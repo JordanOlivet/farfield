@@ -70,7 +70,8 @@ public final class LodRenderer {
     private static final long INITIAL_QUADS = 8L << 20;
     private static final long MAX_QUADS = 128L << 20;
     private static final int SECTION_BYTES = 32;
-    private static final int EVICT_AFTER_FRAMES = 600;
+    /** A resident mesh the selection has not used for this long is freed. */
+    private static final long EVICT_AFTER_NANOS = 10_000_000_000L;
 
     private boolean initialized;
     private boolean disabled;
@@ -107,13 +108,16 @@ public final class LodRenderer {
     private long frame;
     private long frameNanos;
     private long timedFrames;
+    private int meshesUploaded;
+    private int meshesEvicted;
     private long nextStats;
 
     private static final class Resident {
         final int slot;
         long start;
         int quadCount;
-        long lastDrawn;
+        /** Last time the selection used it: drawn, or relied on to descend to its children. */
+        long lastUsed;
 
         Resident(int slot) {
             this.slot = slot;
@@ -180,6 +184,7 @@ public final class LodRenderer {
         uploadMeshes();
         uploadColors();
 
+        long now = System.nanoTime();
         Vec3 cam = camera.getPosition();
         List<Long> draw = new ArrayList<>();
         int minY = level.getMinBuildHeight();
@@ -196,7 +201,14 @@ public final class LodRenderer {
 
             @Override
             public boolean ready(long key) {
-                return resident.containsKey(key);
+                // A section the selection relies on to descend is in use even when
+                // only its children are drawn: freeing it would make its parent fall
+                // back to the coarse level until it is meshed again (flicker).
+                Resident r = resident.get(key);
+                if (r != null) {
+                    r.lastUsed = now;
+                }
+                return r != null;
             }
         }, draw::add, this::request);
 
@@ -204,7 +216,7 @@ public final class LodRenderer {
         int count = 0;
         for (long key : draw) {
             Resident r = resident.get(key);
-            r.lastDrawn = frame;
+            r.lastUsed = now;
             if (r.quadCount == 0 || !visible(frustum, key, cam)) {
                 continue;
             }
@@ -218,7 +230,7 @@ public final class LodRenderer {
             count++;
         }
         if (frame % 60 == 0) {
-            evictUnused();
+            evictUnused(now);
         }
         if (count > 0) {
             draw(count, cam, viewRotation, projection, mc, skyBrightness(level, camera));
@@ -228,11 +240,14 @@ public final class LodRenderer {
         if (System.nanoTime() > nextStats) {
             nextStats = System.nanoTime() + 30_000_000_000L;
             Farfield.LOG.info("LOD renderer: {} sections drawn, {} resident, {} MB of {} MB quads used, {} meshing,"
-                            + " {} us of render-thread time per frame over {} frames", count, resident.size(),
-                    arena.used() * 8 >> 20, arena.capacity() * 8 >> 20, requested.size(),
+                            + " {} meshes uploaded and {} freed since last line, {} us of render-thread time per"
+                            + " frame over {} frames", count, resident.size(), arena.used() * 8 >> 20,
+                    arena.capacity() * 8 >> 20, requested.size(), meshesUploaded, meshesEvicted,
                     frameNanos / 1000 / Math.max(1, timedFrames), timedFrames);
             frameNanos = 0;
             timedFrames = 0;
+            meshesUploaded = 0;
+            meshesEvicted = 0;
         }
     }
 
@@ -327,12 +342,13 @@ public final class LodRenderer {
             Resident r = resident.get(m.key);
             if (r == null) {
                 r = new Resident(allocateSlot());
-                r.lastDrawn = frame;
+                r.lastUsed = System.nanoTime();
                 resident.put(m.key, r);
             } else if (r.quadCount > 0) {
                 arena.release(r.start, r.quadCount);
             }
             r.quadCount = m.quads.length;
+            meshesUploaded++;
             if (r.quadCount > 0) {
                 long start = arena.allocate(r.quadCount);
                 if (start < 0 && growArena(r.quadCount)) {
@@ -389,15 +405,16 @@ public final class LodRenderer {
                 (int) r.start, r.quadCount, 0, 0});
     }
 
-    private void evictUnused() {
+    private void evictUnused(long now) {
         Iterator<Map.Entry<Long, Resident>> it = resident.entrySet().iterator();
         while (it.hasNext()) {
             Resident r = it.next().getValue();
-            if (frame - r.lastDrawn > EVICT_AFTER_FRAMES) {
+            if (now - r.lastUsed > EVICT_AFTER_NANOS) {
                 if (r.quadCount > 0) {
                     arena.release(r.start, r.quadCount);
                 }
                 releaseSlot(r.slot);
+                meshesEvicted++;
                 it.remove();
             }
         }
