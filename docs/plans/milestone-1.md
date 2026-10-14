@@ -127,8 +127,9 @@ choice, an ADR.
   3 s, LOD CPU 0.3 to 3.9 %, about 0.07 ms render-thread and 0.45 ms GPU
   per frame, no Farfield error. The look moves to E.7
 - [ ] E.7 Visual pass (from the user's checks): biome tints for grass,
-  foliage and water (LOD water reads saturated blue or lavender); leaves
-  not as solid opaque cubes (they look odd: cutout or coverage near,
+  foliage and water (LOD water reads saturated blue or lavender); water
+  transparency (LOD water is drawn opaque); leaves not as solid opaque
+  cubes (they look odd: cutout or coverage near,
   darker or dithered far); averaged texture colors instead of map colors
   (ADR-010); the transition band at the vanilla distance (ADR-011); then
   judge the downsampling rules of ADR-020 in game
