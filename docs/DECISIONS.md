@@ -236,7 +236,7 @@ Outcome of spike S5 (numbers in `docs/progress/2026-10-14.md`).
 
 ## ADR-018 — Meshing on the CPU with binary greedy meshing
 
-**Date**: 2026-10-14 · **Status**: proposed
+**Date**: 2026-10-14 · **Status**: accepted
 
 Outcome of spike S2 (numbers in `docs/progress/2026-10-14.md`).
 
@@ -254,3 +254,11 @@ Outcome of spike S2 (numbers in `docs/progress/2026-10-14.md`).
   faces between two translucent voxels are culled whatever their materials.
 - Not decided yet: how light and AO enter the merge key (it lowers the merge
   ratio), shapes of non-cube blocks, cracks between LOD levels.
+- The user's concern: CPU-heavy modpacks may leave no CPU for meshing.
+  Mitigations: meshing runs only when a section arrives or changes (not per
+  frame), on low-priority workers under a configurable budget; the CPU
+  share of LOD work is measured in the user's ~400-mod pack during the
+  in-game check (E.5). GPU meshing stays possible later without touching
+  the renderer, since a compute shader can emit the same 8-byte quads; it
+  gets its own spike once the OpenGL 4.6 RHI exists (after E.3), or earlier
+  if E.5 shows the CPU cannot keep up.

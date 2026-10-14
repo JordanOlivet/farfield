@@ -80,4 +80,6 @@ choice, an ADR.
 - [ ] E.2 Ingest from loaded chunks (snapshots on the owner thread)
 - [ ] E.3 OpenGL 4.6 RHI minimum: buffers, shaders, indirect draws
 - [ ] E.4 Render the LOD meshes beyond the vanilla render distance
-- [ ] E.5 In-game check in the user's real install on both loaders
+- [ ] E.5 In-game check in the user's real install on both loaders,
+  including the CPU share of LOD work (import, meshing) in the ~400-mod
+  pack (ADR-018)
