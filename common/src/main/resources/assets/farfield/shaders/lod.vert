@@ -25,6 +25,7 @@ uniform mat4 u_viewProj;    // the game's projection * view rotation
 uniform ivec3 u_cameraBlock;
 uniform vec3 u_cameraFrac;
 uniform vec2 u_depthRange;  // near, far of the LOD depth mapping
+uniform float u_brightness; // sky brightness (day/night, weather), as vanilla sky light
 
 out vec4 v_color;
 out vec3 v_relative;
@@ -62,5 +63,5 @@ void main() {
     gl_Position.z = gl_Position.w * (f + n) / (f - n) - 2.0 * f * n / (f - n);
 
     vec4 color = unpackUnorm4x8(colors[material]);
-    v_color = vec4(color.rgb * SHADE[direction], 1.0);
+    v_color = vec4(color.rgb * SHADE[direction] * u_brightness, 1.0);
 }

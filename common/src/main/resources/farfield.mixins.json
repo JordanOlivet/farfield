@@ -9,7 +9,8 @@
     "LevelChunkMixin"
   ],
   "client": [
-    "client.LevelRendererMixin"
+    "client.LevelRendererMixin",
+    "client.WindowMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -102,13 +102,20 @@ choice, an ADR.
   through `BiomeManagerAccessor`). No client-side ingest yet. Server mode
   checked again on both dev servers; the remote branch of the provider
   has not run (needs a client on a remote server, E.6)
-- [~] E.3 OpenGL 4.6 RHI minimum: buffers, shaders, indirect draws
+- [x] E.3 OpenGL 4.6 RHI minimum: buffers, shaders, indirect draws
   (`GlBuffer` with DSA storage, `GlProgram`, `glMultiDrawArraysIndirect`
-  with `gl_BaseInstance`). Remains: run it in a client
-- [~] E.4 Render the LOD meshes beyond the vanilla render distance:
+  with `gl_BaseInstance`). Runs in the dev clients of both loaders; Fabric
+  needed `WindowMixin` to get a 4.6 context (vanilla asks for 3.2;
+  NeoForge's early window already creates 4.6)
+- [x] E.4 Render the LOD meshes beyond the vanilla render distance:
   `LodRenderer` (octree selection by `LodSelector`, meshing on two
-  threads, first-fit quad arena, map colors, mixin after the sky).
-  Remains: run it in a dev client, then fix what shows
+  threads, first-fit quad arena, map colors, sky brightness, mixin after
+  the sky). Checked in the dev clients of both loaders on `main-install`
+  (936 to 985 sections drawn up to 4,096 blocks, 49 MB of quads, about
+  1.4 ms of render-thread time per frame). Known gaps, for later items:
+  water and grass without biome tints (water reads lavender through the
+  fog), a visible seam at the vanilla distance (ADR-011 transition band),
+  no light or AO in the LOD faces, cracks between levels not checked
 - [ ] E.5 In-game check in the user's real install on both loaders,
   including the CPU share of LOD work (import, meshing) in the ~400-mod
   pack (ADR-018)

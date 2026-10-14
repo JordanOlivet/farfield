@@ -105,6 +105,8 @@ public final class LodRenderer {
     private int slotCount;
     private int[] commands = new int[4 * 1024];
     private long frame;
+    private long frameNanos;
+    private long timedFrames;
     private long nextStats;
 
     private static final class Resident {
@@ -154,8 +156,8 @@ public final class LodRenderer {
         colorBuffer = new GlBuffer(4096L * 4);
         indirect = new GlBuffer(1024L * 16);
         vao = glCreateVertexArrays();
-        Farfield.LOG.info("LOD renderer ready on {} ({} MB of quads to start)", glGetString(GL_RENDERER),
-                INITIAL_QUADS * 8 >> 20);
+        Farfield.LOG.info("LOD renderer ready on {}, OpenGL {} ({} MB of quads to start)", glGetString(GL_RENDERER),
+                glGetString(GL_VERSION), INITIAL_QUADS * 8 >> 20);
         return true;
     }
 
@@ -172,6 +174,7 @@ public final class LodRenderer {
         if (world == null) {
             return;
         }
+        long frameStart = System.nanoTime();
         frame++;
         applyRewrites();
         uploadMeshes();
@@ -218,12 +221,18 @@ public final class LodRenderer {
             evictUnused();
         }
         if (count > 0) {
-            draw(count, cam, viewRotation, projection, mc);
+            draw(count, cam, viewRotation, projection, mc, skyBrightness(level, camera));
         }
+        frameNanos += System.nanoTime() - frameStart;
+        timedFrames++;
         if (System.nanoTime() > nextStats) {
             nextStats = System.nanoTime() + 30_000_000_000L;
-            Farfield.LOG.info("LOD renderer: {} sections drawn, {} resident, {} MB of {} MB quads used, {} meshing",
-                    count, resident.size(), arena.used() * 8 >> 20, arena.capacity() * 8 >> 20, requested.size());
+            Farfield.LOG.info("LOD renderer: {} sections drawn, {} resident, {} MB of {} MB quads used, {} meshing,"
+                            + " {} us of render-thread time per frame over {} frames", count, resident.size(),
+                    arena.used() * 8 >> 20, arena.capacity() * 8 >> 20, requested.size(),
+                    frameNanos / 1000 / Math.max(1, timedFrames), timedFrames);
+            frameNanos = 0;
+            timedFrames = 0;
         }
     }
 
@@ -423,7 +432,13 @@ public final class LodRenderer {
         return frustum.testAab(x, y, z, x + size, y + size, z + size);
     }
 
-    private void draw(int count, Vec3 cam, Matrix4f viewRotation, Matrix4f projection, Minecraft mc) {
+    /** Vanilla's sky brightness (time of day, rain, thunder); 1 in dimensions without sky light. */
+    private static float skyBrightness(ClientLevel level, Camera camera) {
+        return level.dimensionType().hasSkyLight() ? level.getSkyDarken(camera.getPartialTickTime()) : 1f;
+    }
+
+    private void draw(int count, Vec3 cam, Matrix4f viewRotation, Matrix4f projection, Minecraft mc,
+                      float brightness) {
         long bytes = (long) count * 16;
         if (bytes > indirect.size()) {
             indirect.grow(Math.max(bytes, indirect.size() * 2), 0);
@@ -445,6 +460,7 @@ public final class LodRenderer {
                 (float) (cam.z - blockZ));
         glUniform2f(program.uniform("u_depthRange"), 8f, (float) MAX_DISTANCE * 2);
         glUniform1f(program.uniform("u_vanillaRadius"), vanilla);
+        glUniform1f(program.uniform("u_brightness"), brightness);
         glUniform4f(program.uniform("u_fogColor"), fogColor[0], fogColor[1], fogColor[2], 1f);
         glUniform2f(program.uniform("u_fog"), (float) MAX_DISTANCE * 0.6f, (float) MAX_DISTANCE);
 

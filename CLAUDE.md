@@ -85,6 +85,11 @@ and `fabric/build/libs/farfield-fabric-1.21.1-<version>.jar`.
   counters.
 - Scripted dev clients (window capture, chat commands, clicks) work only while
   the Windows session is unlocked and the user is not using the PC; ask first.
+  `-PquickPlay=<save>` opens a world directly (`runClient`, both loaders);
+  build its LODs beforehand with the dev server pointed at the save
+  (`level-name=saves/<save>` in `server.properties`, restore it after). Capture
+  the window with `PrintWindow` (flag 2) from a DPI-aware process: it works
+  while other windows cover the game.
 
 ## Windows gotchas
 
