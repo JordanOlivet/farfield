@@ -97,47 +97,10 @@ class SectionCodecTest {
     }
 
     @Test
-    void mipOfUniformChildrenIsUniform() {
-        MipBuilder mips = new MipBuilder(0, m -> m == 0);
-        LodSection[] children = new LodSection[8];
-        for (int i = 0; i < 8; i++) {
-            children[i] = new LodSection(i < 4 ? 7 : 0); // lower half stone, upper half air
-        }
-        LodSection parent = mips.build(children);
-        assertEquals(7, parent.material(3, 15, 3));
-        assertEquals(0, parent.material(3, 16, 3));
-        assertEquals(LodSection.BRICK_COUNT, parent.uniformBrickCount());
-    }
-
-    @Test
-    void mipKeepsMajorityNonAirAndMaxLight() {
-        MipBuilder mips = new MipBuilder(0, m -> m == 0);
-        LodSection child = new LodSection(0);
-        // Cell (0, 0, 0) of the parent: 5 of 8 children non-air (3 x 4, 2 x 9).
-        child.set(0, 0, 0, 4);
-        child.set(1, 0, 0, 4);
-        child.set(0, 1, 0, 4);
-        child.set(1, 1, 0, 9);
-        child.set(0, 0, 1, 9);
-        child.blockLight().set(1, 1, 1, 12);
-        // Cell (1, 0, 0): only 3 non-air children -> air.
-        child.set(2, 0, 0, 4);
-        child.set(3, 0, 0, 4);
-        child.set(2, 1, 0, 4);
-        LodSection[] children = new LodSection[8];
-        children[0] = child;
-        LodSection parent = mips.build(children);
-        assertEquals(4, parent.material(0, 0, 0));
-        assertEquals(12, parent.blockLight().get(0, 0, 0));
-        assertEquals(0, parent.material(1, 0, 0));
-        assertEquals(15, parent.skyLight().get(20, 20, 20));
-    }
-
-    @Test
     void mipParentsEncodeCanonically() {
         // Regression: light written voxel by voxel left packed bricks whose
         // values were all equal, so a decoded copy re-encoded differently.
-        MipBuilder mips = new MipBuilder(0, m -> m == 0);
+        MipBuilder mips = new MipBuilder(0, m -> m == 0 ? MipBuilder.Shapes.EMPTY : MipBuilder.Shapes.FULL);
         LodSection child = new LodSection(0);
         for (int y = 0; y < 32; y++) {
             for (int z = 0; z < 32; z++) {

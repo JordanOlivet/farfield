@@ -83,7 +83,10 @@ choice, an ADR.
 
 ## M1.E — First LODs in single player (spike S4)
 
-- [ ] E.1 Mip building (downsampling rules of analysis §5.3)
+- [~] E.1 Mip building (downsampling rules of analysis §5.3): `MipBuilder`
+  with block shapes, weighted occupancy and the material seen from above
+  (ADR-020), unit tested against a voxel-by-voxel reference. Remains: the
+  look check in game (E.5)
 - [ ] E.2 Ingest from loaded chunks (snapshots on the owner thread)
 - [ ] E.3 OpenGL 4.6 RHI minimum: buffers, shaders, indirect draws
 - [ ] E.4 Render the LOD meshes beyond the vanilla render distance

@@ -265,7 +265,7 @@ Outcome of spike S2 (numbers in `docs/progress/2026-10-14.md`).
 
 ## ADR-019 — LOD storage format and container
 
-**Date**: 2026-10-14 · **Status**: proposed
+**Date**: 2026-10-14 · **Status**: accepted
 
 Outcome of spike S1 (numbers in `docs/progress/2026-10-14.md`). Refines
 ADR-009.
@@ -304,3 +304,36 @@ ADR-009.
   aircompressor if it is fast enough, otherwise LWJGL's zstd bindings and
   their natives), decided when the store is wired in; compaction policy
   (garbage ratio, when to run); per-section versions for the network sync.
+
+## ADR-020 — Downsampling rule for the mip levels
+
+**Date**: 2026-10-14 · **Status**: proposed
+
+Plan item E.1, analysis §5.3. `MipBuilder` builds level N+1 from 2x2x2
+voxels of level N; it replaces the provisional majority vote of spike S1.
+
+- **Block shapes** come from the Minecraft side (`MipBuilder.Shapes`):
+  empty, sparse (plants, flowers, torches, rails, fences, panes, walls),
+  cover (slabs, snow layers, carpets, paths), full (any full cube, opaque or
+  not: stone, leaves, glass, water).
+- **Occupancy**: weighted vote, full 4, cover 2, sparse 1; the parent voxel
+  is solid from a weight of 8. Two full children are enough, so one-block
+  walls, floors and trunks survive (a majority vote erases them and makes
+  forests bald), an isolated block disappears, and plants alone never raise
+  the ground. A feature survives to level k when it is at least 2^k blocks
+  long along one axis.
+- **Material**: what is seen from above. Per child column, the highest
+  non-sparse voxel, else the highest sparse one; the most frequent of the
+  four, ties to one seen in the upper layer. Water over sand stays water,
+  snow layers over grass stay snow, plants over a grass block show the
+  block.
+- **Light**: maximum of the children. **Biome**: most frequent known biome
+  of the eight child cells.
+- Cost: mip building on `server-pregen` took 26 s of worker time instead of
+  39 s with the S1 rule (brick-wise, uniform bricks without per-voxel work);
+  levels 1 to 4 now add 25 % to the store instead of 21 %.
+- **Not yet**: averaged colors per cell for the far levels (needs the
+  material layer, analysis §5.4), a coverage value for leaves, and the
+  selection hysteresis against flicker between levels (§9.2). Status moves
+  to accepted after the in-game look check (E.5).
+

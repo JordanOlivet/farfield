@@ -147,6 +147,30 @@ public final class StorageBenchmark {
         return a;
     }
 
+    /**
+     * Rough block shapes from block keys for the mip rule, for benchmarking
+     * only (the game side derives them from block states).
+     */
+    static int shapeOf(String key) {
+        int bracket = key.indexOf('[');
+        String name = bracket < 0 ? key : key.substring(0, bracket);
+        if (name.equals("minecraft:air") || name.equals("minecraft:cave_air") || name.equals("minecraft:void_air")) {
+            return MipBuilder.Shapes.EMPTY;
+        }
+        if (name.endsWith("_slab") || name.equals("minecraft:snow") || name.endsWith("_carpet")
+                || name.equals("minecraft:dirt_path") || name.equals("minecraft:farmland")) {
+            return MipBuilder.Shapes.COVER;
+        }
+        if (name.endsWith("grass") || name.endsWith("fern") || name.endsWith("flower") || name.endsWith("_sapling")
+                || name.endsWith("torch") || name.endsWith("rail") || name.endsWith("_fence") || name.endsWith("_pane")
+                || name.endsWith("_wall") || name.endsWith("_button") || name.endsWith("_bush") || name.contains("kelp")
+                || name.endsWith("vine") || name.endsWith("vines") || name.equals("minecraft:dandelion")
+                || name.equals("minecraft:poppy") || name.endsWith("_tulip") || name.endsWith("mushroom")) {
+            return MipBuilder.Shapes.SPARSE;
+        }
+        return MipBuilder.Shapes.FULL;
+    }
+
     private StorageBenchmark(Path regionDir) {
         this.regionDir = regionDir;
         this.air = blocks.id("minecraft:air");
@@ -279,7 +303,7 @@ public final class StorageBenchmark {
         final ChunkData chunk = new ChunkData();
         final GrowableBytes nbt = new GrowableBytes(256 * 1024);
         final RegionFile.RawChunk rawChunk = new RegionFile.RawChunk();
-        final MipBuilder mips = new MipBuilder(air, isAir);
+        final MipBuilder mips = new MipBuilder(air, m -> shapeOf(blocks.key(m)));
         final int[] brickMaterials = new int[LodSection.BRICK_VOLUME];
 
         Worker() {
