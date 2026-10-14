@@ -294,6 +294,16 @@ public final class LodPipeline {
      * work that feeds the stores from elsewhere, such as an import).
      */
     public void stop(Runnable beforeClose) {
+        // Called on the owner thread: take every chunk still waiting (loaded or
+        // changed recently) while it is in memory, or it would be missing from
+        // the LODs until it loads again.
+        for (LodLevel lod : levels.values()) {
+            for (LodLevel.Due d : lod.due.values()) {
+                lod.snapshotsAtStop.incrementAndGet();
+                submit(lod, ChunkSnapshot.take(lod.level, d.chunk()));
+            }
+            lod.due.clear();
+        }
         stopping = true;
         ACTIVE.remove(this);
         maintenance.shutdown();
@@ -309,9 +319,10 @@ public final class LodPipeline {
             try {
                 lod.world().close();
                 Farfield.LOG.info("LOD store of {} ({}) closed: {} chunks ingested ({} live snapshots, {} at unload,"
-                                + " {} of border chunks, {} without complete light, {} block changes), {} sections"
-                                + " written, {} unchanged; {} chunks loaded, {} not snapshotted", lod.name(), name,
-                        lod.world().chunksIngested(), lod.snapshots.get(), lod.snapshotsAtUnload.get(),
+                                + " {} at stop, {} of border chunks, {} without complete light, {} block changes), {}"
+                                + " sections written, {} unchanged; {} chunks loaded, {} not snapshotted", lod.name(),
+                        name, lod.world().chunksIngested(), lod.snapshots.get(), lod.snapshotsAtUnload.get(),
+                        lod.snapshotsAtStop.get(),
                         lod.snapshotsOfBorderChunks.get(), lod.snapshotsWithoutLight.get(), lod.blockChanges.get(),
                         lod.world().sectionsWritten(), lod.world().sectionsUnchanged(), lod.loaded.size(),
                         lod.due.size());

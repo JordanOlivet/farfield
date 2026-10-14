@@ -50,6 +50,8 @@ public final class LodLevel {
     final AtomicLong snapshotsWithoutLight = new AtomicLong();
     /** Snapshots of chunks that {@code getChunkNow} did not return (border chunks), for the logs. */
     final AtomicLong snapshotsOfBorderChunks = new AtomicLong();
+    /** Snapshots of chunks still waiting when the pipeline stopped. */
+    final AtomicLong snapshotsAtStop = new AtomicLong();
     /** Counter at the last periodic log line. */
     long loggedSnapshots;
 

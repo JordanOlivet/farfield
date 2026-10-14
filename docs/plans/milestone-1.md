@@ -116,9 +116,15 @@ choice, an ADR.
   water and grass without biome tints (water reads lavender through the
   fog), a visible seam at the vanilla distance (ADR-011 transition band),
   no light or AO in the LOD faces, cracks between levels not checked
-- [ ] E.5 In-game check in the user's real install on both loaders,
+- [~] E.5 In-game check in the user's real install on both loaders,
   including the CPU share of LOD work (import, meshing) in the ~400-mod
-  pack (ADR-018)
+  pack (ADR-018). Done in the 398-mod pack on NeoForge (three passes): no
+  crash, LOD CPU 0 to 1.8 % of the process in steady state and 12 to 21 %
+  during an import, LOD cost per frame small after the renderer rework
+  (273 to 320 fps with LODs against 319 without), holes from fast
+  exploration fixed (0 of 10,930 chunks). Remains: the Fabric pass
+  ("Cobblemon Custom Modpack"), and the look of the downsampling (ADR-020)
+  with biome tints
 - [ ] E.6 Client mode (ADR-022): a client with Farfield on a server
   without it builds and renders LODs from the chunks it receives, stored
   per remote world; command to force or rename the world identity.
