@@ -25,7 +25,8 @@ import java.util.stream.Stream;
  *
  * <ul>
  *   <li><b>Parallel</b>: each worker takes the next region file, nearest to
- *       the configured center first, and processes its chunks in order.</li>
+ *       the configured center first, and processes its chunks in 2x2
+ *       groups (one 32-block LOD column after another).</li>
  *   <li><b>Backpressure</b>: the sink is called on the worker thread; a slow
  *       sink stalls the workers, so memory stays bounded by one region's
  *       worth of buffers per worker.</li>
@@ -55,6 +56,23 @@ public final class RegionImporter {
 
     private volatile boolean paused;
     private volatile boolean cancelled;
+
+    /**
+     * Chunk slots in 2x2 groups: the four chunks of one 32-block LOD column
+     * reach the sink one after another, so it can merge them before writing.
+     */
+    private static final int[] CHUNK_ORDER = new int[RegionFile.CHUNK_COUNT];
+
+    static {
+        int slot = 0;
+        for (int gz = 0; gz < 16; gz++) {
+            for (int gx = 0; gx < 16; gx++) {
+                for (int i = 0; i < 4; i++) {
+                    CHUNK_ORDER[slot++] = (gz * 2 + (i >> 1)) * 32 + gx * 2 + (i & 1);
+                }
+            }
+        }
+    }
 
     public RegionImporter(ImportOptions options, KeyRegistry blockStates, KeyRegistry biomes,
                           ChunkSink sink, ImportListener listener) {
@@ -194,7 +212,8 @@ public final class RegionImporter {
     private int importRegion(RegionFile file, RegionFile.RawChunk raw, GrowableBytes nbt, ChunkData chunk,
                              ChunkDecoder decoder, ChunkDecompressor decompressor) throws InterruptedException {
         int imported = 0;
-        for (int index = 0; index < RegionFile.CHUNK_COUNT; index++) {
+        for (int slot = 0; slot < RegionFile.CHUNK_COUNT; slot++) {
+            int index = CHUNK_ORDER[slot];
             if (!file.hasChunk(index)) {
                 continue;
             }

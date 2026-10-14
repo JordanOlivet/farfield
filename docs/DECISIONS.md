@@ -337,3 +337,36 @@ voxels of level N; it replaces the provisional majority vote of spike S1.
   selection hysteresis against flicker between levels (§9.2). Status moves
   to accepted after the in-game look check (E.5).
 
+## ADR-021 — zstd implementation and the LOD world engine
+
+**Date**: 2026-10-14 · **Status**: proposed
+
+Closes the open points of ADR-019 that the ingest path (E.2) needed.
+
+- **zstd: aircompressor 0.27** (pure Java, Apache 2.0, 255 KB, nested in
+  both loader jars; no natives). Measured on 2,000 level-0 sections of
+  `main-install` (codec bytes, one thread): same size as zstd-jni level 3,
+  compression 62 µs vs 24 µs (level 3) and 152 µs (level 9), decompression
+  13 to 17 µs vs 8 to 11 µs. Its compressor has no level setting, so the
+  store is about 12 % larger than at level 9; any later compressor writes
+  frames the same decoder reads, so switching costs no migration.
+- **Store layout** (`SectionStore`): one `LogStore` per level and region of
+  32x32 section columns, `sections/L<level>/r.<rx>.<rz>.ffl`, opened
+  lazily; record payload = raw length (4 bytes) + zstd frame of the
+  `SectionCodec` bytes. Block-state and biome keys in `block_states.txt` and
+  `biomes.txt`, one per line in id order, forced to disk before any record
+  that may use a new key.
+- **`LodWorld`** (one per dimension, owns no thread): `ingest(ChunkData)`
+  writes a chunk into its level-0 sections through a write-back cache
+  (2,048 sections by default; idle sections flushed by the caller, the
+  oldest written when it overflows), so the four chunks of a 32-block
+  column cost one write; unchanged encodings are not rewritten; writes mark
+  parents dirty and `buildMips` rebuilds them level by level, in parallel
+  within a level. The importer feeds chunks in 2x2 groups for this.
+- Measured on `server-pregen` (8 threads): 4,750 chunks/s from region files
+  to level 0, mips 1.6 s for 10,596 parents, store 111 MB (42 % of the
+  region files, store-time transforms not applied yet).
+- **Not yet**: the store-time transforms of ADR-019 (they need the
+  material classes at write time and neighbor-aware rebuilds), compaction
+  of the region logs, per-section versions for the network.
+

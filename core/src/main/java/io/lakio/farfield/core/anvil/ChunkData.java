@@ -55,6 +55,26 @@ public final class ChunkData {
         return s;
     }
 
+    /**
+     * Starts filling this holder from a live chunk (the game side) instead
+     * of {@link ChunkDecoder}: a full, lit chunk at the given position with
+     * no section yet.
+     */
+    public void beginLive(int chunkX, int chunkZ) {
+        reset();
+        this.chunkX = chunkX;
+        this.chunkZ = chunkZ;
+        this.status = "minecraft:full";
+        this.lightOn = true;
+    }
+
+    /** Adds a section (cleared, no blocks, biomes or light) at section Y index {@code y}. */
+    public SectionData addLiveSection(int y) {
+        SectionData s = addSection();
+        s.y = y;
+        return s;
+    }
+
     void dropLastSection() {
         sectionCount--;
     }

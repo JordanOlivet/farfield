@@ -807,6 +807,66 @@ public final class StorageBenchmark {
         System.out.printf(Locale.ROOT, "%nRead, one thread, %d level-0 sections: dense+zstd %.1f us (decompress + unpack),"
                         + " codec+zstd+dict %.1f us (decompress + decode) (sink %d)%n",
                 sample.size(), denseUs, codecUs, sink & 1);
+        zstdImplementations(w, sample);
+    }
+
+    /** zstd-jni (native) against aircompressor (pure Java) on the codec bytes of the read sample. */
+    private static void zstdImplementations(Worker w, List<LodSection> sample) {
+        List<byte[]> raws = new ArrayList<>();
+        for (LodSection s : sample) {
+            w.raw.reset();
+            w.codec.encode(s, w.raw);
+            raws.add(Arrays.copyOf(w.raw.array(), w.raw.length()));
+        }
+        io.airlift.compress.zstd.ZstdCompressor air = new io.airlift.compress.zstd.ZstdCompressor();
+        io.airlift.compress.zstd.ZstdDecompressor airDecompressor = new io.airlift.compress.zstd.ZstdDecompressor();
+        ZstdDecompressCtx jniDecompressor = new ZstdDecompressCtx();
+        byte[] out = new byte[(int) Zstd.compressBound(1 << 20)];
+        byte[] back = new byte[1 << 20];
+        String[] names = {"zstd-jni level 3", "zstd-jni level 9", "aircompressor"};
+        for (int impl = 0; impl < 3; impl++) {
+            List<byte[]> blobs = new ArrayList<>();
+            double compressUs = 0;
+            double jniReadUs = 0;
+            double airReadUs = 0;
+            long bytes = 0;
+            for (int pass = 0; pass < 6; pass++) {
+                blobs.clear();
+                bytes = 0;
+                long t0 = System.nanoTime();
+                for (byte[] raw : raws) {
+                    int n = switch (impl) {
+                        case 0 -> w.compress(w.zstd, raw, raw.length);
+                        case 1 -> w.compress(w.zstd9, raw, raw.length);
+                        default -> air.compress(raw, 0, raw.length, out, 0, out.length);
+                    };
+                    byte[] blob = impl == 2 ? Arrays.copyOf(out, n) : Arrays.copyOf(w.compressed, n);
+                    blobs.add(blob);
+                    bytes += n;
+                }
+                long t1 = System.nanoTime();
+                for (int i = 0; i < blobs.size(); i++) {
+                    byte[] blob = blobs.get(i);
+                    jniDecompressor.decompressByteArray(back, 0, raws.get(i).length, blob, 0, blob.length);
+                }
+                long t2 = System.nanoTime();
+                for (int i = 0; i < blobs.size(); i++) {
+                    byte[] blob = blobs.get(i);
+                    int n = airDecompressor.decompress(blob, 0, blob.length, back, 0, back.length);
+                    if (n != raws.get(i).length || !Arrays.equals(back, 0, n, raws.get(i), 0, n)) {
+                        throw new IllegalStateException("aircompressor round trip failed");
+                    }
+                }
+                long t3 = System.nanoTime();
+                if (pass >= 2) {
+                    compressUs += (t1 - t0) / 1e3 / raws.size() / 4;
+                    jniReadUs += (t2 - t1) / 1e3 / raws.size() / 4;
+                    airReadUs += (t3 - t2) / 1e3 / raws.size() / 4;
+                }
+            }
+            System.out.printf(Locale.ROOT, "%-17s %,10d bytes  compress %6.1f us  decompress jni %5.1f us, aircompressor %5.1f us%n",
+                    names[impl], bytes, compressUs, jniReadUs, airReadUs);
+        }
     }
 
     // ---------------------------------------------------------------- containers

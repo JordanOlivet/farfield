@@ -62,6 +62,47 @@ public final class SectionData {
         return biomePalette;
     }
 
+    // Filling from a live chunk (see ChunkData#addLiveSection).
+
+    /**
+     * Sets the block palette (registry ids, {@code count} entries). With one
+     * entry the section is uniform; otherwise fill {@link #blockIndicesForWrite()}.
+     */
+    public void setBlockPalette(int[] ids, int count) {
+        System.arraycopy(ids, 0, ensureBlockPalette(count), 0, count);
+        blockPaletteSize = count;
+        hasBlocks = true;
+    }
+
+    /** The 4096 palette indices to fill after {@link #setBlockPalette}. */
+    public short[] blockIndicesForWrite() {
+        return blockIndices;
+    }
+
+    /** Sets the biome palette; with more than one entry fill {@link #biomeIndicesForWrite()}. */
+    public void setBiomePalette(int[] ids, int count) {
+        System.arraycopy(ids, 0, ensureBiomePalette(count), 0, count);
+        biomePaletteSize = count;
+        hasBiomes = true;
+    }
+
+    /** The 64 biome palette indices, cell order {@code (y * 4 + z) * 4 + x}. */
+    public byte[] biomeIndicesForWrite() {
+        return biomeIndices;
+    }
+
+    /** Copies 2048 bytes of sky light nibbles. */
+    public void setSkyLight(byte[] nibbles) {
+        System.arraycopy(nibbles, 0, skyLight, 0, LIGHT_BYTES);
+        hasSkyLight = true;
+    }
+
+    /** Copies 2048 bytes of block light nibbles. */
+    public void setBlockLight(byte[] nibbles) {
+        System.arraycopy(nibbles, 0, blockLight, 0, LIGHT_BYTES);
+        hasBlockLight = true;
+    }
+
     /** Section Y index (block Y / 16). */
     public int y() {
         return y;

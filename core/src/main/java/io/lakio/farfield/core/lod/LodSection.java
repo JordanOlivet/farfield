@@ -405,6 +405,64 @@ public final class LodSection {
         }
     }
 
+    /**
+     * Drops palette entries that no voxel uses any more (left behind when a
+     * stored section is partly overwritten), keeping the order of the others,
+     * and shrinks the index width if it can.
+     */
+    public void prunePalette() {
+        boolean[] used = new boolean[paletteSize];
+        int count = 0;
+        for (int b = 0; b < BRICK_COUNT; b++) {
+            long[] data = bricks[b];
+            if (data == null) {
+                if (!used[uniform[b]]) {
+                    used[uniform[b]] = true;
+                    count++;
+                }
+                continue;
+            }
+            for (int v = 0; v < BRICK_VOLUME; v++) {
+                int index = unpack(data, bits, v);
+                if (!used[index]) {
+                    used[index] = true;
+                    count++;
+                }
+            }
+        }
+        if (count == paletteSize) {
+            return;
+        }
+        int[] newIndex = new int[paletteSize];
+        int[] newPalette = new int[Math.max(8, Integer.highestOneBit(Math.max(1, count - 1)) << 1)];
+        paletteLookup.clear();
+        int n = 0;
+        for (int i = 0; i < paletteSize; i++) {
+            if (used[i]) {
+                newIndex[i] = n;
+                newPalette[n] = palette[i];
+                paletteLookup.put(palette[i], n);
+                n++;
+            }
+        }
+        int oldBits = bits;
+        int newBits = bitsFor(n);
+        for (int b = 0; b < BRICK_COUNT; b++) {
+            long[] data = bricks[b];
+            if (data == null) {
+                uniform[b] = newIndex[uniform[b]];
+                continue;
+            }
+            for (int v = 0; v < BRICK_VOLUME; v++) {
+                scratch[v] = newIndex[unpack(data, oldBits, v)];
+            }
+            bricks[b] = pack(scratch, newBits);
+        }
+        palette = newPalette;
+        paletteSize = n;
+        bits = newBits;
+    }
+
     public int uniformBrickCount() {
         int n = 0;
         for (long[] data : bricks) {

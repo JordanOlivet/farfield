@@ -31,3 +31,14 @@ neoForge {
         }
     }
 }
+
+dependencies {
+    // Libraries of the engine core, nested in the mod jar.
+    jarJar(implementation("io.airlift:aircompressor")) {
+        version {
+            strictly "[${aircompressor_version},)"
+            prefer aircompressor_version
+        }
+    }
+    additionalRuntimeClasspath "io.airlift:aircompressor:${aircompressor_version}"
+}

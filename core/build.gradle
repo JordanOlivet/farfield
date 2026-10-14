@@ -6,6 +6,9 @@ plugins {
 dependencies {
     api project(':api')
 
+    // zstd in pure Java for the LOD store (ADR-021): no natives to ship.
+    implementation "io.airlift:aircompressor:${aircompressor_version}"
+
     // Reference implementation of the LZ4 block stream that region files use
     // (compression type 4), to check our own decoder against it. Tests only.
     testImplementation "org.lz4:lz4-java:${lz4_java_version}"
@@ -55,4 +58,17 @@ tasks.register('storageBench', JavaExec) {
     maxHeapSize = '8g'
     // lmdbjava reaches into NIO buffers.
     jvmArgs '--add-opens', 'java.base/java.nio=ALL-UNNAMED', '--add-opens', 'java.base/sun.nio.ch=ALL-UNNAMED'
+}
+
+// The production LOD build path on a corpus world (plan item E.2):
+//   gradlew :core:worldBench --args="<world dir> <output dir> [--threads N] [--limit-regions N]"
+tasks.register('worldBench', JavaExec) {
+    group = 'benchmark'
+    description = 'Imports a world into a LodWorld store and builds its mips.'
+    classpath = sourceSets.jmh.runtimeClasspath
+    mainClass = 'io.lakio.farfield.core.bench.WorldBuildBenchmark'
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(java_version)
+    }
+    maxHeapSize = '4g'
 }
