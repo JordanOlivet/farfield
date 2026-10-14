@@ -1,6 +1,8 @@
 package io.lakio.farfield.server;
 
 import com.mojang.brigadier.CommandDispatcher;
+import io.lakio.farfield.Farfield;
+import io.lakio.farfield.lod.RenderToggle;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.commands.CommandSourceStack;
@@ -14,7 +16,8 @@ import java.util.Locale;
 /**
  * {@code /farfield import [threads]}, {@code /farfield import stop},
  * {@code /farfield import status}: build the LODs of the current dimension
- * from its region files. Operators, or the owner of a single-player world
+ * from its region files. {@code /farfield render on|off}: switch LOD drawing
+ * in single player. Operators, or the owner of a single-player world
  * (cheats off included).
  */
 public final class FarfieldCommands {
@@ -30,7 +33,19 @@ public final class FarfieldCommands {
                         .then(Commands.argument("threads", IntegerArgumentType.integer(1, 64))
                                 .executes(c -> start(c, IntegerArgumentType.getInteger(c, "threads"))))
                         .then(Commands.literal("stop").executes(FarfieldCommands::stop))
-                        .then(Commands.literal("status").executes(FarfieldCommands::status))));
+                        .then(Commands.literal("status").executes(FarfieldCommands::status)))
+                .then(Commands.literal("render")
+                        .then(Commands.literal("on").executes(c -> render(c, true)))
+                        .then(Commands.literal("off").executes(c -> render(c, false)))));
+    }
+
+    /** Single player: switches LOD drawing on the client of the same process, to compare frame rates. */
+    private static int render(CommandContext<CommandSourceStack> c, boolean on) {
+        RenderToggle.set(on);
+        Farfield.LOG.info("LOD rendering switched {} by command", on ? "on" : "off");
+        c.getSource().sendSuccess(() -> Component.literal("LOD rendering " + (on ? "on" : "off")
+                + " (single player only: it acts on this game's own client)."), false);
+        return 1;
     }
 
     private static boolean allowed(CommandSourceStack source) {

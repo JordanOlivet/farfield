@@ -13,6 +13,7 @@ import io.lakio.farfield.core.select.LodSelector;
 import io.lakio.farfield.core.util.RangeAllocator;
 import io.lakio.farfield.core.world.LodWorld;
 import io.lakio.farfield.client.LodWorldProvider;
+import io.lakio.farfield.lod.RenderToggle;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -168,7 +169,7 @@ public final class LodRenderer {
     private void renderFrame(Camera camera, Matrix4f viewRotation, Matrix4f projection) {
         Minecraft mc = Minecraft.getInstance();
         ClientLevel level = mc.level;
-        if (level == null || !init()) {
+        if (level == null || !RenderToggle.enabled() || !init()) {
             return;
         }
         LodWorld current = LodWorldProvider.current(mc, level);

@@ -12,7 +12,12 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-/** Tells the LOD pipelines (server or client side) which loaded chunks changed, so they snapshot them again. */
+/**
+ * Tells the LOD pipelines (server or client side) which loaded chunks
+ * changed, so they snapshot them again. Optional: if another mod replaces
+ * {@code setBlockState}, changes are only seen at the next load (the
+ * pipeline's close line counts the block changes seen).
+ */
 @Mixin(LevelChunk.class)
 public abstract class LevelChunkMixin {
 
@@ -20,7 +25,7 @@ public abstract class LevelChunkMixin {
     @Final
     Level level;
 
-    @Inject(method = "setBlockState", at = @At("RETURN"))
+    @Inject(method = "setBlockState", at = @At("RETURN"), require = 0)
     private void farfield$onSetBlockState(BlockPos pos, BlockState state, boolean isMoving,
                                           CallbackInfoReturnable<BlockState> cir) {
         if (cir.getReturnValue() != null) {

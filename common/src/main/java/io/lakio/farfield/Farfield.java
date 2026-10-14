@@ -19,5 +19,6 @@ public final class Farfield {
         LOG.info("{} initialising on {} (API {}, {} environment)", MOD_NAME,
                 Services.PLATFORM.getPlatformName(), FarfieldApi.API_VERSION,
                 Services.PLATFORM.isClient() ? "client" : "server");
+        CpuUsage.start();
     }
 }
