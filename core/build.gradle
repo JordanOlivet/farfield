@@ -72,3 +72,16 @@ tasks.register('worldBench', JavaExec) {
     }
     maxHeapSize = '4g'
 }
+
+// Diagnostic: full chunks of a world whose level-0 LODs hold no voxel.
+//   gradlew :core:storeHoles --args="<dir with region/ and farfield/>"   (run on a copy)
+tasks.register('storeHoles', JavaExec) {
+    group = 'benchmark'
+    description = 'Lists full chunks missing from a LOD store.'
+    classpath = sourceSets.jmh.runtimeClasspath
+    mainClass = 'io.lakio.farfield.core.bench.StoreHoles'
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(java_version)
+    }
+    maxHeapSize = '4g'
+}

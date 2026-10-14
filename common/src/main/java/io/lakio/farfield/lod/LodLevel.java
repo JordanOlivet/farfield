@@ -35,6 +35,14 @@ public final class LodLevel {
     /** Block changes seen in loaded chunks, and snapshots taken, for the logs. */
     final AtomicLong blockChanges = new AtomicLong();
     final AtomicLong snapshots = new AtomicLong();
+    /** Snapshots taken when the chunk unloaded, and without complete light. */
+    final AtomicLong snapshotsAtUnload = new AtomicLong();
+    final AtomicLong snapshotsWithoutLight = new AtomicLong();
+    /** Due chunks never snapshotted (not available for 60 s and no unload seen). */
+    final AtomicLong dropped = new AtomicLong();
+    /** Counters at the last periodic log line. */
+    long loggedSnapshots;
+    long loggedDropped;
 
     private LodLevel(Level level, Path dir, LodWorld world) {
         this.level = level;

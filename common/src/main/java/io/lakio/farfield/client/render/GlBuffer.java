@@ -44,6 +44,11 @@ final class GlBuffer implements AutoCloseable {
         glNamedBufferSubData(id, offset, data);
     }
 
+    /** Uploads the buffer's remaining ints (position to limit). */
+    void upload(long offset, java.nio.IntBuffer data) {
+        glNamedBufferSubData(id, offset, data);
+    }
+
     /** Reallocates to {@code newSize} bytes, keeping the first {@code keep} bytes. */
     void grow(long newSize, long keep) {
         if (newSize <= size) {

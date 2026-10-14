@@ -50,8 +50,14 @@ void main() {
     uint vAxis = (axis + 2u) % 3u;
     vec3 p = vec3(voxel);
     p[axis] += float(direction & 1u);
-    p[uAxis] += float(CORNER_U[corner] * sizeU);
-    p[vAxis] += float(CORNER_V[corner] * sizeV);
+    // (U, V) corners wind counter-clockwise seen from +axis (U x V = +axis);
+    // faces toward -axis swap them so every face winds counter-clockwise from
+    // outside and back faces can be culled.
+    bool negative = (direction & 1u) == 0u;
+    uint cu = negative ? CORNER_V[corner] : CORNER_U[corner];
+    uint cv = negative ? CORNER_U[corner] : CORNER_V[corner];
+    p[uAxis] += float(cu * sizeU);
+    p[vAxis] += float(cv * sizeV);
 
     float scale = float(1 << s.originLevel.w);
     v_relative = vec3(s.originLevel.xyz - u_cameraBlock) + p * scale - u_cameraFrac;

@@ -31,9 +31,12 @@ import java.util.function.Predicate;
  * <ul>
  *   <li>The owner thread (server thread or client thread) reports chunk
  *       loads, unloads and block changes, and calls {@link #tick()}: a chunk
- *       is snapshotted 2 s after it loads (once its light is correct) and
- *       5 s after its last block change, at most 16 chunks and 2 ms per tick
- *       and 256 in flight.</li>
+ *       is snapshotted 2 s after it loads (once its light is correct, or
+ *       10 s later without it) and 5 s after its last block change, at most
+ *       16 chunks and 2 ms per tick and 256 in flight. A due chunk that
+ *       unloads first is snapshotted at unload, whatever its light: a chunk
+ *       generated and left quickly must not leave a hole. A due chunk that
+ *       is not available is kept for 60 s, then dropped and counted.</li>
  *   <li>Low-priority workers convert snapshots and ingest them into the
  *       level's {@link LodWorld}.</li>
  *   <li>A maintenance thread writes sections idle for 3 s and rebuilds the
@@ -47,6 +50,10 @@ public final class LodPipeline {
 
     private static final long LOAD_DELAY_TICKS = 40;
     private static final long CHANGE_DELAY_TICKS = 100;
+    /** Past its due tick, a chunk whose light is still not correct is taken anyway. */
+    private static final long LIGHT_WAIT_TICKS = 200;
+    /** Past its due tick, a chunk that stays unavailable is dropped. */
+    private static final long DROP_AFTER_TICKS = 1200;
     private static final int SNAPSHOTS_PER_TICK = 16;
     private static final long SNAPSHOT_BUDGET_NANOS = 2_000_000;
     private static final int MAX_IN_FLIGHT = 256;
@@ -63,6 +70,7 @@ public final class LodPipeline {
     private final AtomicInteger inFlight = new AtomicInteger();
     private volatile boolean stopping;
     private long lastSync = System.nanoTime();
+    private long lastReport = System.nanoTime();
 
     /**
      * @param name    for thread names and logs ("server", "client")
@@ -121,8 +129,14 @@ public final class LodPipeline {
         }
         long pos = chunk.getPos().toLong();
         lod.loaded.remove(pos);
-        // Changed and not snapshotted yet: take it now, it is still complete.
-        if (lod.due.remove(pos) != null && chunk.isLightCorrect()) {
+        // Loaded or changed and not snapshotted yet: take it now, while it is
+        // still in memory, even if its light is not complete (the LODs do not
+        // draw light yet; a hole is worse).
+        if (lod.due.remove(pos) != null) {
+            lod.snapshotsAtUnload.incrementAndGet();
+            if (!chunk.isLightCorrect()) {
+                lod.snapshotsWithoutLight.incrementAndGet();
+            }
             submit(lod, ChunkSnapshot.take(level, chunk));
         }
     }
@@ -154,11 +168,19 @@ public final class LodPipeline {
                 long pos = e.getKey();
                 LevelChunk chunk = lod.level.getChunkSource().getChunkNow(ChunkPos.getX(pos), ChunkPos.getZ(pos));
                 if (chunk == null) {
-                    it.remove();
+                    // Not available right now (some mods load chunks in stages):
+                    // keep it, the unload event or a later tick will take it.
+                    if (now - e.getValue() > DROP_AFTER_TICKS) {
+                        it.remove();
+                        lod.dropped.incrementAndGet();
+                    }
                     continue;
                 }
                 if (!chunk.isLightCorrect()) {
-                    continue;
+                    if (now - e.getValue() < LIGHT_WAIT_TICKS) {
+                        continue;
+                    }
+                    lod.snapshotsWithoutLight.incrementAndGet();
                 }
                 it.remove();
                 submit(lod, ChunkSnapshot.take(lod.level, chunk));
@@ -232,7 +254,11 @@ public final class LodPipeline {
             return;
         }
         boolean sync = System.nanoTime() - lastSync > TimeUnit.SECONDS.toNanos(30);
+        boolean report = System.nanoTime() - lastReport > TimeUnit.SECONDS.toNanos(60);
         for (LodLevel lod : levels.values()) {
+            if (report) {
+                report(lod);
+            }
             try {
                 lod.world().flush(TimeUnit.SECONDS.toNanos(3));
                 if (lod.world().hasDirtyMips()) {
@@ -248,6 +274,24 @@ public final class LodPipeline {
         if (sync) {
             lastSync = System.nanoTime();
         }
+        if (report) {
+            lastReport = System.nanoTime();
+        }
+    }
+
+    /** One line per minute when chunks were snapshotted or dropped. */
+    private void report(LodLevel lod) {
+        long snapshots = lod.snapshots.get();
+        long dropped = lod.dropped.get();
+        if (snapshots == lod.loggedSnapshots && dropped == lod.loggedDropped) {
+            return;
+        }
+        Farfield.LOG.info("LOD pipeline ({}) {}: {} snapshots in the last minute ({} at unload, {} without complete"
+                        + " light in total), {} dropped in total, {} waiting, {} chunks loaded", name, lod.name(),
+                snapshots - lod.loggedSnapshots, lod.snapshotsAtUnload.get(), lod.snapshotsWithoutLight.get(),
+                dropped, lod.due.size(), lod.loaded.size());
+        lod.loggedSnapshots = snapshots;
+        lod.loggedDropped = dropped;
     }
 
     /**
@@ -270,9 +314,11 @@ public final class LodPipeline {
         for (LodLevel lod : levels.values()) {
             try {
                 lod.world().close();
-                Farfield.LOG.info("LOD store of {} ({}) closed: {} chunks ingested ({} live snapshots, {} block changes),"
-                                + " {} sections written, {} unchanged; {} chunks loaded, {} not snapshotted", lod.name(),
-                        name, lod.world().chunksIngested(), lod.snapshots.get(), lod.blockChanges.get(),
+                Farfield.LOG.info("LOD store of {} ({}) closed: {} chunks ingested ({} live snapshots, {} at unload,"
+                                + " {} without complete light, {} dropped, {} block changes), {} sections written,"
+                                + " {} unchanged; {} chunks loaded, {} not snapshotted", lod.name(), name,
+                        lod.world().chunksIngested(), lod.snapshots.get(), lod.snapshotsAtUnload.get(),
+                        lod.snapshotsWithoutLight.get(), lod.dropped.get(), lod.blockChanges.get(),
                         lod.world().sectionsWritten(), lod.world().sectionsUnchanged(), lod.loaded.size(),
                         lod.due.size());
             } catch (IOException e) {
