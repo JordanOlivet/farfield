@@ -210,7 +210,7 @@ renderer; the world map showing each chunk's LOD state and errors (v2).
 
 ## ADR-017 — Region-file import
 
-**Date**: 2026-10-14 · **Status**: proposed
+**Date**: 2026-10-14 · **Status**: accepted
 
 Outcome of spike S5 (numbers in `docs/progress/2026-10-14.md`).
 
@@ -233,3 +233,24 @@ Outcome of spike S5 (numbers in `docs/progress/2026-10-14.md`).
   chunks per second; pause, resume, cancel at chunk granularity; an
   append-only checkpoint of completed regions (keyed by name, size and
   modification time) to resume an interrupted import.
+
+## ADR-018 — Meshing on the CPU with binary greedy meshing
+
+**Date**: 2026-10-14 · **Status**: proposed
+
+Outcome of spike S2 (numbers in `docs/progress/2026-10-14.md`).
+
+- LOD geometry is meshed **on the CPU** in `core` by binary greedy meshing
+  (bit-column occupancy, face culling 32 voxels at a time, greedy merge of
+  32x32 bit planes). At 122 to 139 µs per 32³ section on one core with no
+  allocation, GPU meshing in compute is not needed; it stays an option.
+- Output: **8-byte quads** for vertex pulling (position, size, direction,
+  20-bit material, 16 bits reserved for light and ambient occlusion),
+  **grouped by face direction**.
+- Mesher input: `LodSection`, 32³ voxels in 8³ paletted bricks, uniform
+  bricks without data. Its storage encoding is decided by spike S1
+  (ADR-009); this ADR only fixes the in-memory shape the mesher reads.
+- Material classes (air, opaque, translucent) come from the Minecraft side;
+  faces between two translucent voxels are culled whatever their materials.
+- Not decided yet: how light and AO enter the merge key (it lowers the merge
+  ratio), shapes of non-cube blocks, cracks between LOD levels.

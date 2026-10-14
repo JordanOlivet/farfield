@@ -13,10 +13,14 @@ dependencies {
 
 jmh {
     jmhVersion = jmh_version
-    // Defaults for a quick local run; override with -Pjmh.includes=... etc.
-    warmupIterations = 2
-    iterations = 5
-    fork = 1
+    // Run a subset with -PjmhIncludes=<regex>, e.g. -PjmhIncludes=MeshBenchmark
+    if (project.hasProperty('jmhIncludes')) {
+        includes = [project.property('jmhIncludes') as String]
+    }
+    // Comma-separated JMH profilers, e.g. -PjmhProfilers=gc,stack
+    if (project.hasProperty('jmhProfilers')) {
+        profilers = (project.property('jmhProfilers') as String).split(',').toList()
+    }
 }
 
 // End-to-end import throughput on a corpus world (spike S5, plan item B.4):

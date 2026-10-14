@@ -48,11 +48,19 @@ choice, an ADR.
 
 ## M1.C — Spike S2: meshing
 
-- [ ] C.1 Brick representation from S5 output (paletted bricks, occupancy
-  masks)
-- [ ] C.2 Binary greedy meshing (64-wide bit operations), packed quads
-  (target 8 bytes per quad), per-direction face groups
-- [ ] C.3 JMH benchmark. Exit: < 200 µs per 32³ section on one core
+- [x] C.1 Brick representation from S5 output (paletted bricks, occupancy
+  masks): `LodSection`, 32³ of 4x4x4 bricks of 8³, one palette per section,
+  uniform bricks without data, 1/2/4/8/16-bit packed indices; built from
+  decoded chunk sections (6.6 to 12 µs per chunk section). Occupancy masks
+  are built by the mesher from the bricks, not stored
+- [x] C.2 Binary greedy meshing (64-wide bit operations), packed quads
+  (target 8 bytes per quad), per-direction face groups:
+  `BinaryGreedyMesher`, `Quad` (8 bytes, 16 bits reserved for light/AO),
+  `MeshBuffer`; checked against a brute-force face visibility oracle on
+  random sections
+- [x] C.3 JMH benchmark. Exit: < 200 µs per 32³ section on one core
+  (122 to 139 µs on real terrain, no allocation; numbers in
+  `docs/progress/2026-10-14.md`). Light and AO are not in it yet
 
 ## M1.D — Spike S1: storage format
 
