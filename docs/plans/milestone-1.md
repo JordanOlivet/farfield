@@ -64,15 +64,22 @@ choice, an ADR.
 
 ## M1.D — Spike S1: storage format
 
-- [ ] D.1 Encoders: dense + zstd (baseline), paletted bricks + zstd,
+- [x] D.1 Encoders: dense + zstd (baseline), paletted bricks + zstd,
   paletted bricks + zstd with trained dictionaries, + parent-mip residuals,
-  + brick deduplication
-- [ ] D.2 Containers: custom paged file vs LMDB (write, read, crash safety,
-  file size)
-- [ ] D.3 Measurements on the corpus: bytes per chunk, read/write speed.
+  + brick deduplication; plus two store-time transforms (hidden voxels,
+  face light) that turned out to be the main gain (`StorageBenchmark`)
+- [x] D.2 Containers: custom paged file vs LMDB (write, read, crash safety,
+  file size): `LogStore` (append-only log) vs LMDB, 20 process kills each,
+  no durable record lost
+- [x] D.3 Measurements on the corpus: bytes per chunk, read/write speed.
   Exit: at least 4x smaller than Neo-Voxy's database for the same area, reads
-  at least as fast
-- [ ] D.4 ADR choosing the format
+  at least as fast. Met where Neo-Voxy covered the whole world: 5.65x on the
+  user's server (4.69 GB vs 26.5 GB), 6.1x on `server-pregen` (zstd 3). Not
+  met on `modded-large` (3.3x), `modded-played` (2.1x), `main-install`
+  (1.9x), whose Voxy databases (0.6x to 1.0x the region files) most likely
+  cover less ground than the region files. Reads 2x faster than the dense
+  Voxy-style layout (not measured against Voxy itself)
+- [x] D.4 ADR choosing the format: ADR-019 (proposed)
 
 ## M1.E — First LODs in single player (spike S4)
 

@@ -9,6 +9,11 @@ dependencies {
     // Reference implementation of the LZ4 block stream that region files use
     // (compression type 4), to check our own decoder against it. Tests only.
     testImplementation "org.lz4:lz4-java:${lz4_java_version}"
+
+    // Spike S1 (storage) measurements only: never part of the mod jar. The
+    // shipped choice is made by the ADR that closes the spike.
+    jmhImplementation "com.github.luben:zstd-jni:${zstd_jni_version}"
+    jmhImplementation "org.lmdbjava:lmdbjava:${lmdbjava_version}"
 }
 
 jmh {
@@ -35,4 +40,19 @@ tasks.register('importBench', JavaExec) {
         languageVersion = JavaLanguageVersion.of(java_version)
     }
     maxHeapSize = '4g'
+}
+
+// Storage measurements on a corpus world (spike S1, plan items D.1 to D.3):
+//   gradlew :core:storageBench --args="<world dir> [--threads N] [--containers] [--dict-from <world dir>] ..."
+tasks.register('storageBench', JavaExec) {
+    group = 'benchmark'
+    description = 'Measures LOD storage encoders and containers on a world folder.'
+    classpath = sourceSets.jmh.runtimeClasspath
+    mainClass = 'io.lakio.farfield.core.bench.StorageBenchmark'
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(java_version)
+    }
+    maxHeapSize = '8g'
+    // lmdbjava reaches into NIO buffers.
+    jvmArgs '--add-opens', 'java.base/java.nio=ALL-UNNAMED', '--add-opens', 'java.base/sun.nio.ch=ALL-UNNAMED'
 }

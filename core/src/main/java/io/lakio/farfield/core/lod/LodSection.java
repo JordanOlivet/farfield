@@ -15,6 +15,11 @@ import java.util.Arrays;
  *   <li>A brick is either <b>uniform</b> (one palette index, no data: air,
  *       stone, water bodies cost nothing) or holds 512 indices bit-packed with
  *       1, 2, 4, 8 or 16 bits each, entries never spanning two longs.</li>
+ *   <li>Sky and block light per voxel in {@link NibbleBricks} (same bricks;
+ *       defaults 15 and 0).</li>
+ *   <li>Biomes per 4x4x4-voxel cell, 8x8x8 cells, index
+ *       {@code (y * 8 + z) * 8 + x}: one value for the whole section until
+ *       cells differ. Biome ids come from a registry; -1 means unknown.</li>
  * </ul>
  *
  * <p>Voxel order inside a brick: {@code (y * 8 + z) * 8 + x}; brick order in
@@ -40,12 +45,114 @@ public final class LodSection {
     private final long[][] bricks = new long[BRICK_COUNT][];
     private final int[] uniform = new int[BRICK_COUNT];
 
+    public static final int BIOME_CELLS_PER_AXIS = 8;
+    public static final int BIOME_CELLS = BIOME_CELLS_PER_AXIS * BIOME_CELLS_PER_AXIS * BIOME_CELLS_PER_AXIS;
+
+    private final NibbleBricks skyLight = new NibbleBricks(15);
+    private final NibbleBricks blockLight = new NibbleBricks(0);
+    private int[] biomes;
+    private int uniformBiome = -1;
+
     private final int[] scratch = new int[BRICK_VOLUME];
+    private final byte[] nibbleScratch = new byte[NibbleBricks.BRICK_BYTES];
     private int[] remap = new int[16];
 
-    /** A section filled with one material (typically air). */
+    /** A section filled with one material (typically air), full sky light, unknown biome. */
     public LodSection(int fillMaterial) {
         paletteIndexOf(fillMaterial);
+    }
+
+    private LodSection() {
+    }
+
+    /**
+     * A section whose palette is exactly {@code materials[0 .. count)} (no
+     * duplicates), every brick uniform at index 0. For decoders, which then
+     * restore bricks with {@link #setBrickData} and {@link #setUniform}.
+     */
+    public static LodSection withPalette(int[] materials, int count) {
+        if (count < 1) {
+            throw new IllegalArgumentException("empty palette");
+        }
+        LodSection section = new LodSection();
+        for (int i = 0; i < count; i++) {
+            if (section.paletteIndexOf(materials[i]) != i) {
+                throw new IllegalArgumentException("duplicate palette entry " + materials[i]);
+            }
+        }
+        return section;
+    }
+
+    /** Sets a brick to one palette index. */
+    public void setUniform(int brick, int paletteIndex) {
+        if (paletteIndex < 0 || paletteIndex >= paletteSize) {
+            throw new IllegalArgumentException("palette index out of range: " + paletteIndex);
+        }
+        bricks[brick] = null;
+        uniform[brick] = paletteIndex;
+    }
+
+    /**
+     * Sets a brick's packed indices (taken as is, not copied), in the layout
+     * of {@link #brickData} for the current {@link #bits()}.
+     */
+    public void setBrickData(int brick, long[] data) {
+        if (data.length != BRICK_VOLUME * bits / 64) {
+            throw new IllegalArgumentException("brick data of " + data.length + " longs for " + bits + " bits");
+        }
+        bricks[brick] = data;
+    }
+
+    public NibbleBricks skyLight() {
+        return skyLight;
+    }
+
+    public NibbleBricks blockLight() {
+        return blockLight;
+    }
+
+    /** Biome of a 4x4x4-voxel cell (cell coordinates 0..7). */
+    public int biome(int cellX, int cellY, int cellZ) {
+        return biomes == null ? uniformBiome : biomes[(cellY * 8 + cellZ) * 8 + cellX];
+    }
+
+    /** Per-cell biomes, or null when the whole section has {@link #uniformBiome()}. Do not modify. */
+    public int[] biomeCells() {
+        return biomes;
+    }
+
+    public int uniformBiome() {
+        return uniformBiome;
+    }
+
+    public void fillBiome(int biome) {
+        biomes = null;
+        uniformBiome = biome;
+    }
+
+    public void setBiome(int cellX, int cellY, int cellZ, int biome) {
+        if (biomes == null) {
+            if (biome == uniformBiome) {
+                return;
+            }
+            biomes = new int[BIOME_CELLS];
+            Arrays.fill(biomes, uniformBiome);
+        }
+        biomes[(cellY * 8 + cellZ) * 8 + cellX] = biome;
+    }
+
+    /** Collapses per-cell biomes back to one value when they are all equal. */
+    public void compactBiomes() {
+        if (biomes == null) {
+            return;
+        }
+        int first = biomes[0];
+        for (int b : biomes) {
+            if (b != first) {
+                return;
+            }
+        }
+        fillBiome(first);
     }
 
     public static int brickIndex(int bx, int by, int bz) {
@@ -181,10 +288,26 @@ public final class LodSection {
 
     /**
      * Writes one decoded 16x16x16 chunk section into the octant
-     * {@code (dx, dy, dz)} (each 0 or 1) of this section. A section without
-     * block data leaves the octant unchanged.
+     * {@code (dx, dy, dz)} (each 0 or 1) of this section: blocks, light and
+     * biomes. Parts the chunk section does not carry (no block data, no light
+     * array, no biomes) leave the octant's current values.
      */
     public void writeChunkSection(int dx, int dy, int dz, SectionData section) {
+        if (section.hasSkyLight()) {
+            writeLight(dx, dy, dz, section.skyLight(), skyLight);
+        }
+        if (section.hasBlockLight()) {
+            writeLight(dx, dy, dz, section.blockLight(), blockLight);
+        }
+        if (section.hasBiomes()) {
+            for (int cy = 0; cy < 4; cy++) {
+                for (int cz = 0; cz < 4; cz++) {
+                    for (int cx = 0; cx < 4; cx++) {
+                        setBiome(dx * 4 + cx, dy * 4 + cy, dz * 4 + cz, section.biomeAt(cx, cy, cz));
+                    }
+                }
+            }
+        }
         if (!section.hasBlocks()) {
             return;
         }
@@ -236,8 +359,35 @@ public final class LodSection {
         }
     }
 
-    /** Turns bricks whose voxels all share one index back into uniform bricks. */
+    private void writeLight(int dx, int dy, int dz, byte[] chunkNibbles, NibbleBricks target) {
+        for (int by = 0; by < 2; by++) {
+            for (int bz = 0; bz < 2; bz++) {
+                for (int bx = 0; bx < 2; bx++) {
+                    int b = brickIndex(dx * 2 + bx, dy * 2 + by, dz * 2 + bz);
+                    byte[] out = nibbleScratch;
+                    int v = 0;
+                    for (int ly = 0; ly < 8; ly++) {
+                        for (int lz = 0; lz < 8; lz++) {
+                            int row = ((by * 8 + ly) << 8) | ((bz * 8 + lz) << 4) | (bx * 8);
+                            // 8 voxels starting at an even index: 4 whole bytes of the chunk array.
+                            System.arraycopy(chunkNibbles, row >> 1, out, v >> 1, 4);
+                            v += 8;
+                        }
+                    }
+                    target.setBrick(b, out);
+                }
+            }
+        }
+    }
+
+    /**
+     * Turns bricks whose voxels all share one value back into uniform bricks
+     * (block indices and both light arrays), so equal sections always encode
+     * to the same bytes.
+     */
     public void compact() {
+        skyLight.compact();
+        blockLight.compact();
         for (int b = 0; b < BRICK_COUNT; b++) {
             long[] data = bricks[b];
             if (data == null) {

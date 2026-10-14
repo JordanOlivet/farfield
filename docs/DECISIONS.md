@@ -262,3 +262,45 @@ Outcome of spike S2 (numbers in `docs/progress/2026-10-14.md`).
   the renderer, since a compute shader can emit the same 8-byte quads; it
   gets its own spike once the OpenGL 4.6 RHI exists (after E.3), or earlier
   if E.5 shows the CPU cannot keep up.
+
+## ADR-019 — LOD storage format and container
+
+**Date**: 2026-10-14 · **Status**: proposed
+
+Outcome of spike S1 (numbers in `docs/progress/2026-10-14.md`). Refines
+ADR-009.
+
+- **Record format**: one record per 32³ section and level, encoded by
+  `SectionCodec` (palette of material ids, uniform bricks as one value,
+  bit-packed indices, light as nibble bricks, biome cells), then **zstd**,
+  level 9 by default (13 % smaller than level 3; writes are background
+  work, reads cost the same).
+- **Two store-time transforms**, applied when a section is written:
+  - *hidden voxels*: an opaque full cube whose six neighbors are opaque full
+    cubes is replaced by the most common visible material of its brick. It
+    never shows, and the LOD is rebuilt from the real chunk when anything
+    around it changes. Mips are built before the transform, from full data.
+  - *face light*: light is kept only on non-opaque voxels next to a
+    non-air voxel (where a face can take its light); other voxels take the
+    brick's most common kept value.
+  Together they make the store 36 % smaller than the plain codec. They need
+  the opacity of block states at store time (Minecraft side, like the
+  mesher's `MaterialClassifier`); partial blocks must not count as full
+  cubes once level 0 renders shapes (analysis §8.2).
+- **Not adopted** (measured, no gain): trained zstd dictionaries (sections
+  are 20 to 30 KB raw, dictionaries made them about 4 to 5 % *larger*),
+  residuals against the parent mip (0 to 0.6 % larger), brick deduplication
+  (1.6 to 4.9 % of bricks are duplicates), whole-byte indices with an "up"
+  filter (16 % larger).
+- **Container: `LogStore`**, our append-only log with CRC32C per record, an
+  index snapshot for fast open, torn-tail recovery and offline compaction;
+  one file per level and 32x32 section columns. Chosen over LMDB: 1 % disk
+  overhead instead of 45 to 49 % (LMDB stores 2 to 5 KB values in whole
+  overflow pages, and on Windows its file is preallocated to the map size),
+  no native library, and it survived the same kill tests. LMDB reads
+  faster (3.6 µs vs 6.6 to 7.0 µs per record on one thread, 2.3 M vs 0.8 M
+  records/s on 14 threads), far above what rendering needs.
+- **Open**: which zstd implementation ships (a pure-Java one such as
+  aircompressor if it is fast enough, otherwise LWJGL's zstd bindings and
+  their natives), decided when the store is wired in; compaction policy
+  (garbage ratio, when to run); per-section versions for the network sync.

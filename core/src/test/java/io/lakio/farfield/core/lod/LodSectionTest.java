@@ -124,4 +124,42 @@ class LodSectionTest {
         assertTrue(section.isUniform(LodSection.brickIndex(2, 2, 0)));
         assertFalse(section.isUniform(LodSection.brickIndex(2, 0, 0)));
     }
+
+    @Test
+    void writesLightAndBiomesOfChunkSections() {
+        KeyRegistry blocks = new KeyRegistry();
+        KeyRegistry biomes = new KeyRegistry();
+        byte[] sky = new byte[2048];
+        byte[] block = new byte[2048];
+        for (int i = 0; i < 4096; i++) {
+            int y = i >> 8;
+            int value = Math.min(15, y);
+            sky[i >> 1] |= (byte) (value << ((i & 1) << 2));
+        }
+        block[(5 << 8 | 6 << 4 | 7) >> 1] = (byte) (9 << 4); // index 5*256+6*16+7 is odd: high nibble
+        int[] biomeIndices = new int[64];
+        biomeIndices[(2 * 4 + 1) * 4 + 3] = 1; // cell x=3, y=2, z=1
+        byte[] nbt = TestChunks.chunk(0, 0, "minecraft:full", List.of(
+                new Section(0, new State[]{new State("minecraft:air")}, null,
+                        new String[]{"minecraft:plains", "minecraft:river"}, biomeIndices, sky, block)));
+        ChunkDecoder decoder = new ChunkDecoder(blocks, biomes);
+        ChunkData chunk = new ChunkData();
+        decoder.decodeHeader(nbt, 0, nbt.length, 0, 0, chunk);
+        decoder.decodeSections(chunk);
+
+        LodSection section = new LodSection(blocks.id("minecraft:air"));
+        section.writeChunkSection(0, 1, 1, chunk.section(0));
+        for (int y = 0; y < 16; y++) {
+            assertEquals(Math.min(15, y), section.skyLight().get(4, 16 + y, 20));
+        }
+        assertEquals(15, section.skyLight().get(4, 3, 3)); // untouched octant keeps the default
+        assertEquals(9, section.blockLight().get(7, 16 + 5, 16 + 6));
+        assertEquals(0, section.blockLight().get(6, 16 + 5, 16 + 6));
+        assertEquals("minecraft:river", biomes.key(section.biome(3, 4 + 2, 4 + 1)));
+        assertEquals("minecraft:plains", biomes.key(section.biome(2, 4 + 2, 4 + 1)));
+        assertEquals(-1, section.biome(0, 0, 0));
+        // Sky light varies with y in the written octant, not in the others.
+        assertFalse(section.skyLight().isUniform(LodSection.brickIndex(0, 2, 2)));
+        assertTrue(section.skyLight().isUniform(LodSection.brickIndex(0, 0, 0)));
+    }
 }
