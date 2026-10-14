@@ -116,15 +116,22 @@ choice, an ADR.
   water and grass without biome tints (water reads lavender through the
   fog), a visible seam at the vanilla distance (ADR-011 transition band),
   no light or AO in the LOD faces, cracks between levels not checked
-- [~] E.5 In-game check in the user's real install on both loaders,
+- [x] E.5 In-game check in the user's real install on both loaders,
   including the CPU share of LOD work (import, meshing) in the ~400-mod
-  pack (ADR-018). Done in the 398-mod pack on NeoForge (three passes): no
-  crash, LOD CPU 0 to 1.8 % of the process in steady state and 12 to 21 %
-  during an import, LOD cost per frame small after the renderer rework
-  (273 to 320 fps with LODs against 319 without), holes from fast
-  exploration fixed (0 of 10,930 chunks). Remains: the Fabric pass
-  ("Cobblemon Custom Modpack"), and the look of the downsampling (ADR-020)
-  with biome tints
+  pack (ADR-018). NeoForge, 398-mod pack (three passes): no crash, LOD CPU
+  0 to 1.8 % of the process in steady state and 12 to 21 % during an
+  import, LOD cost per frame small after the renderer rework (273 to 320
+  fps with LODs against 319 without), holes from fast exploration fixed
+  (0 of 10,930 chunks). Fabric, "Cobblemon Custom Modpack" (77 mods, Sodium
+  0.8.13, Iris): OpenGL 4.6 through `WindowMixin`, import 8,895 chunks in
+  3 s, LOD CPU 0.3 to 3.9 %, about 0.07 ms render-thread and 0.45 ms GPU
+  per frame, no Farfield error. The look moves to E.7
+- [ ] E.7 Visual pass (from the user's checks): biome tints for grass,
+  foliage and water (LOD water reads saturated blue or lavender); leaves
+  not as solid opaque cubes (they look odd: cutout or coverage near,
+  darker or dithered far); averaged texture colors instead of map colors
+  (ADR-010); the transition band at the vanilla distance (ADR-011); then
+  judge the downsampling rules of ADR-020 in game
 - [ ] E.6 Client mode (ADR-022): a client with Farfield on a server
   without it builds and renders LODs from the chunks it receives, stored
   per remote world; command to force or rename the world identity.
