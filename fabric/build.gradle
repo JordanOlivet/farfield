@@ -38,3 +38,8 @@ loom {
         }
     }
 }
+
+// Dev servers read console commands (scripted checks pipe them in).
+tasks.matching { it.name == 'runServer' }.configureEach {
+    standardInput = System.in
+}

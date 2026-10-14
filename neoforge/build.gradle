@@ -42,3 +42,8 @@ dependencies {
     }
     additionalRuntimeClasspath "io.airlift:aircompressor:${aircompressor_version}"
 }
+
+// Dev servers read console commands (scripted checks pipe them in).
+tasks.matching { it.name == 'runServer' }.configureEach {
+    standardInput = System.in
+}

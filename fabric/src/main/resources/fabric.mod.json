@@ -14,6 +14,9 @@
       "io.lakio.farfield.fabric.FarfieldFabric"
     ]
   },
+  "mixins": [
+    "farfield.mixins.json"
+  ],
   "depends": {
     "fabricloader": ">=${fabric_loader_version}",
     "fabric-api": "*",

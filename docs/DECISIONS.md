@@ -370,3 +370,36 @@ Closes the open points of ADR-019 that the ingest path (E.2) needed.
   material classes at write time and neighbor-aware rebuilds), compaction
   of the region logs, per-section versions for the network.
 
+## ADR-022 — LODs are built on the logical server
+
+**Date**: 2026-10-14 · **Status**: proposed
+
+Plan item E.2.
+
+- The **logical server** (dedicated, or the integrated server of single
+  player) builds and stores the LODs of each dimension in
+  `<dimension folder>/farfield/` (`LodWorld`, ADR-021). It has complete
+  chunks with their light, persists them with the world, and is where the
+  network sync of ADR-013 will read from. In single player the client
+  renders from the integrated server's store in the same process; in
+  multiplayer it will keep a cache fed by the protocol. Building LODs on
+  the client from the chunks it receives (for servers without Farfield) is
+  a later option, not decided.
+- **Live chunks**: a chunk is snapshotted on the server thread 2 s after
+  it loads (once its light is correct) and 5 s after its last block change
+  (mixin on `LevelChunk.setBlockState`), at most 16 chunks and 2 ms per tick
+  and 256 in flight; a changed chunk unloading before that is snapshotted
+  at unload. The snapshot copies the section palettes and light layers
+  (`PalettedContainer.copy`, `DataLayer.copy`); conversion to engine ids
+  and ingest run on low-priority workers (cores / 4, 1 to 4 threads).
+- **Existing worlds**: `/farfield import [threads]` (operators, or the
+  owner of a single-player world) imports the dimension's region files
+  with a checkpoint (`import.checkpoint`, resumable), skipping loaded
+  chunks; `/farfield import stop|status`.
+- **Maintenance thread**: every second, writes cached sections idle for
+  3 s and rebuilds dirty mips on the workers; `sync` every 30 s; at server
+  stop, everything is written and the mips built.
+- Materials (mesher class, mip shape) come from block states
+  (`BlockKeys.resolve`: shape, fluids, leaves, occlusion); unknown keys are
+  opaque cubes.
+

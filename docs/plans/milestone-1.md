@@ -87,7 +87,13 @@ choice, an ADR.
   with block shapes, weighted occupancy and the material seen from above
   (ADR-020), unit tested against a voxel-by-voxel reference. Remains: the
   look check in game (E.5)
-- [ ] E.2 Ingest from loaded chunks (snapshots on the owner thread)
+- [x] E.2 Ingest from loaded chunks (snapshots on the owner thread):
+  `LodWorld` engine (ADR-021) and the server side (ADR-022): snapshots after
+  load and after block changes, workers, maintenance thread,
+  `/farfield import` from region files. Checked on the dev servers of both
+  loaders (live chunks, a block change through the mixin, import, unchanged
+  sections not rewritten across restarts); not yet in single player or in
+  the user's install (E.5). Store-time transforms of ADR-019 not applied yet
 - [ ] E.3 OpenGL 4.6 RHI minimum: buffers, shaders, indirect draws
 - [ ] E.4 Render the LOD meshes beyond the vanilla render distance
 - [ ] E.5 In-game check in the user's real install on both loaders,

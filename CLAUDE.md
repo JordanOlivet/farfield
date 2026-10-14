@@ -79,6 +79,10 @@ and `fabric/build/libs/farfield-fabric-1.21.1-<version>.jar`.
   dirs.
 - Prove a code path ran from logs: a path that logs nothing on success cannot
   be verified, add one `info` line on the success branch.
+- Dev servers read console commands from stdin, so a check can be scripted:
+  `(sleep 90; echo "farfield import"; sleep 20; echo stop) | ./gradlew.bat :neoforge:runServer --no-daemon --console plain > log`
+  (Git Bash). Stopping with `stop` closes the LOD stores and logs their
+  counters.
 - Scripted dev clients (window capture, chat commands, clicks) work only while
   the Windows session is unlocked and the user is not using the PC; ask first.
 
