@@ -19,7 +19,7 @@ choice, an ADR.
 - [x] A.3 `core` unit tests run in the build (`LodKey`)
 - [x] A.4 Docs: `CLAUDE.md`, `docs/VISION.md`, `docs/DECISIONS.md`
   (ADR-001 to ADR-016), this plan, the analysis, the first progress log
-- [ ] A.5 CI green on GitHub (`.github/workflows/build.yml`)
+- [x] A.5 CI green on GitHub (`.github/workflows/build.yml`; first cold run ~15 min)
 - [x] A.6 Dev servers boot on both loaders (`Farfield initialising`, `Done`)
 - [x] A.7 Dev clients boot on both loaders (title screen, init log line)
 - [ ] A.8 Reference world corpus: pick and document 3-4 real worlds (a
