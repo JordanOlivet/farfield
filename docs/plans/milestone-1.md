@@ -22,9 +22,11 @@ choice, an ADR.
 - [x] A.5 CI green on GitHub (`.github/workflows/build.yml`; first cold run ~15 min)
 - [x] A.6 Dev servers boot on both loaders (`Farfield initialising`, `Done`)
 - [x] A.7 Dev clients boot on both loaders (title screen, init log line)
-- [ ] A.8 Reference world corpus: pick and document 3-4 real worlds (a
-  pre-generated server map, a built-up survival world, a modded world, an
-  extreme-terrain world); stored outside the repository
+- [x] A.8 Reference world corpus: six worlds documented in `docs/corpus.md`
+  (pre-generated server map, large modded, played modded, main test world,
+  generated amplified terrain, a 1.20.1 world with a Distant Horizons
+  database), stored outside the repository. The user's large server world
+  can be added later
 
 ## M1.B — Spike S5: region-file import (feeds S1 and S2 with real data)
 
