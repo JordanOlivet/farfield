@@ -29,7 +29,7 @@ public abstract class LevelChunkMixin {
     private void farfield$onSetBlockState(BlockPos pos, BlockState state, boolean isMoving,
                                           CallbackInfoReturnable<BlockState> cir) {
         if (cir.getReturnValue() != null) {
-            LodPipeline.blockChanged(level, ((LevelChunk) (Object) this).getPos());
+            LodPipeline.blockChanged(level, (LevelChunk) (Object) this);
         }
     }
 }

@@ -35,8 +35,11 @@ import java.util.function.Predicate;
  *       10 s later without it) and 5 s after its last block change, at most
  *       16 chunks and 2 ms per tick and 256 in flight. A due chunk that
  *       unloads first is snapshotted at unload, whatever its light: a chunk
- *       generated and left quickly must not leave a hole. A due chunk that
- *       is not available is kept for 60 s, then dropped and counted.</li>
+ *       generated and left quickly must not leave a hole. The queue keeps
+ *       the chunk object: a loaded chunk the player left becomes a border
+ *       chunk that {@code getChunkNow} does not return, yet it is complete
+ *       and in memory until it unloads, and coming back to it fires no new
+ *       load event.</li>
  *   <li>Low-priority workers convert snapshots and ingest them into the
  *       level's {@link LodWorld}.</li>
  *   <li>A maintenance thread writes sections idle for 3 s and rebuilds the
@@ -52,8 +55,6 @@ public final class LodPipeline {
     private static final long CHANGE_DELAY_TICKS = 100;
     /** Past its due tick, a chunk whose light is still not correct is taken anyway. */
     private static final long LIGHT_WAIT_TICKS = 200;
-    /** Past its due tick, a chunk that stays unavailable is dropped. */
-    private static final long DROP_AFTER_TICKS = 1200;
     private static final int SNAPSHOTS_PER_TICK = 16;
     private static final long SNAPSHOT_BUDGET_NANOS = 2_000_000;
     private static final int MAX_IN_FLIGHT = 256;
@@ -100,10 +101,10 @@ public final class LodPipeline {
     }
 
     /** A block changed in a loaded chunk (mixin into {@code LevelChunk.setBlockState}); any side. */
-    public static void blockChanged(Level level, ChunkPos pos) {
+    public static void blockChanged(Level level, LevelChunk chunk) {
         for (LodPipeline p : ACTIVE) {
             if (p.accepts.test(level)) {
-                p.onBlockChanged(level, pos);
+                p.onBlockChanged(level, chunk);
             }
         }
     }
@@ -118,7 +119,7 @@ public final class LodPipeline {
         if (lod != null) {
             long pos = chunk.getPos().toLong();
             lod.loaded.add(pos);
-            lod.due.put(pos, level.getGameTime() + LOAD_DELAY_TICKS);
+            lod.due.put(pos, new LodLevel.Due(level.getGameTime() + LOAD_DELAY_TICKS, chunk));
         }
     }
 
@@ -141,10 +142,10 @@ public final class LodPipeline {
         }
     }
 
-    private void onBlockChanged(Level level, ChunkPos pos) {
+    private void onBlockChanged(Level level, LevelChunk chunk) {
         LodLevel lod = levels.get(level);
         if (!stopping && lod != null) {
-            lod.due.put(pos.toLong(), level.getGameTime() + CHANGE_DELAY_TICKS);
+            lod.due.put(chunk.getPos().toLong(), new LodLevel.Due(level.getGameTime() + CHANGE_DELAY_TICKS, chunk));
             lod.blockChanges.incrementAndGet();
         }
     }
@@ -158,29 +159,24 @@ public final class LodPipeline {
         int taken = 0;
         for (LodLevel lod : levels.values()) {
             long now = lod.level.getGameTime();
-            Iterator<Map.Entry<Long, Long>> it = lod.due.entrySet().iterator();
+            Iterator<Map.Entry<Long, LodLevel.Due>> it = lod.due.entrySet().iterator();
             while (it.hasNext() && taken < SNAPSHOTS_PER_TICK && inFlight.get() < MAX_IN_FLIGHT
                     && System.nanoTime() - start < SNAPSHOT_BUDGET_NANOS) {
-                Map.Entry<Long, Long> e = it.next();
-                if (e.getValue() > now) {
+                Map.Entry<Long, LodLevel.Due> e = it.next();
+                LodLevel.Due d = e.getValue();
+                if (d.tick() > now) {
                     continue;
                 }
-                long pos = e.getKey();
-                LevelChunk chunk = lod.level.getChunkSource().getChunkNow(ChunkPos.getX(pos), ChunkPos.getZ(pos));
-                if (chunk == null) {
-                    // Not available right now (some mods load chunks in stages):
-                    // keep it, the unload event or a later tick will take it.
-                    if (now - e.getValue() > DROP_AFTER_TICKS) {
-                        it.remove();
-                        lod.dropped.incrementAndGet();
-                    }
-                    continue;
-                }
+                LevelChunk chunk = d.chunk();
                 if (!chunk.isLightCorrect()) {
-                    if (now - e.getValue() < LIGHT_WAIT_TICKS) {
+                    if (now - d.tick() < LIGHT_WAIT_TICKS) {
                         continue;
                     }
                     lod.snapshotsWithoutLight.incrementAndGet();
+                }
+                long pos = e.getKey();
+                if (lod.level.getChunkSource().getChunkNow(ChunkPos.getX(pos), ChunkPos.getZ(pos)) != chunk) {
+                    lod.snapshotsOfBorderChunks.incrementAndGet();
                 }
                 it.remove();
                 submit(lod, ChunkSnapshot.take(lod.level, chunk));
@@ -279,19 +275,17 @@ public final class LodPipeline {
         }
     }
 
-    /** One line per minute when chunks were snapshotted or dropped. */
+    /** One line per minute when chunks were snapshotted. */
     private void report(LodLevel lod) {
         long snapshots = lod.snapshots.get();
-        long dropped = lod.dropped.get();
-        if (snapshots == lod.loggedSnapshots && dropped == lod.loggedDropped) {
+        if (snapshots == lod.loggedSnapshots) {
             return;
         }
-        Farfield.LOG.info("LOD pipeline ({}) {}: {} snapshots in the last minute ({} at unload, {} without complete"
-                        + " light in total), {} dropped in total, {} waiting, {} chunks loaded", name, lod.name(),
-                snapshots - lod.loggedSnapshots, lod.snapshotsAtUnload.get(), lod.snapshotsWithoutLight.get(),
-                dropped, lod.due.size(), lod.loaded.size());
+        Farfield.LOG.info("LOD pipeline ({}) {}: {} snapshots in the last minute; in total {} at unload, {} of border"
+                        + " chunks, {} without complete light; {} waiting, {} chunks loaded", name, lod.name(),
+                snapshots - lod.loggedSnapshots, lod.snapshotsAtUnload.get(), lod.snapshotsOfBorderChunks.get(),
+                lod.snapshotsWithoutLight.get(), lod.due.size(), lod.loaded.size());
         lod.loggedSnapshots = snapshots;
-        lod.loggedDropped = dropped;
     }
 
     /**
@@ -315,10 +309,10 @@ public final class LodPipeline {
             try {
                 lod.world().close();
                 Farfield.LOG.info("LOD store of {} ({}) closed: {} chunks ingested ({} live snapshots, {} at unload,"
-                                + " {} without complete light, {} dropped, {} block changes), {} sections written,"
-                                + " {} unchanged; {} chunks loaded, {} not snapshotted", lod.name(), name,
+                                + " {} of border chunks, {} without complete light, {} block changes), {} sections"
+                                + " written, {} unchanged; {} chunks loaded, {} not snapshotted", lod.name(), name,
                         lod.world().chunksIngested(), lod.snapshots.get(), lod.snapshotsAtUnload.get(),
-                        lod.snapshotsWithoutLight.get(), lod.dropped.get(), lod.blockChanges.get(),
+                        lod.snapshotsOfBorderChunks.get(), lod.snapshotsWithoutLight.get(), lod.blockChanges.get(),
                         lod.world().sectionsWritten(), lod.world().sectionsUnchanged(), lod.loaded.size(),
                         lod.due.size());
             } catch (IOException e) {
