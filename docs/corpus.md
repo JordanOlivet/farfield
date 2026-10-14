@@ -28,7 +28,7 @@ A copy of the user's public modded server, `D:\MC server save\minecraft-gotta-cr
 
 | Dimension | Regions | Chunks | Region files |
 |---|---|---|---|
-| Overworld (x -169..81, z -103..105 in regions; spawn -64, 48) | 2,092 | 1,926,613 | 16.7 GB |
+| Overworld (x -169..81, z -103..105 in regions; spawn -64, 48) | 2,092 | 1,507,797 (corrected on 2026-10-14, see below) | 16.7 GB |
 | Nether | 33 | 19,060 | 117 MB |
 | End | 65 | 49,282 | 156 MB |
 | Modded dimensions (raid dens, compact machines) | | | 29 MB |
@@ -36,9 +36,36 @@ A copy of the user's public modded server, `D:\MC server save\minecraft-gotta-cr
 Average overworld region file 8.4 MB, heaviest 17.6 MB; far pre-generated
 regions are around 0.9 MB.
 
+The overworld chunk count was first recorded as 1,926,613; the S5 reader and
+an independent count of non-empty location entries both find 1,507,797
+(1,331,683 of them `full`). The other dimensions' counts were not rechecked.
+
 Chunk counts come from the region headers (non-empty entries), so they include
-chunks that are not fully generated; the S5 reader will report the status
-distribution.
+chunks that are not fully generated.
+
+## Generation status (S5 reader, 2026-10-14)
+
+Every chunk of every corpus world decodes without error or warning. All use
+zlib (compression type 2), no external `.mcc` chunk; the 1.21.1 worlds are
+DataVersion 3955, `dh-baseline-1.20.1` is 3465.
+
+| Name | Chunks | `full` | Not `full` (mostly) | Compressed bytes per chunk read |
+|---|---|---|---|---|
+| `server-pregen` | 35,793 | 20,305 (57 %) | `structure_starts` (Chunky border) | 4,257 |
+| `modded-large` | 67,386 | 51,752 (77 %) | | 11,866 |
+| `modded-played` | 33,502 | 19,894 (59 %) | | 6,949 |
+| `main-install` | 85,999 | 72,873 (85 %) | | 8,660 |
+| `amplified` | 7,569 | 4,225 (56 %) | `structure_starts` | 6,315 |
+| `dh-baseline-1.20.1` | 189,072 | 1,433 (0.8 %) | `structure_starts` (181,833) | 534 |
+| `server-spawn` | 36,864 | 36,864 (100 %) | | 8,720 |
+| `server-dense` | 16,384 | 16,384 (100 %) | | 5,852 |
+
+`dh-baseline-1.20.1` is almost entirely proto-chunks: its 795 MB of region
+files are mostly sector padding (each chunk takes at least one 4 KiB sector
+for about 0.5 KB of data), and its Distant Horizons database most likely
+covers terrain that DH generated itself, which saves no chunks (not
+verified). Its LOD/region ratio below is therefore not comparable with the other worlds, and it is no use for
+import throughput.
 
 ## Existing LOD databases (size baselines)
 
@@ -52,7 +79,7 @@ copied into the corpus.
 | `modded-large` | Voxy (Neo-Voxy) | 720 MB | 725 MB | 1.0x |
 | `modded-played` | Voxy (Neo-Voxy) | 169 MB | 280 MB | 0.6x |
 | `main-install` | Voxy (Neo-Voxy) | 496 MB | 793 MB | 0.6x |
-| `dh-baseline-1.20.1` | Distant Horizons (SQLite) | 637 MB | 759 MB | 0.8x |
+| `dh-baseline-1.20.1` | Distant Horizons (SQLite) | 637 MB | 759 MB | 0.8x (not comparable, see above) |
 
 Caveat: an LOD database may cover a slightly different area than the region
 files (for example data received from a server, or chunks unloaded before

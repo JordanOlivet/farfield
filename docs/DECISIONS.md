@@ -207,3 +207,29 @@ Planned but not in the first milestones: importers for Distant Horizons, Voxy
 and Neo-Voxy data; the public API (an internal `api` project exists from the
 start); the Paper plugin; the LOD side channel; a CPU-driven fallback
 renderer; the world map showing each chunk's LOD state and errors (v2).
+
+## ADR-017 — Region-file import
+
+**Date**: 2026-10-14 · **Status**: proposed
+
+Outcome of spike S5 (numbers in `docs/progress/2026-10-14.md`).
+
+- The Anvil reader lives in `core` and has **no dependency**: region header,
+  external `.mcc` chunks, zlib/gzip through the JDK, and our own decoder of
+  the "LZ4Block" stream that 1.20.5+ writes for compression type 4 (checked
+  against lz4-java in tests only). NBT is walked in place by a cursor that
+  reads the fields LODs need and skips the rest, without building tag trees.
+- Supported chunk format: 1.18 and later (DataVersion 2844+), which covers
+  1.20.1 and 1.21.x. Older chunks are counted and skipped.
+- Decoded chunks keep the game's shape: per-section palette of registry ids
+  over canonical string keys (`name[k=v,...]`, properties sorted), 4096
+  palette indices, 64 biome indices, sky/block light nibbles. Holders are
+  reused per worker, so a sink sees a chunk only for the duration of the
+  call.
+- Only `full` chunks are imported by default; partially generated chunks
+  are counted per status.
+- Import pipeline: one worker per region file, nearest region first; the
+  sink runs on the worker (backpressure by blocking); a shared rate limit in
+  chunks per second; pause, resume, cancel at chunk granularity; an
+  append-only checkpoint of completed regions (keyed by name, size and
+  modification time) to resume an interrupted import.

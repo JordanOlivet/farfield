@@ -30,13 +30,21 @@ choice, an ADR.
 
 ## M1.B — Spike S5: region-file import (feeds S1 and S2 with real data)
 
-- [ ] B.1 Pure-Java Anvil reader in `core`: region header, chunk
+- [x] B.1 Pure-Java Anvil reader in `core`: region header, chunk
   decompression (zlib, LZ4 and uncompressed), NBT parsing without Minecraft
-- [ ] B.2 Decode 1.21.1 chunk sections: block-state palettes, packed indices,
-  biomes, sky/block light
-- [ ] B.3 Parallel import pipeline with backpressure, resumable, throttled
-  (basis of the "build LOD for an existing world" command)
-- [ ] B.4 JMH benchmark on the corpus. Exit: > 2000 chunks/s on 8 cores
+  (`core.anvil`, `core.nbt`; also gzip and external `.mcc` chunks; LZ4
+  checked against lz4-java in tests)
+- [x] B.2 Decode 1.21.1 chunk sections: block-state palettes, packed indices,
+  biomes, sky/block light (1.18+ format; every chunk of the corpus and of the
+  user's server decodes with no error or warning)
+- [x] B.3 Parallel import pipeline with backpressure, resumable, throttled
+  (basis of the "build LOD for an existing world" command): `RegionImporter`,
+  unit tested (checkpoint resume, throttle, pause, sink failure). Not wired
+  to a game command yet
+- [x] B.4 JMH benchmark on the corpus. Exit: > 2000 chunks/s on 8 cores
+  (33,800 to 46,800 full chunks/s on 8 threads with a warm cache, 31,400 on
+  the user's 17.5 GB server cold from disk; numbers in
+  `docs/progress/2026-10-14.md`)
 
 ## M1.C — Spike S2: meshing
 

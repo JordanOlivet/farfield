@@ -1,7 +1,34 @@
 plugins {
     id 'farfield-java'
+    id 'me.champeau.jmh' version '0.7.2'
 }
 
 dependencies {
     api project(':api')
+
+    // Reference implementation of the LZ4 block stream that region files use
+    // (compression type 4), to check our own decoder against it. Tests only.
+    testImplementation "org.lz4:lz4-java:${lz4_java_version}"
+}
+
+jmh {
+    jmhVersion = jmh_version
+    // Defaults for a quick local run; override with -Pjmh.includes=... etc.
+    warmupIterations = 2
+    iterations = 5
+    fork = 1
+}
+
+// End-to-end import throughput on a corpus world (spike S5, plan item B.4):
+//   gradlew :core:importBench --args="<world or region dir> [--threads N] [--all-status] [--limit-regions N]"
+tasks.register('importBench', JavaExec) {
+    group = 'benchmark'
+    description = 'Runs the multi-threaded region import benchmark on a world folder.'
+    classpath = sourceSets.jmh.runtimeClasspath
+    mainClass = 'io.lakio.farfield.core.bench.ImportBenchmark'
+    // Same JVM as the game on 1.21.1, not the one running Gradle.
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(java_version)
+    }
+    maxHeapSize = '4g'
 }
