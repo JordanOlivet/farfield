@@ -1,7 +1,7 @@
 package io.lakio.farfield.client.render;
 
 import io.lakio.farfield.core.anvil.KeyRegistry;
-import io.lakio.farfield.server.BlockKeys;
+import io.lakio.farfield.lod.BlockKeys;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.state.BlockState;

@@ -12,7 +12,7 @@ import io.lakio.farfield.core.mesh.Quad;
 import io.lakio.farfield.core.select.LodSelector;
 import io.lakio.farfield.core.util.RangeAllocator;
 import io.lakio.farfield.core.world.LodWorld;
-import io.lakio.farfield.server.LodServer;
+import io.lakio.farfield.client.LodWorldProvider;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -43,8 +43,8 @@ import static org.lwjgl.opengl.GL46C.*;
  * distance (plan item E.4), on the minimal OpenGL 4.6 RHI (E.3).
  *
  * <ul>
- *   <li>Data: in single player, the integrated server's {@link LodWorld}
- *       (ADR-022), read in process.</li>
+ *   <li>Data: the {@link LodWorld} that {@link LodWorldProvider} gives for
+ *       the current dimension (ADR-022).</li>
  *   <li>Selection: {@link LodSelector} each frame; missing meshes are built
  *       by {@link BinaryGreedyMesher} on two low-priority threads and
  *       uploaded on the render thread under a per-frame budget; a section
@@ -165,7 +165,7 @@ public final class LodRenderer {
         if (level == null || !init()) {
             return;
         }
-        LodWorld current = LodServer.world(level.dimension());
+        LodWorld current = LodWorldProvider.current(mc, level);
         if (current != world) {
             switchWorld(current);
         }
@@ -247,7 +247,7 @@ public final class LodRenderer {
         world = next;
         if (world != null) {
             world.addListener(listener);
-            Farfield.LOG.info("LOD renderer attached to the integrated server's store");
+            Farfield.LOG.info("LOD renderer attached to a LOD store");
         }
     }
 

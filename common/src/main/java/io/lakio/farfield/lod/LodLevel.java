@@ -1,13 +1,11 @@
-package io.lakio.farfield.server;
+package io.lakio.farfield.lod;
 
 import io.lakio.farfield.core.world.LodWorld;
 import net.minecraft.core.Holder;
-import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.dimension.DimensionType;
-import net.minecraft.world.level.storage.LevelResource;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -17,43 +15,55 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * The LOD state of one server dimension: its {@link LodWorld} (stored in
- * {@code <dimension folder>/farfield/}), block-state and biome id caches, and
- * the chunks waiting to be snapshotted.
+ * The LOD state of one level (server or client side) in a
+ * {@link LodPipeline}: its {@link LodWorld}, block-state and biome id caches,
+ * and the chunks waiting to be snapshotted.
  */
-final class LodLevel {
+public final class LodLevel {
 
-    final ServerLevel level;
-    final Path dir;
-    final Path regionDir;
-    final LodWorld world;
+    final Level level;
+    private final Path dir;
+    private final LodWorld world;
 
     private final Map<BlockState, Integer> blockIds = new ConcurrentHashMap<>();
     private final Map<Holder<Biome>, Integer> biomeIds = new ConcurrentHashMap<>();
 
-    /** Loaded chunks (packed {@link ChunkPos}): the importer leaves them to the live path. */
+    /** Loaded chunks (packed {@link ChunkPos}): an import leaves them to the live path. */
     final Set<Long> loaded = ConcurrentHashMap.newKeySet();
-    /** Chunk -> server tick from which it may be snapshotted (after a load or the last block change). */
+    /** Chunk -> game tick from which it may be snapshotted (after a load or the last block change). */
     final Map<Long, Long> due = new ConcurrentHashMap<>();
     /** Block changes seen in loaded chunks, and snapshots taken, for the logs. */
     final AtomicLong blockChanges = new AtomicLong();
     final AtomicLong snapshots = new AtomicLong();
 
-    private LodLevel(ServerLevel level, Path dir, Path regionDir, LodWorld world) {
+    private LodLevel(Level level, Path dir, LodWorld world) {
         this.level = level;
         this.dir = dir;
-        this.regionDir = regionDir;
         this.world = world;
     }
 
-    static LodLevel open(ServerLevel level) throws IOException {
-        Path dimension = DimensionType.getStorageFolder(level.dimension(),
-                level.getServer().getWorldPath(LevelResource.ROOT));
-        Path dir = dimension.resolve("farfield");
-        return new LodLevel(level, dir, dimension.resolve("region"), LodWorld.open(dir, BlockKeys::resolve));
+    static LodLevel open(Level level, Path dir) throws IOException {
+        return new LodLevel(level, dir, LodWorld.open(dir, BlockKeys::resolve));
     }
 
-    String name() {
+    public Level level() {
+        return level;
+    }
+
+    public Path dir() {
+        return dir;
+    }
+
+    public LodWorld world() {
+        return world;
+    }
+
+    /** True while the chunk is loaded in this level. */
+    public boolean isLoaded(int chunkX, int chunkZ) {
+        return loaded.contains(ChunkPos.asLong(chunkX, chunkZ));
+    }
+
+    public String name() {
         return level.dimension().location().toString();
     }
 

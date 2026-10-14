@@ -1,8 +1,7 @@
 package io.lakio.farfield.mixin;
 
-import io.lakio.farfield.server.LodServer;
+import io.lakio.farfield.lod.LodPipeline;
 import net.minecraft.core.BlockPos;
-import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
@@ -13,7 +12,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-/** Tells the LOD server which loaded chunks changed, so it snapshots them again. */
+/** Tells the LOD pipelines (server or client side) which loaded chunks changed, so they snapshot them again. */
 @Mixin(LevelChunk.class)
 public abstract class LevelChunkMixin {
 
@@ -24,8 +23,8 @@ public abstract class LevelChunkMixin {
     @Inject(method = "setBlockState", at = @At("RETURN"))
     private void farfield$onSetBlockState(BlockPos pos, BlockState state, boolean isMoving,
                                           CallbackInfoReturnable<BlockState> cir) {
-        if (cir.getReturnValue() != null && level instanceof ServerLevel serverLevel) {
-            LodServer.onBlockChanged(serverLevel, ((LevelChunk) (Object) this).getPos());
+        if (cir.getReturnValue() != null) {
+            LodPipeline.blockChanged(level, ((LevelChunk) (Object) this).getPos());
         }
     }
 }

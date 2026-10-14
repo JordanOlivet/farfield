@@ -1,4 +1,4 @@
-package io.lakio.farfield.server;
+package io.lakio.farfield.lod;
 
 import io.lakio.farfield.core.lod.MipBuilder;
 import io.lakio.farfield.core.mesh.MaterialClassifier;

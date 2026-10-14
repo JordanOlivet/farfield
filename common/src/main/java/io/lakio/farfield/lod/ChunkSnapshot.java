@@ -1,10 +1,10 @@
-package io.lakio.farfield.server;
+package io.lakio.farfield.lod;
 
 import io.lakio.farfield.core.anvil.ChunkData;
 import io.lakio.farfield.core.anvil.SectionData;
 import net.minecraft.core.Holder;
 import net.minecraft.core.SectionPos;
-import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.state.BlockState;
@@ -15,9 +15,10 @@ import net.minecraft.world.level.chunk.PalettedContainer;
 import net.minecraft.world.level.chunk.PalettedContainerRO;
 
 /**
- * A copy of what the LOD needs from a loaded chunk, taken on the server
- * thread ({@link #take}) in a few microseconds per section (palette and
- * packed-array copies), and converted on a worker ({@link #fill}).
+ * A copy of what the LOD needs from a loaded chunk, taken on the owner
+ * thread of its level, server or client ({@link #take}), in a few
+ * microseconds per section (palette and packed-array copies), and converted
+ * on a worker ({@link #fill}).
  */
 final class ChunkSnapshot {
 
@@ -44,8 +45,8 @@ final class ChunkSnapshot {
         this.noSkyLight = noSkyLight;
     }
 
-    /** Copies a loaded chunk. Server thread only. */
-    static ChunkSnapshot take(ServerLevel level, LevelChunk chunk) {
+    /** Copies a loaded chunk. Owner thread of the level only. */
+    static ChunkSnapshot take(Level level, LevelChunk chunk) {
         LevelChunkSection[] sections = chunk.getSections();
         int minSection = chunk.getMinSection();
         boolean noSky = !level.dimensionType().hasSkyLight();

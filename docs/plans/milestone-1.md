@@ -94,6 +94,14 @@ choice, an ADR.
   loaders (live chunks, a block change through the mixin, import, unchanged
   sections not rewritten across restarts); not yet in single player or in
   the user's install (E.5). Store-time transforms of ADR-019 not applied yet
+- [x] E.2b Side-neutral LOD pipeline (ADR-022): snapshot scheduling,
+  workers and maintenance out of `LodServer` into a pipeline that works on
+  any `Level` (`io.lakio.farfield.lod.LodPipeline`); a provider gives the
+  renderer the `LodWorld` of the current dimension (`LodWorldProvider`);
+  identity and store folder of a remote world (`RemoteWorldId`, seed hash
+  through `BiomeManagerAccessor`). No client-side ingest yet. Server mode
+  checked again on both dev servers; the remote branch of the provider
+  has not run (needs a client on a remote server, E.6)
 - [~] E.3 OpenGL 4.6 RHI minimum: buffers, shaders, indirect draws
   (`GlBuffer` with DSA storage, `GlProgram`, `glMultiDrawArraysIndirect`
   with `gl_BaseInstance`). Remains: run it in a client
@@ -104,3 +112,8 @@ choice, an ADR.
 - [ ] E.5 In-game check in the user's real install on both loaders,
   including the CPU share of LOD work (import, meshing) in the ~400-mod
   pack (ADR-018)
+- [ ] E.6 Client mode (ADR-022): a client with Farfield on a server
+  without it builds and renders LODs from the chunks it receives, stored
+  per remote world; command to force or rename the world identity.
+  Checked with the dev client on a vanilla 1.21.1 server jar, then on a
+  real server

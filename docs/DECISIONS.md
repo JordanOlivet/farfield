@@ -307,7 +307,7 @@ ADR-009.
 
 ## ADR-020 — Downsampling rule for the mip levels
 
-**Date**: 2026-10-14 · **Status**: proposed
+**Date**: 2026-10-14 · **Status**: accepted
 
 Plan item E.1, analysis §5.3. `MipBuilder` builds level N+1 from 2x2x2
 voxels of level N; it replaces the provisional majority vote of spike S1.
@@ -334,12 +334,12 @@ voxels of level N; it replaces the provisional majority vote of spike S1.
   levels 1 to 4 now add 25 % to the store instead of 21 %.
 - **Not yet**: averaged colors per cell for the far levels (needs the
   material layer, analysis §5.4), a coverage value for leaves, and the
-  selection hysteresis against flicker between levels (§9.2). Status moves
-  to accepted after the in-game look check (E.5).
+  selection hysteresis against flicker between levels (§9.2). The weights
+  may be tuned after the in-game look check (E.5).
 
 ## ADR-021 — zstd implementation and the LOD world engine
 
-**Date**: 2026-10-14 · **Status**: proposed
+**Date**: 2026-10-14 · **Status**: accepted
 
 Closes the open points of ADR-019 that the ingest path (E.2) needed.
 
@@ -370,36 +370,57 @@ Closes the open points of ADR-019 that the ingest path (E.2) needed.
   material classes at write time and neighbor-aware rebuilds), compaction
   of the region logs, per-section versions for the network.
 
-## ADR-022 — LODs are built on the logical server
+## ADR-022 — Who builds the LODs: three modes, one engine
 
-**Date**: 2026-10-14 · **Status**: proposed
+**Date**: 2026-10-14 · **Status**: accepted
 
-Plan item E.2.
+Plan items E.2, E.2b and E.6. Rewritten before acceptance: the first
+version covered the logical server only; the user asked that a client
+with Farfield on a server without it still builds and renders LODs, and
+that this be designed from the start.
 
-- The **logical server** (dedicated, or the integrated server of single
-  player) builds and stores the LODs of each dimension in
-  `<dimension folder>/farfield/` (`LodWorld`, ADR-021). It has complete
-  chunks with their light, persists them with the world, and is where the
-  network sync of ADR-013 will read from. In single player the client
-  renders from the integrated server's store in the same process; in
-  multiplayer it will keep a cache fed by the protocol. Building LODs on
-  the client from the chunks it receives (for servers without Farfield) is
-  a later option, not decided.
-- **Live chunks**: a chunk is snapshotted on the server thread 2 s after
-  it loads (once its light is correct) and 5 s after its last block change
-  (mixin on `LevelChunk.setBlockState`), at most 16 chunks and 2 ms per tick
-  and 256 in flight; a changed chunk unloading before that is snapshotted
-  at unload. The snapshot copies the section palettes and light layers
-  (`PalettedContainer.copy`, `DataLayer.copy`); conversion to engine ids
-  and ingest run on low-priority workers (cores / 4, 1 to 4 threads).
-- **Existing worlds**: `/farfield import [threads]` (operators, or the
-  owner of a single-player world) imports the dimension's region files
-  with a checkpoint (`import.checkpoint`, resumable), skipping loaded
-  chunks; `/farfield import stop|status`.
-- **Maintenance thread**: every second, writes cached sections idle for
-  3 s and rebuilds dirty mips on the workers; `sync` every 30 s; at server
-  stop, everything is written and the mips built.
-- Materials (mesher class, mip shape) come from block states
-  (`BlockKeys.resolve`: shape, fluids, leaves, occlusion); unknown keys are
-  opaque cubes.
+- **One engine, several producers.** `LodWorld` (ADR-021) only sees
+  `ChunkData` and owns no thread. A side-neutral pipeline (`LodPipeline`:
+  snapshots on the owner thread, conversion and ingest on low-priority
+  workers, a maintenance thread) feeds it from the server or from the
+  client. The renderer never asks a producer directly: a provider hands it
+  the `LodWorld` of the current dimension, whatever its source.
 
+| Situation | Who builds the LODs | Where they are stored |
+|---|---|---|
+| Single player (and the host of a LAN game) | the integrated server, live chunks and `/farfield import` | `<dimension folder>/farfield/` |
+| Server without Farfield | **the client**, from the chunks it receives | `<game dir>/farfield/servers/<server>/<seed hash>/<dimension>/` |
+| Server with Farfield | the server, sent over the protocol (ADR-013) | a client cache in the same format |
+
+- **Server mode** (built in E.2): a chunk is snapshotted on the server
+  thread 2 s after it loads (once its light is correct) and 5 s after its
+  last block change (mixin on `LevelChunk.setBlockState`), at most 16
+  chunks and 2 ms per tick and 256 in flight; a changed chunk unloading
+  before that is snapshotted at unload. The snapshot copies the section
+  palettes and light layers (`PalettedContainer.copy`, `DataLayer.copy`).
+  Workers: cores / 4, 1 to 4 threads. `/farfield import [threads]`
+  (operators, or the owner of a single-player world) imports the region
+  files with a resumable checkpoint, skipping loaded chunks;
+  `/farfield import stop|status`. The maintenance thread writes sections
+  idle for 3 s, rebuilds dirty mips every second and syncs every 30 s;
+  everything is written at server stop.
+- **Client mode** (E.6): the same pipeline on the client level, fed by the
+  chunks the server sends and by block changes (the same mixin). Coverage
+  grows as the player explores: no import is possible without the region
+  files. On servers with an anti-x-ray that sends fake ores, data under the
+  surface is wrong; the surface is not affected.
+- **Identity of a remote world**: server address (as typed, normalized)
+  plus the hashed seed the server sends at login and respawn (used for
+  biome zoom), plus the dimension key. The seed hash tells apart the
+  worlds behind one address (proxies such as Velocity or BungeeCord). A
+  command will force or rename the identity when this guesses wrong. A
+  LAN game whose port changes gets a new identity each time.
+- **Choosing the mode**: in single player the client never ingests (the
+  integrated server does, so chunks are not written twice). On a remote
+  server, if the server announces Farfield on its network channel, its
+  protocol is authoritative and the client does not ingest (filling gaps
+  locally can come later as an option); otherwise the client ingests.
+- Materials (mesher class, mip shape) come from block states on either
+  side (`BlockKeys.resolve`); unknown keys are opaque cubes.
+- Later: per-section versions (open in ADR-021) once the protocol mode
+  merges server data with a client cache.

@@ -5,6 +5,7 @@
   "compatibilityLevel": "JAVA_21",
   "refmap": "farfield.refmap.json",
   "mixins": [
+    "BiomeManagerAccessor",
     "LevelChunkMixin"
   ],
   "client": [
