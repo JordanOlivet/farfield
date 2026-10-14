@@ -94,8 +94,13 @@ choice, an ADR.
   loaders (live chunks, a block change through the mixin, import, unchanged
   sections not rewritten across restarts); not yet in single player or in
   the user's install (E.5). Store-time transforms of ADR-019 not applied yet
-- [ ] E.3 OpenGL 4.6 RHI minimum: buffers, shaders, indirect draws
-- [ ] E.4 Render the LOD meshes beyond the vanilla render distance
+- [~] E.3 OpenGL 4.6 RHI minimum: buffers, shaders, indirect draws
+  (`GlBuffer` with DSA storage, `GlProgram`, `glMultiDrawArraysIndirect`
+  with `gl_BaseInstance`). Remains: run it in a client
+- [~] E.4 Render the LOD meshes beyond the vanilla render distance:
+  `LodRenderer` (octree selection by `LodSelector`, meshing on two
+  threads, first-fit quad arena, map colors, mixin after the sky).
+  Remains: run it in a dev client, then fix what shows
 - [ ] E.5 In-game check in the user's real install on both loaders,
   including the CPU share of LOD work (import, meshing) in the ~400-mod
   pack (ADR-018)

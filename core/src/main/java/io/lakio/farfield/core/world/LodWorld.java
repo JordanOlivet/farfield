@@ -146,6 +146,11 @@ public final class LodWorld implements AutoCloseable {
         return store.read(key);
     }
 
+    /** True if a section is stored at {@code key}. Thread-safe, cheap. */
+    public boolean exists(long key) throws IOException {
+        return store.contains(key);
+    }
+
     /**
      * Writes a chunk (block ids and biome ids of this world's key tables)
      * into its level-0 sections. Sections without blocks are ignored.

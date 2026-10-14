@@ -142,6 +142,12 @@ public final class SectionStore implements AutoCloseable {
         return b.decompressed;
     }
 
+    /** True if a section is stored at {@code key}; cheap (index lookup). */
+    public boolean contains(long key) throws IOException {
+        LogStore store = store(regionOf(key), false);
+        return store != null && store.contains(key);
+    }
+
     /** The decoded section, or null if absent. */
     public LodSection read(long key) throws IOException {
         int[] length = new int[1];

@@ -7,7 +7,9 @@
   "mixins": [
     "LevelChunkMixin"
   ],
-  "client": [],
+  "client": [
+    "client.LevelRendererMixin"
+  ],
   "injectors": {
     "defaultRequire": 1
   }

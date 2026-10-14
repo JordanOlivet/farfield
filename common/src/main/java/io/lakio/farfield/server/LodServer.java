@@ -5,9 +5,12 @@ import io.lakio.farfield.core.importer.ImportListener;
 import io.lakio.farfield.core.importer.ImportOptions;
 import io.lakio.farfield.core.importer.ImportStats;
 import io.lakio.farfield.core.importer.RegionImporter;
+import io.lakio.farfield.core.world.LodWorld;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.chunk.LevelChunk;
 
 import java.io.IOException;
@@ -142,6 +145,21 @@ public final class LodServer {
 
     static LodServer get() {
         return instance;
+    }
+
+    /**
+     * The LOD world of a dimension of the running server, or null (no
+     * server, or the dimension has no store yet). For the single-player
+     * renderer, which reads the integrated server's store in process.
+     */
+    public static LodWorld world(ResourceKey<Level> dimension) {
+        LodServer s = instance;
+        if (s == null || s.stopping) {
+            return null;
+        }
+        ServerLevel level = s.server.getLevel(dimension);
+        LodLevel lod = level == null ? null : s.levels.get(level);
+        return lod == null ? null : lod.world;
     }
 
     // ---------------------------------------------------------------- work
