@@ -1,0 +1,14 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    uses: JordanOlivet/ci-workflows/.github/workflows/build-gradle-mod.yml@main
+    with:
+      working-directory: .
+      artifact-name: farfield-jars
