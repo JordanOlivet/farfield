@@ -126,7 +126,7 @@ choice, an ADR.
   0.8.13, Iris): OpenGL 4.6 through `WindowMixin`, import 8,895 chunks in
   3 s, LOD CPU 0.3 to 3.9 %, about 0.07 ms render-thread and 0.45 ms GPU
   per frame, no Farfield error. The look moves to E.7
-- [~] E.7 Visual pass (from the user's checks): biome tints for grass,
+- [x] E.7 Visual pass (from the user's checks): biome tints for grass,
   foliage and water (LOD water reads saturated blue or lavender); water
   transparency (LOD water is drawn opaque); leaves not as solid opaque
   cubes (they look odd: cutout or coverage near,
@@ -157,7 +157,10 @@ choice, an ADR.
   has compiled (Sodium or vanilla rule), partial blocks at their height on
   level 0, fill height of coarse voxels (ADR-028). Remains: the user's
   check in the pack; fences, walls and panes stay invisible in LODs;
-  stairs are full cubes; judge ADR-020
+  stairs are full cubes; judge ADR-020. Closed 2026-10-16 after the user's
+  last pack pass ("nickel"): flicker, shapes and the water line gone;
+  ADR-020 judged in game and amended by ADR-028 (fill). Fences, walls,
+  panes and stairs are left out of E.7
 - [ ] E.6 Client mode (ADR-022): a client with Farfield on a server
   without it builds and renders LODs from the chunks it receives, stored
   per remote world; command to force or rename the world identity.
