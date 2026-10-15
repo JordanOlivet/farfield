@@ -198,6 +198,7 @@ public final class LodRenderer {
     };
     private boolean selectionDirty = true;
     private double loggedDetail = 1e-9;
+    private double pendingDetail = 1e-9;
     private long selectionTime;
     private double selectedX;
     private double selectedY;
@@ -391,6 +392,12 @@ public final class LodRenderer {
             return; // degenerate projection (seen on the first frame): keep the last detail
         }
         double detail = Math.max(1, focal / (LodSection.SIZE * RenderSettings.voxelPixels()));
+        // A value must hold for two frames: the first frame's projection can be off
+        // (seen at 20 times the right detail), which would request level-0 meshes for nothing.
+        if (Math.abs(detail - pendingDetail) > pendingDetail * 0.02) {
+            pendingDetail = detail;
+            return;
+        }
         double current = selector.detail();
         if (Math.abs(detail - current) > current * 0.02) {
             selector.setDetail(detail);
