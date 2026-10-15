@@ -147,7 +147,13 @@ choice, an ADR.
   Fabric dev client with Sodium; `/farfield debug levels` colors the levels.
   Textured faces, on every LOD by default (ADR-025, ADR-026), leaves as textured
   cubes with dark holes, checked in the Fabric dev client at render
-  distance 2; the OpenGL 4.6 request no longer conflicts with Sodium
+  distance 2; the OpenGL 4.6 request no longer conflicts with Sodium.
+  After the user's pass with textures: the water crack between LOD levels
+  closed (coarse water tops one block lower), faces lit by vanilla's
+  lightmap (sky and block light per quad), vanilla-style ambient
+  occlusion on levels 0 and 1; checked on both loaders in the dev client.
+  Remains: the user's check at the vanilla edge; lakes away from sea level
+  may still show a crack where levels meet; judge ADR-020
 - [ ] E.6 Client mode (ADR-022): a client with Farfield on a server
   without it builds and renders LODs from the chunks it receives, stored
   per remote world; command to force or rename the world identity.
