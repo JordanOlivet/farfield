@@ -79,7 +79,9 @@ import static org.lwjgl.opengl.GL46C.*;
  *   <li>Hand-off: drawn after the sky and before the terrain, with its own
  *       depth range; the depth buffer is cleared afterwards so vanilla
  *       terrain covers it, and fragments within the vanilla distance are
- *       discarded.</li>
+ *       discarded. Vanilla's terrain fog moves out to the LOD fog
+ *       ({@code FogRendererMixin}), so near terrain does not fade into the
+ *       sky just before the LODs start.</li>
  * </ul>
  */
 public final class LodRenderer {
@@ -88,6 +90,8 @@ public final class LodRenderer {
 
     private static final double DETAIL = 4.0;
     private static final double MAX_DISTANCE = 4096;
+    private static final float FOG_START = (float) MAX_DISTANCE * 0.6f;
+    private static final float FOG_END = (float) MAX_DISTANCE;
     private static final int MAX_IN_FLIGHT = 64;
     private static final long UPLOAD_BUDGET_QUADS = 1 << 20;
     private static final long INITIAL_QUADS = 8L << 20;
@@ -219,6 +223,22 @@ public final class LodRenderer {
     }
 
     private LodRenderer() {
+    }
+
+    /** Whether LODs are drawn beyond the vanilla terrain (a LOD world is attached and rendering is on). */
+    public static boolean drawsBeyondVanilla() {
+        LodRenderer r = INSTANCE;
+        return r.world != null && r.initialized && !r.disabled && RenderToggle.enabled();
+    }
+
+    /** Distance where the LOD fog starts, in blocks. */
+    public static float fogStart() {
+        return FOG_START;
+    }
+
+    /** Distance where the LOD fog is opaque, in blocks. */
+    public static float fogEnd() {
+        return FOG_END;
     }
 
     /** Called from the level renderer mixin, after the sky, before the terrain. */
@@ -736,7 +756,7 @@ public final class LodRenderer {
         glUniform1f(uVanillaRadius, vanilla);
         glUniform1f(uBrightness, brightness);
         glUniform4f(uFogColor, fogColor[0], fogColor[1], fogColor[2], 1f);
-        glUniform2f(uFog, (float) MAX_DISTANCE * 0.6f, (float) MAX_DISTANCE);
+        glUniform2f(uFog, FOG_START, FOG_END);
         glUniform1i(uTranslucent, 0);
 
         GlStateManager._glBindVertexArray(vao);
