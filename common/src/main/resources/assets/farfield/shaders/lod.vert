@@ -84,7 +84,8 @@ void main() {
     gl_Position.z = gl_Position.w * (f + n) / (f - n) - 2.0 * f * n / (f - n);
 
     uint face = material * COLOR_STRIDE + direction * 2u;
-    vec3 color = toLinear(unpackUnorm4x8(colors[face]).rgb);
+    vec4 untinted = unpackUnorm4x8(colors[face]);
+    vec3 color = toLinear(untinted.rgb);
     uint tinted = colors[face + 1u];
     if ((tinted & 0xFFFFFFu) != 0u) {
         uint biomeSlot = (q.y >> 16) & 0xFFFu;
@@ -92,5 +93,5 @@ void main() {
         color += toLinear(unpackUnorm4x8(tinted).rgb) * tint;
     }
     color = pow(min(color, vec3(1.0)), vec3(1.0 / 2.2));
-    v_color = vec4(color * SHADE[direction] * u_brightness, 1.0);
+    v_color = vec4(color * SHADE[direction] * u_brightness, untinted.a);
 }

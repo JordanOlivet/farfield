@@ -8,6 +8,7 @@ import io.lakio.farfield.client.LodWorldProvider;
 import io.lakio.farfield.core.LodKey;
 import io.lakio.farfield.core.lod.LodSection;
 import io.lakio.farfield.core.mesh.BinaryGreedyMesher;
+import io.lakio.farfield.core.mesh.MaterialClassifier;
 import io.lakio.farfield.core.mesh.MeshBuffer;
 import io.lakio.farfield.core.mesh.Quad;
 import io.lakio.farfield.core.select.LodSelector;
@@ -65,9 +66,16 @@ import static org.lwjgl.opengl.GL46C.*;
  *   <li>GPU: quads in one storage buffer (first-fit ranges, grown on
  *       demand), one 32-byte record per resident section, averaged texture
  *       colors per block state and face ({@link MaterialColors}), tints per
- *       biome ({@link BiomeTints}); one {@code glMultiDrawArraysIndirect} per frame, vertex
- *       pulling in {@code lod.vert}, back faces culled. GPU time is measured
- *       with timestamp queries and logged with the render-thread time.</li>
+ *       biome ({@link BiomeTints}). Two {@code glMultiDrawArraysIndirect}
+ *       per frame: opaque quads, then translucent ones (water, glass, ice)
+ *       blended with their texture coverage, without depth writes; each
+ *       section stores its opaque quads first. Vertex pulling in
+ *       {@code lod.vert}, back faces culled. GPU time is measured with
+ *       timestamp queries and logged with the render-thread time.</li>
+ *   <li>Sections with translucent voxels are meshed with their six
+ *       same-level neighbors' border layers, so water spanning sections
+ *       shows no inner walls; a rewritten section meshes its translucent
+ *       neighbors again.</li>
  *   <li>Hand-off: drawn after the sky and before the terrain, with its own
  *       depth range; the depth buffer is cleared afterwards so vanilla
  *       terrain covers it, and fragments within the vanilla distance are
@@ -94,6 +102,7 @@ public final class LodRenderer {
     private static final byte EXISTS = 1;
     private static final byte ABSENT = 2;
     private static final int TIMER_SLOTS = 4;
+    private static final int[][] STEP = {{-1, 0, 0}, {1, 0, 0}, {0, -1, 0}, {0, 1, 0}, {0, 0, -1}, {0, 0, 1}};
 
     private boolean initialized;
     private boolean disabled;
@@ -119,6 +128,7 @@ public final class LodRenderer {
     private int uBrightness;
     private int uFogColor;
     private int uFog;
+    private int uTranslucent;
     private final int[] timerQueries = new int[TIMER_SLOTS * 2];
     private final boolean[] timerPending = new boolean[TIMER_SLOTS];
     private int timerSlot;
@@ -141,6 +151,7 @@ public final class LodRenderer {
     });
     private final ThreadLocal<BinaryGreedyMesher> mesher = ThreadLocal.withInitial(BinaryGreedyMesher::new);
     private final ThreadLocal<MeshBuffer> meshBuffer = ThreadLocal.withInitial(MeshBuffer::new);
+    private final ThreadLocal<int[][]> borderPlanes = ThreadLocal.withInitial(() -> new int[6][LodSection.SIZE]);
     private int[] freeSlots = new int[0];
     private int freeSlotCount;
     private int slotCount;
@@ -177,6 +188,7 @@ public final class LodRenderer {
     private final Matrix4f viewProj = new Matrix4f();
     private final float[] matrix = new float[16];
     private IntBuffer commands = MemoryUtil.memAllocInt(4 * 1024);
+    private IntBuffer translucentCommands = MemoryUtil.memAllocInt(4 * 1024);
 
     // Statistics for the periodic log line.
     private long frame;
@@ -193,6 +205,8 @@ public final class LodRenderer {
         final int slot;
         long start;
         int quadCount;
+        /** The first quads of the range are opaque, the rest translucent. */
+        int opaqueCount;
         /** Last time the selection used it: drawn, or relied on to descend to its children. */
         long lastUsed;
 
@@ -201,7 +215,7 @@ public final class LodRenderer {
         }
     }
 
-    private record MeshResult(int generation, long key, long[] quads) {
+    private record MeshResult(int generation, long key, long[] quads, int opaqueCount) {
     }
 
     private LodRenderer() {
@@ -239,6 +253,7 @@ public final class LodRenderer {
         uBrightness = program.uniform("u_brightness");
         uFogColor = program.uniform("u_fogColor");
         uFog = program.uniform("u_fog");
+        uTranslucent = program.uniform("u_translucent");
         glGenQueries(timerQueries);
         quads = new GlBuffer(INITIAL_QUADS * 8);
         arena = new RangeAllocator(INITIAL_QUADS);
@@ -283,24 +298,40 @@ public final class LodRenderer {
 
         updateFrustum(viewRotation, projection);
         commands.clear();
+        translucentCommands.clear();
         int count = 0;
+        int opaqueDraws = 0;
+        int translucentDraws = 0;
         for (int i = 0, n = drawList.size(); i < n; i++) {
             long key = drawList.getLong(i);
             Resident r = resident.get(key);
             if (r == null || r.quadCount == 0 || !visible(key, cam)) {
                 continue;
             }
-            if (commands.remaining() < 4) {
-                commands = MemoryUtil.memRealloc(commands, commands.capacity() * 2);
-            }
-            commands.put(r.quadCount * 6).put(1).put(0).put(r.slot);
             count++;
+            if (r.opaqueCount > 0) {
+                if (commands.remaining() < 4) {
+                    commands = MemoryUtil.memRealloc(commands, commands.capacity() * 2);
+                }
+                commands.put(r.opaqueCount * 6).put(1).put(0).put(r.slot);
+                opaqueDraws++;
+            }
+            int translucent = r.quadCount - r.opaqueCount;
+            if (translucent > 0) {
+                if (translucentCommands.remaining() < 4) {
+                    translucentCommands = MemoryUtil.memRealloc(translucentCommands,
+                            translucentCommands.capacity() * 2);
+                }
+                // gl_VertexID starts at "first": the shader reads the quads after the opaque ones.
+                translucentCommands.put(translucent * 6).put(1).put(r.opaqueCount * 6).put(r.slot);
+                translucentDraws++;
+            }
         }
         if (frame % 60 == 0) {
             evictUnused(frameStart);
         }
         if (count > 0) {
-            draw(count, cam, viewRotation, projection, mc, skyBrightness(level, camera));
+            draw(opaqueDraws, translucentDraws, cam, viewRotation, projection, mc, skyBrightness(level, camera));
         }
         frameNanos += System.nanoTime() - frameStart;
         timedFrames++;
@@ -395,29 +426,67 @@ public final class LodRenderer {
         LodWorld w = world;
         int gen = generation.get();
         meshers.execute(() -> {
-            long[] result;
+            MeshResult result;
             try {
                 LodSection section = w.read(key);
-                result = section == null ? new long[0] : mesh(w, section);
+                result = section == null ? new MeshResult(gen, key, new long[0], 0) : mesh(w, gen, key, section);
             } catch (IOException | RuntimeException e) {
                 Farfield.LOG.debug("LOD mesh of {} failed", LodKey.toString(key), e);
-                result = new long[0];
+                result = new MeshResult(gen, key, new long[0], 0);
             }
-            done.add(new MeshResult(gen, key, result));
+            done.add(result);
         });
     }
 
-    private long[] mesh(LodWorld w, LodSection section) {
+    /** Meshes a section: opaque quads first, then translucent ones. */
+    private MeshResult mesh(LodWorld w, int gen, long key, LodSection section) throws IOException {
+        MaterialClassifier classes = w.materials();
+        int[][] solid = hasTranslucent(section, classes) ? neighborSolid(w, key, classes) : null;
         MeshBuffer out = meshBuffer.get();
-        mesher.get().mesh(section, w.materials(), tintedMaterials, null, out);
+        mesher.get().mesh(section, classes, tintedMaterials, null, solid, out);
         long[] all = new long[out.total()];
-        int n = 0;
+        int opaque = 0;
+        int back = all.length;
         for (int d = 0; d < Quad.DIRECTIONS; d++) {
-            int c = out.count(d);
-            System.arraycopy(out.quads(d), 0, all, n, c);
-            n += c;
+            long[] quads = out.quads(d);
+            for (int i = 0, c = out.count(d); i < c; i++) {
+                long q = quads[i];
+                if (classes.classOf(Quad.material(q)) == MaterialClassifier.TRANSLUCENT) {
+                    all[--back] = q;
+                } else {
+                    all[opaque++] = q;
+                }
+            }
         }
-        return all;
+        return new MeshResult(gen, key, all, opaque);
+    }
+
+    private static boolean hasTranslucent(LodSection section, MaterialClassifier classes) {
+        for (int i = 0, n = section.paletteSize(); i < n; i++) {
+            if (classes.classOf(section.paletteEntry(i)) == MaterialClassifier.TRANSLUCENT) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Solid border layers of the six same-level neighbors (null entries where none is stored). */
+    private int[][] neighborSolid(LodWorld w, long key, MaterialClassifier classes) throws IOException {
+        int[][] planes = borderPlanes.get();
+        int[][] result = new int[6][];
+        int level = LodKey.level(key);
+        for (int d = 0; d < 6; d++) {
+            int y = LodKey.y(key) + STEP[d][1];
+            if (y < LodKey.Y_MIN || y > LodKey.Y_MAX) {
+                continue;
+            }
+            long neighbor = LodKey.pack(level, LodKey.x(key) + STEP[d][0], y, LodKey.z(key) + STEP[d][2]);
+            LodSection section = w.exists(neighbor) ? w.read(neighbor) : null;
+            if (section != null) {
+                result[d] = BinaryGreedyMesher.borderPlane(section, d, classes, true, planes[d]);
+            }
+        }
+        return result;
     }
 
     /**
@@ -434,6 +503,19 @@ public final class LodRenderer {
             }
             if (resident.containsKey(key.longValue())) {
                 stale.add(key.longValue());
+            }
+            // Translucent faces of the neighbors were culled against the old data.
+            long k = key;
+            for (int d = 0; d < 6; d++) {
+                int y = LodKey.y(k) + STEP[d][1];
+                if (y < LodKey.Y_MIN || y > LodKey.Y_MAX) {
+                    continue;
+                }
+                long neighbor = LodKey.pack(LodKey.level(k), LodKey.x(k) + STEP[d][0], y, LodKey.z(k) + STEP[d][2]);
+                Resident r = resident.get(neighbor);
+                if (r != null && r.quadCount > r.opaqueCount) {
+                    stale.add(neighbor);
+                }
             }
         }
         LongIterator it = stale.iterator();
@@ -466,6 +548,7 @@ public final class LodRenderer {
                 arena.release(r.start, r.quadCount);
             }
             r.quadCount = m.quads.length;
+            r.opaqueCount = m.opaqueCount;
             meshesUploaded++;
             if (r.quadCount > 0) {
                 long start = arena.allocate(r.quadCount);
@@ -474,6 +557,7 @@ public final class LodRenderer {
                 }
                 if (start < 0) {
                     r.quadCount = 0; // out of GPU budget: drawn as empty until evictions free space
+                    r.opaqueCount = 0;
                 } else {
                     r.start = start;
                     quads.upload(start * 8, m.quads, m.quads.length);
@@ -618,14 +702,17 @@ public final class LodRenderer {
         }
     }
 
-    private void draw(int count, Vec3 cam, Matrix4f viewRotation, Matrix4f projection, Minecraft mc,
-                      float brightness) {
-        long bytes = (long) count * 16;
+    private void draw(int opaqueDraws, int translucentDraws, Vec3 cam, Matrix4f viewRotation, Matrix4f projection,
+                      Minecraft mc, float brightness) {
+        long opaqueBytes = (long) opaqueDraws * 16;
+        long bytes = opaqueBytes + (long) translucentDraws * 16;
         if (bytes > indirect.size()) {
             indirect.grow(Math.max(bytes, indirect.size() * 2), 0);
         }
         commands.flip();
         indirect.upload(0, commands);
+        translucentCommands.flip();
+        indirect.upload(opaqueBytes, translucentCommands);
 
         int blockX = (int) Math.floor(cam.x);
         int blockY = (int) Math.floor(cam.y);
@@ -650,6 +737,7 @@ public final class LodRenderer {
         glUniform1f(uBrightness, brightness);
         glUniform4f(uFogColor, fogColor[0], fogColor[1], fogColor[2], 1f);
         glUniform2f(uFog, (float) MAX_DISTANCE * 0.6f, (float) MAX_DISTANCE);
+        glUniform1i(uTranslucent, 0);
 
         GlStateManager._glBindVertexArray(vao);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, quads.id());
@@ -663,7 +751,19 @@ public final class LodRenderer {
         RenderSystem.disableBlend();
         RenderSystem.enableCull(); // lod.vert winds every face counter-clockwise from outside
 
-        glMultiDrawArraysIndirect(GL_TRIANGLES, 0, count, 0);
+        if (opaqueDraws > 0) {
+            glMultiDrawArraysIndirect(GL_TRIANGLES, 0, opaqueDraws, 0);
+        }
+        if (translucentDraws > 0) {
+            glUniform1i(uTranslucent, 1);
+            RenderSystem.enableBlend();
+            RenderSystem.blendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+            RenderSystem.depthMask(false);
+            glMultiDrawArraysIndirect(GL_TRIANGLES, opaqueBytes, translucentDraws, 0);
+            RenderSystem.depthMask(true);
+            RenderSystem.defaultBlendFunc();
+            RenderSystem.disableBlend();
+        }
 
         if (timed) {
             glQueryCounter(timerQueries[slot * 2 + 1], GL_TIMESTAMP);

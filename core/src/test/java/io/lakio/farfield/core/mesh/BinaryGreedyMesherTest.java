@@ -65,7 +65,7 @@ class BinaryGreedyMesherTest {
             }
         }
         section.compact();
-        mesher.mesh(section, CLASSES, m -> m == 3, null, out);
+        mesher.mesh(section, CLASSES, m -> m == 3, null, null, out);
         assertEquals(2, out.count(Quad.POS_Y));
         for (int i = 0; i < 2; i++) {
             long q = out.quads(Quad.POS_Y)[i];
@@ -82,7 +82,7 @@ class BinaryGreedyMesherTest {
             }
         }
         uniform.fillBiome(9);
-        mesher.mesh(uniform, CLASSES, m -> m == 3, null, out);
+        mesher.mesh(uniform, CLASSES, m -> m == 3, null, null, out);
         assertEquals(1, out.count(Quad.POS_Y));
         assertEquals(9, Quad.biome(out.quads(Quad.POS_Y)[0]));
     }
@@ -109,7 +109,7 @@ class BinaryGreedyMesherTest {
                 }
             }
             section.compact();
-            verify(section, null, m -> m % 2 == 0);
+            verify(section, null, null, m -> m % 2 == 0);
         }
     }
 
@@ -209,8 +209,10 @@ class BinaryGreedyMesherTest {
             }
             section.compact();
             int[][] neighbors = null;
+            int[][] solid = null;
             if (random.nextBoolean()) {
                 neighbors = new int[6][];
+                solid = random.nextBoolean() ? new int[6][] : null;
                 for (int d = 0; d < 6; d++) {
                     if (random.nextBoolean()) {
                         neighbors[d] = new int[32];
@@ -218,10 +220,39 @@ class BinaryGreedyMesherTest {
                             neighbors[d][u] = random.nextInt();
                         }
                     }
+                    if (solid != null && random.nextBoolean()) {
+                        // Solid layers include the opaque voxels.
+                        solid[d] = new int[32];
+                        for (int u = 0; u < 32; u++) {
+                            solid[d][u] = random.nextInt() | (neighbors[d] == null ? 0 : neighbors[d][u]);
+                        }
+                    }
                 }
             }
-            verify(section, neighbors);
+            verify(section, neighbors, solid, null);
         }
+    }
+
+    @Test
+    void waterSpanningSectionsHasNoInnerWalls() {
+        LodSection water = new LodSection(0);
+        for (int y = 0; y < 32; y++) {
+            for (int z = 0; z < 32; z++) {
+                for (int x = 0; x < 32; x++) {
+                    water.set(x, y, z, 10);
+                }
+            }
+        }
+        int[] full = new int[32];
+        Arrays.fill(full, -1);
+        int[][] solid = new int[6][];
+        for (int d = 0; d < 6; d++) {
+            solid[d] = d == Quad.POS_Y ? null : full;
+        }
+        mesher.mesh(water, CLASSES, null, null, solid, out);
+        // Water all around and below: only the top shows.
+        assertEquals(1, out.total());
+        assertEquals(1, out.count(Quad.POS_Y));
     }
 
     @Test
@@ -238,6 +269,8 @@ class BinaryGreedyMesherTest {
         for (int row : plane) {
             assertEquals(0, row);
         }
+        plane = BinaryGreedyMesher.borderPlane(neighbor, Quad.POS_Y, CLASSES, true, null);
+        assertEquals(1 << 6, plane[30]);
     }
 
     /**
@@ -245,12 +278,15 @@ class BinaryGreedyMesherTest {
      * each, with the right material.
      */
     private void verify(LodSection section, int[][] neighbors) {
-        verify(section, neighbors, null);
+        verify(section, neighbors, null, null);
     }
 
-    /** Also checks each face's biome: its cell's for tinted materials, none otherwise. */
-    private void verify(LodSection section, int[][] neighbors, IntPredicate tinted) {
-        mesher.mesh(section, CLASSES, tinted, neighbors, out);
+    /**
+     * Also checks each face's biome (its cell's for tinted materials, none
+     * otherwise) and the culling of translucent faces against solid neighbors.
+     */
+    private void verify(LodSection section, int[][] neighbors, int[][] solid, IntPredicate tinted) {
+        mesher.mesh(section, CLASSES, tinted, neighbors, solid, out);
         Map<Long, Integer> covered = new HashMap<>();
         for (int d = 0; d < Quad.DIRECTIONS; d++) {
             for (int i = 0; i < out.count(d); i++) {
@@ -291,7 +327,9 @@ class BinaryGreedyMesherTest {
                         int nz = z + STEP[d][2];
                         int nc;
                         if (nx < 0 || ny < 0 || nz < 0 || nx > 31 || ny > 31 || nz > 31) {
-                            nc = neighborOpaque(neighbors, d, x, y, z) ? MaterialClassifier.OPAQUE : MaterialClassifier.AIR;
+                            nc = neighborBit(neighbors, d, x, y, z) ? MaterialClassifier.OPAQUE
+                                    : neighborBit(solid, d, x, y, z) ? MaterialClassifier.TRANSLUCENT
+                                    : MaterialClassifier.AIR;
                         } else {
                             nc = CLASSES.classOf(section.material(nx, ny, nz));
                         }
@@ -318,7 +356,7 @@ class BinaryGreedyMesherTest {
         assertEquals(expected, mesher.facesEmitted());
     }
 
-    private static boolean neighborOpaque(int[][] neighbors, int d, int x, int y, int z) {
+    private static boolean neighborBit(int[][] neighbors, int d, int x, int y, int z) {
         if (neighbors == null || neighbors[d] == null) {
             return false;
         }

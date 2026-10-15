@@ -6,6 +6,7 @@ in vec3 v_relative;
 uniform float u_vanillaRadius; // vanilla terrain is drawn within this horizontal distance
 uniform vec4 u_fogColor;
 uniform vec2 u_fog;            // start, end
+uniform bool u_translucent;    // translucent pass: blend with the face's coverage
 
 out vec4 fragColor;
 
@@ -15,5 +16,5 @@ void main() {
         discard;
     }
     float fog = smoothstep(u_fog.x, u_fog.y, length(v_relative));
-    fragColor = vec4(mix(v_color.rgb, u_fogColor.rgb, fog), 1.0);
+    fragColor = vec4(mix(v_color.rgb, u_fogColor.rgb, fog), u_translucent ? v_color.a : 1.0);
 }

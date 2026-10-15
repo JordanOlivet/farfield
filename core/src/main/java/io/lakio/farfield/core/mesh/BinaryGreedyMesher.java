@@ -16,7 +16,10 @@ import java.util.function.IntPredicate;
  *   <li>Face culling 32 voxels at a time: a face is visible where a voxel's
  *       neighbor along the axis is not opaque (translucent voxels also hide
  *       translucent neighbors). Neighbor sections contribute their border
- *       layer as one bit per column.</li>
+ *       layer as one bit per column: opaque voxels for every face, and
+ *       optionally solid (opaque or translucent) voxels for translucent
+ *       faces only, so water bodies spanning sections show no inner walls
+ *       while opaque borders stay closed.</li>
  *   <li>Face columns are transposed into one 32x32 plane per depth, split by
  *       material, and each plane is merged greedily with bit operations:
  *       take the lowest run of set bits in a row, extend it over the next
@@ -73,17 +76,22 @@ public final class BinaryGreedyMesher {
      *                       null, or a null entry, means no opaque neighbor
      */
     public void mesh(LodSection section, MaterialClassifier classifier, int[][] neighborOpaque, MeshBuffer out) {
-        mesh(section, classifier, null, neighborOpaque, out);
+        mesh(section, classifier, null, neighborOpaque, null, out);
     }
 
     /**
      * Meshes a section; the quads of the materials {@code tinted} accepts
      * carry their biome.
      *
-     * @param tinted materials whose color depends on the biome; null for none
+     * @param tinted        materials whose color depends on the biome; null for none
+     * @param neighborSolid like {@code neighborOpaque}, the solid (opaque or
+     *                      translucent) voxels of the neighbor layers; they
+     *                      only hide translucent faces. Null, or a null
+     *                      entry, culls translucent faces against
+     *                      {@code neighborOpaque} only
      */
     public void mesh(LodSection section, MaterialClassifier classifier, IntPredicate tinted, int[][] neighborOpaque,
-                     MeshBuffer out) {
+                     int[][] neighborSolid, MeshBuffer out) {
         out.clear();
         facesEmitted = 0;
         if (!classify(section, classifier)) {
@@ -98,7 +106,9 @@ public final class BinaryGreedyMesher {
                 int direction = axis * 2 + sign;
                 int[] minus = neighborOpaque == null ? null : neighborOpaque[axis * 2];
                 int[] plus = neighborOpaque == null ? null : neighborOpaque[axis * 2 + 1];
-                if (cullFaces(sign == 1, minus, plus)) {
+                int[] minusSolid = neighborSolid == null ? null : neighborSolid[axis * 2];
+                int[] plusSolid = neighborSolid == null ? null : neighborSolid[axis * 2 + 1];
+                if (cullFaces(sign == 1, minus, plus, minusSolid, plusSolid)) {
                     buildPlanes();
                     mergePlanes(section, direction, out);
                 }
@@ -258,11 +268,14 @@ public final class BinaryGreedyMesher {
     }
 
     /** Computes the visible faces of one direction; returns false if there are none. */
-    private boolean cullFaces(boolean positive, int[] minusNeighbor, int[] plusNeighbor) {
+    private boolean cullFaces(boolean positive, int[] minusNeighbor, int[] plusNeighbor, int[] minusSolid,
+                              int[] plusSolid) {
         int any = 0;
         for (int u = 0; u < S; u++) {
             int minusRow = minusNeighbor == null ? 0 : minusNeighbor[u];
             int plusRow = plusNeighbor == null ? 0 : plusNeighbor[u];
+            int minusSolidRow = minusSolid == null ? 0 : minusSolid[u];
+            int plusSolidRow = plusSolid == null ? 0 : plusSolid[u];
             for (int v = 0; v < S; v++) {
                 int i = u * S + v;
                 int op = colOpaque[i];
@@ -275,7 +288,11 @@ public final class BinaryGreedyMesher {
                 long c = (op & 0xFFFFFFFFL) << 1
                         | (minusRow >>> v & 1L)
                         | (plusRow >>> v & 1L) << 33;
-                long t = (tr & 0xFFFFFFFFL) << 1;
+                // Neighbor solid bits only enter the translucent test; bits 0
+                // and 33 never survive the shift back, so they emit nothing.
+                long t = (tr & 0xFFFFFFFFL) << 1
+                        | (minusSolidRow >>> v & 1L)
+                        | (plusSolidRow >>> v & 1L) << 33;
                 long solid = c | t;
                 long visible = positive
                         ? (c & ~(c >>> 1)) | (t & ~(solid >>> 1))
@@ -433,6 +450,15 @@ public final class BinaryGreedyMesher {
      * neighbor), in the layout {@link #mesh} expects: 32 rows by U, bits by V.
      */
     public static int[] borderPlane(LodSection neighbor, int direction, MaterialClassifier classifier, int[] out) {
+        return borderPlane(neighbor, direction, classifier, false, out);
+    }
+
+    /**
+     * Like {@link #borderPlane(LodSection, int, MaterialClassifier, int[])};
+     * with {@code solid}, translucent voxels count as well.
+     */
+    public static int[] borderPlane(LodSection neighbor, int direction, MaterialClassifier classifier, boolean solid,
+                                    int[] out) {
         int[] plane = out != null ? out : new int[S];
         Arrays.fill(plane, 0);
         int axis = direction >> 1;
@@ -446,7 +472,8 @@ public final class BinaryGreedyMesher {
                     case 1 -> neighbor.material(v, layer, u);
                     default -> neighbor.material(u, v, layer);
                 };
-                if (classifier.classOf(material) == MaterialClassifier.OPAQUE) {
+                int c = classifier.classOf(material);
+                if (c == MaterialClassifier.OPAQUE || solid && c == MaterialClassifier.TRANSLUCENT) {
                     row |= 1 << v;
                 }
             }
