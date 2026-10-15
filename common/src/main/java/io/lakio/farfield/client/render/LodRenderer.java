@@ -84,10 +84,11 @@ import static org.lwjgl.opengl.GL46C.*;
  *       shows no inner walls; a rewritten section meshes its translucent
  *       neighbors again.</li>
  *   <li>Ambient occlusion as vanilla's smooth lighting, per fragment: the
- *       opaque voxels of each level-0 and level-1 section (4 KB) go to a
- *       storage buffer by slot; {@code lod.frag} reads the eight voxels
- *       around the one in front of the face, so merged quads stay merged.
- *       Coarser levels skip it (their voxels span 4 blocks or more).</li>
+ *       opaque voxels of each section (4 KB) go to a storage buffer by
+ *       slot, with the slots of its 26 same-level neighbors; {@code lod.frag}
+ *       reads the eight voxels around the one in front of the face, across
+ *       section borders, so merged quads stay merged and no grid of lighter
+ *       lines shows along section borders.</li>
  *   <li>Hand-off: drawn after the sky and before the terrain, with its own
  *       depth range; the depth buffer is cleared afterwards so vanilla
  *       terrain covers it, and fragments within the vanilla distance are
@@ -111,8 +112,8 @@ public final class LodRenderer {
     /** The compiled-sections grid is rebuilt every this many frames. */
     private static final int DRAWN_SECTIONS_EVERY = 8;
     private static final int OCCUPANCY_INTS = LodSection.SIZE * LodSection.SIZE;
-    /** Ambient occlusion up to this level (voxels of 2 blocks). */
-    private static final int AO_MAX_LEVEL = 1;
+    /** Neighbor slots per section slot: (dx + 1) * 9 + (dy + 1) * 3 + (dz + 1), slot + 1 or 0. */
+    private static final int NEIGHBOR_INTS = 27;
     /** A resident mesh the selection has not used for this long is freed. */
     private static final long EVICT_AFTER_NANOS = 10_000_000_000L;
     /** The selection runs again when the camera moved this far (squared blocks)... */
@@ -133,6 +134,11 @@ public final class LodRenderer {
     private GlBuffer biomeBuffer;
     /** Opaque voxels per section slot ({@link #OCCUPANCY_INTS} ints), for ambient occlusion. */
     private GlBuffer occupancy;
+    /** Per section slot, the slots of its resident same-level neighbors ({@link #NEIGHBOR_INTS}). */
+    private GlBuffer neighborSlots;
+    private final int[] neighborScratch = new int[NEIGHBOR_INTS];
+    private final int[] oneInt = new int[1];
+    private final LongArrayList evicted = new LongArrayList();
     /**
      * Sections the terrain renderer has compiled around the camera, one bit
      * each ({@link #updateDrawnSections}): LODs give way only where the game
@@ -355,6 +361,7 @@ public final class LodRenderer {
         colorBuffer = new GlBuffer(4096L * MaterialColors.STRIDE * 4);
         biomeBuffer = new GlBuffer(256L * BiomeTints.KINDS * 4);
         occupancy = new GlBuffer(1024L * OCCUPANCY_INTS * 4);
+        neighborSlots = new GlBuffer(1024L * NEIGHBOR_INTS * 4);
         drawnSections = new GlBuffer(4096L * 4);
         indirect = new GlBuffer(1024L * 16);
         vao = glCreateVertexArrays();
@@ -638,7 +645,7 @@ public final class LodRenderer {
             }
         }
         int[] occupied = null;
-        if (all.length > 0 && LodKey.level(key) <= AO_MAX_LEVEL) {
+        if (all.length > 0) {
             occupied = new int[OCCUPANCY_INTS];
             mesher.get().copyOpaqueRows(occupied);
         }
@@ -757,6 +764,7 @@ public final class LodRenderer {
                 }
             }
             writeSection(m.key, r);
+            linkNeighbors(m.key, r);
         }
     }
 
@@ -799,11 +807,66 @@ public final class LodRenderer {
                 (int) r.start, r.quadCount, r.occluders ? 1 : 0, 0});
     }
 
+    /**
+     * Writes a section's neighbor slots and its own slot into its resident
+     * neighbors' tables (ambient occlusion across section borders); a
+     * section without occluders is written as absent.
+     */
+    private void linkNeighbors(long key, Resident r) {
+        long needed = (long) (r.slot + 1) * NEIGHBOR_INTS * 4;
+        if (needed > neighborSlots.size()) {
+            neighborSlots.grow(Math.max(needed, neighborSlots.size() * 2), neighborSlots.size());
+        }
+        int level = LodKey.level(key);
+        int x = LodKey.x(key);
+        int y = LodKey.y(key);
+        int z = LodKey.z(key);
+        for (int i = 0; i < NEIGHBOR_INTS; i++) {
+            neighborScratch[i] = 0;
+            if (i == 13) {
+                continue;
+            }
+            int ny = y + i / 3 % 3 - 1;
+            if (ny < LodKey.Y_MIN || ny > LodKey.Y_MAX) {
+                continue;
+            }
+            Resident n = resident.get(LodKey.pack(level, x + i / 9 - 1, ny, z + i % 3 - 1));
+            if (n == null) {
+                continue;
+            }
+            if (n.occluders) {
+                neighborScratch[i] = n.slot + 1;
+            }
+            oneInt[0] = r.occluders ? r.slot + 1 : 0;
+            neighborSlots.upload(((long) n.slot * NEIGHBOR_INTS + (26 - i)) * 4, oneInt);
+        }
+        neighborSlots.upload((long) r.slot * NEIGHBOR_INTS * 4, neighborScratch);
+    }
+
+    /** Removes an evicted section from its resident neighbors' tables. */
+    private void unlinkNeighbors(long key) {
+        int level = LodKey.level(key);
+        oneInt[0] = 0;
+        for (int i = 0; i < NEIGHBOR_INTS; i++) {
+            int ny = LodKey.y(key) + i / 3 % 3 - 1;
+            if (i == 13 || ny < LodKey.Y_MIN || ny > LodKey.Y_MAX) {
+                continue;
+            }
+            Resident n = resident.get(LodKey.pack(level, LodKey.x(key) + i / 9 - 1, ny, LodKey.z(key) + i % 3 - 1));
+            if (n != null) {
+                neighborSlots.upload(((long) n.slot * NEIGHBOR_INTS + (26 - i)) * 4, oneInt);
+            }
+        }
+    }
+
     private void evictUnused(long now) {
+        evicted.clear();
         ObjectIterator<Long2ObjectOpenHashMap.Entry<Resident>> it = resident.long2ObjectEntrySet().fastIterator();
         while (it.hasNext()) {
-            Resident r = it.next().getValue();
+            Long2ObjectOpenHashMap.Entry<Resident> e = it.next();
+            Resident r = e.getValue();
             if (now - r.lastUsed > EVICT_AFTER_NANOS) {
+                evicted.add(e.getLongKey());
                 if (r.quadCount > 0) {
                     arena.release(r.start, r.quadCount);
                 }
@@ -812,6 +875,9 @@ public final class LodRenderer {
                 it.remove();
                 selectionDirty = true;
             }
+        }
+        for (int i = 0, n = evicted.size(); i < n; i++) {
+            unlinkNeighbors(evicted.getLong(i));
         }
     }
 
@@ -957,6 +1023,7 @@ public final class LodRenderer {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, colorBuffer.id());
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, biomeBuffer.id());
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, occupancy.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, neighborSlots.id());
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, drawnSections.id());
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirect.id());
         RenderSystem.enableDepthTest();

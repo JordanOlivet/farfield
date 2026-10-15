@@ -46,11 +46,24 @@ const float TILE = 16.0;
 const vec3 LEVEL_COLORS[5] = vec3[](vec3(1.0, 0.15, 0.1), vec3(1.0, 0.55, 0.0), vec3(1.0, 0.95, 0.1),
                                     vec3(0.2, 0.85, 0.2), vec3(0.2, 0.45, 1.0));
 
+// Slots of each section's 26 same-level neighbors: 27 per slot,
+// (dx + 1) * 9 + (dy + 1) * 3 + (dz + 1), slot + 1 or 0 when not resident.
+layout(std430, binding = 6) readonly buffer NeighborSlots {
+    uint neighborSlots[];
+};
+
 bool occluder(ivec3 v) {
-    if (any(lessThan(v, ivec3(0))) || any(greaterThan(v, ivec3(31)))) {
-        return false; // outside the section: counted as open
+    uint slot = v_slot;
+    ivec3 o = v >> 5; // -1, 0 or 1 per axis
+    if (o != ivec3(0)) {
+        uint n = neighborSlots[v_slot * 27u + uint((o.x + 1) * 9 + (o.y + 1) * 3 + (o.z + 1))];
+        if (n == 0u) {
+            return false; // neighbor not drawn at this level: counted as open
+        }
+        slot = n - 1u;
+        v -= o * 32;
     }
-    return ((occupancy[v_slot * 1024u + uint(v.y * 32 + v.z)] >> uint(v.x)) & 1u) != 0u;
+    return ((occupancy[slot * 1024u + uint(v.y * 32 + v.z)] >> uint(v.x)) & 1u) != 0u;
 }
 
 // Vanilla's smooth-lighting ambient occlusion: per corner of the voxel face,
