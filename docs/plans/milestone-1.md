@@ -126,13 +126,21 @@ choice, an ADR.
   0.8.13, Iris): OpenGL 4.6 through `WindowMixin`, import 8,895 chunks in
   3 s, LOD CPU 0.3 to 3.9 %, about 0.07 ms render-thread and 0.45 ms GPU
   per frame, no Farfield error. The look moves to E.7
-- [ ] E.7 Visual pass (from the user's checks): biome tints for grass,
+- [~] E.7 Visual pass (from the user's checks): biome tints for grass,
   foliage and water (LOD water reads saturated blue or lavender); water
   transparency (LOD water is drawn opaque); leaves not as solid opaque
   cubes (they look odd: cutout or coverage near,
   darker or dithered far); averaged texture colors instead of map colors
   (ADR-010); the transition band at the vanilla distance (ADR-011); then
-  judge the downsampling rules of ADR-020 in game
+  judge the downsampling rules of ADR-020 in game.
+  Done and checked in the NeoForge dev client (2026-10-15): averaged
+  texture colors per face with biome tints (`779c9f0`), translucent water,
+  glass and ice without inner walls (`5c93273`), vanilla terrain fog moved
+  out to the LOD fog (`5a2470a`). Remains: the user's check in the real
+  installs (NeoForge pack and Fabric with Sodium); leaves (judge them with
+  texture colors first, then cutout or darkening if still odd); the water
+  side faces vanilla draws at its last chunks (a thin stepped line now that
+  the fog is gone); judge ADR-020
 - [ ] E.6 Client mode (ADR-022): a client with Farfield on a server
   without it builds and renders LODs from the chunks it receives, stored
   per remote world; command to force or rename the world identity.
