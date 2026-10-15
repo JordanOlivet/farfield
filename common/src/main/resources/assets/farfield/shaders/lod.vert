@@ -92,6 +92,8 @@ void main() {
     // their block's height (snow layers, slabs, carpets); on coarser levels,
     // every voxel takes its fill in eighths, so the sea and snow stand where
     // they are instead of at the top of the coarse voxel.
+    // Ambient occlusion reads the voxel grid at the face's unlowered position.
+    v_voxel = p;
     bool top = direction == 3u
             || (axis == 0u && cu == 1u)
             || (axis == 2u && cv == 1u);
@@ -136,7 +138,6 @@ void main() {
     v_light = SHADE[direction];
     v_lightmap = ivec2(int((q.y >> 25) & 15u), int((q.y >> 21) & 15u));
     v_level = s.originLevel.w;
-    v_voxel = p;
     v_direction = direction;
     v_slot = uint(gl_BaseInstance);
     v_occluders = s.info.z;

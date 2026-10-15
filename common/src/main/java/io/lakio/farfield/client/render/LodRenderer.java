@@ -231,6 +231,8 @@ public final class LodRenderer {
         }
     };
     private boolean selectionDirty = true;
+    /** Most sections a selection drew coarser than wanted since the last stat line. */
+    private int maxFallbacks;
     private double loggedDetail = 1e-9;
     private double pendingDetail = 1e-9;
     private long selectionTime;
@@ -518,6 +520,7 @@ public final class LodRenderer {
         drawList.clear();
         selector.select(cam.x, cam.y, cam.z, level.getMinBuildHeight(), level.getMaxBuildHeight(), MAX_DISTANCE,
                 sections, drawSink, wantSink);
+        maxFallbacks = Math.max(maxFallbacks, selector.fallbacks());
         for (int i = 0, n = drawList.size(); i < n; i++) {
             Resident r = resident.get(drawList.getLong(i));
             if (r != null) {
@@ -545,10 +548,12 @@ public final class LodRenderer {
         nextStats = System.nanoTime() + 30_000_000_000L;
         Farfield.LOG.info("LOD renderer: {} sections drawn, {} resident, {} MB of {} MB quads used, {} meshing,"
                         + " {} meshes uploaded and {} freed, {} selections since last line; per frame {} us on the"
-                        + " render thread and {} us on the GPU, over {} frames; detail {}", count, resident.size(),
+                        + " render thread and {} us on the GPU, over {} frames; detail {}; at most {} coarse"
+                        + " fallbacks per selection", count, resident.size(),
                 arena.used() * 8 >> 20, arena.capacity() * 8 >> 20, requested.size(), meshesUploaded, meshesEvicted,
                 selections, frameNanos / 1000 / Math.max(1, timedFrames), gpuNanos / 1000 / Math.max(1, gpuFrames),
-                timedFrames, String.format("%.1f", selector.detail()));
+                timedFrames, String.format("%.1f", selector.detail()), maxFallbacks);
+        maxFallbacks = 0;
         frameNanos = 0;
         timedFrames = 0;
         gpuNanos = 0;

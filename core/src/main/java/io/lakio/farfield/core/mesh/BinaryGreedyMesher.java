@@ -56,6 +56,8 @@ public final class BinaryGreedyMesher {
     private final int[] colOpaque = new int[PLANE];
     private final int[] colTranslucent = new int[PLANE];
     private final int[] colPartial = new int[PLANE];
+    /** Opaque or partial X rows before {@link #splitPartialFill} moves voxels. */
+    private final int[] solidRows = new int[PLANE];
     /** Visible faces of the current direction, same layout as the columns. */
     private final int[] faces = new int[PLANE];
     /** Faces of the current direction per depth: index {@code depth * 32 + u}, bit v. */
@@ -253,9 +255,15 @@ public final class BinaryGreedyMesher {
     /**
      * Opaque voxels whose fill is below full (coarse levels) mesh as partial
      * ones: they hide only the top of the voxel below and stand at their fill.
+     * Only surface voxels: under an opaque or partial voxel the top is hidden,
+     * and a lowered body would open a slit showing the unlit inside of the
+     * terrain (dark dashes on steep cliffs).
      */
     private void splitPartialFill(LodSection section) {
         NibbleBricks fill = section.fill();
+        for (int i = 0; i < PLANE; i++) {
+            solidRows[i] = rowsOpaque[i] | rowsPartial[i];
+        }
         for (int b = 0; b < LodSection.BRICK_COUNT; b++) {
             if (fill.isUniform(b) && fill.uniformValue(b) == 15) {
                 continue;
@@ -270,9 +278,12 @@ public final class BinaryGreedyMesher {
                     if (opaqueBits == 0) {
                         continue;
                     }
+                    int y = by * 8 + ly;
+                    int covered = y + 1 < S ? solidRows[row + S] >>> (bx * 8) & 0xFF : 0;
+                    opaqueBits &= ~covered;
                     int lowered = 0;
                     for (int lx = 0; lx < 8; lx++) {
-                        if ((opaqueBits >> lx & 1) != 0 && fill.get(bx * 8 + lx, by * 8 + ly, bz * 8 + lz) < 15) {
+                        if ((opaqueBits >> lx & 1) != 0 && fill.get(bx * 8 + lx, y, bz * 8 + lz) < 15) {
                             lowered |= 1 << lx;
                         }
                     }
@@ -454,8 +465,10 @@ public final class BinaryGreedyMesher {
                 }
                 int index = section.paletteIndex(x, y, z);
                 int biome = splitBiomes && tintedIndex[index] ? section.biome(x >> 2, y >> 2, z >> 2) : -1;
-                int light = light(section, x, y, z, index, axis, depthStep)
-                        | ((section.fill().get(x, y, z) + 2) >> 1) << 8;
+                // Voxels kept opaque are full whatever their stored fill.
+                boolean full = (rowsOpaque[y * S + z] >>> x & 1) != 0;
+                int fillEighths = full ? Quad.FULL_FILL : (section.fill().get(x, y, z) + 2) >> 1;
+                int light = light(section, x, y, z, index, axis, depthStep) | fillEighths << 8;
                 int slot;
                 if (index == lastIndex && slotBiome[lastSlot] == biome && slotLight[lastSlot] == light) {
                     slot = lastSlot;

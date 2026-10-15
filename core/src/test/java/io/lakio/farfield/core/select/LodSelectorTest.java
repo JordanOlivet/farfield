@@ -66,4 +66,24 @@ class LodSelectorTest {
         assertTrue(draw.contains(LodKey.parent(child)));
         assertTrue(!draw.contains(child));
     }
+
+    @Test
+    void descendingParentKeepsDescendingWhenAChildIsNotReady() {
+        LodSelector selector = new LodSelector(5, 2.0);
+        long child = LodKey.pack(0, 0, -1, 0);
+        List<Long> draw = new ArrayList<>();
+        List<Long> want = new ArrayList<>();
+        // First selection: everything ready, the parent descends.
+        selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of()), draw::add, want::add);
+        assertTrue(draw.contains(child));
+        // A child becomes not ready (new or remeshed): the parent stays split,
+        // its ready siblings stay drawn, the child is asked for, no coarse flash.
+        draw.clear();
+        selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of(child)), draw::add, want::add);
+        assertTrue(!draw.contains(LodKey.parent(child)));
+        assertTrue(!draw.contains(child));
+        assertTrue(want.contains(child));
+        assertTrue(draw.contains(LodKey.pack(0, 1, -1, 0)));
+        assertEquals(0, selector.fallbacks());
+    }
 }

@@ -149,6 +149,37 @@ class BinaryGreedyMesherTest {
     }
 
     @Test
+    void lowFillUnderASolidVoxelStaysFull() {
+        // A low-fill voxel with an opaque voxel above it is not lowered: its
+        // sides keep the full height, so no slit opens under the overhang.
+        LodSection section = new LodSection(0);
+        section.set(5, 5, 5, 1);
+        section.fill().set(5, 5, 5, 3);
+        section.set(5, 6, 5, 2);
+        section.compact();
+        mesher.mesh(section, CLASSES, null, out);
+        for (int d = 0; d < Quad.DIRECTIONS; d++) {
+            for (int i = 0; i < out.count(d); i++) {
+                long q = out.quads(d)[i];
+                if (Quad.material(q) == 1) {
+                    assertEquals(Quad.FULL_FILL, Quad.fill(q), "fill of " + Quad.toString(q));
+                }
+            }
+        }
+        assertEquals(0, countMaterial(Quad.POS_Y, 1), "the covered top stays hidden");
+    }
+
+    private int countMaterial(int direction, int material) {
+        int n = 0;
+        for (int i = 0; i < out.count(direction); i++) {
+            if (Quad.material(out.quads(direction)[i]) == material) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    @Test
     void tintedQuadsSplitByBiomeCell() {
         // Grass top layer over two biomes split at x = 16: the tinted top
         // splits in two quads, the untinted stone below stays one.

@@ -3,6 +3,8 @@ package io.lakio.farfield.core.select;
 import io.lakio.farfield.core.LodKey;
 import io.lakio.farfield.core.lod.LodSection;
 
+import java.util.HashSet;
+import java.util.Set;
 import java.util.function.LongConsumer;
 import java.util.function.LongPredicate;
 
@@ -16,13 +18,22 @@ import java.util.function.LongPredicate;
  *
  * <p>Coverage while meshes stream in: a section descends only when all its
  * existing children are ready to draw; otherwise it draws itself (if ready)
- * and asks for the missing children. Sections absent from the store are air
- * and skipped.
+ * and asks for the missing children. A section that already descended in the
+ * previous selection keeps descending when a child is not ready: that child
+ * is new (it did not exist, so nothing was drawn there) or being remeshed
+ * (its old mesh stays ready), and falling back would flash the whole area to
+ * the coarse level, up to the top when the parents are new too (terrain
+ * explored for the first time). Sections absent from the store are air and
+ * skipped.
  */
 public final class LodSelector {
 
     private final int levels;
     private double detail;
+    private int fallbacks;
+    /** Sections that descended in the previous selection, and in the current one. */
+    private Set<Long> descended = new HashSet<>();
+    private Set<Long> descending = new HashSet<>();
 
     /**
      * @param levels number of levels (0 to {@code levels - 1})
@@ -44,6 +55,11 @@ public final class LodSelector {
         this.detail = detail;
     }
 
+    /** Sections the last selection drew coarser than wanted, waiting for a child mesh. */
+    public int fallbacks() {
+        return fallbacks;
+    }
+
     /** What the store and the mesh cache know about sections. */
     public interface Sections {
         /** True if the store has the section (it holds non-air voxels). */
@@ -62,6 +78,8 @@ public final class LodSelector {
      */
     public void select(double camX, double camY, double camZ, int minY, int maxY, double maxDistance,
                        Sections sections, LongConsumer draw, LongConsumer want) {
+        fallbacks = 0;
+        descending.clear();
         int top = levels - 1;
         int size = LodSection.SIZE << top;
         int x0 = Math.floorDiv((int) Math.floor(camX - maxDistance), size);
@@ -77,6 +95,9 @@ public final class LodSelector {
                 }
             }
         }
+        Set<Long> previous = descended;
+        descended = descending;
+        descending = previous;
     }
 
     private void visit(long key, double camX, double camY, double camZ, double maxDistance, Sections sections,
@@ -109,7 +130,8 @@ public final class LodSelector {
                     want.accept(child);
                 }
             }
-            if (childrenReady) {
+            if (childrenReady || descended.contains(key)) {
+                descending.add(key);
                 for (int i = 0; i < 8; i++) {
                     visit(LodKey.pack(level - 1, x + (i & 1), y + (i >> 2), z + ((i >> 1) & 1)),
                             camX, camY, camZ, maxDistance, sections, draw, want);
@@ -118,6 +140,9 @@ public final class LodSelector {
             }
         }
         if (sections.ready(key)) {
+            if (level > 0 && distance < detail * size) {
+                fallbacks++;
+            }
             draw.accept(key);
         } else {
             want.accept(key);
