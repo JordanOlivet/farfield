@@ -9,7 +9,10 @@ import java.util.function.LongPredicate;
 /**
  * Chooses which LOD sections to draw around a camera: an octree descent
  * from the coarsest level, splitting a section into its eight children when
- * the camera is closer than {@code detail} times its size.
+ * the camera is closer than {@code detail} times its size. A renderer gets
+ * a screen-space criterion from {@code detail = focal length in pixels /
+ * (32 * voxel pixels)}: a section splits when its voxels would exceed that
+ * many pixels at its nearest point.
  *
  * <p>Coverage while meshes stream in: a section descends only when all its
  * existing children are ready to draw; otherwise it draws itself (if ready)
@@ -19,7 +22,7 @@ import java.util.function.LongPredicate;
 public final class LodSelector {
 
     private final int levels;
-    private final double detail;
+    private double detail;
 
     /**
      * @param levels number of levels (0 to {@code levels - 1})
@@ -29,6 +32,15 @@ public final class LodSelector {
      */
     public LodSelector(int levels, double detail) {
         this.levels = levels;
+        this.detail = detail;
+    }
+
+    public double detail() {
+        return detail;
+    }
+
+    /** Sets the split distance in section sizes (see the constructor). */
+    public void setDetail(double detail) {
         this.detail = detail;
     }
 

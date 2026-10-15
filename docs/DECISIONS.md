@@ -424,3 +424,27 @@ that this be designed from the start.
   side (`BlockKeys.resolve`); unknown keys are opaque cubes.
 - Later: per-section versions (open in ADR-021) once the protocol mode
   merges server data with a client cache.
+
+## ADR-023 — Screen-space level of detail
+
+**Date**: 2026-10-15 · **Status**: accepted
+
+- A section splits into its finer level when its voxels would exceed a
+  target size on screen at its nearest point: `detail = focal length in
+  pixels / (32 * voxel pixels)`, with the focal length from the window
+  height and the projection. The criterion follows resolution and field of
+  view; the fixed ratio before (split within 4 section sizes) gave voxels
+  up to about 20 px on a 4K screen and read coarse at middle distance.
+- Default 4 px, set in game with `/farfield detail <1..32>` (single
+  player for now; a client option comes with the settings screen).
+  Measured in the Fabric dev client with Sodium, 4K, middle-distance view
+  over forest and lake: 12 px 30 MB of quads, 0.19 ms render thread,
+  2.35 ms GPU; 6 px 102 MB, 0.41 ms, 3.06 ms; 4 px 203 MB, 0.70 ms,
+  3.85 ms; 2 px 593 MB, 2.92 ms, 4.58 ms. 4 px shows single trees; 2 px
+  adds little for three times the memory.
+- Neo-Voxy (Voxy) splits at 64 px per 32-voxel node, about 2 px per voxel;
+  Farfield takes the same kind of criterion (concept only, ADR-001) with a
+  coarser default until GPU culling (ADR-007) lowers the per-section cost.
+- The vanilla hand-off discards LOD fragments only where vanilla draws:
+  within the render distance horizontally and vertically (Sodium culls
+  sections farther than the render distance on either axis).

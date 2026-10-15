@@ -14,7 +14,7 @@ import io.lakio.farfield.core.mesh.Quad;
 import io.lakio.farfield.core.select.LodSelector;
 import io.lakio.farfield.core.util.RangeAllocator;
 import io.lakio.farfield.core.world.LodWorld;
-import io.lakio.farfield.lod.RenderToggle;
+import io.lakio.farfield.lod.RenderSettings;
 import it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
@@ -54,9 +54,12 @@ import static org.lwjgl.opengl.GL46C.*;
  * <ul>
  *   <li>Data: the {@link LodWorld} that {@link LodWorldProvider} gives for
  *       the current dimension (ADR-022).</li>
- *   <li>Selection: {@link LodSelector}, run again only when the camera moved
- *       8 blocks, meshes arrived or left, the store changed, or once a
- *       second; between runs each frame only culls the cached list against
+ *   <li>Selection: {@link LodSelector} with a screen-space criterion: a
+ *       section splits into the finer level when its voxels would exceed
+ *       {@link RenderSettings#voxelPixels()} pixels on screen (from the
+ *       window height and the field of view). Run again only when the camera
+ *       moved 8 blocks, meshes arrived or left, the store changed, the
+ *       detail changed, or once a second; between runs each frame only culls the cached list against
  *       the frustum. Section existence is cached (the store's listener keeps
  *       it exact). Missing meshes are built by {@link BinaryGreedyMesher} on
  *       two low-priority threads and uploaded on the render thread under a
@@ -88,7 +91,6 @@ public final class LodRenderer {
 
     private static final LodRenderer INSTANCE = new LodRenderer();
 
-    private static final double DETAIL = 4.0;
     private static final double MAX_DISTANCE = 4096;
     private static final float FOG_START = (float) MAX_DISTANCE * 0.6f;
     private static final float FOG_END = (float) MAX_DISTANCE;
@@ -139,7 +141,7 @@ public final class LodRenderer {
 
     private LodWorld world;
     private final AtomicInteger generation = new AtomicInteger();
-    private final LodSelector selector = new LodSelector(LodWorld.LEVELS, DETAIL);
+    private final LodSelector selector = new LodSelector(LodWorld.LEVELS, 4.0);
     private final Long2ObjectOpenHashMap<Resident> resident = new Long2ObjectOpenHashMap<>();
     private final LongOpenHashSet requested = new LongOpenHashSet();
     private final LongOpenHashSet stale = new LongOpenHashSet();
@@ -183,6 +185,7 @@ public final class LodRenderer {
         }
     };
     private boolean selectionDirty = true;
+    private double loggedDetail = 1e-9;
     private long selectionTime;
     private double selectedX;
     private double selectedY;
@@ -228,7 +231,7 @@ public final class LodRenderer {
     /** Whether LODs are drawn beyond the vanilla terrain (a LOD world is attached and rendering is on). */
     public static boolean drawsBeyondVanilla() {
         LodRenderer r = INSTANCE;
-        return r.world != null && r.initialized && !r.disabled && RenderToggle.enabled();
+        return r.world != null && r.initialized && !r.disabled && RenderSettings.enabled();
     }
 
     /** Distance where the LOD fog starts, in blocks. */
@@ -290,7 +293,7 @@ public final class LodRenderer {
     private void renderFrame(Camera camera, Matrix4f viewRotation, Matrix4f projection) {
         Minecraft mc = Minecraft.getInstance();
         ClientLevel level = mc.level;
-        if (level == null || !RenderToggle.enabled() || !init()) {
+        if (level == null || !RenderSettings.enabled() || !init()) {
             return;
         }
         LodWorld current = LodWorldProvider.current(mc, level);
@@ -311,6 +314,7 @@ public final class LodRenderer {
         double dx = cam.x - selectedX;
         double dy = cam.y - selectedY;
         double dz = cam.z - selectedZ;
+        updateDetail(mc, projection);
         if (selectionDirty || dx * dx + dy * dy + dz * dz > RESELECT_DISTANCE_SQ
                 || frameStart - selectionTime > RESELECT_NANOS) {
             select(level, cam, frameStart);
@@ -360,6 +364,30 @@ public final class LodRenderer {
         }
     }
 
+    /**
+     * Screen-space level of detail: a section of S blocks at distance D
+     * covers about {@code S * focal / D} pixels, so its 32 voxels stay under
+     * {@code voxelPixels} each while {@code D > S * focal / (32 * voxelPixels)}.
+     */
+    private void updateDetail(Minecraft mc, Matrix4f projection) {
+        float focal = mc.getWindow().getHeight() * Math.abs(projection.m11()) / 2;
+        if (!Float.isFinite(focal) || focal <= 0) {
+            return; // degenerate projection (seen on the first frame): keep the last detail
+        }
+        double detail = Math.max(1, focal / (LodSection.SIZE * RenderSettings.voxelPixels()));
+        double current = selector.detail();
+        if (Math.abs(detail - current) > current * 0.02) {
+            selector.setDetail(detail);
+            selectionDirty = true;
+            if (Math.abs(detail - loggedDetail) > loggedDetail * 0.1) {
+                loggedDetail = detail;
+                Farfield.LOG.info("LOD detail: {} px per voxel, focal {} px (window height {}, projection m11 {}),"
+                                + " sections split within {} section sizes", RenderSettings.voxelPixels(), focal,
+                        mc.getWindow().getHeight(), projection.m11(), String.format("%.1f", detail));
+            }
+        }
+    }
+
     private void select(ClientLevel level, Vec3 cam, long now) {
         selectionTime = now;
         selectedX = cam.x;
@@ -397,10 +425,10 @@ public final class LodRenderer {
         nextStats = System.nanoTime() + 30_000_000_000L;
         Farfield.LOG.info("LOD renderer: {} sections drawn, {} resident, {} MB of {} MB quads used, {} meshing,"
                         + " {} meshes uploaded and {} freed, {} selections since last line; per frame {} us on the"
-                        + " render thread and {} us on the GPU, over {} frames", count, resident.size(),
+                        + " render thread and {} us on the GPU, over {} frames; detail {}", count, resident.size(),
                 arena.used() * 8 >> 20, arena.capacity() * 8 >> 20, requested.size(), meshesUploaded, meshesEvicted,
                 selections, frameNanos / 1000 / Math.max(1, timedFrames), gpuNanos / 1000 / Math.max(1, gpuFrames),
-                timedFrames);
+                timedFrames, String.format("%.1f", selector.detail()));
         frameNanos = 0;
         timedFrames = 0;
         gpuNanos = 0;

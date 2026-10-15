@@ -140,7 +140,11 @@ choice, an ADR.
   installs (NeoForge pack and Fabric with Sodium); leaves (judge them with
   texture colors first, then cutout or darkening if still odd); the water
   side faces vanilla draws at its last chunks (a thin stepped line now that
-  the fog is gone); judge ADR-020
+  the fog is gone); judge ADR-020. After the user's Fabric pack pass
+  (coarse middle distance, a hole under a high player): screen-space level
+  of detail, 4 px per voxel by default (ADR-023), and the LOD discard
+  limited vertically like Sodium, both checked in the Fabric dev client
+  with Sodium
 - [ ] E.6 Client mode (ADR-022): a client with Farfield on a server
   without it builds and renders LODs from the chunks it receives, stored
   per remote world; command to force or rename the world identity.

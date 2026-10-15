@@ -2,7 +2,8 @@ package io.lakio.farfield.server;
 
 import com.mojang.brigadier.CommandDispatcher;
 import io.lakio.farfield.Farfield;
-import io.lakio.farfield.lod.RenderToggle;
+import io.lakio.farfield.lod.RenderSettings;
+import com.mojang.brigadier.arguments.FloatArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.commands.CommandSourceStack;
@@ -36,15 +37,36 @@ public final class FarfieldCommands {
                         .then(Commands.literal("status").executes(FarfieldCommands::status)))
                 .then(Commands.literal("render")
                         .then(Commands.literal("on").executes(c -> render(c, true)))
-                        .then(Commands.literal("off").executes(c -> render(c, false)))));
+                        .then(Commands.literal("off").executes(c -> render(c, false))))
+                .then(Commands.literal("detail")
+                        .executes(FarfieldCommands::showDetail)
+                        .then(Commands.argument("pixels", FloatArgumentType.floatArg(
+                                        RenderSettings.MIN_VOXEL_PIXELS, RenderSettings.MAX_VOXEL_PIXELS))
+                                .executes(c -> detail(c, FloatArgumentType.getFloat(c, "pixels"))))));
     }
 
     /** Single player: switches LOD drawing on the client of the same process, to compare frame rates. */
     private static int render(CommandContext<CommandSourceStack> c, boolean on) {
-        RenderToggle.set(on);
+        RenderSettings.set(on);
         Farfield.LOG.info("LOD rendering switched {} by command", on ? "on" : "off");
         c.getSource().sendSuccess(() -> Component.literal("LOD rendering " + (on ? "on" : "off")
                 + " (single player only: it acts on this game's own client)."), false);
+        return 1;
+    }
+
+    /** Single player: the largest on-screen size of an LOD voxel before the finer level takes over. */
+    private static int detail(CommandContext<CommandSourceStack> c, float pixels) {
+        RenderSettings.setVoxelPixels(pixels);
+        Farfield.LOG.info("LOD detail set to {} px per voxel by command", RenderSettings.voxelPixels());
+        c.getSource().sendSuccess(() -> Component.literal("LOD detail: " + RenderSettings.voxelPixels()
+                + " px per voxel (lower is finer; default " + RenderSettings.DEFAULT_VOXEL_PIXELS
+                + "; single player only)."), false);
+        return 1;
+    }
+
+    private static int showDetail(CommandContext<CommandSourceStack> c) {
+        c.getSource().sendSuccess(() -> Component.literal("LOD detail: " + RenderSettings.voxelPixels()
+                + " px per voxel (lower is finer; default " + RenderSettings.DEFAULT_VOXEL_PIXELS + ")."), false);
         return 1;
     }
 
