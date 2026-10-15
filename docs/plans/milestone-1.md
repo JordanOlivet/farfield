@@ -142,11 +142,14 @@ choice, an ADR.
   side faces vanilla draws at its last chunks (a thin stepped line now that
   the fog is gone); judge ADR-020. After the user's Fabric pack pass
   (coarse middle distance, a hole under a high player): screen-space level
-  of detail, 4 px per voxel by default (ADR-023), and the LOD discard
-  limited vertically like Sodium, both checked in the Fabric dev client
-  with Sodium
+  of detail, 4 px per voxel by default (ADR-023, then 8 px by ADR-024),
+  and the LOD discard limited vertically like Sodium, both checked in the
+  Fabric dev client with Sodium; `/farfield debug levels` colors the levels
 - [ ] E.6 Client mode (ADR-022): a client with Farfield on a server
   without it builds and renders LODs from the chunks it receives, stored
   per remote world; command to force or rename the world identity.
   Checked with the dev client on a vanilla 1.21.1 server jar, then on a
   real server
+- [ ] E.8 In-game settings screen (client): level of detail in pixels per
+  voxel (ADR-024, default 8), LOD drawing on and off, level colors; saved
+  in the client config. The `/farfield` commands stay

@@ -448,3 +448,15 @@ that this be designed from the start.
 - The vanilla hand-off discards LOD fragments only where vanilla draws:
   within the render distance horizontally and vertically (Sodium culls
   sections farther than the render distance on either axis).
+
+## ADR-024 — Default level of detail: 8 px per voxel
+
+**Date**: 2026-10-15 · **Status**: accepted
+
+Amends ADR-023. The default target is 8 px per voxel instead of 4. The
+user compared both in the Fabric pack with the level colors: 4 px is very
+good, 8 px is fine, and 8 px costs about a third of the memory and less
+than half the render-thread time (Fabric dev client, 4K, over the lake:
+62 MB of quads and 0.29 ms against 203 MB and 0.80 ms). Players choose the
+detail in the in-game settings screen once it exists (plan item E.8); the
+`/farfield detail <px>` command stays.

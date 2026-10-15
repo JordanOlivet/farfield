@@ -11,7 +11,7 @@ package io.lakio.farfield.lod;
 public final class RenderSettings {
 
     /** Default target size of an LOD voxel on screen, in pixels, where a level hands over to the next. */
-    public static final float DEFAULT_VOXEL_PIXELS = 4f;
+    public static final float DEFAULT_VOXEL_PIXELS = 8f;
     public static final float MIN_VOXEL_PIXELS = 1f;
     public static final float MAX_VOXEL_PIXELS = 32f;
 
