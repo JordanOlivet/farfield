@@ -460,3 +460,31 @@ than half the render-thread time (Fabric dev client, 4K, over the lake:
 62 MB of quads and 0.29 ms against 203 MB and 0.80 ms). Players choose the
 detail in the in-game settings screen once it exists (plan item E.8); the
 `/farfield detail <px>` command stays.
+
+## ADR-025 — Textured LOD faces by distance
+
+**Date**: 2026-10-15 · **Status**: accepted
+
+Implements the near half of ADR-010.
+
+- Each block state's faces are baked into 16x16 tiles from the model's
+  quads (positions and UVs from the vertex data, layers in drawing order),
+  as an untinted tile and a biome-tinted tile, in one sRGB atlas with five
+  mip levels built per tile (nearest filtering, no bleeding between tiles)
+  and identical tiles stored once. The textured color is `untinted +
+  tinted * biome tint`; the far mean color is the mean of the same tiles,
+  so the fade between them shows no step.
+- Textures repeat once per block at every LOD level and fade into the mean
+  color over the last quarter of a distance in blocks, by default 512, set
+  with `/farfield textures <0..4096>` (0: off) and later in the settings
+  screen (E.8). Distance rather than LOD level: what decides whether a
+  texture shows is its size on screen, and beyond about 500 blocks a block
+  covers two or three pixels on a 4K screen, so the mips already reduce the
+  texture to its mean.
+- Measured in the Fabric dev client with Sodium (4K, 1,219 sections):
+  2.05 ms GPU without textures, 2.10 at 128 blocks, 2.13 at 512, 2.11 at
+  2,048. The distance is a matter of look, not of cost, on this hardware.
+- Opaque materials with holes (leaves) have their holes filled with their
+  own color at 45 % brightness, as vanilla's fast leaves: textured cubes
+  near, darker foliage far. Translucent materials keep their texture's
+  alpha.

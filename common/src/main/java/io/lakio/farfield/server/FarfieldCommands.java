@@ -43,11 +43,31 @@ public final class FarfieldCommands {
                         .then(Commands.argument("pixels", FloatArgumentType.floatArg(
                                         RenderSettings.MIN_VOXEL_PIXELS, RenderSettings.MAX_VOXEL_PIXELS))
                                 .executes(c -> detail(c, FloatArgumentType.getFloat(c, "pixels")))))
+                .then(Commands.literal("textures")
+                        .executes(FarfieldCommands::showTextures)
+                        .then(Commands.argument("blocks", IntegerArgumentType.integer(0,
+                                        RenderSettings.MAX_TEXTURE_DISTANCE))
+                                .executes(c -> textures(c, IntegerArgumentType.getInteger(c, "blocks")))))
                 .then(Commands.literal("debug")
                         .then(Commands.literal("levels")
                                 .executes(c -> debugLevels(c, !RenderSettings.debugLevels()))
                                 .then(Commands.literal("on").executes(c -> debugLevels(c, true)))
                                 .then(Commands.literal("off").executes(c -> debugLevels(c, false))))));
+    }
+
+    /** Single player: the distance up to which LOD faces show their textures (0: off). */
+    private static int textures(CommandContext<CommandSourceStack> c, int blocks) {
+        RenderSettings.setTextureDistance(blocks);
+        Farfield.LOG.info("LOD texture distance set to {} blocks by command", RenderSettings.textureDistance());
+        return showTextures(c);
+    }
+
+    private static int showTextures(CommandContext<CommandSourceStack> c) {
+        int blocks = RenderSettings.textureDistance();
+        c.getSource().sendSuccess(() -> Component.literal(blocks == 0 ? "LOD textures off."
+                : "LOD textures up to " + blocks + " blocks, fading over the last quarter (default "
+                + RenderSettings.DEFAULT_TEXTURE_DISTANCE + "; 0 turns them off; single player only)."), false);
+        return 1;
     }
 
     /** Single player: tints LOD faces by level, to see where each level hands over. */

@@ -67,9 +67,12 @@ import static org.lwjgl.opengl.GL46C.*;
  *   <li>Steady frames allocate nothing (primitive collections, reused
  *       matrices and buffers), so they add no garbage-collection pauses.</li>
  *   <li>GPU: quads in one storage buffer (first-fit ranges, grown on
- *       demand), one 32-byte record per resident section, averaged texture
- *       colors per block state and face ({@link MaterialColors}), tints per
- *       biome ({@link BiomeTints}). Two {@code glMultiDrawArraysIndirect}
+ *       demand), one 32-byte record per resident section, baked face
+ *       textures and their mean colors per block state and face
+ *       ({@link MaterialColors}, {@link FaceTextures}), tints per biome
+ *       ({@link BiomeTints}). Textures show up to
+ *       {@link RenderSettings#textureDistance()} and fade into the mean
+ *       colors over its last quarter. Two {@code glMultiDrawArraysIndirect}
  *       per frame: opaque quads, then translucent ones (water, glass, ice)
  *       blended with their texture coverage, without depth writes; each
  *       section stores its opaque quads first. Vertex pulling in
@@ -120,7 +123,12 @@ public final class LodRenderer {
     private GlBuffer indirect;
     private int vao;
     private RangeAllocator arena;
-    private final MaterialColors colors = new MaterialColors();
+    /** Texture unit of the face atlas; the game tracks units 0 to 11 and uses the low ones. */
+    private static final int ATLAS_UNIT = 10;
+
+    private final FaceTextures faceTextures = new FaceTextures();
+    private final MaterialColors colors = new MaterialColors(faceTextures);
+    private int atlas;
     private final BiomeTints tints = new BiomeTints();
     private final IntPredicate tintedMaterials = colors::tinted;
     /** Changes on every resource reload: the colors are built again. */
@@ -136,6 +144,9 @@ public final class LodRenderer {
     private int uFog;
     private int uTranslucent;
     private int uDebugLevels;
+    private int uAtlas;
+    private int uAtlasSize;
+    private int uTextureEnd;
     private final int[] timerQueries = new int[TIMER_SLOTS * 2];
     private final boolean[] timerPending = new boolean[TIMER_SLOTS];
     private int timerSlot;
@@ -279,6 +290,9 @@ public final class LodRenderer {
         uFog = program.uniform("u_fog");
         uTranslucent = program.uniform("u_translucent");
         uDebugLevels = program.uniform("u_debugLevels");
+        uAtlas = program.uniform("u_atlas");
+        uAtlasSize = program.uniform("u_atlasSize");
+        uTextureEnd = program.uniform("u_textureEnd");
         glGenQueries(timerQueries);
         quads = new GlBuffer(INITIAL_QUADS * 8);
         arena = new RangeAllocator(INITIAL_QUADS);
@@ -697,7 +711,7 @@ public final class LodRenderer {
                 return;
             }
         }
-        int first = colors.update(world.blockStates(), tints, plains);
+        int first = colors.update(world.blockStates(), world.materials(), tints, plains);
         if (first >= 0) {
             int stride = MaterialColors.STRIDE;
             long needed = (long) colors.count() * stride * 4;
@@ -707,6 +721,7 @@ public final class LodRenderer {
             colorBuffer.upload((long) first * stride * 4,
                     java.util.Arrays.copyOfRange(colors.colors(), first * stride, colors.count() * stride));
         }
+        atlas = faceTextures.upload();
         if (tints.update(world.biomes(), biomes, plains)) {
             long needed = (long) tints.length() * 4;
             if (needed > biomeBuffer.size()) {
@@ -789,6 +804,13 @@ public final class LodRenderer {
         glUniform2f(uFog, FOG_START, FOG_END);
         glUniform1i(uTranslucent, 0);
         glUniform1i(uDebugLevels, RenderSettings.debugLevels() ? 1 : 0);
+        glUniform1i(uAtlas, ATLAS_UNIT);
+        glUniform2f(uAtlasSize, faceTextures.width(), Math.max(1, faceTextures.height()));
+        glUniform1f(uTextureEnd, atlas == 0 ? 0 : RenderSettings.textureDistance());
+        int previousUnit = GlStateManager._getActiveTexture();
+        GlStateManager._activeTexture(GL_TEXTURE0 + ATLAS_UNIT);
+        GlStateManager._bindTexture(atlas);
+        GlStateManager._activeTexture(previousUnit);
 
         GlStateManager._glBindVertexArray(vao);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, quads.id());
