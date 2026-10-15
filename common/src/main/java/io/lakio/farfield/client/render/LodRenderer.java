@@ -813,7 +813,9 @@ public final class LodRenderer {
         glUniform1i(uDebugLevels, RenderSettings.debugLevels() ? 1 : 0);
         glUniform1i(uAtlas, ATLAS_UNIT);
         glUniform2f(uAtlasSize, faceTextures.width(), Math.max(1, faceTextures.height()));
-        glUniform1f(uTextureEnd, atlas == 0 ? 0 : RenderSettings.textureDistance());
+        int textureDistance = RenderSettings.textureDistance();
+        glUniform1f(uTextureEnd, atlas == 0 ? 0
+                : textureDistance == RenderSettings.ALL_DISTANCES ? Float.MAX_VALUE : textureDistance);
         int previousUnit = GlStateManager._getActiveTexture();
         GlStateManager._activeTexture(GL_TEXTURE0 + ATLAS_UNIT);
         GlStateManager._bindTexture(atlas);

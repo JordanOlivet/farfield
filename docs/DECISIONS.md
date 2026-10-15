@@ -488,3 +488,14 @@ Implements the near half of ADR-010.
   own color at 45 % brightness, as vanilla's fast leaves: textured cubes
   near, darker foliage far. Translucent materials keep their texture's
   alpha.
+
+## ADR-026 — Textures on every LOD by default
+
+**Date**: 2026-10-15 · **Status**: accepted
+
+Amends ADR-025. The default texture distance is "all": every LOD face
+shows its texture, whatever its distance (the mips reduce far textures to
+their mean anyway). The measured GPU cost of textures was within noise
+(2.05 ms without, 2.10 to 2.13 ms with). `/farfield textures all|<blocks>`
+(0: off) stays for cases where it hurts, and moves into the settings
+screen (E.8).

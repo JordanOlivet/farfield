@@ -45,6 +45,7 @@ public final class FarfieldCommands {
                                 .executes(c -> detail(c, FloatArgumentType.getFloat(c, "pixels")))))
                 .then(Commands.literal("textures")
                         .executes(FarfieldCommands::showTextures)
+                        .then(Commands.literal("all").executes(c -> textures(c, RenderSettings.ALL_DISTANCES)))
                         .then(Commands.argument("blocks", IntegerArgumentType.integer(0,
                                         RenderSettings.MAX_TEXTURE_DISTANCE))
                                 .executes(c -> textures(c, IntegerArgumentType.getInteger(c, "blocks")))))
@@ -58,15 +59,19 @@ public final class FarfieldCommands {
     /** Single player: the distance up to which LOD faces show their textures (0: off). */
     private static int textures(CommandContext<CommandSourceStack> c, int blocks) {
         RenderSettings.setTextureDistance(blocks);
-        Farfield.LOG.info("LOD texture distance set to {} blocks by command", RenderSettings.textureDistance());
+        Farfield.LOG.info("LOD texture distance set to {} by command",
+                RenderSettings.textureDistance() == RenderSettings.ALL_DISTANCES ? "all LODs"
+                        : RenderSettings.textureDistance() + " blocks");
         return showTextures(c);
     }
 
     private static int showTextures(CommandContext<CommandSourceStack> c) {
         int blocks = RenderSettings.textureDistance();
-        c.getSource().sendSuccess(() -> Component.literal(blocks == 0 ? "LOD textures off."
-                : "LOD textures up to " + blocks + " blocks, fading over the last quarter (default "
-                + RenderSettings.DEFAULT_TEXTURE_DISTANCE + "; 0 turns them off; single player only)."), false);
+        String what = blocks == 0 ? "LOD textures off"
+                : blocks == RenderSettings.ALL_DISTANCES ? "LOD textures on every LOD"
+                : "LOD textures up to " + blocks + " blocks, fading over the last quarter";
+        c.getSource().sendSuccess(() -> Component.literal(what
+                + " (default all; /farfield textures all|<blocks>, 0 turns them off; single player only)."), false);
         return 1;
     }
 
