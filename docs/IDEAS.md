@@ -1,0 +1,1 @@
+- Start loading LODs from the player position in a circle pattern when entering the world/dimension
