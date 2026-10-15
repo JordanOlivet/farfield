@@ -125,6 +125,8 @@ public final class LodRenderer {
     private RangeAllocator arena;
     /** Texture unit of the face atlas; the game tracks units 0 to 11 and uses the low ones. */
     private static final int ATLAS_UNIT = 10;
+    /** Texture unit of vanilla's lightmap for the LOD shader. */
+    private static final int LIGHTMAP_UNIT = 11;
 
     private final FaceTextures faceTextures = new FaceTextures();
     private final MaterialColors colors = new MaterialColors(faceTextures);
@@ -139,7 +141,7 @@ public final class LodRenderer {
     private int uCameraFrac;
     private int uDepthRange;
     private int uVanillaRadius;
-    private int uBrightness;
+    private int uLightmap;
     private int uFogColor;
     private int uFog;
     private int uTranslucent;
@@ -286,7 +288,7 @@ public final class LodRenderer {
         uCameraFrac = program.uniform("u_cameraFrac");
         uDepthRange = program.uniform("u_depthRange");
         uVanillaRadius = program.uniform("u_vanillaRadius");
-        uBrightness = program.uniform("u_brightness");
+        uLightmap = program.uniform("u_lightmap");
         uFogColor = program.uniform("u_fogColor");
         uFog = program.uniform("u_fog");
         uTranslucent = program.uniform("u_translucent");
@@ -372,7 +374,7 @@ public final class LodRenderer {
             evictUnused(frameStart);
         }
         if (count > 0) {
-            draw(opaqueDraws, translucentDraws, cam, viewRotation, projection, mc, skyBrightness(level, camera));
+            draw(opaqueDraws, translucentDraws, cam, viewRotation, projection, mc);
         }
         frameNanos += System.nanoTime() - frameStart;
         timedFrames++;
@@ -754,9 +756,14 @@ public final class LodRenderer {
         return frustum.testAab(x, y, z, x + size, y + size, z + size);
     }
 
-    /** Vanilla's sky brightness (time of day, rain, thunder); 1 in dimensions without sky light. */
-    private static float skyBrightness(ClientLevel level, Camera camera) {
-        return level.dimensionType().hasSkyLight() ? level.getSkyDarken(camera.getPartialTickTime()) : 1f;
+    /**
+     * Vanilla's lightmap texture (updated by the game renderer before the
+     * level renders): binding it as the light layer stores its id in shader
+     * texture slot 2, as the terrain shaders expect.
+     */
+    private static int lightmap(Minecraft mc) {
+        mc.gameRenderer.lightTexture().turnOnLightLayer();
+        return RenderSystem.getShaderTexture(2);
     }
 
     /** Reads the GPU timestamps of earlier frames that are ready, without waiting. */
@@ -775,7 +782,7 @@ public final class LodRenderer {
     }
 
     private void draw(int opaqueDraws, int translucentDraws, Vec3 cam, Matrix4f viewRotation, Matrix4f projection,
-                      Minecraft mc, float brightness) {
+                      Minecraft mc) {
         long opaqueBytes = (long) opaqueDraws * 16;
         long bytes = opaqueBytes + (long) translucentDraws * 16;
         if (bytes > indirect.size()) {
@@ -806,7 +813,7 @@ public final class LodRenderer {
         glUniform3f(uCameraFrac, (float) (cam.x - blockX), (float) (cam.y - blockY), (float) (cam.z - blockZ));
         glUniform2f(uDepthRange, 8f, (float) MAX_DISTANCE * 2);
         glUniform1f(uVanillaRadius, vanilla);
-        glUniform1f(uBrightness, brightness);
+        glUniform1i(uLightmap, LIGHTMAP_UNIT);
         glUniform4f(uFogColor, fogColor[0], fogColor[1], fogColor[2], 1f);
         glUniform2f(uFog, FOG_START, FOG_END);
         glUniform1i(uTranslucent, 0);
@@ -819,6 +826,8 @@ public final class LodRenderer {
         int previousUnit = GlStateManager._getActiveTexture();
         GlStateManager._activeTexture(GL_TEXTURE0 + ATLAS_UNIT);
         GlStateManager._bindTexture(atlas);
+        GlStateManager._activeTexture(GL_TEXTURE0 + LIGHTMAP_UNIT);
+        GlStateManager._bindTexture(lightmap(mc));
         GlStateManager._activeTexture(previousUnit);
 
         GlStateManager._glBindVertexArray(vao);

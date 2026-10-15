@@ -37,7 +37,6 @@ uniform mat4 u_viewProj;    // the game's projection * view rotation
 uniform ivec3 u_cameraBlock;
 uniform vec3 u_cameraFrac;
 uniform vec2 u_depthRange;  // near, far of the LOD depth mapping
-uniform float u_brightness; // sky brightness (day/night, weather), as vanilla sky light
 uniform bool u_translucent; // translucent pass (water, glass, ice and their skirts)
 
 out vec3 v_relative;
@@ -45,7 +44,8 @@ out vec2 v_texCoord;      // block units along the face's U and V axes: one tile
 flat out vec4 v_flat;     // mean face color, linear, before light; alpha: coverage
 flat out vec3 v_tint;     // biome tint of the tinted part, linear (0 when none)
 flat out uint v_tiles;    // atlas tiles of the face (see Colors)
-flat out float v_light;   // face shade times sky brightness
+flat out float v_light;   // face shade (vanilla's per-direction shade)
+flat out ivec2 v_lightmap; // (block light, sky light) in front of the face: vanilla lightmap texel
 flat out int v_level;
 
 const uint CORNER_U[6] = uint[](0u, 1u, 1u, 0u, 1u, 0u);
@@ -65,7 +65,7 @@ void main() {
     uint sizeU = ((lo >> 15) & 31u) + 1u;
     uint sizeV = ((lo >> 20) & 31u) + 1u;
     uint direction = (lo >> 25) & 7u;
-    uint material = (lo >> 28) | ((q.y & 0xFFFFu) << 4);
+    uint material = (lo >> 28) | ((q.y & 0x3FFFu) << 4);
 
     uint axis = direction >> 1;
     uint uAxis = (axis + 1u) % 3u;
@@ -113,13 +113,14 @@ void main() {
     uint tinted = colors[face + 1u];
     vec3 tint = vec3(0.0);
     if ((tinted & 0xFFFFFFu) != 0u) {
-        uint biomeSlot = (q.y >> 16) & 0xFFFu;
+        uint biomeSlot = (q.y >> 14) & 0x3FFu;
         tint = toLinear(unpackUnorm4x8(tints[biomeSlot * TINT_KINDS + (tinted >> 24)]).rgb);
         color += toLinear(unpackUnorm4x8(tinted).rgb) * tint;
     }
     v_flat = vec4(color, untinted.a);
     v_tint = tint;
     v_tiles = colors[face + 2u];
-    v_light = SHADE[direction] * u_brightness;
+    v_light = SHADE[direction];
+    v_lightmap = ivec2(int(q.y >> 28), int((q.y >> 24) & 15u));
     v_level = s.originLevel.w;
 }

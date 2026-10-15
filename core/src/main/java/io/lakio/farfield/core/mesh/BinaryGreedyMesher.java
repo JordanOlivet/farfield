@@ -26,10 +26,13 @@ import java.util.function.IntPredicate;
  *       rows while they contain the whole run.</li>
  * </ol>
  *
- * <p>Quads only merge faces of the same material, and for materials whose
- * color depends on the biome (grass, leaves, water) of the same biome cell
- * (4x4x4 voxels); those quads carry their biome. Light and ambient
- * occlusion are not part of the merge key yet.
+ * <p>Quads only merge faces of the same material and light, and for
+ * materials whose color depends on the biome (grass, leaves, water) of the
+ * same biome cell (4x4x4 voxels); those quads carry their biome. A face's
+ * light is the sky and block light of the voxel in front of it; in front of
+ * a section border, the face voxel's own light when it is translucent
+ * (water), else full sky light (open terrain at section tops). Ambient
+ * occlusion is not part of the merge key.
  *
  * <p>Not thread-safe: one instance per worker; all buffers are reused.
  */
@@ -55,6 +58,7 @@ public final class BinaryGreedyMesher {
 
     private int[] slotIndex = new int[16];
     private int[] slotBiome = new int[16];
+    private int[] slotLight = new int[16];
     private int[] slotRows = new int[16 * S];
     private boolean[] tintedIndex = new boolean[64];
     private boolean anyTinted;
@@ -339,11 +343,12 @@ public final class BinaryGreedyMesher {
             if (any == 0) {
                 continue;
             }
-            splitByMaterial(section, axis, depth, base);
+            splitByMaterial(section, axis, (direction & 1) != 0 ? 1 : -1, depth, base);
             for (int slot = 0; slot < slotCount; slot++) {
                 int index = slotIndex[slot];
                 int biome = !tintedIndex[index] ? -1 : splitBiomes ? slotBiome[slot] : sectionBiome;
-                greedy(slotRows, slot * S, direction, axis, depth, section.paletteEntry(index), biome, out);
+                greedy(slotRows, slot * S, direction, axis, depth, section.paletteEntry(index), biome,
+                        slotLight[slot], out);
             }
         }
     }
@@ -352,7 +357,7 @@ public final class BinaryGreedyMesher {
      * Sorts the face bits of one plane into per-palette-index planes (slots);
      * tinted materials get one slot per biome when the section's cells differ.
      */
-    private void splitByMaterial(LodSection section, int axis, int depth, int base) {
+    private void splitByMaterial(LodSection section, int axis, int depthStep, int depth, int base) {
         slotCount = 0;
         int lastIndex = -1;
         int lastSlot = -1;
@@ -383,19 +388,20 @@ public final class BinaryGreedyMesher {
                 }
                 int index = section.paletteIndex(x, y, z);
                 int biome = splitBiomes && tintedIndex[index] ? section.biome(x >> 2, y >> 2, z >> 2) : -1;
+                int light = light(section, x, y, z, index, axis, depthStep);
                 int slot;
-                if (index == lastIndex && slotBiome[lastSlot] == biome) {
+                if (index == lastIndex && slotBiome[lastSlot] == biome && slotLight[lastSlot] == light) {
                     slot = lastSlot;
                 } else {
                     slot = -1;
                     for (int s = 0; s < slotCount; s++) {
-                        if (slotIndex[s] == index && slotBiome[s] == biome) {
+                        if (slotIndex[s] == index && slotBiome[s] == biome && slotLight[s] == light) {
                             slot = s;
                             break;
                         }
                     }
                     if (slot < 0) {
-                        slot = newSlot(index, biome);
+                        slot = newSlot(index, biome, light);
                     }
                     lastIndex = index;
                     lastSlot = slot;
@@ -405,22 +411,43 @@ public final class BinaryGreedyMesher {
         }
     }
 
-    private int newSlot(int index, int biome) {
+    /** Sky light << 4 | block light in front of a face (see the class comment). */
+    private int light(LodSection section, int x, int y, int z, int index, int axis, int step) {
+        int nx = x;
+        int ny = y;
+        int nz = z;
+        switch (axis) {
+            case 0 -> nx += step;
+            case 1 -> ny += step;
+            default -> nz += step;
+        }
+        if (nx >= 0 && ny >= 0 && nz >= 0 && nx < S && ny < S && nz < S) {
+            return section.skyLight().get(nx, ny, nz) << 4 | section.blockLight().get(nx, ny, nz);
+        }
+        if (translucent[index] != 0) {
+            return section.skyLight().get(x, y, z) << 4 | section.blockLight().get(x, y, z);
+        }
+        return 15 << 4;
+    }
+
+    private int newSlot(int index, int biome, int light) {
         if (slotCount == slotIndex.length) {
             slotIndex = Arrays.copyOf(slotIndex, slotCount * 2);
             slotBiome = Arrays.copyOf(slotBiome, slotCount * 2);
+            slotLight = Arrays.copyOf(slotLight, slotCount * 2);
             slotRows = Arrays.copyOf(slotRows, slotCount * 2 * S);
         }
         int slot = slotCount++;
         slotIndex[slot] = index;
         slotBiome[slot] = biome;
+        slotLight[slot] = light;
         Arrays.fill(slotRows, slot * S, slot * S + S, 0);
         return slot;
     }
 
     /** Greedy merge of one 32x32 plane (rows by U, bits by V), consuming it. */
     private void greedy(int[] rows, int off, int direction, int axis, int depth, int material, int biome,
-                        MeshBuffer out) {
+                        int light, MeshBuffer out) {
         for (int u = 0; u < S; u++) {
             int row = rows[off + u];
             while (row != 0) {
@@ -435,9 +462,9 @@ public final class BinaryGreedyMesher {
                 }
                 facesEmitted += (long) width * height;
                 long quad = switch (axis) {
-                    case 0 -> Quad.pack(depth, u, v, height, width, direction, material, biome);
-                    case 1 -> Quad.pack(v, depth, u, height, width, direction, material, biome);
-                    default -> Quad.pack(u, v, depth, height, width, direction, material, biome);
+                    case 0 -> Quad.pack(depth, u, v, height, width, direction, material, biome, light >> 4, light & 15);
+                    case 1 -> Quad.pack(v, depth, u, height, width, direction, material, biome, light >> 4, light & 15);
+                    default -> Quad.pack(u, v, depth, height, width, direction, material, biome, light >> 4, light & 15);
                 };
                 out.add(direction, quad);
             }

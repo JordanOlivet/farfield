@@ -35,8 +35,14 @@ class BinaryGreedyMesherTest {
         assertEquals(1, Quad.sizeV(q));
         assertEquals(Quad.POS_Z, Quad.direction(q));
         assertEquals(Quad.MAX_MATERIAL, Quad.material(q));
-        assertEquals(0, q >>> 48);
         assertEquals(-1, Quad.biome(q));
+        assertEquals(15, Quad.skyLight(q));
+        assertEquals(0, Quad.blockLight(q));
+        q = Quad.pack(0, 0, 0, 1, 1, Quad.POS_Y, Quad.MAX_MATERIAL, Quad.MAX_BIOME, 7, 13);
+        assertEquals(Quad.MAX_MATERIAL, Quad.material(q));
+        assertEquals(Quad.MAX_BIOME, Quad.biome(q));
+        assertEquals(7, Quad.skyLight(q));
+        assertEquals(13, Quad.blockLight(q));
 
         q = Quad.pack(1, 2, 3, 4, 5, Quad.NEG_Y, 77, Quad.MAX_BIOME);
         assertEquals(Quad.MAX_BIOME, Quad.biome(q));
@@ -44,6 +50,31 @@ class BinaryGreedyMesherTest {
         assertEquals(Quad.NEG_Y, Quad.direction(q));
         assertEquals(0, Quad.biome(Quad.pack(0, 0, 0, 1, 1, 0, 1, 0)));
         assertEquals(-1, Quad.biome(Quad.pack(0, 0, 0, 1, 1, 0, 1, Quad.MAX_BIOME + 1)));
+    }
+
+    @Test
+    void quadsCarryTheLightInFrontOfTheirFaces() {
+        // A floor whose air above is dark on one half: the top splits by light.
+        LodSection section = new LodSection(0);
+        for (int z = 0; z < 32; z++) {
+            for (int x = 0; x < 32; x++) {
+                section.set(x, 0, z, 1);
+                section.skyLight().set(x, 1, z, x < 16 ? 15 : 4);
+                section.blockLight().set(x, 1, z, x < 16 ? 0 : 9);
+            }
+        }
+        section.compact();
+        mesher.mesh(section, CLASSES, null, out);
+        assertEquals(2, out.count(Quad.POS_Y));
+        for (int i = 0; i < 2; i++) {
+            long q = out.quads(Quad.POS_Y)[i];
+            boolean lit = Quad.x(q) < 16;
+            assertEquals(lit ? 15 : 4, Quad.skyLight(q));
+            assertEquals(lit ? 0 : 9, Quad.blockLight(q));
+        }
+        // The bottom face lies on the section border: opaque, so full sky light.
+        assertEquals(1, out.count(Quad.NEG_Y));
+        assertEquals(15, Quad.skyLight(out.quads(Quad.NEG_Y)[0]));
     }
 
     @Test

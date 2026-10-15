@@ -6,6 +6,7 @@ flat in vec4 v_flat;
 flat in vec3 v_tint;
 flat in uint v_tiles;
 flat in float v_light;
+flat in ivec2 v_lightmap;
 flat in int v_level;
 
 uniform float u_vanillaRadius; // vanilla terrain is drawn within this horizontal and vertical distance
@@ -16,6 +17,7 @@ uniform bool u_debugLevels;    // tint faces by LOD level (/farfield debug level
 uniform sampler2D u_atlas;     // FaceTextures: 16x16 sRGB tiles, 128 per row, 5 mip levels
 uniform vec2 u_atlasSize;      // in pixels
 uniform float u_textureEnd;    // textures fade into the mean color up to this distance; 0: off
+uniform sampler2D u_lightmap;  // vanilla's lightmap: x block light, y sky light (day, gamma, effects)
 
 out vec4 fragColor;
 
@@ -57,7 +59,8 @@ void main() {
         color = mix(textured, color, fade);
         alpha = mix(base.a, alpha, fade);
     }
-    color = pow(min(color, vec3(1.0)), vec3(1.0 / 2.2)) * v_light;
+    // As vanilla's terrain: texture times shade times lightmap, in sRGB.
+    color = pow(min(color, vec3(1.0)), vec3(1.0 / 2.2)) * v_light * texelFetch(u_lightmap, v_lightmap, 0).rgb;
     if (u_debugLevels) {
         color = mix(color, LEVEL_COLORS[min(v_level, 4)], 0.65);
     }
