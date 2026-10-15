@@ -130,4 +130,24 @@ public final class BlockKeys {
         }
         return MaterialTable.pack(MaterialClassifier.AIR, MipBuilder.Shapes.SPARSE);
     }
+
+    /**
+     * The state whose look an LOD voxel of {@code state} takes: its fluid for
+     * the blocks {@link #resolve} turns into water (waterlogged partial
+     * blocks, seagrass, kelp), else the state itself.
+     */
+    public static BlockState lookOf(BlockState state) {
+        Block block = state.getBlock();
+        if (state.getFluidState().isEmpty() || block instanceof LiquidBlock || block instanceof LeavesBlock) {
+            return state;
+        }
+        try {
+            if (Block.isShapeFullBlock(state.getShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO))) {
+                return state;
+            }
+        } catch (RuntimeException e) {
+            return state;
+        }
+        return state.getFluidState().createLegacyBlock();
+    }
 }

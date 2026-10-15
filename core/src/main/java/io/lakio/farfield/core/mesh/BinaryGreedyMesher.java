@@ -4,6 +4,7 @@ import io.lakio.farfield.core.lod.LodSection;
 import io.lakio.farfield.core.util.Bits;
 
 import java.util.Arrays;
+import java.util.function.IntPredicate;
 
 /**
  * Meshes a {@link LodSection} into packed quads with binary greedy meshing:
@@ -22,7 +23,9 @@ import java.util.Arrays;
  *       rows while they contain the whole run.</li>
  * </ol>
  *
- * <p>Quads only merge faces of the same material; light and ambient
+ * <p>Quads only merge faces of the same material, and for materials whose
+ * color depends on the biome (grass, leaves, water) of the same biome cell
+ * (4x4x4 voxels); those quads carry their biome. Light and ambient
  * occlusion are not part of the merge key yet.
  *
  * <p>Not thread-safe: one instance per worker; all buffers are reused.
@@ -48,7 +51,14 @@ public final class BinaryGreedyMesher {
     private final int[] scratch = new int[S];
 
     private int[] slotIndex = new int[16];
+    private int[] slotBiome = new int[16];
     private int[] slotRows = new int[16 * S];
+    private boolean[] tintedIndex = new boolean[64];
+    private boolean anyTinted;
+    /** Tinted faces split by biome cell (the section's cells differ). */
+    private boolean splitBiomes;
+    /** The section's biome when all its cells share one. */
+    private int sectionBiome;
     private int slotCount;
 
     private long facesEmitted;
@@ -63,11 +73,23 @@ public final class BinaryGreedyMesher {
      *                       null, or a null entry, means no opaque neighbor
      */
     public void mesh(LodSection section, MaterialClassifier classifier, int[][] neighborOpaque, MeshBuffer out) {
+        mesh(section, classifier, null, neighborOpaque, out);
+    }
+
+    /**
+     * Meshes a section; the quads of the materials {@code tinted} accepts
+     * carry their biome.
+     *
+     * @param tinted materials whose color depends on the biome; null for none
+     */
+    public void mesh(LodSection section, MaterialClassifier classifier, IntPredicate tinted, int[][] neighborOpaque,
+                     MeshBuffer out) {
         out.clear();
         facesEmitted = 0;
         if (!classify(section, classifier)) {
             return;
         }
+        classifyTints(section, tinted);
         buildRows(section);
 
         for (int axis = 0; axis < 3; axis++) {
@@ -117,6 +139,21 @@ public final class BinaryGreedyMesher {
             }
         }
         return false;
+    }
+
+    private void classifyTints(LodSection section, IntPredicate tinted) {
+        int n = section.paletteSize();
+        if (tintedIndex.length < n) {
+            tintedIndex = new boolean[Math.max(n, tintedIndex.length * 2)];
+        }
+        anyTinted = false;
+        for (int i = 0; i < n; i++) {
+            boolean t = tinted != null && tinted.test(section.paletteEntry(i));
+            tintedIndex[i] = t;
+            anyTinted |= t;
+        }
+        splitBiomes = anyTinted && section.biomeCells() != null;
+        sectionBiome = section.uniformBiome();
     }
 
     private void buildRows(LodSection section) {
@@ -287,12 +324,17 @@ public final class BinaryGreedyMesher {
             }
             splitByMaterial(section, axis, depth, base);
             for (int slot = 0; slot < slotCount; slot++) {
-                greedy(slotRows, slot * S, direction, axis, depth, section.paletteEntry(slotIndex[slot]), out);
+                int index = slotIndex[slot];
+                int biome = !tintedIndex[index] ? -1 : splitBiomes ? slotBiome[slot] : sectionBiome;
+                greedy(slotRows, slot * S, direction, axis, depth, section.paletteEntry(index), biome, out);
             }
         }
     }
 
-    /** Sorts the face bits of one plane into per-palette-index planes (slots). */
+    /**
+     * Sorts the face bits of one plane into per-palette-index planes (slots);
+     * tinted materials get one slot per biome when the section's cells differ.
+     */
     private void splitByMaterial(LodSection section, int axis, int depth, int base) {
         slotCount = 0;
         int lastIndex = -1;
@@ -302,24 +344,41 @@ public final class BinaryGreedyMesher {
             while (row != 0) {
                 int v = Integer.numberOfTrailingZeros(row);
                 row &= row - 1;
-                int index = switch (axis) {
-                    case 0 -> section.paletteIndex(depth, u, v);
-                    case 1 -> section.paletteIndex(v, depth, u);
-                    default -> section.paletteIndex(u, v, depth);
-                };
+                int x;
+                int y;
+                int z;
+                switch (axis) {
+                    case 0 -> {
+                        x = depth;
+                        y = u;
+                        z = v;
+                    }
+                    case 1 -> {
+                        x = v;
+                        y = depth;
+                        z = u;
+                    }
+                    default -> {
+                        x = u;
+                        y = v;
+                        z = depth;
+                    }
+                }
+                int index = section.paletteIndex(x, y, z);
+                int biome = splitBiomes && tintedIndex[index] ? section.biome(x >> 2, y >> 2, z >> 2) : -1;
                 int slot;
-                if (index == lastIndex) {
+                if (index == lastIndex && slotBiome[lastSlot] == biome) {
                     slot = lastSlot;
                 } else {
                     slot = -1;
                     for (int s = 0; s < slotCount; s++) {
-                        if (slotIndex[s] == index) {
+                        if (slotIndex[s] == index && slotBiome[s] == biome) {
                             slot = s;
                             break;
                         }
                     }
                     if (slot < 0) {
-                        slot = newSlot(index);
+                        slot = newSlot(index, biome);
                     }
                     lastIndex = index;
                     lastSlot = slot;
@@ -329,19 +388,22 @@ public final class BinaryGreedyMesher {
         }
     }
 
-    private int newSlot(int index) {
+    private int newSlot(int index, int biome) {
         if (slotCount == slotIndex.length) {
             slotIndex = Arrays.copyOf(slotIndex, slotCount * 2);
+            slotBiome = Arrays.copyOf(slotBiome, slotCount * 2);
             slotRows = Arrays.copyOf(slotRows, slotCount * 2 * S);
         }
         int slot = slotCount++;
         slotIndex[slot] = index;
+        slotBiome[slot] = biome;
         Arrays.fill(slotRows, slot * S, slot * S + S, 0);
         return slot;
     }
 
     /** Greedy merge of one 32x32 plane (rows by U, bits by V), consuming it. */
-    private void greedy(int[] rows, int off, int direction, int axis, int depth, int material, MeshBuffer out) {
+    private void greedy(int[] rows, int off, int direction, int axis, int depth, int material, int biome,
+                        MeshBuffer out) {
         for (int u = 0; u < S; u++) {
             int row = rows[off + u];
             while (row != 0) {
@@ -356,9 +418,9 @@ public final class BinaryGreedyMesher {
                 }
                 facesEmitted += (long) width * height;
                 long quad = switch (axis) {
-                    case 0 -> Quad.pack(depth, u, v, height, width, direction, material);
-                    case 1 -> Quad.pack(v, depth, u, height, width, direction, material);
-                    default -> Quad.pack(u, v, depth, height, width, direction, material);
+                    case 0 -> Quad.pack(depth, u, v, height, width, direction, material, biome);
+                    case 1 -> Quad.pack(v, depth, u, height, width, direction, material, biome);
+                    default -> Quad.pack(u, v, depth, height, width, direction, material, biome);
                 };
                 out.add(direction, quad);
             }

@@ -23,6 +23,11 @@ import it.unimi.dsi.fastutil.objects.ObjectIterator;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.resources.model.BakedModel;
+import net.minecraft.core.Registry;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.biome.Biomes;
 import net.minecraft.world.phys.Vec3;
 import org.joml.FrustumIntersection;
 import org.joml.Matrix4f;
@@ -36,6 +41,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.IntPredicate;
 import java.util.function.LongConsumer;
 
 import static org.lwjgl.opengl.GL46C.*;
@@ -57,8 +63,9 @@ import static org.lwjgl.opengl.GL46C.*;
  *   <li>Steady frames allocate nothing (primitive collections, reused
  *       matrices and buffers), so they add no garbage-collection pauses.</li>
  *   <li>GPU: quads in one storage buffer (first-fit ranges, grown on
- *       demand), one 32-byte record per resident section, colors per block
- *       state; one {@code glMultiDrawArraysIndirect} per frame, vertex
+ *       demand), one 32-byte record per resident section, averaged texture
+ *       colors per block state and face ({@link MaterialColors}), tints per
+ *       biome ({@link BiomeTints}); one {@code glMultiDrawArraysIndirect} per frame, vertex
  *       pulling in {@code lod.vert}, back faces culled. GPU time is measured
  *       with timestamp queries and logged with the render-thread time.</li>
  *   <li>Hand-off: drawn after the sky and before the terrain, with its own
@@ -94,10 +101,16 @@ public final class LodRenderer {
     private GlBuffer quads;
     private GlBuffer sectionInfo;
     private GlBuffer colorBuffer;
+    private GlBuffer biomeBuffer;
     private GlBuffer indirect;
     private int vao;
     private RangeAllocator arena;
     private final MaterialColors colors = new MaterialColors();
+    private final BiomeTints tints = new BiomeTints();
+    private final IntPredicate tintedMaterials = colors::tinted;
+    /** Changes on every resource reload: the colors are built again. */
+    private BakedModel missingModel;
+    private ClientLevel colorLevel;
     private int uViewProj;
     private int uCameraBlock;
     private int uCameraFrac;
@@ -230,7 +243,8 @@ public final class LodRenderer {
         quads = new GlBuffer(INITIAL_QUADS * 8);
         arena = new RangeAllocator(INITIAL_QUADS);
         sectionInfo = new GlBuffer(4096L * SECTION_BYTES);
-        colorBuffer = new GlBuffer(4096L * 4);
+        colorBuffer = new GlBuffer(4096L * MaterialColors.STRIDE * 4);
+        biomeBuffer = new GlBuffer(256L * BiomeTints.KINDS * 4);
         indirect = new GlBuffer(1024L * 16);
         vao = glCreateVertexArrays();
         Farfield.LOG.info("LOD renderer ready on {}, OpenGL {} ({} MB of quads to start)", glGetString(GL_RENDERER),
@@ -256,7 +270,7 @@ public final class LodRenderer {
         readGpuTimers();
         applyRewrites();
         uploadMeshes();
-        uploadColors();
+        uploadColors(mc, level);
 
         Vec3 cam = camera.getPosition();
         double dx = cam.x - selectedX;
@@ -362,6 +376,8 @@ public final class LodRenderer {
         drawList.clear();
         done.clear();
         rewritten.clear();
+        colors.reset();
+        tints.reset();
         freeSlotCount = 0;
         slotCount = 0;
         selectionDirty = true;
@@ -393,7 +409,7 @@ public final class LodRenderer {
 
     private long[] mesh(LodWorld w, LodSection section) {
         MeshBuffer out = meshBuffer.get();
-        mesher.get().mesh(section, w.materials(), null, out);
+        mesher.get().mesh(section, w.materials(), tintedMaterials, null, out);
         long[] all = new long[out.total()];
         int n = 0;
         for (int d = 0; d < Quad.DIRECTIONS; d++) {
@@ -523,17 +539,47 @@ public final class LodRenderer {
         }
     }
 
-    private void uploadColors() {
-        int first = colors.update(world.blockStates());
-        if (first < 0) {
-            return;
+    /**
+     * Builds and uploads the colors of new block states and the biome tints.
+     * A resource reload or another level builds everything again, and meshes
+     * again what is resident (which materials depend on the biome may change).
+     */
+    private void uploadColors(Minecraft mc, ClientLevel level) {
+        BakedModel missing = mc.getModelManager().getMissingModel();
+        if (missing != missingModel || level != colorLevel) {
+            if (missingModel != null) {
+                stale.addAll(resident.keySet());
+            }
+            missingModel = missing;
+            colorLevel = level;
+            colors.reset();
+            tints.reset();
         }
-        long needed = (long) colors.count() * 4;
-        if (needed > colorBuffer.size()) {
-            colorBuffer.grow(Math.max(needed, colorBuffer.size() * 2), (long) first * 4);
+        Registry<Biome> biomes = level.registryAccess().registryOrThrow(Registries.BIOME);
+        Biome plains = biomes.get(Biomes.PLAINS);
+        if (plains == null) {
+            plains = biomes.stream().findFirst().orElse(null);
+            if (plains == null) {
+                return;
+            }
         }
-        int[] all = colors.colors();
-        colorBuffer.upload((long) first * 4, java.util.Arrays.copyOfRange(all, first, colors.count()));
+        int first = colors.update(world.blockStates(), tints, plains);
+        if (first >= 0) {
+            int stride = MaterialColors.STRIDE;
+            long needed = (long) colors.count() * stride * 4;
+            if (needed > colorBuffer.size()) {
+                colorBuffer.grow(Math.max(needed, colorBuffer.size() * 2), (long) first * stride * 4);
+            }
+            colorBuffer.upload((long) first * stride * 4,
+                    java.util.Arrays.copyOfRange(colors.colors(), first * stride, colors.count() * stride));
+        }
+        if (tints.update(world.biomes(), biomes, plains)) {
+            long needed = (long) tints.length() * 4;
+            if (needed > biomeBuffer.size()) {
+                biomeBuffer.grow(Math.max(needed, biomeBuffer.size() * 2), 0);
+            }
+            biomeBuffer.upload(0, java.util.Arrays.copyOf(tints.table(), tints.length()));
+        }
     }
 
     private void updateFrustum(Matrix4f viewRotation, Matrix4f projection) {
@@ -609,6 +655,7 @@ public final class LodRenderer {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, quads.id());
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, sectionInfo.id());
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, colorBuffer.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, biomeBuffer.id());
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirect.id());
         RenderSystem.enableDepthTest();
         RenderSystem.depthFunc(GL_LEQUAL);

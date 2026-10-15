@@ -17,9 +17,20 @@ layout(std430, binding = 1) readonly buffer Sections {
     Section sections[];
 };
 
+// Per block-state id and face direction (MaterialColors): an untinted
+// color (alpha: coverage) and a biome-tinted color (alpha byte: tint kind),
+// ABGR8 in sRGB.
 layout(std430, binding = 2) readonly buffer Colors {
-    uint colors[]; // ABGR8 per block-state id
+    uint colors[];
 };
+
+// Per biome slot (biome id + 1, 0 for unknown) and tint kind (BiomeTints).
+layout(std430, binding = 3) readonly buffer BiomeTints {
+    uint tints[];
+};
+
+const uint COLOR_STRIDE = 12u;
+const uint TINT_KINDS = 8u;
 
 uniform mat4 u_viewProj;    // the game's projection * view rotation
 uniform ivec3 u_cameraBlock;
@@ -33,6 +44,10 @@ out vec3 v_relative;
 const uint CORNER_U[6] = uint[](0u, 1u, 1u, 0u, 1u, 0u);
 const uint CORNER_V[6] = uint[](0u, 0u, 1u, 0u, 1u, 1u);
 const float SHADE[6] = float[](0.6, 0.6, 0.5, 1.0, 0.8, 0.8);
+
+vec3 toLinear(vec3 c) {
+    return pow(c, vec3(2.2));
+}
 
 void main() {
     Section s = sections[gl_BaseInstance];
@@ -68,6 +83,14 @@ void main() {
     float f = u_depthRange.y;
     gl_Position.z = gl_Position.w * (f + n) / (f - n) - 2.0 * f * n / (f - n);
 
-    vec4 color = unpackUnorm4x8(colors[material]);
-    v_color = vec4(color.rgb * SHADE[direction] * u_brightness, 1.0);
+    uint face = material * COLOR_STRIDE + direction * 2u;
+    vec3 color = toLinear(unpackUnorm4x8(colors[face]).rgb);
+    uint tinted = colors[face + 1u];
+    if ((tinted & 0xFFFFFFu) != 0u) {
+        uint biomeSlot = (q.y >> 16) & 0xFFFu;
+        vec3 tint = toLinear(unpackUnorm4x8(tints[biomeSlot * TINT_KINDS + (tinted >> 24)]).rgb);
+        color += toLinear(unpackUnorm4x8(tinted).rgb) * tint;
+    }
+    color = pow(min(color, vec3(1.0)), vec3(1.0 / 2.2));
+    v_color = vec4(color * SHADE[direction] * u_brightness, 1.0);
 }

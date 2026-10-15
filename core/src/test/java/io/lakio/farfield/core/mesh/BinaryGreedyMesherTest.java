@@ -7,6 +7,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.SplittableRandom;
+import java.util.function.IntPredicate;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -35,6 +36,81 @@ class BinaryGreedyMesherTest {
         assertEquals(Quad.POS_Z, Quad.direction(q));
         assertEquals(Quad.MAX_MATERIAL, Quad.material(q));
         assertEquals(0, q >>> 48);
+        assertEquals(-1, Quad.biome(q));
+
+        q = Quad.pack(1, 2, 3, 4, 5, Quad.NEG_Y, 77, Quad.MAX_BIOME);
+        assertEquals(Quad.MAX_BIOME, Quad.biome(q));
+        assertEquals(77, Quad.material(q));
+        assertEquals(Quad.NEG_Y, Quad.direction(q));
+        assertEquals(0, Quad.biome(Quad.pack(0, 0, 0, 1, 1, 0, 1, 0)));
+        assertEquals(-1, Quad.biome(Quad.pack(0, 0, 0, 1, 1, 0, 1, Quad.MAX_BIOME + 1)));
+    }
+
+    @Test
+    void tintedQuadsSplitByBiomeCell() {
+        // Grass top layer over two biomes split at x = 16: the tinted top
+        // splits in two quads, the untinted stone below stays one.
+        LodSection section = new LodSection(0);
+        for (int z = 0; z < 32; z++) {
+            for (int x = 0; x < 32; x++) {
+                section.set(x, 0, z, 2);
+                section.set(x, 1, z, 3);
+            }
+        }
+        for (int cz = 0; cz < 8; cz++) {
+            for (int cy = 0; cy < 8; cy++) {
+                for (int cx = 0; cx < 8; cx++) {
+                    section.setBiome(cx, cy, cz, cx < 4 ? 5 : 6);
+                }
+            }
+        }
+        section.compact();
+        mesher.mesh(section, CLASSES, m -> m == 3, null, out);
+        assertEquals(2, out.count(Quad.POS_Y));
+        for (int i = 0; i < 2; i++) {
+            long q = out.quads(Quad.POS_Y)[i];
+            assertEquals(Quad.z(q) < 16 && Quad.x(q) < 16 ? 5 : 6, Quad.biome(q));
+        }
+        assertEquals(1, out.count(Quad.NEG_Y));
+        assertEquals(-1, Quad.biome(out.quads(Quad.NEG_Y)[0]));
+
+        // One biome for the whole section: tinted quads carry it and merge.
+        LodSection uniform = new LodSection(0);
+        for (int z = 0; z < 32; z++) {
+            for (int x = 0; x < 32; x++) {
+                uniform.set(x, 0, z, 3);
+            }
+        }
+        uniform.fillBiome(9);
+        mesher.mesh(uniform, CLASSES, m -> m == 3, null, out);
+        assertEquals(1, out.count(Quad.POS_Y));
+        assertEquals(9, Quad.biome(out.quads(Quad.POS_Y)[0]));
+    }
+
+    @Test
+    void tintedMatchesBruteForceOnRandomBiomes() {
+        SplittableRandom random = new SplittableRandom(17);
+        for (int round = 0; round < 30; round++) {
+            LodSection section = new LodSection(0);
+            for (int y = 0; y < 32; y++) {
+                for (int z = 0; z < 32; z++) {
+                    for (int x = 0; x < 32; x++) {
+                        int m = y < 8 + (x + z) % 9 ? 1 + random.nextInt(4) : y < 20 ? 10 + random.nextInt(2) : 0;
+                        section.set(x, y, z, random.nextDouble() < 0.1 ? 0 : m);
+                    }
+                }
+            }
+            int biomes = 1 + random.nextInt(4);
+            for (int cz = 0; cz < 8; cz++) {
+                for (int cy = 0; cy < 8; cy++) {
+                    for (int cx = 0; cx < 8; cx++) {
+                        section.setBiome(cx, cy, cz, random.nextInt(biomes));
+                    }
+                }
+            }
+            section.compact();
+            verify(section, null, m -> m % 2 == 0);
+        }
     }
 
     @Test
@@ -169,7 +245,12 @@ class BinaryGreedyMesherTest {
      * each, with the right material.
      */
     private void verify(LodSection section, int[][] neighbors) {
-        mesher.mesh(section, CLASSES, neighbors, out);
+        verify(section, neighbors, null);
+    }
+
+    /** Also checks each face's biome: its cell's for tinted materials, none otherwise. */
+    private void verify(LodSection section, int[][] neighbors, IntPredicate tinted) {
+        mesher.mesh(section, CLASSES, tinted, neighbors, out);
         Map<Long, Integer> covered = new HashMap<>();
         for (int d = 0; d < Quad.DIRECTIONS; d++) {
             for (int i = 0; i < out.count(d); i++) {
@@ -188,7 +269,9 @@ class BinaryGreedyMesherTest {
                         }
                         assertTrue(x < 32 && y < 32 && z < 32, "quad out of the section: " + Quad.toString(q));
                         long key = faceKey(x, y, z, d);
-                        assertNull(covered.put(key, Quad.material(q)), "face covered twice: " + Quad.toString(q));
+                        int biome = Quad.biome(q);
+                        assertNull(covered.put(key, Quad.material(q) | (biome + 1) << 20),
+                                "face covered twice: " + Quad.toString(q));
                     }
                 }
             }
@@ -221,7 +304,9 @@ class BinaryGreedyMesherTest {
                             if (got == null) {
                                 fail("missing face at " + x + "," + y + "," + z + " dir " + d);
                             }
-                            assertEquals(m, got.intValue());
+                            int biome = tinted != null && tinted.test(m) ? section.biome(x >> 2, y >> 2, z >> 2) : -1;
+                            assertEquals(m | (biome + 1) << 20, got.intValue(),
+                                    "material or biome at " + x + "," + y + "," + z + " dir " + d);
                         } else if (got != null) {
                             fail("hidden face drawn at " + x + "," + y + "," + z + " dir " + d);
                         }
