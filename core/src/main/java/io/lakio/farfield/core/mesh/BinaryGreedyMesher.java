@@ -43,13 +43,16 @@ public final class BinaryGreedyMesher {
 
     private int[] opaque = new int[64];
     private int[] translucent = new int[64];
+    private int[] partial = new int[64];
 
-    /** Opaque and translucent X rows, index {@code y * 32 + z}, bit x. */
+    /** Opaque, translucent and partial X rows, index {@code y * 32 + z}, bit x. */
     private final int[] rowsOpaque = new int[PLANE];
     private final int[] rowsTranslucent = new int[PLANE];
+    private final int[] rowsPartial = new int[PLANE];
     /** Columns of the current axis, index {@code u * 32 + v}, bit = depth. */
     private final int[] colOpaque = new int[PLANE];
     private final int[] colTranslucent = new int[PLANE];
+    private final int[] colPartial = new int[PLANE];
     /** Visible faces of the current direction, same layout as the columns. */
     private final int[] faces = new int[PLANE];
     /** Faces of the current direction per depth: index {@code depth * 32 + u}, bit v. */
@@ -112,7 +115,7 @@ public final class BinaryGreedyMesher {
                 int[] plus = neighborOpaque == null ? null : neighborOpaque[axis * 2 + 1];
                 int[] minusSolid = neighborSolid == null ? null : neighborSolid[axis * 2];
                 int[] plusSolid = neighborSolid == null ? null : neighborSolid[axis * 2 + 1];
-                if (cullFaces(sign == 1, minus, plus, minusSolid, plusSolid)) {
+                if (cullFaces(axis == 1, sign == 1, minus, plus, minusSolid, plusSolid)) {
                     buildPlanes();
                     mergePlanes(section, direction, out);
                 }
@@ -140,12 +143,14 @@ public final class BinaryGreedyMesher {
         if (opaque.length < n) {
             opaque = new int[Math.max(n, opaque.length * 2)];
             translucent = new int[opaque.length];
+            partial = new int[opaque.length];
         }
         boolean anyVisible = false;
         for (int i = 0; i < n; i++) {
             int c = classifier.classOf(section.paletteEntry(i));
             opaque[i] = c == MaterialClassifier.OPAQUE ? 1 : 0;
             translucent[i] = c == MaterialClassifier.TRANSLUCENT ? 1 : 0;
+            partial[i] = c == MaterialClassifier.PARTIAL ? 1 : 0;
             anyVisible |= c != MaterialClassifier.AIR;
         }
         if (!anyVisible) {
@@ -157,7 +162,7 @@ public final class BinaryGreedyMesher {
                 return true;
             }
             int i = section.uniformIndex(b);
-            if (opaque[i] != 0 || translucent[i] != 0) {
+            if (opaque[i] != 0 || translucent[i] != 0 || partial[i] != 0) {
                 return true;
             }
         }
@@ -182,6 +187,7 @@ public final class BinaryGreedyMesher {
     private void buildRows(LodSection section) {
         Arrays.fill(rowsOpaque, 0);
         Arrays.fill(rowsTranslucent, 0);
+        Arrays.fill(rowsPartial, 0);
         int bits = section.bits();
         int perLong = 64 / bits;
         long mask = (1L << bits) - 1;
@@ -193,7 +199,8 @@ public final class BinaryGreedyMesher {
                     long[] data = section.brickData(b);
                     if (data == null) {
                         int i = section.uniformIndex(b);
-                        int[] target = opaque[i] != 0 ? rowsOpaque : translucent[i] != 0 ? rowsTranslucent : null;
+                        int[] target = opaque[i] != 0 ? rowsOpaque : translucent[i] != 0 ? rowsTranslucent
+                                : partial[i] != 0 ? rowsPartial : null;
                         if (target == null) {
                             continue;
                         }
@@ -215,6 +222,7 @@ public final class BinaryGreedyMesher {
                         for (int lz = 0; lz < 8; lz++) {
                             int op = 0;
                             int tr = 0;
+                            int pa = 0;
                             for (int lx = 0; lx < 8; lx++) {
                                 if (left == 0) {
                                     current = data[++word];
@@ -225,9 +233,11 @@ public final class BinaryGreedyMesher {
                                 left--;
                                 op |= opaque[i] << lx;
                                 tr |= translucent[i] << lx;
+                                pa |= partial[i] << lx;
                             }
                             rowsOpaque[row + lz] |= op << xShift;
                             rowsTranslucent[row + lz] |= tr << xShift;
+                            rowsPartial[row + lz] |= pa << xShift;
                         }
                     }
                 }
@@ -242,16 +252,19 @@ public final class BinaryGreedyMesher {
                 // X columns at (u = y, v = z) are the rows themselves.
                 System.arraycopy(rowsOpaque, 0, colOpaque, 0, PLANE);
                 System.arraycopy(rowsTranslucent, 0, colTranslucent, 0, PLANE);
+                System.arraycopy(rowsPartial, 0, colPartial, 0, PLANE);
             }
             case 1 -> {
                 // Y columns at (u = z, v = x): for each z, transpose the (y, x) matrix.
                 transposeGather(rowsOpaque, colOpaque, true);
                 transposeGather(rowsTranslucent, colTranslucent, true);
+                transposeGather(rowsPartial, colPartial, true);
             }
             default -> {
                 // Z columns at (u = x, v = y): for each y, transpose the (z, x) matrix.
                 transposeGather(rowsOpaque, colOpaque, false);
                 transposeGather(rowsTranslucent, colTranslucent, false);
+                transposeGather(rowsPartial, colPartial, false);
             }
         }
     }
@@ -281,7 +294,8 @@ public final class BinaryGreedyMesher {
     }
 
     /** Computes the visible faces of one direction; returns false if there are none. */
-    private boolean cullFaces(boolean positive, int[] minusNeighbor, int[] plusNeighbor, int[] minusSolid,
+    private boolean cullFaces(boolean yAxis, boolean positive, int[] minusNeighbor, int[] plusNeighbor,
+                              int[] minusSolid,
                               int[] plusSolid) {
         int any = 0;
         for (int u = 0; u < S; u++) {
@@ -293,7 +307,8 @@ public final class BinaryGreedyMesher {
                 int i = u * S + v;
                 int op = colOpaque[i];
                 int tr = colTranslucent[i];
-                if ((op | tr) == 0) {
+                int pa = colPartial[i];
+                if ((op | tr | pa) == 0) {
                     faces[i] = 0;
                     continue;
                 }
@@ -307,9 +322,13 @@ public final class BinaryGreedyMesher {
                         | (minusSolidRow >>> v & 1L)
                         | (plusSolidRow >>> v & 1L) << 33;
                 long solid = c | t;
+                // Partial voxels hide only the top face of the voxel below them,
+                // and only full opaque voxels hide their faces.
+                long p = (pa & 0xFFFFFFFFL) << 1;
+                long hidesOpaque = yAxis && positive ? c | p : c;
                 long visible = positive
-                        ? (c & ~(c >>> 1)) | (t & ~(solid >>> 1))
-                        : (c & ~(c << 1)) | (t & ~(solid << 1));
+                        ? (c & ~(hidesOpaque >>> 1)) | (t & ~(solid >>> 1)) | (p & ~(c >>> 1))
+                        : (c & ~(c << 1)) | (t & ~(solid << 1)) | (p & ~(c << 1));
                 int f = (int) (visible >>> 1);
                 faces[i] = f;
                 any |= f;
@@ -433,7 +452,7 @@ public final class BinaryGreedyMesher {
         if (nx >= 0 && ny >= 0 && nz >= 0 && nx < S && ny < S && nz < S) {
             return section.skyLight().get(nx, ny, nz) << 4 | section.blockLight().get(nx, ny, nz);
         }
-        if (translucent[index] != 0) {
+        if (translucent[index] != 0 || partial[index] != 0) {
             return section.skyLight().get(x, y, z) << 4 | section.blockLight().get(x, y, z);
         }
         return 15 << 4;

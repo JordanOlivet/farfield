@@ -608,7 +608,13 @@ public final class LodRenderer {
 
     /** Meshes a section: opaque quads first, then translucent ones. */
     private MeshResult mesh(LodWorld w, int gen, long key, LodSection section) throws IOException {
-        MaterialClassifier classes = w.materials();
+        MaterialClassifier materials = w.materials();
+        // Partial blocks keep their height on the finest level only; coarser
+        // voxels hold more than the block and stay full.
+        MaterialClassifier classes = LodKey.level(key) == 0 ? materials : m -> {
+            int c = materials.classOf(m);
+            return c == MaterialClassifier.PARTIAL ? MaterialClassifier.OPAQUE : c;
+        };
         int[][] solid = hasTranslucent(section, classes) ? neighborSolid(w, key, classes) : null;
         MeshBuffer out = meshBuffer.get();
         mesher.get().mesh(section, classes, tintedMaterials, null, solid, out);

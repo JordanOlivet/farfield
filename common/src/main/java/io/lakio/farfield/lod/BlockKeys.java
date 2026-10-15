@@ -125,10 +125,30 @@ public final class BlockKeys {
         if (!shape.isEmpty()) {
             AABB b = shape.bounds();
             if (b.minX <= 0.01 && b.maxX >= 0.99 && b.minZ <= 0.01 && b.maxZ >= 0.99) {
-                return MaterialTable.pack(MaterialClassifier.OPAQUE, MipBuilder.Shapes.COVER);
+                // Lower than a cube and standing on the bottom (snow layers, bottom
+                // slabs, carpets): drawn at its own height on the finest level.
+                boolean partial = b.minY <= 0.01 && b.maxY < 0.99;
+                int meshClass = partial ? MaterialClassifier.PARTIAL : MaterialClassifier.OPAQUE;
+                return MaterialTable.pack(meshClass, MipBuilder.Shapes.COVER);
             }
         }
         return MaterialTable.pack(MaterialClassifier.AIR, MipBuilder.Shapes.SPARSE);
+    }
+
+    /**
+     * Height of a {@link MaterialClassifier#PARTIAL} block in sixteenths of a
+     * block (1..16, the top of its shape), 16 when it has no usable shape.
+     */
+    public static int heightSixteenths(BlockState state) {
+        try {
+            VoxelShape shape = state.getShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO);
+            if (shape.isEmpty()) {
+                return 16;
+            }
+            return Math.max(1, Math.min(16, (int) Math.round(shape.bounds().maxY * 16)));
+        } catch (RuntimeException e) {
+            return 16;
+        }
     }
 
     /**

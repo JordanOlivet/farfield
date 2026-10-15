@@ -20,7 +20,8 @@ layout(std430, binding = 1) readonly buffer Sections {
 // Per block-state id and face direction (MaterialColors): an untinted
 // color (alpha: coverage), a biome-tinted color (alpha byte: tint kind),
 // both ABGR8 in sRGB, and the face's atlas tiles (untinted + 1 low 16 bits,
-// tinted + 1 high 16 bits, 0 for none).
+// tinted + 1 high 16 bits, 0 for none); then the block's height in
+// sixteenths (below 16 for partial blocks: snow layers, slabs, carpets).
 layout(std430, binding = 2) readonly buffer Colors {
     uint colors[];
 };
@@ -30,7 +31,8 @@ layout(std430, binding = 3) readonly buffer BiomeTints {
     uint tints[];
 };
 
-const uint COLOR_STRIDE = 18u;
+const uint COLOR_STRIDE = 19u;
+const uint HEIGHT_OFFSET = 18u;
 const uint TINT_KINDS = 8u;
 
 uniform mat4 u_viewProj;    // the game's projection * view rotation
@@ -91,6 +93,17 @@ void main() {
     // stand one block high at every level above 0 and leave a step where
     // levels meet. Their top edges come down one block, which puts the sea
     // exactly at 63 on every level.
+    // Partial blocks on the finest level: their top edges come down to the
+    // block's own height (the mesher keeps them out of coarser levels).
+    if (s.originLevel.w == 0) {
+        uint height = colors[material * COLOR_STRIDE + HEIGHT_OFFSET];
+        bool top = direction == 3u
+                || (axis == 0u && cu == 1u)
+                || (axis == 2u && cv == 1u);
+        if (height < 16u && top) {
+            p.y -= float(16u - height) / 16.0;
+        }
+    }
     if (u_translucent && s.originLevel.w > 0) {
         bool top = direction == 3u
                 || (axis == 0u && cu == 1u)

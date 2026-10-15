@@ -16,9 +16,10 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 class BinaryGreedyMesherTest {
 
-    // Materials: 0 air, 1..9 opaque, 10..12 translucent.
+    // Materials: 0 air, 1..9 opaque, 10..12 translucent, 20..22 partial.
     private static final MaterialClassifier CLASSES = m -> m == 0 ? MaterialClassifier.AIR
-            : m < 10 ? MaterialClassifier.OPAQUE : MaterialClassifier.TRANSLUCENT;
+            : m < 10 ? MaterialClassifier.OPAQUE : m < 20 ? MaterialClassifier.TRANSLUCENT
+            : MaterialClassifier.PARTIAL;
 
     private static final int[][] STEP = {{-1, 0, 0}, {1, 0, 0}, {0, -1, 0}, {0, 1, 0}, {0, 0, -1}, {0, 0, 1}};
 
@@ -75,6 +76,36 @@ class BinaryGreedyMesherTest {
         // The bottom face lies on the section border: opaque, so full sky light.
         assertEquals(1, out.count(Quad.NEG_Y));
         assertEquals(15, Quad.skyLight(out.quads(Quad.NEG_Y)[0]));
+    }
+
+    @Test
+    void partialVoxelsHideOnlyTheTopBelowThem() {
+        // Stone floor, a snow layer on half of it, a stone wall beside the snow.
+        LodSection section = new LodSection(0);
+        for (int z = 0; z < 32; z++) {
+            for (int x = 0; x < 32; x++) {
+                section.set(x, 0, z, 1);
+                if (x < 16) {
+                    section.set(x, 1, z, 20);
+                }
+            }
+            section.set(16, 1, z, 2);
+        }
+        section.compact();
+        mesher.mesh(section, CLASSES, null, out);
+        boolean floorTopUnderSnow = false;
+        boolean wallSideTowardSnow = false;
+        for (int i = 0; i < out.count(Quad.POS_Y); i++) {
+            long q = out.quads(Quad.POS_Y)[i];
+            floorTopUnderSnow |= Quad.material(q) == 1 && Quad.y(q) == 0 && Quad.x(q) < 16;
+        }
+        for (int i = 0; i < out.count(Quad.NEG_X); i++) {
+            long q = out.quads(Quad.NEG_X)[i];
+            wallSideTowardSnow |= Quad.material(q) == 2 && Quad.x(q) == 16;
+        }
+        assertTrue(!floorTopUnderSnow, "the snow hides the floor top under it");
+        assertTrue(wallSideTowardSnow, "the snow does not hide the wall beside it");
+        verify(section, null);
     }
 
     @Test
@@ -229,8 +260,13 @@ class BinaryGreedyMesherTest {
                         int m;
                         if (round % 3 == 0) {
                             m = random.nextDouble() < density ? 1 + random.nextInt(materials) : 0;
+                            if (m > 0 && random.nextInt(4) == 0) {
+                                m = 20 + random.nextInt(3);
+                            }
                         } else if (round % 3 == 1) {
-                            m = y < 10 + ((x / 4 + z / 4) % 6) ? 1 + (y % materials) : y < 18 ? 10 : 0;
+                            int top = 10 + ((x / 4 + z / 4) % 6);
+                            m = y < top ? 1 + (y % materials) : y == top && (x + z) % 3 == 0 ? 21
+                                    : y < 18 ? 10 : 0;
                         } else {
                             m = ((x / 8 + y / 8 + z / 8) % 3 == 0) ? 0 : 1 + ((x / 8) % materials);
                         }
@@ -364,9 +400,12 @@ class BinaryGreedyMesherTest {
                         } else {
                             nc = CLASSES.classOf(section.material(nx, ny, nz));
                         }
-                        boolean visible = c == MaterialClassifier.OPAQUE
-                                ? nc != MaterialClassifier.OPAQUE
-                                : nc == MaterialClassifier.AIR;
+                        boolean visible = switch (c) {
+                            case MaterialClassifier.OPAQUE -> nc != MaterialClassifier.OPAQUE
+                                    && !(d == Quad.POS_Y && nc == MaterialClassifier.PARTIAL);
+                            case MaterialClassifier.PARTIAL -> nc != MaterialClassifier.OPAQUE;
+                            default -> nc == MaterialClassifier.AIR || nc == MaterialClassifier.PARTIAL;
+                        };
                         Integer got = covered.get(faceKey(x, y, z, d));
                         if (visible) {
                             expected++;

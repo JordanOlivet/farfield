@@ -33,7 +33,9 @@ import java.util.Map;
  *
  * <p>Per block-state id, {@link #STRIDE} ints; per face direction (the order
  * of {@code Quad}): an untinted color, a biome-tinted color (both ABGR8 in
- * sRGB) and the face's tiles. The face's color is {@code untinted + tinted *
+ * sRGB) and the face's tiles; then the block's height in sixteenths (16 for
+ * all but {@code PARTIAL} blocks, which the shader draws at that height on
+ * the finest level). The face's color is {@code untinted + tinted *
  * tint} (summed in linear space), the tint coming from {@link BiomeTints}
  * for the quad's biome and the kind in the tinted color's alpha byte; the
  * untinted color's alpha is the face's coverage (water, glass, ice are below
@@ -58,7 +60,9 @@ import java.util.Map;
  */
 final class MaterialColors {
 
-    static final int STRIDE = 18;
+    static final int STRIDE = 19;
+    /** Offset of the height (sixteenths) in a block state's entry. */
+    static final int HEIGHT = 18;
 
     private static final int T = FaceTextures.TILE;
     private static final int PIXELS = T * T;
@@ -118,8 +122,11 @@ final class MaterialColors {
         int first = count;
         int id = count;
         while (id < size) {
-            boolean opaque = classes.classOf(id) == MaterialClassifier.OPAQUE;
-            flags[id] = build(registry.key(id), id * STRIDE, opaque, tints, probeBiome);
+            int meshClass = classes.classOf(id);
+            String key = registry.key(id);
+            flags[id] = build(key, id * STRIDE, meshClass == MaterialClassifier.OPAQUE, tints, probeBiome);
+            BlockState state = meshClass == MaterialClassifier.PARTIAL ? BlockKeys.state(key) : null;
+            colors[id * STRIDE + HEIGHT] = state == null ? 16 : BlockKeys.heightSixteenths(state);
             id++;
             if (System.nanoTime() > deadline) {
                 break;

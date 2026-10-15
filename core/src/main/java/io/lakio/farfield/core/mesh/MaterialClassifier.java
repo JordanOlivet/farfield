@@ -18,6 +18,13 @@ public interface MaterialClassifier {
      * glass shows no face: acceptable for LODs).
      */
     int TRANSLUCENT = 2;
+    /**
+     * An opaque block lower than a full cube, standing on the bottom of its
+     * voxel over the whole footprint (snow layers, bottom slabs, carpets):
+     * it hides only the top face of the voxel below it, and only full opaque
+     * voxels hide its faces. A renderer draws it at its own height.
+     */
+    int PARTIAL = 3;
 
     int classOf(int material);
 }
