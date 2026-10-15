@@ -42,7 +42,22 @@ public final class FarfieldCommands {
                         .executes(FarfieldCommands::showDetail)
                         .then(Commands.argument("pixels", FloatArgumentType.floatArg(
                                         RenderSettings.MIN_VOXEL_PIXELS, RenderSettings.MAX_VOXEL_PIXELS))
-                                .executes(c -> detail(c, FloatArgumentType.getFloat(c, "pixels"))))));
+                                .executes(c -> detail(c, FloatArgumentType.getFloat(c, "pixels")))))
+                .then(Commands.literal("debug")
+                        .then(Commands.literal("levels")
+                                .executes(c -> debugLevels(c, !RenderSettings.debugLevels()))
+                                .then(Commands.literal("on").executes(c -> debugLevels(c, true)))
+                                .then(Commands.literal("off").executes(c -> debugLevels(c, false))))));
+    }
+
+    /** Single player: tints LOD faces by level, to see where each level hands over. */
+    private static int debugLevels(CommandContext<CommandSourceStack> c, boolean on) {
+        RenderSettings.setDebugLevels(on);
+        Farfield.LOG.info("LOD level colors switched {} by command", on ? "on" : "off");
+        c.getSource().sendSuccess(() -> Component.literal(on
+                ? "LOD level colors on: red 1 block, orange 2, yellow 4, green 8, blue 16 (single player only)."
+                : "LOD level colors off."), false);
+        return 1;
     }
 
     /** Single player: switches LOD drawing on the client of the same process, to compare frame rates. */

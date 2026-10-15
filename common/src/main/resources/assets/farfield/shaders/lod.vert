@@ -37,6 +37,7 @@ uniform ivec3 u_cameraBlock;
 uniform vec3 u_cameraFrac;
 uniform vec2 u_depthRange;  // near, far of the LOD depth mapping
 uniform float u_brightness; // sky brightness (day/night, weather), as vanilla sky light
+uniform bool u_debugLevels; // tint faces by LOD level (/farfield debug levels)
 
 out vec4 v_color;
 out vec3 v_relative;
@@ -44,6 +45,9 @@ out vec3 v_relative;
 const uint CORNER_U[6] = uint[](0u, 1u, 1u, 0u, 1u, 0u);
 const uint CORNER_V[6] = uint[](0u, 0u, 1u, 0u, 1u, 1u);
 const float SHADE[6] = float[](0.6, 0.6, 0.5, 1.0, 0.8, 0.8);
+// Level 0 to 4: red, orange, yellow, green, blue.
+const vec3 LEVEL_COLORS[5] = vec3[](vec3(1.0, 0.15, 0.1), vec3(1.0, 0.55, 0.0), vec3(1.0, 0.95, 0.1),
+                                    vec3(0.2, 0.85, 0.2), vec3(0.2, 0.45, 1.0));
 
 vec3 toLinear(vec3 c) {
     return pow(c, vec3(2.2));
@@ -93,5 +97,8 @@ void main() {
         color += toLinear(unpackUnorm4x8(tinted).rgb) * tint;
     }
     color = pow(min(color, vec3(1.0)), vec3(1.0 / 2.2));
+    if (u_debugLevels) {
+        color = mix(color, LEVEL_COLORS[min(s.originLevel.w, 4)], 0.65);
+    }
     v_color = vec4(color * SHADE[direction] * u_brightness, untinted.a);
 }

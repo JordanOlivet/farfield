@@ -135,6 +135,7 @@ public final class LodRenderer {
     private int uFogColor;
     private int uFog;
     private int uTranslucent;
+    private int uDebugLevels;
     private final int[] timerQueries = new int[TIMER_SLOTS * 2];
     private final boolean[] timerPending = new boolean[TIMER_SLOTS];
     private int timerSlot;
@@ -277,6 +278,7 @@ public final class LodRenderer {
         uFogColor = program.uniform("u_fogColor");
         uFog = program.uniform("u_fog");
         uTranslucent = program.uniform("u_translucent");
+        uDebugLevels = program.uniform("u_debugLevels");
         glGenQueries(timerQueries);
         quads = new GlBuffer(INITIAL_QUADS * 8);
         arena = new RangeAllocator(INITIAL_QUADS);
@@ -786,6 +788,7 @@ public final class LodRenderer {
         glUniform4f(uFogColor, fogColor[0], fogColor[1], fogColor[2], 1f);
         glUniform2f(uFog, FOG_START, FOG_END);
         glUniform1i(uTranslucent, 0);
+        glUniform1i(uDebugLevels, RenderSettings.debugLevels() ? 1 : 0);
 
         GlStateManager._glBindVertexArray(vao);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, quads.id());
