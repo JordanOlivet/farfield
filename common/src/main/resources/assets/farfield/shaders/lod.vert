@@ -10,7 +10,7 @@ layout(std430, binding = 0) readonly buffer Quads {
 
 struct Section {
     ivec4 originLevel; // origin in blocks (xyz), level (w)
-    uvec4 info;        // x: first quad
+    uvec4 info;        // x: first quad, y: quad count, z: 1 if its opaque voxels are in Occupancy
 };
 
 layout(std430, binding = 1) readonly buffer Sections {
@@ -47,6 +47,10 @@ flat out uint v_tiles;    // atlas tiles of the face (see Colors)
 flat out float v_light;   // face shade (vanilla's per-direction shade)
 flat out ivec2 v_lightmap; // (block light, sky light) in front of the face: vanilla lightmap texel
 flat out int v_level;
+out vec3 v_voxel;          // section-local position in voxels, for ambient occlusion
+flat out uint v_direction;
+flat out uint v_slot;      // section slot (Occupancy), with v_occluders
+flat out uint v_occluders;
 
 const uint CORNER_U[6] = uint[](0u, 1u, 1u, 0u, 1u, 0u);
 const uint CORNER_V[6] = uint[](0u, 0u, 1u, 0u, 1u, 1u);
@@ -123,4 +127,8 @@ void main() {
     v_light = SHADE[direction];
     v_lightmap = ivec2(int(q.y >> 28), int((q.y >> 24) & 15u));
     v_level = s.originLevel.w;
+    v_voxel = p;
+    v_direction = direction;
+    v_slot = uint(gl_BaseInstance);
+    v_occluders = s.info.z;
 }

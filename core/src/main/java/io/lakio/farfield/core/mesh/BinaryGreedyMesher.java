@@ -120,6 +120,15 @@ public final class BinaryGreedyMesher {
         }
     }
 
+    /**
+     * Copies the opaque voxels of the last meshed section into {@code out}
+     * (1024 ints): index {@code y * 32 + z}, bit x. Only valid when the last
+     * mesh produced quads. Renderers use it for ambient occlusion.
+     */
+    public void copyOpaqueRows(int[] out) {
+        System.arraycopy(rowsOpaque, 0, out, 0, PLANE);
+    }
+
     /** Faces covered by the last mesh's quads (before merging, for statistics). */
     public long facesEmitted() {
         return facesEmitted;

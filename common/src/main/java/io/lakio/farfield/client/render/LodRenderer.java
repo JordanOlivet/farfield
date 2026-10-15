@@ -82,6 +82,11 @@ import static org.lwjgl.opengl.GL46C.*;
  *       same-level neighbors' border layers, so water spanning sections
  *       shows no inner walls; a rewritten section meshes its translucent
  *       neighbors again.</li>
+ *   <li>Ambient occlusion as vanilla's smooth lighting, per fragment: the
+ *       opaque voxels of each level-0 and level-1 section (4 KB) go to a
+ *       storage buffer by slot; {@code lod.frag} reads the eight voxels
+ *       around the one in front of the face, so merged quads stay merged.
+ *       Coarser levels skip it (their voxels span 4 blocks or more).</li>
  *   <li>Hand-off: drawn after the sky and before the terrain, with its own
  *       depth range; the depth buffer is cleared afterwards so vanilla
  *       terrain covers it, and fragments within the vanilla distance are
@@ -102,6 +107,9 @@ public final class LodRenderer {
     private static final long INITIAL_QUADS = 8L << 20;
     private static final long MAX_QUADS = 128L << 20;
     private static final int SECTION_BYTES = 32;
+    private static final int OCCUPANCY_INTS = LodSection.SIZE * LodSection.SIZE;
+    /** Ambient occlusion up to this level (voxels of 2 blocks). */
+    private static final int AO_MAX_LEVEL = 1;
     /** A resident mesh the selection has not used for this long is freed. */
     private static final long EVICT_AFTER_NANOS = 10_000_000_000L;
     /** The selection runs again when the camera moved this far (squared blocks)... */
@@ -120,6 +128,8 @@ public final class LodRenderer {
     private GlBuffer sectionInfo;
     private GlBuffer colorBuffer;
     private GlBuffer biomeBuffer;
+    /** Opaque voxels per section slot ({@link #OCCUPANCY_INTS} ints), for ambient occlusion. */
+    private GlBuffer occupancy;
     private GlBuffer indirect;
     private int vao;
     private RangeAllocator arena;
@@ -229,6 +239,8 @@ public final class LodRenderer {
         int quadCount;
         /** The first quads of the range are opaque, the rest translucent. */
         int opaqueCount;
+        /** Its opaque voxels are in the occupancy buffer (ambient occlusion). */
+        boolean occluders;
         /** Last time the selection used it: drawn, or relied on to descend to its children. */
         long lastUsed;
 
@@ -237,7 +249,7 @@ public final class LodRenderer {
         }
     }
 
-    private record MeshResult(int generation, long key, long[] quads, int opaqueCount) {
+    private record MeshResult(int generation, long key, long[] quads, int opaqueCount, int[] occupancy) {
     }
 
     private LodRenderer() {
@@ -302,6 +314,7 @@ public final class LodRenderer {
         sectionInfo = new GlBuffer(4096L * SECTION_BYTES);
         colorBuffer = new GlBuffer(4096L * MaterialColors.STRIDE * 4);
         biomeBuffer = new GlBuffer(256L * BiomeTints.KINDS * 4);
+        occupancy = new GlBuffer(1024L * OCCUPANCY_INTS * 4);
         indirect = new GlBuffer(1024L * 16);
         vao = glCreateVertexArrays();
         Farfield.LOG.info("LOD renderer ready on {}, OpenGL {} ({} MB of quads to start)", glGetString(GL_RENDERER),
@@ -502,10 +515,10 @@ public final class LodRenderer {
             MeshResult result;
             try {
                 LodSection section = w.read(key);
-                result = section == null ? new MeshResult(gen, key, new long[0], 0) : mesh(w, gen, key, section);
+                result = section == null ? new MeshResult(gen, key, new long[0], 0, null) : mesh(w, gen, key, section);
             } catch (IOException | RuntimeException e) {
                 Farfield.LOG.debug("LOD mesh of {} failed", LodKey.toString(key), e);
-                result = new MeshResult(gen, key, new long[0], 0);
+                result = new MeshResult(gen, key, new long[0], 0, null);
             }
             done.add(result);
         });
@@ -531,7 +544,12 @@ public final class LodRenderer {
                 }
             }
         }
-        return new MeshResult(gen, key, all, opaque);
+        int[] occupied = null;
+        if (all.length > 0 && LodKey.level(key) <= AO_MAX_LEVEL) {
+            occupied = new int[OCCUPANCY_INTS];
+            mesher.get().copyOpaqueRows(occupied);
+        }
+        return new MeshResult(gen, key, all, opaque, occupied);
     }
 
     private static boolean hasTranslucent(LodSection section, MaterialClassifier classes) {
@@ -622,6 +640,14 @@ public final class LodRenderer {
             }
             r.quadCount = m.quads.length;
             r.opaqueCount = m.opaqueCount;
+            r.occluders = m.occupancy != null;
+            if (r.occluders) {
+                long needed = (long) (r.slot + 1) * OCCUPANCY_INTS * 4;
+                if (needed > occupancy.size()) {
+                    occupancy.grow(Math.max(needed, occupancy.size() * 2), occupancy.size());
+                }
+                occupancy.upload((long) r.slot * OCCUPANCY_INTS * 4, m.occupancy);
+            }
             meshesUploaded++;
             if (r.quadCount > 0) {
                 long start = arena.allocate(r.quadCount);
@@ -677,7 +703,7 @@ public final class LodRenderer {
         int size = LodSection.SIZE << level;
         sectionInfo.upload((long) r.slot * SECTION_BYTES, new int[]{
                 LodKey.x(key) * size, LodKey.y(key) * size, LodKey.z(key) * size, level,
-                (int) r.start, r.quadCount, 0, 0});
+                (int) r.start, r.quadCount, r.occluders ? 1 : 0, 0});
     }
 
     private void evictUnused(long now) {
@@ -835,6 +861,7 @@ public final class LodRenderer {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, sectionInfo.id());
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, colorBuffer.id());
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, biomeBuffer.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, occupancy.id());
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirect.id());
         RenderSystem.enableDepthTest();
         RenderSystem.depthFunc(GL_LEQUAL);
