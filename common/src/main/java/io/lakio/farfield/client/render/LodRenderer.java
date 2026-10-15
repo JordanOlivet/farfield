@@ -150,7 +150,10 @@ public final class LodRenderer {
     private int uCameraBlock;
     private int uCameraFrac;
     private int uDepthRange;
-    private int uVanillaRadius;
+    private int uRenderDistance;
+    private int uSodiumRule;
+    /** Sodium or a fork draws the terrain: its section rule decides where LODs give way. */
+    private boolean sodiumRule;
     private int uLightmap;
     private int uFogColor;
     private int uFog;
@@ -261,6 +264,15 @@ public final class LodRenderer {
         return r.world != null && r.initialized && !r.disabled && RenderSettings.enabled();
     }
 
+    private static boolean classExists(String name) {
+        try {
+            Class.forName(name, false, LodRenderer.class.getClassLoader());
+            return true;
+        } catch (ClassNotFoundException | LinkageError e) {
+            return false;
+        }
+    }
+
     /** Distance where the LOD fog starts, in blocks. */
     public static float fogStart() {
         return FOG_START;
@@ -299,7 +311,12 @@ public final class LodRenderer {
         uCameraBlock = program.uniform("u_cameraBlock");
         uCameraFrac = program.uniform("u_cameraFrac");
         uDepthRange = program.uniform("u_depthRange");
-        uVanillaRadius = program.uniform("u_vanillaRadius");
+        uRenderDistance = program.uniform("u_renderDistance");
+        uSodiumRule = program.uniform("u_sodiumRule");
+        sodiumRule = classExists("net.caffeinemc.mods.sodium.client.SodiumClientMod")
+                || classExists("org.embeddedt.embeddium.impl.Embeddium")
+                || classExists("me.jellysquid.mods.sodium.client.SodiumClientMod");
+        Farfield.LOG.info("LOD hand-off follows the {} section rule", sodiumRule ? "Sodium" : "vanilla");
         uLightmap = program.uniform("u_lightmap");
         uFogColor = program.uniform("u_fogColor");
         uFog = program.uniform("u_fog");
@@ -824,7 +841,6 @@ public final class LodRenderer {
         int blockZ = (int) Math.floor(cam.z);
         viewProj.set(projection).mul(viewRotation);
         float[] fogColor = RenderSystem.getShaderFogColor();
-        float vanilla = Math.max(0, (mc.options.getEffectiveRenderDistance() - 1) * 16f);
 
         // Timestamps rather than a time-elapsed query: the game may have one open.
         int slot = timerSlot;
@@ -838,7 +854,8 @@ public final class LodRenderer {
         glUniform3i(uCameraBlock, blockX, blockY, blockZ);
         glUniform3f(uCameraFrac, (float) (cam.x - blockX), (float) (cam.y - blockY), (float) (cam.z - blockZ));
         glUniform2f(uDepthRange, 8f, (float) MAX_DISTANCE * 2);
-        glUniform1f(uVanillaRadius, vanilla);
+        glUniform1i(uRenderDistance, mc.options.getEffectiveRenderDistance());
+        glUniform1i(uSodiumRule, sodiumRule ? 1 : 0);
         glUniform1i(uLightmap, LIGHTMAP_UNIT);
         glUniform4f(uFogColor, fogColor[0], fogColor[1], fogColor[2], 1f);
         glUniform2f(uFog, FOG_START, FOG_END);

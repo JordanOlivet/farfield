@@ -18,7 +18,10 @@ layout(std430, binding = 4) readonly buffer Occupancy {
 };
 flat in int v_level;
 
-uniform float u_vanillaRadius; // vanilla terrain is drawn within this horizontal and vertical distance
+uniform ivec3 u_cameraBlock;
+uniform vec3 u_cameraFrac;
+uniform int u_renderDistance;  // the game's render distance in chunks
+uniform bool u_sodiumRule;     // Sodium (or a fork) draws the terrain, else vanilla
 uniform vec4 u_fogColor;
 uniform vec2 u_fog;            // start, end
 uniform bool u_translucent;    // translucent pass: blend with the face's coverage
@@ -79,6 +82,32 @@ float ambientOcclusion() {
     return mix(mix(a00, a10, f.x), mix(a01, a11, f.x), f.y);
 }
 
+// Whether the game draws the chunk section holding a world block, with the
+// same rule as the terrain renderer, so LOD and vanilla neither overlap
+// (translucent surfaces blended twice) nor leave a gap.
+bool vanillaDraws(ivec3 block) {
+    ivec3 section = block >> 4;
+    if (u_sodiumRule) {
+        // Sodium's OcclusionCuller: nearest point of the section grown by one
+        // block, within the render distance horizontally and vertically.
+        float d = float(u_renderDistance * 16);
+        ivec3 o = section * 16 - u_cameraBlock;
+        vec3 n;
+        for (int i = 0; i < 3; i++) {
+            int lo = o[i] - 1;
+            int hi = o[i] + 17;
+            n[i] = float(lo > 0 ? lo : (hi < 0 ? hi : 0)) - u_cameraFrac[i];
+        }
+        return n.x * n.x + n.z * n.z < d * d && abs(n.y) < d;
+    }
+    // Vanilla's ChunkTrackingView.isInViewDistance, around the camera's chunk.
+    ivec2 c = abs(section.xz - (u_cameraBlock.xz >> 4)) - 1;
+    c = max(c, ivec2(0));
+    int far = max(c.x, c.y);
+    int near = min(c.x, c.y);
+    return near * near + far * far < u_renderDistance * u_renderDistance;
+}
+
 // One texel of a tile, the mip level chosen from the unwrapped coordinates
 // (fract() alone would jump to the smallest mip at every block edge).
 vec4 tile(uint index, vec2 f, vec2 gx, vec2 gy) {
@@ -88,10 +117,12 @@ vec4 tile(uint index, vec2 f, vec2 gx, vec2 gy) {
 }
 
 void main() {
-    // Sodium draws a section only within the render distance horizontally
-    // and vertically: far below or above the camera, LODs must show.
-    float horizontal = length(v_relative.xz);
-    if (horizontal < u_vanillaRadius && abs(v_relative.y) < u_vanillaRadius) {
+    // The block this face belongs to: a hair inside its voxel, so faces on a
+    // section border test the section of their own voxel.
+    vec3 normal = vec3(0.0);
+    normal[v_direction >> 1] = (v_direction & 1u) != 0u ? 1.0 : -1.0;
+    vec3 inside = v_relative + u_cameraFrac - normal * 0.01;
+    if (vanillaDraws(u_cameraBlock + ivec3(floor(inside)))) {
         discard;
     }
     float distance = length(v_relative);
@@ -113,7 +144,10 @@ void main() {
     }
     // As vanilla's terrain: texture times shade times lightmap, in sRGB.
     float ao = (v_occluders != 0u && !u_translucent) ? ambientOcclusion() : 1.0;
-    color = pow(min(color, vec3(1.0)), vec3(1.0 / 2.2)) * (v_light * ao) * texelFetch(u_lightmap, v_lightmap, 0).rgb;
+    // Vanilla samples its lightmap filtered at level / 16 (minecraft_sample_lightmap),
+    // between two texels: full light reads halfway between levels 14 and 15.
+    vec2 lightUv = clamp(vec2(v_lightmap) / 16.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0));
+    color = pow(min(color, vec3(1.0)), vec3(1.0 / 2.2)) * (v_light * ao) * texture(u_lightmap, lightUv).rgb;
     if (u_debugLevels) {
         color = mix(color, LEVEL_COLORS[min(v_level, 4)], 0.65);
     }
