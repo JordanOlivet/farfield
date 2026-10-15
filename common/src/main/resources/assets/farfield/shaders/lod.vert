@@ -20,8 +20,8 @@ layout(std430, binding = 1) readonly buffer Sections {
 // Per block-state id and face direction (MaterialColors): an untinted
 // color (alpha: coverage), a biome-tinted color (alpha byte: tint kind),
 // both ABGR8 in sRGB, and the face's atlas tiles (untinted + 1 low 16 bits,
-// tinted + 1 high 16 bits, 0 for none); then the block's height in
-// sixteenths (below 16 for partial blocks: snow layers, slabs, carpets).
+// tinted + 1 high 16 bits, 0 for none); then the height of the block's top
+// in blocks, float bits (snow layers, slabs, carpets, fluids at vanilla's 8/9).
 layout(std430, binding = 2) readonly buffer Colors {
     uint colors[];
 };
@@ -99,14 +99,22 @@ void main() {
             || (axis == 2u && cv == 1u);
     if (top) {
         if (s.originLevel.w == 0) {
-            uint height = colors[material * COLOR_STRIDE + HEIGHT_OFFSET];
-            if (height < 16u) {
-                p.y -= float(16u - height) / 16.0;
+            float height = uintBitsToFloat(colors[material * COLOR_STRIDE + HEIGHT_OFFSET]);
+            if (height < 1.0) {
+                p.y -= 1.0 - height;
             }
         } else {
             uint fill = (q.y >> 29) + 1u;
             if (fill < 8u) {
                 p.y -= float(8u - fill) / 8.0;
+            }
+            // Fluids also lose the last ninth of a block, in blocks, as on level 0:
+            // the sea surface lies at the same height on every level.
+            if (u_translucent) {
+                float height = uintBitsToFloat(colors[material * COLOR_STRIDE + HEIGHT_OFFSET]);
+                if (height < 1.0) {
+                    p.y -= (1.0 - height) / scale;
+                }
             }
         }
     }

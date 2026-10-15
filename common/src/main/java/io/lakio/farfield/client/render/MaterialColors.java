@@ -18,6 +18,7 @@ import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.ColorResolver;
 import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.MapColor;
 
@@ -33,9 +34,9 @@ import java.util.Map;
  *
  * <p>Per block-state id, {@link #STRIDE} ints; per face direction (the order
  * of {@code Quad}): an untinted color, a biome-tinted color (both ABGR8 in
- * sRGB) and the face's tiles; then the block's height in sixteenths (16 for
- * all but {@code PARTIAL} blocks, which the shader draws at that height on
- * the finest level). The face's color is {@code untinted + tinted *
+ * sRGB) and the face's tiles; then the height of the block's top in blocks
+ * (float bits; below 1 for partial blocks and fluids, which the shader draws
+ * at that height on the finest level). The face's color is {@code untinted + tinted *
  * tint} (summed in linear space), the tint coming from {@link BiomeTints}
  * for the quad's biome and the kind in the tinted color's alpha byte; the
  * untinted color's alpha is the face's coverage (water, glass, ice are below
@@ -61,7 +62,7 @@ import java.util.Map;
 final class MaterialColors {
 
     static final int STRIDE = 19;
-    /** Offset of the height (sixteenths) in a block state's entry. */
+    /** Offset of the top height (float bits, in blocks) in a block state's entry. */
     static final int HEIGHT = 18;
 
     private static final int T = FaceTextures.TILE;
@@ -125,8 +126,7 @@ final class MaterialColors {
             int meshClass = classes.classOf(id);
             String key = registry.key(id);
             flags[id] = build(key, id * STRIDE, meshClass == MaterialClassifier.OPAQUE, tints, probeBiome);
-            BlockState state = meshClass == MaterialClassifier.PARTIAL ? BlockKeys.state(key) : null;
-            colors[id * STRIDE + HEIGHT] = state == null ? 16 : BlockKeys.heightSixteenths(state);
+            colors[id * STRIDE + HEIGHT] = Float.floatToIntBits(height(key, meshClass));
             id++;
             if (System.nanoTime() > deadline) {
                 break;
@@ -135,6 +135,25 @@ final class MaterialColors {
         count = id;
         tinted = Arrays.copyOf(flags, id);
         return first;
+    }
+
+    /**
+     * Height of a block's top in blocks, drawn on the finest level: partial
+     * blocks their shape's, fluids vanilla's surface (8/9, so the LOD sea
+     * meets vanilla's without a slit at the edge), anything else 1.
+     */
+    private static float height(String key, int meshClass) {
+        if (meshClass != MaterialClassifier.PARTIAL && meshClass != MaterialClassifier.TRANSLUCENT) {
+            return 1f;
+        }
+        BlockState state = BlockKeys.state(key);
+        if (state == null) {
+            return 1f;
+        }
+        if (meshClass == MaterialClassifier.PARTIAL) {
+            return BlockKeys.heightSixteenths(state) / 16f;
+        }
+        return BlockKeys.lookOf(state).getBlock() instanceof LiquidBlock ? 8f / 9f : 1f;
     }
 
     /** Forgets every look (resource reload, other world): they are built again. */
