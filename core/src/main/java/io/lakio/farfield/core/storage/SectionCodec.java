@@ -15,17 +15,19 @@ import java.util.Arrays;
  * last, so similar bytes sit together for the compressor.
  *
  * <pre>
- *   u8      format version (1)
+ *   u8      format version (2; version 1 had no fill and reads as full)
  *   varint  palette size, then each material id (varint)
  *   u8      bits per index (1, 2, 4, 8, 16)
  *   64 x    brick entry: varint (index &lt;&lt; 1) if uniform, 1 if packed
  *   64 x    sky light entry: u8 value (0..15) if uniform, 0x10 if packed
  *   64 x    block light entry: same
+ *   64 x    fill entry: same (version 2)
  *   varint  ((biome + 1) &lt;&lt; 1) if one biome, 1 if per cell; per cell:
  *           varint palette size, each (biome + 1) as varint,
  *           512 cell indices (u8, or u16 if more than 256 biomes)
  *   then    packed bricks (longs, little-endian), packed sky light bricks
- *           (256 bytes each), packed block light bricks
+ *           (256 bytes each), packed block light bricks, packed fill
+ *           bricks (version 2)
  * </pre>
  *
  * Material and biome ids are those of the world's key table (ADR-008: the
@@ -33,7 +35,7 @@ import java.util.Arrays;
  */
 public final class SectionCodec {
 
-    public static final int VERSION = 1;
+    public static final int VERSION = 2;
     private static final int PACKED_LIGHT = 0x10;
 
     private final IntIntMap biomeLookup = new IntIntMap(16);
@@ -54,6 +56,7 @@ public final class SectionCodec {
         }
         writeLightMap(section.skyLight(), out);
         writeLightMap(section.blockLight(), out);
+        writeLightMap(section.fill(), out);
         writeBiomes(section, out);
         for (int b = 0; b < LodSection.BRICK_COUNT; b++) {
             long[] data = section.brickData(b);
@@ -63,6 +66,7 @@ public final class SectionCodec {
         }
         writeLightData(section.skyLight(), out);
         writeLightData(section.blockLight(), out);
+        writeLightData(section.fill(), out);
     }
 
     private static void writeLightMap(NibbleBricks light, ByteWriter out) {
@@ -120,7 +124,7 @@ public final class SectionCodec {
     public LodSection decode(byte[] data, int offset, int length) {
         ByteReader in = new ByteReader().reset(data, offset, length);
         int version = in.readByte();
-        if (version != VERSION) {
+        if (version != VERSION && version != 1) {
             throw new IllegalStateException("unknown section format version " + version);
         }
         int n = in.readVarInt();
@@ -146,6 +150,11 @@ public final class SectionCodec {
         byte[] blockMap = new byte[LodSection.BRICK_COUNT];
         in.readBytes(skyMap, 0, skyMap.length);
         in.readBytes(blockMap, 0, blockMap.length);
+        byte[] fillMap = null;
+        if (version >= 2) {
+            fillMap = new byte[LodSection.BRICK_COUNT];
+            in.readBytes(fillMap, 0, fillMap.length);
+        }
         readBiomes(section, in);
 
         int longs = LodSection.BRICK_VOLUME * bits / 64;
@@ -169,6 +178,9 @@ public final class SectionCodec {
         }
         readLightData(section.skyLight(), skyMap, in);
         readLightData(section.blockLight(), blockMap, in);
+        if (fillMap != null) {
+            readLightData(section.fill(), fillMap, in);
+        }
         if (in.remaining() != 0) {
             throw new IllegalStateException(in.remaining() + " trailing bytes");
         }

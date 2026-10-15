@@ -117,6 +117,21 @@ public final class SectionStore implements AutoCloseable {
         }
     }
 
+    /** Calls {@code action} with every stored key of a level (order unspecified). */
+    public void forEachKey(int level, java.util.function.LongConsumer action) throws IOException {
+        for (long region : existing) {
+            if (LodKey.level(region) != level) {
+                continue;
+            }
+            LogStore s = store(region, false);
+            if (s != null) {
+                for (long key : s.keys()) {
+                    action.accept(key);
+                }
+            }
+        }
+    }
+
     /**
      * The codec bytes of a section (decompressed), or null if absent. The
      * array is the calling thread's buffer: valid until its next call.

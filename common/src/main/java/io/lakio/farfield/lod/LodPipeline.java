@@ -208,6 +208,11 @@ public final class LodPipeline {
                 }
                 levels.put(level, lod);
                 Farfield.LOG.info("LOD store of {} ({}) opened at {}", lod.name(), name, dir);
+                int upgrade = lod.world().mipsToUpgrade();
+                if (upgrade > 0) {
+                    Farfield.LOG.info("LOD store of {}: rebuilding its coarse levels with the current mip rules"
+                            + " (once, {} level-1 sections queued)", lod.name(), upgrade);
+                }
             }
             return lod;
         }
@@ -258,7 +263,12 @@ public final class LodPipeline {
             try {
                 lod.world().flush(TimeUnit.SECONDS.toNanos(3));
                 if (lod.world().hasDirtyMips()) {
-                    lod.world().buildMips(workers);
+                    boolean upgrading = lod.world().mipsToUpgrade() > 0;
+                    int written = lod.world().buildMips(workers);
+                    if (upgrading && lod.world().mipsToUpgrade() == 0) {
+                        Farfield.LOG.info("LOD store of {}: coarse levels rebuilt with the current mip rules"
+                                + " ({} sections written in the last pass)", lod.name(), written);
+                    }
                 }
                 if (sync) {
                     lod.world().sync();

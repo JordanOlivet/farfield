@@ -21,6 +21,15 @@ import java.util.Arrays;
  * in the upper layer). Water over sand stays water, snow over grass stays
  * snow, grass plants over a grass block show the block.
  *
+ * <p><b>Fill</b> is how high the content stands in the parent voxel: per
+ * child column, the upper child's height above a full lower half, or the
+ * lower child's height; the highest of the four columns, rounded up to a
+ * sixteenth. Children on level 0 take their material's height (a snow
+ * layer 2, a slab 8, a cube 16, air and plants 0); coarser children their
+ * stored fill. The highest column keeps trunks, walls and cliff edges, and a
+ * snow layer or the sea surface lands where it is instead of at the top of
+ * the coarse voxel.
+ *
  * <p><b>Light</b> is the maximum of the children (the light of the air next
  * to a surface survives). A <b>biome</b> cell takes the most frequent known
  * biome of its eight child cells.
@@ -42,6 +51,12 @@ public final class MipBuilder {
         int FULL = 3;
 
         int shapeOf(int material);
+
+        /** Height of the block in sixteenths: 16 for a cube, less for a cover, 0 for nothing. */
+        default int heightOf(int material) {
+            int shape = shapeOf(material);
+            return shape >= COVER ? 16 : 0;
+        }
     }
 
     private static final int[] WEIGHT = {0, 1, 2, 4};
@@ -52,6 +67,10 @@ public final class MipBuilder {
     private final Shapes shapes;
 
     private int[] shapeOfIndex = new int[16];
+    private int[] heightOfIndex = new int[16];
+    private boolean childrenFinest;
+    private final byte[] octantFill = new byte[OCTANT * OCTANT * OCTANT];
+    private final int[] heights = new int[LodSection.BRICK_VOLUME];
     private final int[] indices = new int[LodSection.BRICK_VOLUME];
     private final int[] octantMaterials = new int[OCTANT * OCTANT * OCTANT];
     private final byte[] octantSky = new byte[OCTANT * OCTANT * OCTANT];
@@ -71,6 +90,15 @@ public final class MipBuilder {
      *                 a null child counts as all air with full sky light
      */
     public LodSection build(LodSection[] children) {
+        return build(children, true);
+    }
+
+    /**
+     * @param childrenFinest the children are level-0 sections (their heights
+     *                       come from their materials, not their fill)
+     */
+    public LodSection build(LodSection[] children, boolean childrenFinest) {
+        this.childrenFinest = childrenFinest;
         LodSection parent = new LodSection(airMaterial);
         for (int oy = 0; oy < 2; oy++) {
             for (int oz = 0; oz < 2; oz++) {
@@ -91,9 +119,12 @@ public final class MipBuilder {
         int paletteSize = child.paletteSize();
         if (shapeOfIndex.length < paletteSize) {
             shapeOfIndex = new int[Integer.highestOneBit(paletteSize - 1) << 1];
+            heightOfIndex = new int[shapeOfIndex.length];
         }
         for (int i = 0; i < paletteSize; i++) {
-            shapeOfIndex[i] = shapes.shapeOf(child.paletteEntry(i));
+            int material = child.paletteEntry(i);
+            shapeOfIndex[i] = shapes.shapeOf(material);
+            heightOfIndex[i] = shapes.heightOf(material);
         }
         for (int by = 0; by < LodSection.BRICKS_PER_AXIS; by++) {
             for (int bz = 0; bz < LodSection.BRICKS_PER_AXIS; bz++) {
@@ -109,6 +140,7 @@ public final class MipBuilder {
                     }
                     downsampleLight(child.skyLight(), brick, bx, by, bz, octantSky);
                     downsampleLight(child.blockLight(), brick, bx, by, bz, octantBlock);
+                    downsampleFill(child, brick, bx, by, bz);
                 }
             }
         }
@@ -216,6 +248,69 @@ public final class MipBuilder {
         return child.paletteEntry(best);
     }
 
+    /**
+     * Fills {@link #octantFill} for the 4^3 parent voxels of a child brick:
+     * per parent voxel, the highest of its four child columns (see the class
+     * comment), as sixteenths minus one.
+     */
+    private void downsampleFill(LodSection child, int brick, int bx, int by, int bz) {
+        NibbleBricks fill = child.fill();
+        boolean fillUniform = fill.isUniform(brick);
+        int uniformFill = fill.uniformValue(brick);
+        byte[] fillData = fill.brickData(brick);
+        if (child.isUniform(brick) && (childrenFinest || fillUniform)) {
+            int index = child.uniformIndex(brick);
+            int h = height(index, uniformFill);
+            int column = h == 0 ? 0 : 16 + h;
+            byte value = (byte) (toFill(column) & 15);
+            for (int y = 0; y < 4; y++) {
+                for (int z = 0; z < 4; z++) {
+                    int row = ((by * 4 + y) * OCTANT + bz * 4 + z) * OCTANT + bx * 4;
+                    Arrays.fill(octantFill, row, row + 4, value);
+                }
+            }
+            return;
+        }
+        long[] data = child.brickData(brick);
+        int bits = child.bits();
+        int uniformIndex = data == null ? child.uniformIndex(brick) : 0;
+        for (int v = 0; v < LodSection.BRICK_VOLUME; v++) {
+            int index = data == null ? uniformIndex : LodSection.unpack(data, bits, v);
+            int f = fillData == null ? uniformFill : (fillData[v >> 1] >> ((v & 1) << 2)) & 15;
+            heights[v] = height(index, f);
+        }
+        for (int py = 0; py < 4; py++) {
+            for (int pz = 0; pz < 4; pz++) {
+                for (int px = 0; px < 4; px++) {
+                    int best = 0;
+                    for (int c = 0; c < 4; c++) {
+                        int cx = px * 2 + (c & 1);
+                        int cz = pz * 2 + (c >> 1);
+                        int lower = heights[voxel(cx, py * 2, cz)];
+                        int upper = heights[voxel(cx, py * 2 + 1, cz)];
+                        best = Math.max(best, upper > 0 ? 16 + upper : lower);
+                    }
+                    octantFill[((by * 4 + py) * OCTANT + bz * 4 + pz) * OCTANT + bx * 4 + px] =
+                            (byte) (toFill(best) & 15);
+                }
+            }
+        }
+    }
+
+    /** Height of a child voxel in sixteenths of the child voxel. */
+    private int height(int paletteIndex, int fillNibble) {
+        if (shapeOfIndex[paletteIndex] == Shapes.EMPTY) {
+            return 0;
+        }
+        return childrenFinest ? heightOfIndex[paletteIndex] : fillNibble + 1;
+    }
+
+    /** A column height in sixteenths of a child voxel (0..32) as a parent fill nibble. */
+    private static int toFill(int column) {
+        int sixteenths = (column + 1) / 2;
+        return Math.max(1, Math.min(16, sixteenths)) - 1;
+    }
+
     private static int voxel(int x, int y, int z) {
         return (y << 6) | (z << 3) | x;
     }
@@ -287,6 +382,7 @@ public final class MipBuilder {
                     }
                     writeLightBrick(parent.skyLight(), brick, octantSky, ox, oy, oz);
                     writeLightBrick(parent.blockLight(), brick, octantBlock, ox, oy, oz);
+                    writeLightBrick(parent.fill(), brick, octantFill, ox, oy, oz);
                 }
             }
         }

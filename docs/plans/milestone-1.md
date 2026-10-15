@@ -152,8 +152,12 @@ choice, an ADR.
   closed (coarse water tops one block lower), faces lit by vanilla's
   lightmap (sky and block light per quad), vanilla-style ambient
   occlusion on levels 0 and 1; checked on both loaders in the dev client.
-  Remains: the user's check at the vanilla edge; lakes away from sea level
-  may still show a crack where levels meet; judge ADR-020
+  Then (user's pass with textures and light): lightmap sampled like vanilla
+  (LODs were 5 % brighter), LODs give way exactly on the sections the game
+  has compiled (Sodium or vanilla rule), partial blocks at their height on
+  level 0, fill height of coarse voxels (ADR-028). Remains: the user's
+  check in the pack; fences, walls and panes stay invisible in LODs;
+  stairs are full cubes; judge ADR-020
 - [ ] E.6 Client mode (ADR-022): a client with Farfield on a server
   without it builds and renders LODs from the chunks it receives, stored
   per remote world; command to force or rename the world identity.

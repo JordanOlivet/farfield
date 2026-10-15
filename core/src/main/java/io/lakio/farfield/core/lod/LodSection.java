@@ -15,6 +15,9 @@ import java.util.Arrays;
  *   <li>A brick is either <b>uniform</b> (one palette index, no data: air,
  *       stone, water bodies cost nothing) or holds 512 indices bit-packed with
  *       1, 2, 4, 8 or 16 bits each, entries never spanning two longs.</li>
+ *   <li><b>Fill</b> per voxel on coarse levels ({@link #fill()}): how high
+ *       the content stands in the voxel, in sixteenths minus one (15: full).
+ *       Level 0 keeps it full; there the material says how high a block is.</li>
  *   <li>Sky and block light per voxel in {@link NibbleBricks} (same bricks;
  *       defaults 15 and 0).</li>
  *   <li>Biomes per 4x4x4-voxel cell, 8x8x8 cells, index
@@ -50,6 +53,7 @@ public final class LodSection {
 
     private final NibbleBricks skyLight = new NibbleBricks(15);
     private final NibbleBricks blockLight = new NibbleBricks(0);
+    private final NibbleBricks fill = new NibbleBricks(15);
     private int[] biomes;
     private int uniformBiome = -1;
 
@@ -109,6 +113,11 @@ public final class LodSection {
 
     public NibbleBricks blockLight() {
         return blockLight;
+    }
+
+    /** Fill height per voxel, in sixteenths minus one (15: full); see the class comment. */
+    public NibbleBricks fill() {
+        return fill;
     }
 
     /** Biome of a 4x4x4-voxel cell (cell coordinates 0..7). */
@@ -388,6 +397,7 @@ public final class LodSection {
     public void compact() {
         skyLight.compact();
         blockLight.compact();
+        fill.compact();
         for (int b = 0; b < BRICK_COUNT; b++) {
             long[] data = bricks[b];
             if (data == null) {

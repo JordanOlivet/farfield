@@ -39,7 +39,7 @@ uniform mat4 u_viewProj;    // the game's projection * view rotation
 uniform ivec3 u_cameraBlock;
 uniform vec3 u_cameraFrac;
 uniform vec2 u_depthRange;  // near, far of the LOD depth mapping
-uniform bool u_translucent; // translucent pass (water, glass, ice and their skirts)
+uniform bool u_translucent; // translucent pass (water, glass, ice)
 
 out vec3 v_relative;
 out vec2 v_texCoord;      // block units along the face's U and V axes: one tile per block
@@ -71,7 +71,7 @@ void main() {
     uint sizeU = ((lo >> 15) & 31u) + 1u;
     uint sizeV = ((lo >> 20) & 31u) + 1u;
     uint direction = (lo >> 25) & 7u;
-    uint material = (lo >> 28) | ((q.y & 0x3FFFu) << 4);
+    uint material = (lo >> 28) | ((q.y & 0xFFFu) << 4);
 
     uint axis = direction >> 1;
     uint uAxis = (axis + 1u) % 3u;
@@ -88,28 +88,24 @@ void main() {
     p[vAxis] += float(cv * sizeV);
 
     float scale = float(1 << s.originLevel.w);
-    // Coarse translucent voxels round their top up to the cell top: sea
-    // water (top at 63, one below 64, a multiple of every cell size) would
-    // stand one block high at every level above 0 and leave a step where
-    // levels meet. Their top edges come down one block, which puts the sea
-    // exactly at 63 on every level.
-    // Partial blocks on the finest level: their top edges come down to the
-    // block's own height (the mesher keeps them out of coarser levels).
-    if (s.originLevel.w == 0) {
-        uint height = colors[material * COLOR_STRIDE + HEIGHT_OFFSET];
-        bool top = direction == 3u
-                || (axis == 0u && cu == 1u)
-                || (axis == 2u && cv == 1u);
-        if (height < 16u && top) {
-            p.y -= float(16u - height) / 16.0;
-        }
-    }
-    if (u_translucent && s.originLevel.w > 0) {
-        bool top = direction == 3u
-                || (axis == 0u && cu == 1u)
-                || (axis == 2u && cv == 1u);
-        if (top) {
-            p.y -= 1.0 / scale;
+    // Voxels lower than their cell: on the finest level, partial blocks take
+    // their block's height (snow layers, slabs, carpets); on coarser levels,
+    // every voxel takes its fill in eighths, so the sea and snow stand where
+    // they are instead of at the top of the coarse voxel.
+    bool top = direction == 3u
+            || (axis == 0u && cu == 1u)
+            || (axis == 2u && cv == 1u);
+    if (top) {
+        if (s.originLevel.w == 0) {
+            uint height = colors[material * COLOR_STRIDE + HEIGHT_OFFSET];
+            if (height < 16u) {
+                p.y -= float(16u - height) / 16.0;
+            }
+        } else {
+            uint fill = (q.y >> 29) + 1u;
+            if (fill < 8u) {
+                p.y -= float(8u - fill) / 8.0;
+            }
         }
     }
     v_relative = vec3(s.originLevel.xyz - u_cameraBlock) + p * scale - u_cameraFrac;
@@ -130,7 +126,7 @@ void main() {
     uint tinted = colors[face + 1u];
     vec3 tint = vec3(0.0);
     if ((tinted & 0xFFFFFFu) != 0u) {
-        uint biomeSlot = (q.y >> 14) & 0x3FFu;
+        uint biomeSlot = (q.y >> 12) & 0x1FFu;
         tint = toLinear(unpackUnorm4x8(tints[biomeSlot * TINT_KINDS + (tinted >> 24)]).rgb);
         color += toLinear(unpackUnorm4x8(tinted).rgb) * tint;
     }
@@ -138,7 +134,7 @@ void main() {
     v_tint = tint;
     v_tiles = colors[face + 2u];
     v_light = SHADE[direction];
-    v_lightmap = ivec2(int(q.y >> 28), int((q.y >> 24) & 15u));
+    v_lightmap = ivec2(int((q.y >> 25) & 15u), int((q.y >> 21) & 15u));
     v_level = s.originLevel.w;
     v_voxel = p;
     v_direction = direction;

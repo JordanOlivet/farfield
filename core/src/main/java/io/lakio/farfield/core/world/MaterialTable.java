@@ -8,8 +8,8 @@ import java.util.Arrays;
 
 /**
  * Per-material properties the engine needs, indexed by block-state id of a
- * world's {@link KeyRegistry}: the mesher's class and the downsampling
- * shape. Resolved lazily from the key by the Minecraft side on first use and
+ * world's {@link KeyRegistry}: the mesher's class, the downsampling shape
+ * and the block's height in sixteenths. Resolved lazily from the key by the Minecraft side on first use and
  * cached; thread-safe.
  */
 public final class MaterialTable implements MaterialClassifier, MipBuilder.Shapes {
@@ -18,8 +18,9 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
     @FunctionalInterface
     public interface Resolver {
         /**
-         * @return {@link #pack(int, int)} of the mesher class and the
-         *         downsampling shape; called once per key, from any thread
+         * @return {@link #pack(int, int, int)} of the mesher class, the
+         *         downsampling shape and the height; called once per key,
+         *         from any thread
          */
         int resolve(String key);
     }
@@ -32,19 +33,25 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
         return air ? pack(AIR, EMPTY) : pack(OPAQUE, FULL);
     };
 
-    private static final byte UNRESOLVED = -1;
+    private static final int UNRESOLVED = -1;
 
     private final KeyRegistry keys;
     private final Resolver resolver;
-    private volatile byte[] packed = new byte[0];
+    private volatile int[] packed = new int[0];
 
     public MaterialTable(KeyRegistry keys, Resolver resolver) {
         this.keys = keys;
         this.resolver = resolver;
     }
 
+    /** Class and shape, with the height of the shape (16 for full and cover, 0 otherwise). */
     public static int pack(int meshClass, int shape) {
-        return meshClass | shape << 4;
+        return pack(meshClass, shape, shape >= FULL ? 16 : shape == COVER ? 16 : 0);
+    }
+
+    /** @param height the block's height in sixteenths (0..16) */
+    public static int pack(int meshClass, int shape, int height) {
+        return meshClass | shape << 4 | height << 8;
     }
 
     @Override
@@ -54,13 +61,18 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
 
     @Override
     public int shapeOf(int material) {
-        return properties(material) >> 4;
+        return properties(material) >> 4 & 15;
+    }
+
+    @Override
+    public int heightOf(int material) {
+        return properties(material) >> 8 & 31;
     }
 
     private int properties(int material) {
-        byte[] p = packed;
+        int[] p = packed;
         if (material < p.length) {
-            byte value = p[material];
+            int value = p[material];
             if (value != UNRESOLVED) {
                 return value;
             }
@@ -69,7 +81,7 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
     }
 
     private synchronized int resolve(int material) {
-        byte[] p = packed;
+        int[] p = packed;
         if (material >= p.length) {
             int size = Math.max(material + 1, Math.max(64, p.length * 2));
             p = Arrays.copyOf(p, size);
@@ -82,7 +94,7 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
             } catch (RuntimeException e) {
                 value = pack(OPAQUE, FULL);
             }
-            p[material] = (byte) value;
+            p[material] = value;
         }
         packed = p;
         return p[material];

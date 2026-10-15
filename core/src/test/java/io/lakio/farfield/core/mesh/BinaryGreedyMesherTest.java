@@ -39,11 +39,13 @@ class BinaryGreedyMesherTest {
         assertEquals(-1, Quad.biome(q));
         assertEquals(15, Quad.skyLight(q));
         assertEquals(0, Quad.blockLight(q));
-        q = Quad.pack(0, 0, 0, 1, 1, Quad.POS_Y, Quad.MAX_MATERIAL, Quad.MAX_BIOME, 7, 13);
+        assertEquals(Quad.FULL_FILL, Quad.fill(q));
+        q = Quad.pack(0, 0, 0, 1, 1, Quad.POS_Y, Quad.MAX_MATERIAL, Quad.MAX_BIOME, 7, 13, 3);
         assertEquals(Quad.MAX_MATERIAL, Quad.material(q));
         assertEquals(Quad.MAX_BIOME, Quad.biome(q));
         assertEquals(7, Quad.skyLight(q));
         assertEquals(13, Quad.blockLight(q));
+        assertEquals(3, Quad.fill(q));
 
         q = Quad.pack(1, 2, 3, 4, 5, Quad.NEG_Y, 77, Quad.MAX_BIOME);
         assertEquals(Quad.MAX_BIOME, Quad.biome(q));
@@ -106,6 +108,44 @@ class BinaryGreedyMesherTest {
         assertTrue(!floorTopUnderSnow, "the snow hides the floor top under it");
         assertTrue(wallSideTowardSnow, "the snow does not hide the wall beside it");
         verify(section, null);
+    }
+
+    @Test
+    void lowFillVoxelsMeshAsPartialWithTheirFill() {
+        // A coarse floor (fill full) under a coarse snow cover filled to 3/16:
+        // the cover hides the floor's top, the cover's top carries its fill
+        // (2 eighths), and a full wall beside the cover keeps its side.
+        LodSection section = new LodSection(0);
+        for (int z = 0; z < 32; z++) {
+            for (int x = 0; x < 32; x++) {
+                section.set(x, 0, z, 1);
+                if (x < 16) {
+                    section.set(x, 1, z, 3);
+                    section.fill().set(x, 1, z, 2);
+                }
+            }
+            section.set(16, 1, z, 2);
+        }
+        section.compact();
+        mesher.mesh(section, CLASSES, null, out);
+        boolean floorTopUnderCover = false;
+        boolean coverTop = false;
+        for (int i = 0; i < out.count(Quad.POS_Y); i++) {
+            long q = out.quads(Quad.POS_Y)[i];
+            floorTopUnderCover |= Quad.material(q) == 1 && Quad.x(q) < 16;
+            if (Quad.material(q) == 3) {
+                coverTop = true;
+                assertEquals(2, Quad.fill(q));
+            }
+        }
+        boolean wallSide = false;
+        for (int i = 0; i < out.count(Quad.NEG_X); i++) {
+            long q = out.quads(Quad.NEG_X)[i];
+            wallSide |= Quad.material(q) == 2 && Quad.x(q) == 16;
+        }
+        assertTrue(!floorTopUnderCover, "the cover hides the floor top");
+        assertTrue(coverTop, "the cover's top is drawn");
+        assertTrue(wallSide, "the wall beside the cover keeps its side");
     }
 
     @Test

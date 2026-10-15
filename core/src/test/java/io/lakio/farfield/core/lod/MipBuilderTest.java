@@ -37,6 +37,55 @@ class MipBuilderTest {
     }
 
     @Test
+    void fillFollowsTheSurfaceInsideCoarseVoxels() {
+        Shapes shapes = new Shapes() {
+            @Override
+            public int shapeOf(int material) {
+                return SHAPES.shapeOf(material);
+            }
+
+            @Override
+            public int heightOf(int material) {
+                return material == SNOW_LAYER ? 2 : material == SLAB ? 8 : Shapes.super.heightOf(material);
+            }
+        };
+        MipBuilder builder = new MipBuilder(AIR, shapes);
+        LodSection child = new LodSection(AIR);
+        for (int z = 0; z < 32; z++) {
+            for (int x = 0; x < 32; x++) {
+                for (int y = 0; y < 10; y++) {
+                    child.set(x, y, z, STONE);
+                }
+                if (x < 16) {
+                    child.set(x, 10, z, SNOW_LAYER);
+                } else {
+                    for (int y = 10; y <= 12; y++) {
+                        child.set(x, y, z, WATER);
+                    }
+                }
+            }
+        }
+        LodSection[] children = new LodSection[8];
+        children[0] = child;
+        LodSection parent = builder.build(children, true);
+        // A snow layer of 2/16 in a 2-block voxel fills 1/16 of it (nibble 0), on full stone.
+        assertEquals(SNOW_LAYER, parent.material(2, 5, 2));
+        assertEquals(0, parent.fill().get(2, 5, 2));
+        assertEquals(15, parent.fill().get(2, 4, 2));
+        // Water up to y 12 fills the voxel over y 12..13 by half (nibble 7).
+        assertEquals(WATER, parent.material(10, 6, 2));
+        assertEquals(7, parent.fill().get(10, 6, 2));
+        assertEquals(15, parent.fill().get(10, 5, 2));
+
+        // One level up the children are coarse: their fill counts, not their material.
+        // Blocks 8..11: stone 8..9 and 2/16 of snow on 10: 2.125 of 4 blocks, 9/16 (nibble 8).
+        LodSection[] coarse = new LodSection[8];
+        coarse[0] = parent;
+        LodSection grand = builder.build(coarse, false);
+        assertEquals(8, grand.fill().get(1, 2, 1));
+    }
+
+    @Test
     void uniformChildrenGiveUniformParent() {
         LodSection[] children = new LodSection[8];
         for (int i = 0; i < 8; i++) {

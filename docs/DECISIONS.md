@@ -509,3 +509,31 @@ Amends ADR-024. After playing with textures on every LOD, the user found
 100 MB of quads on the middle-distance test view, between the 62 MB of
 8 px and the 203 MB of 4 px). `/farfield detail <px>` and the settings
 screen (E.8) keep the choice open.
+
+## ADR-028 — Fill height of coarse voxels
+
+**Date**: 2026-10-15 · **Status**: accepted
+
+Amends ADR-020 (downsampling rules).
+
+- Coarse voxels (levels 1 and up) store a **fill**: how high their content
+  stands in the voxel, in sixteenths (4 bits per voxel, in bricks like the
+  light). Per child column, the upper child's height above a full lower
+  half, or the lower child's; the highest of the four columns, rounded up.
+  Level-0 children take their block's height (snow layer 2/16, slab 8/16,
+  cube 16/16); coarser children their fill. The highest column keeps
+  trunks, walls and cliff edges.
+- Quads carry the fill in eighths (3 bits). Opaque voxels that are not full
+  mesh as partial (they hide only the top of the voxel below), and their
+  top edges come down to the fill. The sea now lies at its own height on
+  every level: the one-block lowering of coarse translucent tops is gone.
+- Quad layout: material 16 bits (6,460 block states in a 398-mod pack),
+  biome 9 bits (127 biomes in the same pack), sky and block light 4 bits
+  each, fill 3 bits. Quads stay 8 bytes.
+- Section format version 2 adds the fill map and bricks; version 1 reads as
+  full. A world built with older mip rules rebuilds its coarse levels once
+  from level 0 when opened (`mips.version`); 27,432 level-1 sections in
+  15 s on the test world. Store size unchanged at the MB level
+  (L1 152 MB, L2 31 MB on the test world).
+- Level 0 keeps no fill: there the block state gives the height
+  (`MaterialClassifier.PARTIAL`, drawn at its height by `lod.vert`).

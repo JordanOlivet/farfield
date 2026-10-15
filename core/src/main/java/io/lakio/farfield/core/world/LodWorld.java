@@ -10,6 +10,7 @@ import io.lakio.farfield.core.storage.SectionStore;
 import io.lakio.farfield.core.util.ByteWriter;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -64,6 +65,14 @@ public final class LodWorld implements AutoCloseable {
     private final Object[] locks = new Object[LOCK_STRIPES];
     @SuppressWarnings("unchecked")
     private final Set<Long>[] dirty = new Set[LEVELS];
+    /**
+     * Version of the mip rules the stored coarse levels were built with; a
+     * world built with older rules rebuilds them all once, from level 0
+     * (version 2: per-voxel fill).
+     */
+    private static final String MIPS_VERSION = "2";
+    private final Path mipsVersionFile;
+    private volatile int mipsToUpgrade;
     private final List<LongConsumer> listeners = new CopyOnWriteArrayList<>();
     private final ThreadLocal<MipBuilder> mips;
     private final ConcurrentHashMap<Long, Pending> pending = new ConcurrentHashMap<>();
@@ -105,6 +114,23 @@ public final class LodWorld implements AutoCloseable {
             dirty[level] = ConcurrentHashMap.newKeySet();
         }
         mips = ThreadLocal.withInitial(() -> new MipBuilder(air, materials));
+        mipsVersionFile = dir.resolve("mips.version");
+        String version = Files.exists(mipsVersionFile) ? Files.readString(mipsVersionFile).trim() : "";
+        if (!MIPS_VERSION.equals(version)) {
+            store.forEachKey(0, key -> dirty[1].add(LodKey.parent(key)));
+            mipsToUpgrade = dirty[1].size();
+            if (mipsToUpgrade == 0) {
+                Files.writeString(mipsVersionFile, MIPS_VERSION);
+            }
+        }
+    }
+
+    /**
+     * Level-1 parents queued at open to rebuild the coarse levels with the
+     * current mip rules (0 when they are current); cleared once rebuilt.
+     */
+    public int mipsToUpgrade() {
+        return mipsToUpgrade;
     }
 
     /** Opens with a write-back cache of up to 2048 level-0 sections. */
@@ -312,6 +338,15 @@ public final class LodWorld implements AutoCloseable {
      * One call at a time.
      */
     public synchronized int buildMips(ExecutorService executor) throws IOException {
+        int written = buildMipLevels(executor);
+        if (mipsToUpgrade > 0 && !hasDirtyMips()) {
+            Files.writeString(mipsVersionFile, MIPS_VERSION);
+            mipsToUpgrade = 0;
+        }
+        return written;
+    }
+
+    private int buildMipLevels(ExecutorService executor) throws IOException {
         int written = 0;
         for (int level = 1; level < LEVELS; level++) {
             List<Long> keys = new ArrayList<>(dirty[level]);
@@ -365,7 +400,7 @@ public final class LodWorld implements AutoCloseable {
         if (!any) {
             return false;
         }
-        LodSection parent = mips.get().build(children);
+        LodSection parent = mips.get().build(children, level - 1 == 0);
         int[] length = new int[1];
         byte[] old = store.readEncoded(key, length);
         byte[] oldCopy = old == null ? null : Arrays.copyOf(old, length[0]);

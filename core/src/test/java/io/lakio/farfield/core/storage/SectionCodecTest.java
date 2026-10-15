@@ -79,6 +79,48 @@ class SectionCodecTest {
     }
 
     @Test
+    void roundTripsFill() {
+        LodSection s = randomSection(new SplittableRandom(3), 5);
+        s.fill().set(1, 2, 3, 4);
+        s.fill().set(30, 31, 0, 0);
+        LodSection back = roundTrip(s);
+        assertEquals(4, back.fill().get(1, 2, 3));
+        assertEquals(0, back.fill().get(30, 31, 0));
+        assertEquals(15, back.fill().get(5, 5, 5));
+    }
+
+    @Test
+    void readsVersionOneAsFull() {
+        // A version-2 encoding without fill data, turned into version 1 by
+        // dropping its fill map (64 bytes of 15 right after the block light map).
+        LodSection s = new LodSection(1);
+        s.skyLight().fill(14);
+        s.blockLight().fill(3);
+        ByteWriter out = new ByteWriter(1024);
+        codec.encode(s, out);
+        byte[] v2 = out.toByteArray();
+        int start = -1;
+        for (int i = 0; i + 128 <= v2.length && start < 0; i++) {
+            boolean match = true;
+            for (int j = 0; j < 64 && match; j++) {
+                match = v2[i + j] == 3 && v2[i + 64 + j] == 15;
+            }
+            if (match) {
+                start = i + 64;
+            }
+        }
+        assertTrue(start > 0, "fill map not found");
+        byte[] v1 = new byte[v2.length - 64];
+        System.arraycopy(v2, 0, v1, 0, start);
+        System.arraycopy(v2, start + 64, v1, start, v2.length - start - 64);
+        v1[0] = 1;
+        LodSection back = codec.decode(v1, 0, v1.length);
+        assertEquals(14, back.skyLight().get(7, 7, 7));
+        assertEquals(3, back.blockLight().get(7, 7, 7));
+        assertEquals(15, back.fill().get(7, 7, 7));
+    }
+
+    @Test
     void uniformSectionIsTiny() {
         ByteWriter out = new ByteWriter(16);
         codec.encode(new LodSection(1), out);

@@ -11,11 +11,13 @@ package io.lakio.farfield.core.mesh;
  *   bits 15-19  size along the face's U axis, minus 1
  *   bits 20-24  size along the face's V axis, minus 1
  *   bits 25-27  direction (see below)
- *   bits 28-45  material id (18 bits)
- *   bits 46-55  biome id + 1 (0: none or unknown), set only for materials
+ *   bits 28-43  material id (16 bits)
+ *   bits 44-52  biome id + 1 (0: none or unknown), set only for materials
  *               whose color depends on the biome
- *   bits 56-59  sky light in front of the face (0..15)
- *   bits 60-63  block light in front of the face (0..15)
+ *   bits 53-56  sky light in front of the face (0..15)
+ *   bits 57-60  block light in front of the face (0..15)
+ *   bits 61-63  fill of its voxels in eighths, minus one (7: full; coarse
+ *               levels, see {@code LodSection#fill})
  * </pre>
  *
  * <p>Directions: 0 -X, 1 +X, 2 -Y, 3 +Y, 4 -Z, 5 +Z. A face lies on the side
@@ -34,31 +36,34 @@ public final class Quad {
     public static final int POS_Z = 5;
     public static final int DIRECTIONS = 6;
 
-    /** Largest material id; ids are a world's seen block states, far below it. */
-    public static final int MAX_MATERIAL = (1 << 18) - 1;
-    /** Largest biome id a quad can carry; higher ids are stored as unknown. */
-    public static final int MAX_BIOME = (1 << 10) - 2;
+    /** Largest material id; ids are a world's seen block states (6,460 in a 398-mod pack). */
+    public static final int MAX_MATERIAL = (1 << 16) - 1;
+    /** Largest biome id a quad can carry (127 in a 398-mod pack); higher ids are stored as unknown. */
+    public static final int MAX_BIOME = (1 << 9) - 2;
+    /** Fill of a full voxel, in eighths. */
+    public static final int FULL_FILL = 8;
 
     private Quad() {
     }
 
     /** A quad without biome, in full sky light. */
     public static long pack(int x, int y, int z, int sizeU, int sizeV, int direction, int material) {
-        return pack(x, y, z, sizeU, sizeV, direction, material, -1, 15, 0);
+        return pack(x, y, z, sizeU, sizeV, direction, material, -1, 15, 0, FULL_FILL);
     }
 
     /** A quad in full sky light; {@code biome} is a biome id, or -1 for none or unknown. */
     public static long pack(int x, int y, int z, int sizeU, int sizeV, int direction, int material, int biome) {
-        return pack(x, y, z, sizeU, sizeV, direction, material, biome, 15, 0);
+        return pack(x, y, z, sizeU, sizeV, direction, material, biome, 15, 0, FULL_FILL);
     }
 
     /**
      * @param biome biome id, or -1 for none or unknown
      * @param sky   sky light in front of the face, 0..15
      * @param block block light in front of the face, 0..15
+     * @param fill  fill of its voxels in eighths, 1..8
      */
     public static long pack(int x, int y, int z, int sizeU, int sizeV, int direction, int material, int biome,
-                            int sky, int block) {
+                            int sky, int block, int fill) {
         long biomeBits = biome < 0 || biome > MAX_BIOME ? 0 : biome + 1;
         return (long) x
                 | (long) y << 5
@@ -67,9 +72,10 @@ public final class Quad {
                 | (long) (sizeV - 1) << 20
                 | (long) direction << 25
                 | (long) (material & MAX_MATERIAL) << 28
-                | biomeBits << 46
-                | (long) (sky & 15) << 56
-                | (long) (block & 15) << 60;
+                | biomeBits << 44
+                | (long) (sky & 15) << 53
+                | (long) (block & 15) << 57
+                | (long) (Math.max(1, Math.min(FULL_FILL, fill)) - 1) << 61;
     }
 
     public static int x(long q) {
@@ -100,17 +106,22 @@ public final class Quad {
         return (int) (q >>> 28) & MAX_MATERIAL;
     }
 
+    /** Fill of the quad's voxels in eighths (8: full). */
+    public static int fill(long q) {
+        return (int) (q >>> 61) + 1;
+    }
+
     /** Biome id, or -1 for none or unknown. */
     public static int biome(long q) {
-        return (int) (q >>> 46 & 0x3FF) - 1;
+        return (int) (q >>> 44 & 0x1FF) - 1;
     }
 
     public static int skyLight(long q) {
-        return (int) (q >>> 56) & 15;
+        return (int) (q >>> 53) & 15;
     }
 
     public static int blockLight(long q) {
-        return (int) (q >>> 60) & 15;
+        return (int) (q >>> 57) & 15;
     }
 
     /** Axis of a direction: 0 X, 1 Y, 2 Z. */

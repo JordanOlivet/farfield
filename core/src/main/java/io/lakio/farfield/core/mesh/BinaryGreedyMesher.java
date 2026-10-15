@@ -1,6 +1,7 @@
 package io.lakio.farfield.core.mesh;
 
 import io.lakio.farfield.core.lod.LodSection;
+import io.lakio.farfield.core.lod.NibbleBricks;
 import io.lakio.farfield.core.util.Bits;
 
 import java.util.Arrays;
@@ -29,7 +30,9 @@ import java.util.function.IntPredicate;
  * <p>Quads only merge faces of the same material and light, and for
  * materials whose color depends on the biome (grass, leaves, water) of the
  * same biome cell (4x4x4 voxels); those quads carry their biome. A face's
- * light is the sky and block light of the voxel in front of it; in front of
+ * light is the sky and block light of the voxel in front of it; its fill
+ * (coarse levels) is its voxel's, in eighths, and opaque voxels that are
+ * not full mesh as {@link MaterialClassifier#PARTIAL}; in front of
  * a section border, the face voxel's own light when it is translucent
  * (water), else full sky light (open terrain at section tops). Ambient
  * occlusion is not part of the merge key.
@@ -61,6 +64,7 @@ public final class BinaryGreedyMesher {
 
     private int[] slotIndex = new int[16];
     private int[] slotBiome = new int[16];
+    /** Per slot: light (sky << 4 | block) | fill in eighths << 8. */
     private int[] slotLight = new int[16];
     private int[] slotRows = new int[16 * S];
     private boolean[] tintedIndex = new boolean[64];
@@ -106,6 +110,7 @@ public final class BinaryGreedyMesher {
         }
         classifyTints(section, tinted);
         buildRows(section);
+        splitPartialFill(section);
 
         for (int axis = 0; axis < 3; axis++) {
             buildColumns(axis);
@@ -240,6 +245,39 @@ public final class BinaryGreedyMesher {
                             rowsPartial[row + lz] |= pa << xShift;
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /**
+     * Opaque voxels whose fill is below full (coarse levels) mesh as partial
+     * ones: they hide only the top of the voxel below and stand at their fill.
+     */
+    private void splitPartialFill(LodSection section) {
+        NibbleBricks fill = section.fill();
+        for (int b = 0; b < LodSection.BRICK_COUNT; b++) {
+            if (fill.isUniform(b) && fill.uniformValue(b) == 15) {
+                continue;
+            }
+            int bx = b % LodSection.BRICKS_PER_AXIS;
+            int bz = (b / LodSection.BRICKS_PER_AXIS) % LodSection.BRICKS_PER_AXIS;
+            int by = b / (LodSection.BRICKS_PER_AXIS * LodSection.BRICKS_PER_AXIS);
+            for (int ly = 0; ly < 8; ly++) {
+                for (int lz = 0; lz < 8; lz++) {
+                    int row = (by * 8 + ly) * S + bz * 8 + lz;
+                    int opaqueBits = rowsOpaque[row] >>> (bx * 8) & 0xFF;
+                    if (opaqueBits == 0) {
+                        continue;
+                    }
+                    int lowered = 0;
+                    for (int lx = 0; lx < 8; lx++) {
+                        if ((opaqueBits >> lx & 1) != 0 && fill.get(bx * 8 + lx, by * 8 + ly, bz * 8 + lz) < 15) {
+                            lowered |= 1 << lx;
+                        }
+                    }
+                    rowsOpaque[row] &= ~(lowered << (bx * 8));
+                    rowsPartial[row] |= lowered << (bx * 8);
                 }
             }
         }
@@ -416,7 +454,8 @@ public final class BinaryGreedyMesher {
                 }
                 int index = section.paletteIndex(x, y, z);
                 int biome = splitBiomes && tintedIndex[index] ? section.biome(x >> 2, y >> 2, z >> 2) : -1;
-                int light = light(section, x, y, z, index, axis, depthStep);
+                int light = light(section, x, y, z, index, axis, depthStep)
+                        | ((section.fill().get(x, y, z) + 2) >> 1) << 8;
                 int slot;
                 if (index == lastIndex && slotBiome[lastSlot] == biome && slotLight[lastSlot] == light) {
                     slot = lastSlot;
@@ -490,9 +529,12 @@ public final class BinaryGreedyMesher {
                 }
                 facesEmitted += (long) width * height;
                 long quad = switch (axis) {
-                    case 0 -> Quad.pack(depth, u, v, height, width, direction, material, biome, light >> 4, light & 15);
-                    case 1 -> Quad.pack(v, depth, u, height, width, direction, material, biome, light >> 4, light & 15);
-                    default -> Quad.pack(u, v, depth, height, width, direction, material, biome, light >> 4, light & 15);
+                    case 0 -> Quad.pack(depth, u, v, height, width, direction, material, biome, light >> 4 & 15,
+                            light & 15, light >> 8);
+                    case 1 -> Quad.pack(v, depth, u, height, width, direction, material, biome, light >> 4 & 15,
+                            light & 15, light >> 8);
+                    default -> Quad.pack(u, v, depth, height, width, direction, material, biome, light >> 4 & 15,
+                            light & 15, light >> 8);
                 };
                 out.add(direction, quad);
             }

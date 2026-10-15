@@ -129,7 +129,7 @@ public final class BlockKeys {
                 // slabs, carpets): drawn at its own height on the finest level.
                 boolean partial = b.minY <= 0.01 && b.maxY < 0.99;
                 int meshClass = partial ? MaterialClassifier.PARTIAL : MaterialClassifier.OPAQUE;
-                return MaterialTable.pack(meshClass, MipBuilder.Shapes.COVER);
+                return MaterialTable.pack(meshClass, MipBuilder.Shapes.COVER, partial ? heightSixteenths(state) : 16);
             }
         }
         return MaterialTable.pack(MaterialClassifier.AIR, MipBuilder.Shapes.SPARSE);
