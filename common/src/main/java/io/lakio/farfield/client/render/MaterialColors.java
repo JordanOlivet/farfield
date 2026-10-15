@@ -1,6 +1,7 @@
 package io.lakio.farfield.client.render;
 
 import com.mojang.blaze3d.platform.NativeImage;
+import io.lakio.farfield.Farfield;
 import io.lakio.farfield.core.anvil.KeyRegistry;
 import io.lakio.farfield.core.mesh.MaterialClassifier;
 import io.lakio.farfield.lod.BlockKeys;
@@ -155,12 +156,14 @@ final class MaterialColors {
     private boolean build(String key, int off, boolean opaque, BiomeTints tints, Biome probeBiome) {
         BlockState state = BlockKeys.state(key);
         if (state == null) {
+            Farfield.LOG.warn("LOD look of unknown block state {}: drawn gray", key);
             fillFlat(off, FALLBACK);
             return false;
         }
         try {
             return build(BlockKeys.lookOf(state), off, opaque, tints, probeBiome);
         } catch (RuntimeException | LinkageError e) {
+            Farfield.LOG.warn("LOD look of {} failed, map color used instead", key, e);
             fillFlat(off, mapColor(state));
             return false;
         }

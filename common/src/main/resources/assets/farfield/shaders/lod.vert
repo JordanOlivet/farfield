@@ -38,6 +38,7 @@ uniform ivec3 u_cameraBlock;
 uniform vec3 u_cameraFrac;
 uniform vec2 u_depthRange;  // near, far of the LOD depth mapping
 uniform float u_brightness; // sky brightness (day/night, weather), as vanilla sky light
+uniform bool u_translucent; // translucent pass (water, glass, ice and their skirts)
 
 out vec3 v_relative;
 out vec2 v_texCoord;      // block units along the face's U and V axes: one tile per block
@@ -81,6 +82,19 @@ void main() {
     p[vAxis] += float(cv * sizeV);
 
     float scale = float(1 << s.originLevel.w);
+    // Coarse translucent voxels round their top up to the cell top: sea
+    // water (top at 63, one below 64, a multiple of every cell size) would
+    // stand one block high at every level above 0 and leave a step where
+    // levels meet. Their top edges come down one block, which puts the sea
+    // exactly at 63 on every level.
+    if (u_translucent && s.originLevel.w > 0) {
+        bool top = direction == 3u
+                || (axis == 0u && cu == 1u)
+                || (axis == 2u && cv == 1u);
+        if (top) {
+            p.y -= 1.0 / scale;
+        }
+    }
     v_relative = vec3(s.originLevel.xyz - u_cameraBlock) + p * scale - u_cameraFrac;
     gl_Position = u_viewProj * vec4(v_relative, 1.0);
     // Keep the game's x/y/w, but map depth over our own range (far beyond
