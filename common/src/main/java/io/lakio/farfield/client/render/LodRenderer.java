@@ -111,6 +111,8 @@ public final class LodRenderer {
     private static final int SECTION_BYTES = 32;
     /** The compiled-sections grid is rebuilt every this many frames. */
     private static final int DRAWN_SECTIONS_EVERY = 8;
+    /** Chunks of the outer ring of that grid read again every frame. */
+    private static final int RING_CHUNKS = 3;
     private static final int OCCUPANCY_INTS = LodSection.SIZE * LodSection.SIZE;
     /** Neighbor slots per section slot: (dx + 1) * 9 + (dy + 1) * 3 + (dz + 1), slot + 1 or 0. */
     private static final int NEIGHBOR_INTS = 27;
@@ -147,11 +149,13 @@ public final class LodRenderer {
      */
     private GlBuffer drawnSections;
     private int[] drawnBits = new int[0];
+    /** Raw compiled state of the last pass, same layout: a section must stay built for two passes. */
+    private int[] compiledBits = new int[0];
     private final BlockPos.MutableBlockPos sectionPos = new BlockPos.MutableBlockPos();
     private int gridMinX;
     private int gridMinY;
     private int gridMinZ;
-    private int gridWidth;
+    private int gridWidth = -1;
     private int gridHeight;
     private int uGridMin;
     private int uGridSize;
@@ -389,9 +393,7 @@ public final class LodRenderer {
         applyRewrites();
         uploadMeshes();
         uploadColors(mc, level);
-        if (frame % DRAWN_SECTIONS_EVERY == 1) {
-            updateDrawnSections(mc, level, camera);
-        }
+        updateDrawnSections(mc, level, camera);
 
         Vec3 cam = camera.getPosition();
         double dx = cam.x - selectedX;
@@ -456,26 +458,46 @@ public final class LodRenderer {
     private void updateDrawnSections(Minecraft mc, ClientLevel level, Camera camera) {
         int rd = mc.options.getEffectiveRenderDistance() + 1;
         BlockPos cam = camera.getBlockPosition();
-        gridWidth = rd * 2 + 1;
-        gridHeight = level.getSectionsCount();
-        gridMinX = (cam.getX() >> 4) - rd;
-        gridMinZ = (cam.getZ() >> 4) - rd;
-        gridMinY = level.getMinSection();
+        int minX = (cam.getX() >> 4) - rd;
+        int minZ = (cam.getZ() >> 4) - rd;
+        int minY = level.getMinSection();
+        int width = rd * 2 + 1;
+        int height = level.getSectionsCount();
+        // The whole grid every few frames or when it moves; else only the outer
+        // ring, where chunks load, build and unload while the camera moves.
+        boolean full = frame % DRAWN_SECTIONS_EVERY == 1;
+        if (minX != gridMinX || minZ != gridMinZ || minY != gridMinY || width != gridWidth || height != gridHeight) {
+            remapCompiled(minX, minY, minZ, width, height);
+            full = true;
+        }
         int bits = gridWidth * gridWidth * gridHeight;
         int ints = (bits + 31) >> 5;
-        if (drawnBits.length < ints) {
-            drawnBits = new int[ints];
-        }
-        java.util.Arrays.fill(drawnBits, 0, ints, 0);
+        int ring = rd - RING_CHUNKS;
         net.minecraft.client.renderer.LevelRenderer renderer = mc.levelRenderer;
         for (int z = 0; z < gridWidth; z++) {
             for (int x = 0; x < gridWidth; x++) {
+                if (!full && Math.max(Math.abs(x - rd), Math.abs(z - rd)) < ring) {
+                    continue;
+                }
                 int column = (z * gridWidth + x) * gridHeight;
                 for (int y = 0; y < gridHeight; y++) {
                     sectionPos.set((gridMinX + x) << 4, (gridMinY + y) << 4, (gridMinZ + z) << 4);
-                    if (renderer.isSectionCompiled(sectionPos)) {
-                        int bit = column + y;
-                        drawnBits[bit >> 5] |= 1 << (bit & 31);
+                    int bit = column + y;
+                    int mask = 1 << (bit & 31);
+                    boolean compiled = renderer.isSectionCompiled(sectionPos);
+                    boolean before = (compiledBits[bit >> 5] & mask) != 0;
+                    // A section built this frame enters Sodium's render lists only on
+                    // the next one: LODs give way once it has been built for two
+                    // passes, else the area showed neither for a frame.
+                    if (compiled && before) {
+                        drawnBits[bit >> 5] |= mask;
+                    } else {
+                        drawnBits[bit >> 5] &= ~mask;
+                    }
+                    if (compiled) {
+                        compiledBits[bit >> 5] |= mask;
+                    } else {
+                        compiledBits[bit >> 5] &= ~mask;
                     }
                 }
             }
@@ -485,6 +507,42 @@ public final class LodRenderer {
             drawnSections.grow(Math.max(needed, drawnSections.size() * 2), 0);
         }
         drawnSections.upload(0, java.util.Arrays.copyOf(drawnBits, ints));
+    }
+
+    /** Moves the grids to a new origin or size, keeping the compiled state of sections still inside. */
+    private void remapCompiled(int minX, int minY, int minZ, int width, int height) {
+        int ints = (width * width * height + 31) >> 5;
+        int[] compiled = new int[ints];
+        if (gridWidth > 0 && minY == gridMinY && height == gridHeight) {
+            for (int z = 0; z < width; z++) {
+                int oz = z + minZ - gridMinZ;
+                if (oz < 0 || oz >= gridWidth) {
+                    continue;
+                }
+                for (int x = 0; x < width; x++) {
+                    int ox = x + minX - gridMinX;
+                    if (ox < 0 || ox >= gridWidth) {
+                        continue;
+                    }
+                    int from = (oz * gridWidth + ox) * gridHeight;
+                    int to = (z * width + x) * height;
+                    for (int y = 0; y < height; y++) {
+                        int f = from + y;
+                        if ((compiledBits[f >> 5] >>> (f & 31) & 1) != 0) {
+                            int t = to + y;
+                            compiled[t >> 5] |= 1 << (t & 31);
+                        }
+                    }
+                }
+            }
+        }
+        compiledBits = compiled;
+        drawnBits = new int[ints];
+        gridMinX = minX;
+        gridMinY = minY;
+        gridMinZ = minZ;
+        gridWidth = width;
+        gridHeight = height;
     }
 
     /**
