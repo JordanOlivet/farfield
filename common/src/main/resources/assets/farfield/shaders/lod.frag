@@ -22,6 +22,13 @@ uniform ivec3 u_cameraBlock;
 uniform vec3 u_cameraFrac;
 uniform int u_renderDistance;  // the game's render distance in chunks
 uniform bool u_sodiumRule;     // Sodium (or a fork) draws the terrain, else vanilla
+uniform ivec3 u_gridMin;       // section coordinates of the compiled-sections grid's corner
+uniform ivec2 u_gridSize;      // its width (x and z) and height, in sections
+
+// Sections the terrain renderer has compiled: bit ((z * width + x) * height + y).
+layout(std430, binding = 5) readonly buffer DrawnSections {
+    uint drawnSections[];
+};
 uniform vec4 u_fogColor;
 uniform vec2 u_fog;            // start, end
 uniform bool u_translucent;    // translucent pass: blend with the face's coverage
@@ -87,6 +94,14 @@ float ambientOcclusion() {
 // (translucent surfaces blended twice) nor leave a gap.
 bool vanillaDraws(ivec3 block) {
     ivec3 section = block >> 4;
+    ivec3 g = section - u_gridMin;
+    if (any(lessThan(g, ivec3(0))) || g.x >= u_gridSize.x || g.z >= u_gridSize.x || g.y >= u_gridSize.y) {
+        return false;
+    }
+    uint bit = uint((g.z * u_gridSize.x + g.x) * u_gridSize.y + g.y);
+    if (((drawnSections[bit >> 5] >> (bit & 31u)) & 1u) == 0u) {
+        return false; // not compiled yet: the game draws nothing there
+    }
     if (u_sodiumRule) {
         // Sodium's OcclusionCuller: nearest point of the section grown by one
         // block, within the render distance horizontally and vertically.

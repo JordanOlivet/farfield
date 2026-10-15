@@ -25,6 +25,7 @@ import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.resources.model.BakedModel;
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.world.level.biome.Biome;
@@ -107,6 +108,8 @@ public final class LodRenderer {
     private static final long INITIAL_QUADS = 8L << 20;
     private static final long MAX_QUADS = 128L << 20;
     private static final int SECTION_BYTES = 32;
+    /** The compiled-sections grid is rebuilt every this many frames. */
+    private static final int DRAWN_SECTIONS_EVERY = 8;
     private static final int OCCUPANCY_INTS = LodSection.SIZE * LodSection.SIZE;
     /** Ambient occlusion up to this level (voxels of 2 blocks). */
     private static final int AO_MAX_LEVEL = 1;
@@ -130,6 +133,22 @@ public final class LodRenderer {
     private GlBuffer biomeBuffer;
     /** Opaque voxels per section slot ({@link #OCCUPANCY_INTS} ints), for ambient occlusion. */
     private GlBuffer occupancy;
+    /**
+     * Sections the terrain renderer has compiled around the camera, one bit
+     * each ({@link #updateDrawnSections}): LODs give way only where the game
+     * really draws, so chunks not built yet (the outer ring waiting for its
+     * neighbors, everything right after a teleport) keep their LODs.
+     */
+    private GlBuffer drawnSections;
+    private int[] drawnBits = new int[0];
+    private final BlockPos.MutableBlockPos sectionPos = new BlockPos.MutableBlockPos();
+    private int gridMinX;
+    private int gridMinY;
+    private int gridMinZ;
+    private int gridWidth;
+    private int gridHeight;
+    private int uGridMin;
+    private int uGridSize;
     private GlBuffer indirect;
     private int vao;
     private RangeAllocator arena;
@@ -312,6 +331,8 @@ public final class LodRenderer {
         uCameraFrac = program.uniform("u_cameraFrac");
         uDepthRange = program.uniform("u_depthRange");
         uRenderDistance = program.uniform("u_renderDistance");
+        uGridMin = program.uniform("u_gridMin");
+        uGridSize = program.uniform("u_gridSize");
         uSodiumRule = program.uniform("u_sodiumRule");
         sodiumRule = classExists("net.caffeinemc.mods.sodium.client.SodiumClientMod")
                 || classExists("org.embeddedt.embeddium.impl.Embeddium")
@@ -332,6 +353,7 @@ public final class LodRenderer {
         colorBuffer = new GlBuffer(4096L * MaterialColors.STRIDE * 4);
         biomeBuffer = new GlBuffer(256L * BiomeTints.KINDS * 4);
         occupancy = new GlBuffer(1024L * OCCUPANCY_INTS * 4);
+        drawnSections = new GlBuffer(4096L * 4);
         indirect = new GlBuffer(1024L * 16);
         vao = glCreateVertexArrays();
         Farfield.LOG.info("LOD renderer ready on {}, OpenGL {} ({} MB of quads to start)", glGetString(GL_RENDERER),
@@ -358,6 +380,9 @@ public final class LodRenderer {
         applyRewrites();
         uploadMeshes();
         uploadColors(mc, level);
+        if (frame % DRAWN_SECTIONS_EVERY == 1) {
+            updateDrawnSections(mc, level, camera);
+        }
 
         Vec3 cam = camera.getPosition();
         double dx = cam.x - selectedX;
@@ -411,6 +436,46 @@ public final class LodRenderer {
         if (frameStart > nextStats) {
             logStats(count);
         }
+    }
+
+    /**
+     * Rebuilds the grid of sections the terrain renderer has compiled, over
+     * the render distance plus one chunk around the camera and the level's
+     * height. {@code LevelRenderer.isSectionCompiled} is vanilla's state, or
+     * Sodium's (it overrides the method).
+     */
+    private void updateDrawnSections(Minecraft mc, ClientLevel level, Camera camera) {
+        int rd = mc.options.getEffectiveRenderDistance() + 1;
+        BlockPos cam = camera.getBlockPosition();
+        gridWidth = rd * 2 + 1;
+        gridHeight = level.getSectionsCount();
+        gridMinX = (cam.getX() >> 4) - rd;
+        gridMinZ = (cam.getZ() >> 4) - rd;
+        gridMinY = level.getMinSection();
+        int bits = gridWidth * gridWidth * gridHeight;
+        int ints = (bits + 31) >> 5;
+        if (drawnBits.length < ints) {
+            drawnBits = new int[ints];
+        }
+        java.util.Arrays.fill(drawnBits, 0, ints, 0);
+        net.minecraft.client.renderer.LevelRenderer renderer = mc.levelRenderer;
+        for (int z = 0; z < gridWidth; z++) {
+            for (int x = 0; x < gridWidth; x++) {
+                int column = (z * gridWidth + x) * gridHeight;
+                for (int y = 0; y < gridHeight; y++) {
+                    sectionPos.set((gridMinX + x) << 4, (gridMinY + y) << 4, (gridMinZ + z) << 4);
+                    if (renderer.isSectionCompiled(sectionPos)) {
+                        int bit = column + y;
+                        drawnBits[bit >> 5] |= 1 << (bit & 31);
+                    }
+                }
+            }
+        }
+        long needed = (long) ints * 4;
+        if (needed > drawnSections.size()) {
+            drawnSections.grow(Math.max(needed, drawnSections.size() * 2), 0);
+        }
+        drawnSections.upload(0, java.util.Arrays.copyOf(drawnBits, ints));
     }
 
     /**
@@ -855,6 +920,8 @@ public final class LodRenderer {
         glUniform3f(uCameraFrac, (float) (cam.x - blockX), (float) (cam.y - blockY), (float) (cam.z - blockZ));
         glUniform2f(uDepthRange, 8f, (float) MAX_DISTANCE * 2);
         glUniform1i(uRenderDistance, mc.options.getEffectiveRenderDistance());
+        glUniform3i(uGridMin, gridMinX, gridMinY, gridMinZ);
+        glUniform2i(uGridSize, gridWidth, gridHeight);
         glUniform1i(uSodiumRule, sodiumRule ? 1 : 0);
         glUniform1i(uLightmap, LIGHTMAP_UNIT);
         glUniform4f(uFogColor, fogColor[0], fogColor[1], fogColor[2], 1f);
@@ -879,6 +946,7 @@ public final class LodRenderer {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, colorBuffer.id());
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, biomeBuffer.id());
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, occupancy.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, drawnSections.id());
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirect.id());
         RenderSystem.enableDepthTest();
         RenderSystem.depthFunc(GL_LEQUAL);
