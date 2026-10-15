@@ -499,3 +499,13 @@ their mean anyway). The measured GPU cost of textures was within noise
 (2.05 ms without, 2.10 to 2.13 ms with). `/farfield textures all|<blocks>`
 (0: off) stays for cases where it hurts, and moves into the settings
 screen (E.8).
+
+## ADR-027 — Default level of detail: 6 px per voxel
+
+**Date**: 2026-10-15 · **Status**: accepted
+
+Amends ADR-024. After playing with textures on every LOD, the user found
+8 px "a bit short in some cases": the default is 6 px per voxel (about
+100 MB of quads on the middle-distance test view, between the 62 MB of
+8 px and the 203 MB of 4 px). `/farfield detail <px>` and the settings
+screen (E.8) keep the choice open.
