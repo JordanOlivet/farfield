@@ -1,6 +1,7 @@
 package io.lakio.farfield.client.render;
 
 import com.mojang.blaze3d.platform.GlStateManager;
+import com.mojang.blaze3d.shaders.FogShape;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.BufferUploader;
 import io.lakio.farfield.Farfield;
@@ -191,6 +192,8 @@ public final class LodRenderer {
     private int uLightmap;
     private int uFogColor;
     private int uFog;
+    private int uFogCylinder;
+    private static boolean followVanillaFog;
     private int uTranslucent;
     private int uDebugLevels;
     private int uBiomeBlend;
@@ -315,6 +318,15 @@ public final class LodRenderer {
         }
     }
 
+    /**
+     * Set by the fog mixin for every terrain frame: whether the LODs take the
+     * game's fog (thick dimension fog kept, water, lava, powder snow) instead
+     * of their own far fog (ADR-033).
+     */
+    public static void setFollowVanillaFog(boolean follow) {
+        followVanillaFog = follow;
+    }
+
     /** Distance where the LOD fog starts, in blocks. */
     public static float fogStart() {
         return FOG_START;
@@ -364,6 +376,7 @@ public final class LodRenderer {
         uLightmap = program.uniform("u_lightmap");
         uFogColor = program.uniform("u_fogColor");
         uFog = program.uniform("u_fog");
+        uFogCylinder = program.uniform("u_fogCylinder");
         uTranslucent = program.uniform("u_translucent");
         uDebugLevels = program.uniform("u_debugLevels");
         uBiomeBlend = program.uniform("u_biomeBlend");
@@ -1099,7 +1112,14 @@ public final class LodRenderer {
         glUniform1i(uSodiumRule, sodiumRule ? 1 : 0);
         glUniform1i(uLightmap, LIGHTMAP_UNIT);
         glUniform4f(uFogColor, fogColor[0], fogColor[1], fogColor[2], 1f);
-        glUniform2f(uFog, FOG_START, FOG_END);
+        if (followVanillaFog) {
+            // The game's terrain fog, set up just before the LODs draw.
+            glUniform2f(uFog, RenderSystem.getShaderFogStart(), RenderSystem.getShaderFogEnd());
+            glUniform1i(uFogCylinder, RenderSystem.getShaderFogShape() == FogShape.CYLINDER ? 1 : 0);
+        } else {
+            glUniform2f(uFog, FOG_START, FOG_END);
+            glUniform1i(uFogCylinder, 0);
+        }
         glUniform1i(uTranslucent, 0);
         glUniform1i(uDebugLevels, RenderSettings.debugLevels() ? 1 : 0);
         // Vanilla's Biome Blend option (0 off, else the radius in blocks), as the game's terrain.

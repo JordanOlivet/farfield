@@ -169,8 +169,10 @@ choice, an ADR.
   pipeline on remote servers; checked on a vanilla 1.21.1 server jar with
   both dev clients (chunks ingested, LODs drawn beyond the render
   distance, stores closed on quit and on Disconnect, LODs back from disk
-  after a restart). Remains: the identity command, the user's check on a
-  real server
+  after a restart). User's pass on the homelab server (NeoForge pack):
+  exploring and reconnecting work; the Nether showed the fog problem of
+  ADR-033. Remains: the identity command, the dimension change checked
+  after the fog fix
 - [x] E.8 In-game settings screen (client): level of detail in pixels per
   voxel (ADR-027, default 6), texture distance (ADR-026, default all), LOD
   drawing on and off, level colors; saved in the client config. The

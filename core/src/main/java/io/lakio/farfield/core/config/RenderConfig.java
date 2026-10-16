@@ -13,11 +13,13 @@ import java.util.Properties;
 /**
  * The client's LOD drawing settings as saved in {@code config/farfield-client.properties}:
  * LOD drawing on or off, level of detail in pixels per voxel (ADR-027),
- * texture distance (ADR-026) and level colors. Missing or invalid keys take
+ * texture distance (ADR-026), level colors, and whether thick dimension fog
+ * (the Nether) is pushed back for the LODs (ADR-033). Missing or invalid keys take
  * their default, out-of-range values are clamped, so a hand-edited file never
  * stops the game.
  */
-public record RenderConfig(boolean enabled, float voxelPixels, int textureDistance, boolean levelColors) {
+public record RenderConfig(boolean enabled, float voxelPixels, int textureDistance, boolean levelColors,
+                           boolean extendDimensionFog) {
 
     /** Default target size of an LOD voxel on screen, in pixels, where a level hands over to the next. */
     public static final float DEFAULT_VOXEL_PIXELS = 6f;
@@ -29,12 +31,14 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
     public static final int DEFAULT_TEXTURE_DISTANCE = ALL_DISTANCES;
     public static final int MAX_TEXTURE_DISTANCE = 4096;
 
-    public static final RenderConfig DEFAULTS = new RenderConfig(true, DEFAULT_VOXEL_PIXELS, DEFAULT_TEXTURE_DISTANCE, false);
+    public static final RenderConfig DEFAULTS =
+            new RenderConfig(true, DEFAULT_VOXEL_PIXELS, DEFAULT_TEXTURE_DISTANCE, false, false);
 
     static final String ENABLED = "lod_rendering";
     static final String VOXEL_PIXELS = "detail_pixels_per_voxel";
     static final String TEXTURE_DISTANCE = "texture_distance";
     static final String LEVEL_COLORS = "level_colors";
+    static final String EXTEND_DIMENSION_FOG = "extend_dimension_fog";
     private static final String ALL = "all";
 
     public RenderConfig {
@@ -66,7 +70,8 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
                 bool(p, ENABLED, DEFAULTS.enabled),
                 floatValue(p, VOXEL_PIXELS, DEFAULTS.voxelPixels),
                 parseTextureDistance(p, DEFAULTS.textureDistance),
-                bool(p, LEVEL_COLORS, DEFAULTS.levelColors));
+                bool(p, LEVEL_COLORS, DEFAULTS.levelColors),
+                bool(p, EXTEND_DIMENSION_FOG, DEFAULTS.extendDimensionFog));
     }
 
     /** Writes the file through a temporary file, so a crash mid-write keeps the previous one. */
@@ -87,6 +92,9 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
             out.write(TEXTURE_DISTANCE + "=" + (textureDistance == ALL_DISTANCES ? ALL : Integer.toString(textureDistance)) + "\n");
             out.write("# Tint LOD faces by level (red 1 block, orange 2, yellow 4, green 8, blue 16).\n");
             out.write(LEVEL_COLORS + "=" + levelColors + "\n");
+            out.write("# Thick dimension fog (the Nether): false, LODs fade into it like the game's terrain;\n");
+            out.write("# true, it is pushed back to the LOD horizon. Default false.\n");
+            out.write(EXTEND_DIMENSION_FOG + "=" + extendDimensionFog + "\n");
         }
         Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
     }

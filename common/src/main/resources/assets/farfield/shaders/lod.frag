@@ -33,6 +33,7 @@ layout(std430, binding = 5) readonly buffer DrawnSections {
 };
 uniform vec4 u_fogColor;
 uniform vec2 u_fog;            // start, end
+uniform bool u_fogCylinder;    // vanilla's cylinder fog shape (max of horizontal and vertical distance)
 uniform bool u_translucent;    // translucent pass: blend with the face's coverage
 uniform bool u_debugLevels;    // tint faces by LOD level (/farfield debug levels)
 uniform sampler2D u_atlas;     // FaceTextures: 16x16 sRGB tiles, 128 per row, 5 mip levels
@@ -259,6 +260,8 @@ void main() {
     if (u_debugLevels) {
         color = mix(color, LEVEL_COLORS[min(v_level, 4)], 0.65);
     }
-    float fog = smoothstep(u_fog.x, u_fog.y, distance);
+    // As vanilla's fog_distance: sphere, or cylinder.
+    float fogDistance = u_fogCylinder ? max(length(v_relative.xz), abs(v_relative.y)) : distance;
+    float fog = smoothstep(u_fog.x, u_fog.y, fogDistance);
     fragColor = vec4(mix(color, u_fogColor.rgb, fog), u_translucent ? alpha : 1.0);
 }

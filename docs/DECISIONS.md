@@ -641,3 +641,25 @@ Implements the client mode of ADR-022 (plan item E.6).
   LODs in parallel without sending them.
 - The command to force or rename a remote world's identity is not built
   yet.
+
+## ADR-033 — LODs in thick dimension fog
+
+**Date**: 2026-10-16 · **Status**: accepted
+
+Amends ADR-011 (hand-off with vanilla fog).
+
+- In the Nether, vanilla draws a thick fog (from 5 % of the far plane to
+  `min(far, 192) / 2`, sphere-shaped). The fog mixin left it alone while
+  the LODs kept their own far fog: near terrain sank into the fog color
+  and distant LODs stood out sharp and dark behind it, and the columns of
+  sections vanilla draws (fogged) cut light bands through the LOD ceiling
+  (user's pack pass in the Nether).
+- By default, as the user chose, the LODs now take the game's terrain
+  fog (start, end and shape, read right after vanilla sets it up) when the
+  dimension fog is thick: the Nether keeps its haze, and little of the
+  distant terrain shows. The same applies when the camera is in water,
+  lava or powder snow.
+- A setting, Dimension Fog (Vanilla / Pushed Back, file key
+  `extend_dimension_fog`, default Vanilla), pushes thick fog back to the
+  LOD horizon instead, like the normal fog of ADR-011.
+- Blindness and fog another mod changed are left alone, as before.

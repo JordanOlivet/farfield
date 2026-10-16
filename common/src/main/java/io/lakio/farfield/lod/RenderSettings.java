@@ -34,6 +34,7 @@ public final class RenderSettings {
     private static volatile float voxelPixels = RenderConfig.DEFAULTS.voxelPixels();
     private static volatile boolean debugLevels = RenderConfig.DEFAULTS.levelColors();
     private static volatile int textureDistance = RenderConfig.DEFAULTS.textureDistance();
+    private static volatile boolean extendDimensionFog = RenderConfig.DEFAULTS.extendDimensionFog();
 
     private RenderSettings() {
     }
@@ -81,6 +82,18 @@ public final class RenderSettings {
         debugLevels = value;
     }
 
+    /**
+     * Whether thick dimension fog (the Nether) is pushed back to the LOD
+     * horizon; otherwise LODs fade into it like the game's terrain (ADR-033).
+     */
+    public static boolean extendDimensionFog() {
+        return extendDimensionFog;
+    }
+
+    public static void setExtendDimensionFog(boolean value) {
+        extendDimensionFog = value;
+    }
+
     /** Physical client only: reads the saved settings, or keeps the defaults. */
     public static void load() {
         if (!Services.PLATFORM.isClient()) {
@@ -93,6 +106,7 @@ public final class RenderSettings {
             voxelPixels = config.voxelPixels();
             textureDistance = config.textureDistance();
             debugLevels = config.levelColors();
+            extendDimensionFog = config.extendDimensionFog();
             Farfield.LOG.info(Files.exists(file) ? "LOD settings loaded from {}: {}" : "No {} yet, LOD settings at their defaults: {}",
                     file.getFileName(), config);
         } catch (IOException | RuntimeException e) {
@@ -106,7 +120,7 @@ public final class RenderSettings {
             return;
         }
         Path file = file();
-        RenderConfig config = new RenderConfig(enabled, voxelPixels, textureDistance, debugLevels);
+        RenderConfig config = new RenderConfig(enabled, voxelPixels, textureDistance, debugLevels, extendDimensionFog);
         try {
             config.write(file);
             Farfield.LOG.info("LOD settings saved to {}: {}", file.getFileName(), config);

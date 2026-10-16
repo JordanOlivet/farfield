@@ -44,6 +44,11 @@ public final class FarfieldSettingsScreen extends OptionsSubScreen {
                 new OptionInstance.IntRange(0, TEXTURE_ALL),
                 textureStep(RenderSettings.textureDistance()),
                 step -> RenderSettings.setTextureDistance(textureDistance(step))));
+        list.addBig(OptionInstance.createBoolean("farfield.options.dimension_fog",
+                OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.dimension_fog.tooltip")),
+                (caption, extended) -> Options.genericValueLabel(caption, Component.translatable(extended
+                        ? "farfield.options.dimension_fog.extended" : "farfield.options.dimension_fog.vanilla")),
+                RenderSettings.extendDimensionFog(), RenderSettings::setExtendDimensionFog));
         list.addBig(OptionInstance.createBoolean("farfield.options.level_colors",
                 OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.level_colors.tooltip")),
                 RenderSettings.debugLevels(), RenderSettings::setDebugLevels));

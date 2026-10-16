@@ -26,8 +26,8 @@ class RenderConfigTest {
         Path file = dir.resolve("sub").resolve("farfield-client.properties");
         for (RenderConfig config : new RenderConfig[] {
                 RenderConfig.DEFAULTS,
-                new RenderConfig(false, 2.5f, 0, true),
-                new RenderConfig(true, 12f, 768, false)}) {
+                new RenderConfig(false, 2.5f, 0, true, true),
+                new RenderConfig(true, 12f, 768, false, false)}) {
             config.write(file);
             assertEquals(config, RenderConfig.read(file));
         }
@@ -42,8 +42,9 @@ class RenderConfigTest {
                 detail_pixels_per_voxel=100
                 texture_distance=-5
                 level_colors=on
+                extend_dimension_fog=yes
                 """, StandardCharsets.UTF_8);
-        assertEquals(new RenderConfig(true, RenderConfig.MAX_VOXEL_PIXELS, 0, true), RenderConfig.read(file));
+        assertEquals(new RenderConfig(true, RenderConfig.MAX_VOXEL_PIXELS, 0, true, true), RenderConfig.read(file));
 
         Files.writeString(file, """
                 detail_pixels_per_voxel=fine
@@ -52,7 +53,8 @@ class RenderConfigTest {
         assertEquals(RenderConfig.DEFAULTS, RenderConfig.read(file));
 
         Files.writeString(file, "texture_distance=99999\ndetail_pixels_per_voxel=NaN\n", StandardCharsets.UTF_8);
-        assertEquals(new RenderConfig(true, RenderConfig.DEFAULT_VOXEL_PIXELS, RenderConfig.MAX_TEXTURE_DISTANCE, false),
+        assertEquals(new RenderConfig(true, RenderConfig.DEFAULT_VOXEL_PIXELS, RenderConfig.MAX_TEXTURE_DISTANCE, false,
+                        false),
                 RenderConfig.read(file));
     }
 }
