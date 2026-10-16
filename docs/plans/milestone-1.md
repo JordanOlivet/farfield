@@ -174,7 +174,7 @@ choice, an ADR.
   default; checked in both dev clients (each opener, each setting applied
   live, file written on close and by command). Closed 2026-10-16 after
   the user's pack pass ("C'est nikel pour le menu de config")
-- [~] E.9 Biome blending of LOD tints (ADR-030), from vanilla's Biome Blend
+- [x] E.9 Biome blending of LOD tints (ADR-030), from vanilla's Biome Blend
   option: off at 0, else the vanilla radius. Checked in the Fabric dev
   client with Sodium at 0, 2 and 7 over a biome border in the ocean.
-  Remains: the user's pack check
+  Closed 2026-10-16 after the user's pack pass ("fini pack E9")
