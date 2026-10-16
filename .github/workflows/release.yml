@@ -1,0 +1,30 @@
+name: Release
+
+# Push a tag v<gradle.properties version>[-<pre-release>] (e.g. v0.1.0-alpha.1)
+# to build both loader jars at that version and publish them to Modrinth,
+# CurseForge and a GitHub Release (ADR-031). Needs the repository variables
+# MODRINTH_ID and CURSEFORGE_ID and the secrets MODRINTH_TOKEN and
+# CURSEFORGE_TOKEN.
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    permissions:
+      contents: write
+    uses: JordanOlivet/ci-workflows/.github/workflows/publish-mod.yml@v1
+    with:
+      tag: ${{ github.ref_name }}
+      mod-name: Farfield
+      game-versions: 1.21.1
+      java-versions: 21
+      modrinth-id: ${{ vars.MODRINTH_ID }}
+      curseforge-id: ${{ vars.CURSEFORGE_ID }}
+      targets: >-
+        [{"loader":"neoforge","label":"NeoForge","files":"neoforge/build/libs/farfield-neoforge-*.jar"},
+         {"loader":"fabric","label":"Fabric","files":"fabric/build/libs/farfield-fabric-*.jar"}]
+    secrets:
+      modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
+      curseforge-token: ${{ secrets.CURSEFORGE_TOKEN }}

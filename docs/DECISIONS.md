@@ -589,3 +589,27 @@ radius in blocks), read live every frame.
 - Measured in the Fabric dev client with Sodium (4K, top-down view over
   the ocean of the test world): 3.40 ms GPU at 0, 3.55 ms at 2 (vanilla's
   default), 4.22 ms at 7.
+
+## ADR-031 — Release versions and channel
+
+**Date**: 2026-10-16 · **Status**: accepted
+
+- Releases are SemVer tags `v<major>.<minor>.<patch>[-<pre-release>]`,
+  pre-releases as `alpha.N`, `beta.N` or `rc.N` (first: `v0.1.0-alpha.1`).
+  The tag gives the version: Gradle builds with `-Pversion=<tag without v>`,
+  so the jar names and the mod metadata carry it; `version=` in
+  `gradle.properties` holds the core of the next release and must match the
+  tag's core, or the release stops before publishing. Local and CI builds
+  keep the plain core version. The `0.1.0-pre-alpha` tag made by hand
+  before this ADR stays as it is.
+- A pushed tag runs `.github/workflows/release.yml`, which calls the
+  reusable `publish-mod.yml` of `JordanOlivet/ci-workflows` (shared with the
+  user's other mods): one build, then one Modrinth and CurseForge version
+  per loader jar (`Kir-Antipov/mc-publish` v3.3.1, maintained), version
+  numbers suffixed `+neoforge` / `+fabric` to stay unique on Modrinth, and
+  one GitHub Release with both jars. The version type follows the label:
+  alpha, beta (beta, rc), release.
+- The changelog is the list of commit subjects since the previous tag,
+  without docs, chore, ci and test commits.
+- No dry run on Modrinth's staging server: both projects are unlisted, and
+  the user can delete test uploads.
