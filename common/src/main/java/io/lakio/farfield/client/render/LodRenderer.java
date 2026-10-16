@@ -11,6 +11,7 @@ import io.lakio.farfield.core.mesh.BinaryGreedyMesher;
 import io.lakio.farfield.core.mesh.MaterialClassifier;
 import io.lakio.farfield.core.mesh.MeshBuffer;
 import io.lakio.farfield.core.mesh.Quad;
+import io.lakio.farfield.core.mesh.SurfaceBiomes;
 import io.lakio.farfield.core.select.LodSelector;
 import io.lakio.farfield.core.util.RangeAllocator;
 import io.lakio.farfield.core.world.LodWorld;
@@ -116,6 +117,8 @@ public final class LodRenderer {
     private static final int OCCUPANCY_INTS = LodSection.SIZE * LodSection.SIZE;
     /** Neighbor slots per section slot: (dx + 1) * 9 + (dy + 1) * 3 + (dz + 1), slot + 1 or 0. */
     private static final int NEIGHBOR_INTS = 27;
+    /** Surface biome per 4x4-voxel column and section slot, two 16-bit entries per int (SurfaceBiomes). */
+    private static final int BIOME_COLUMN_INTS = LodSection.BIOME_CELLS_PER_AXIS * LodSection.BIOME_CELLS_PER_AXIS / 2;
     /** A resident mesh the selection has not used for this long is freed. */
     private static final long EVICT_AFTER_NANOS = 10_000_000_000L;
     /** The selection runs again when the camera moved this far (squared blocks)... */
@@ -138,6 +141,8 @@ public final class LodRenderer {
     private GlBuffer occupancy;
     /** Per section slot, the slots of its resident same-level neighbors ({@link #NEIGHBOR_INTS}). */
     private GlBuffer neighborSlots;
+    /** Per section slot, its columns' surface biomes ({@link #BIOME_COLUMN_INTS}), for biome blending. */
+    private GlBuffer biomeColumns;
     private final int[] neighborScratch = new int[NEIGHBOR_INTS];
     private final int[] oneInt = new int[1];
     private final LongArrayList evicted = new LongArrayList();
@@ -188,6 +193,7 @@ public final class LodRenderer {
     private int uFog;
     private int uTranslucent;
     private int uDebugLevels;
+    private int uBiomeBlend;
     private int uAtlas;
     private int uAtlasSize;
     private int uTextureEnd;
@@ -214,6 +220,8 @@ public final class LodRenderer {
     private final ThreadLocal<BinaryGreedyMesher> mesher = ThreadLocal.withInitial(BinaryGreedyMesher::new);
     private final ThreadLocal<MeshBuffer> meshBuffer = ThreadLocal.withInitial(MeshBuffer::new);
     private final ThreadLocal<int[][]> borderPlanes = ThreadLocal.withInitial(() -> new int[6][LodSection.SIZE]);
+    private final ThreadLocal<int[]> surfaceScratch =
+            ThreadLocal.withInitial(() -> new int[LodSection.BIOME_CELLS_PER_AXIS * LodSection.BIOME_CELLS_PER_AXIS]);
     private final ThreadLocal<byte[][]> borderLights =
             ThreadLocal.withInitial(() -> new byte[6][LodSection.SIZE * LodSection.SIZE]);
     private int[] freeSlots = new int[0];
@@ -285,7 +293,8 @@ public final class LodRenderer {
         }
     }
 
-    private record MeshResult(int generation, long key, long[] quads, int opaqueCount, int[] occupancy) {
+    private record MeshResult(int generation, long key, long[] quads, int opaqueCount, int[] occupancy,
+                              int[] biomeColumns) {
     }
 
     private LodRenderer() {
@@ -357,6 +366,7 @@ public final class LodRenderer {
         uFog = program.uniform("u_fog");
         uTranslucent = program.uniform("u_translucent");
         uDebugLevels = program.uniform("u_debugLevels");
+        uBiomeBlend = program.uniform("u_biomeBlend");
         uAtlas = program.uniform("u_atlas");
         uAtlasSize = program.uniform("u_atlasSize");
         uTextureEnd = program.uniform("u_textureEnd");
@@ -368,6 +378,7 @@ public final class LodRenderer {
         biomeBuffer = new GlBuffer(256L * BiomeTints.KINDS * 4);
         occupancy = new GlBuffer(1024L * OCCUPANCY_INTS * 4);
         neighborSlots = new GlBuffer(1024L * NEIGHBOR_INTS * 4);
+        biomeColumns = new GlBuffer(1024L * BIOME_COLUMN_INTS * 4);
         drawnSections = new GlBuffer(4096L * 4);
         indirect = new GlBuffer(1024L * 16);
         vao = glCreateVertexArrays();
@@ -669,10 +680,10 @@ public final class LodRenderer {
             MeshResult result;
             try {
                 LodSection section = w.read(key);
-                result = section == null ? new MeshResult(gen, key, new long[0], 0, null) : mesh(w, gen, key, section);
+                result = section == null ? new MeshResult(gen, key, new long[0], 0, null, null) : mesh(w, gen, key, section);
             } catch (IOException | RuntimeException e) {
                 Farfield.LOG.debug("LOD mesh of {} failed", LodKey.toString(key), e);
-                result = new MeshResult(gen, key, new long[0], 0, null);
+                result = new MeshResult(gen, key, new long[0], 0, null, null);
             }
             done.add(result);
         });
@@ -712,7 +723,13 @@ public final class LodRenderer {
             occupied = new int[OCCUPANCY_INTS];
             mesher.get().copyOpaqueRows(occupied);
         }
-        return new MeshResult(gen, key, all, opaque, occupied);
+        // Every section's columns, even without quads: its neighbors blend with them.
+        int[] columns = SurfaceBiomes.columns(section, classes, surfaceScratch.get());
+        int[] packed = new int[BIOME_COLUMN_INTS];
+        for (int i = 0; i < packed.length; i++) {
+            packed[i] = columns[2 * i] | columns[2 * i + 1] << 16;
+        }
+        return new MeshResult(gen, key, all, opaque, occupied, packed);
     }
 
     private static boolean hasTranslucent(LodSection section, MaterialClassifier classes) {
@@ -820,6 +837,13 @@ public final class LodRenderer {
                     occupancy.grow(Math.max(needed, occupancy.size() * 2), occupancy.size());
                 }
                 occupancy.upload((long) r.slot * OCCUPANCY_INTS * 4, m.occupancy);
+            }
+            if (m.biomeColumns != null) {
+                long needed = (long) (r.slot + 1) * BIOME_COLUMN_INTS * 4;
+                if (needed > biomeColumns.size()) {
+                    biomeColumns.grow(Math.max(needed, biomeColumns.size() * 2), biomeColumns.size());
+                }
+                biomeColumns.upload((long) r.slot * BIOME_COLUMN_INTS * 4, m.biomeColumns);
             }
             meshesUploaded++;
             if (r.quadCount > 0) {
@@ -1078,6 +1102,8 @@ public final class LodRenderer {
         glUniform2f(uFog, FOG_START, FOG_END);
         glUniform1i(uTranslucent, 0);
         glUniform1i(uDebugLevels, RenderSettings.debugLevels() ? 1 : 0);
+        // Vanilla's Biome Blend option (0 off, else the radius in blocks), as the game's terrain.
+        glUniform1i(uBiomeBlend, mc.options.biomeBlendRadius().get());
         glUniform1i(uAtlas, ATLAS_UNIT);
         glUniform2f(uAtlasSize, faceTextures.width(), Math.max(1, faceTextures.height()));
         int textureDistance = RenderSettings.textureDistance();
@@ -1098,6 +1124,7 @@ public final class LodRenderer {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, occupancy.id());
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, neighborSlots.id());
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, drawnSections.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, biomeColumns.id());
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirect.id());
         RenderSystem.enableDepthTest();
         RenderSystem.depthFunc(GL_LEQUAL);

@@ -26,14 +26,8 @@ layout(std430, binding = 2) readonly buffer Colors {
     uint colors[];
 };
 
-// Per biome slot (biome id + 1, 0 for unknown) and tint kind (BiomeTints).
-layout(std430, binding = 3) readonly buffer BiomeTints {
-    uint tints[];
-};
-
 const uint COLOR_STRIDE = 19u;
 const uint HEIGHT_OFFSET = 18u;
-const uint TINT_KINDS = 8u;
 
 uniform mat4 u_viewProj;    // the game's projection * view rotation
 uniform ivec3 u_cameraBlock;
@@ -43,8 +37,10 @@ uniform bool u_translucent; // translucent pass (water, glass, ice)
 
 out vec3 v_relative;
 out vec2 v_texCoord;      // block units along the face's U and V axes: one tile per block
-flat out vec4 v_flat;     // mean face color, linear, before light; alpha: coverage
-flat out vec3 v_tint;     // biome tint of the tinted part, linear (0 when none)
+flat out vec4 v_flat;     // mean untinted face color, linear, before light; alpha: coverage
+flat out vec3 v_tinted;   // mean biome-tinted face color before its tint, linear (0 when none)
+flat out uint v_tintKind; // tint kind (BiomeTints), NO_TINT when the face has no tinted part
+flat out uint v_biome;    // biome slot of the quad (biome id + 1, 0 for unknown)
 flat out uint v_tiles;    // atlas tiles of the face (see Colors)
 flat out float v_light;   // face shade (vanilla's per-direction shade)
 flat out ivec2 v_lightmap; // (block light, sky light) in front of the face: vanilla lightmap texel
@@ -134,14 +130,12 @@ void main() {
     vec4 untinted = unpackUnorm4x8(colors[face]);
     vec3 color = toLinear(untinted.rgb);
     uint tinted = colors[face + 1u];
-    vec3 tint = vec3(0.0);
-    if ((tinted & 0xFFFFFFu) != 0u) {
-        uint biomeSlot = (q.y >> 12) & 0x1FFu;
-        tint = toLinear(unpackUnorm4x8(tints[biomeSlot * TINT_KINDS + (tinted >> 24)]).rgb);
-        color += toLinear(unpackUnorm4x8(tinted).rgb) * tint;
-    }
+    // The tint itself is chosen per fragment: biome blending varies along the face.
+    bool hasTint = (tinted & 0xFFFFFFu) != 0u;
+    v_tinted = hasTint ? toLinear(unpackUnorm4x8(tinted).rgb) : vec3(0.0);
+    v_tintKind = hasTint ? tinted >> 24 : 0xFFFFFFFFu;
+    v_biome = (q.y >> 12) & 0x1FFu;
     v_flat = vec4(color, untinted.a);
-    v_tint = tint;
     v_tiles = colors[face + 2u];
     v_light = SHADE[direction];
     v_lightmap = ivec2(int((q.y >> 25) & 15u), int((q.y >> 21) & 15u));

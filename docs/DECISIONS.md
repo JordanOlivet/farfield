@@ -560,3 +560,32 @@ Implements plan item E.8.
   (`IConfigScreenFactory`), Mod Menu's button on Fabric (optional
   dependency, `modmenu` entrypoint), and a key binding, unbound by default
   (Controls > Key Binds > Farfield), for Fabric installs without Mod Menu.
+
+## ADR-030 — Biome blending of LOD tints
+
+**Date**: 2026-10-16 · **Status**: accepted
+
+Grass, foliage, water and the tints of mods changed color in hard steps at
+biome borders, on the 4-voxel biome cells. LODs now follow vanilla's
+Biome Blend option, as the user asked: at 0 nothing changes (one tint per
+quad, the quad's biome); otherwise each fragment takes the mean tint, in
+sRGB as vanilla, over a square of 2r + 1 blocks around it (r the option's
+radius in blocks), read live every frame.
+
+- Each section slot holds the surface biome of its 8x8 columns of 4x4
+  voxels (`SurfaceBiomes`: the biome of the highest cell with a non-air
+  voxel), 128 bytes per slot, uploaded with every mesh. Blending is
+  horizontal like vanilla's, and LODs mostly show surfaces: one biome per
+  column keeps a cave biome under the surface of the same section from
+  bleeding into it.
+- The fragment shader weighs the columns the window covers by their
+  overlap, across same-level neighbor sections through the slot table of
+  ambient occlusion. Unknown columns (neighbor not resident at that level,
+  air columns) and the fragment's own column take the quad's biome.
+- The window slides continuously instead of block by block, and biomes
+  come from the LOD's 4-voxel cells, not from vanilla's per-block fuzzy
+  biome lookup: the ramps sit where vanilla's do, without vanilla's
+  per-block jitter.
+- Measured in the Fabric dev client with Sodium (4K, top-down view over
+  the ocean of the test world): 3.40 ms GPU at 0, 3.55 ms at 2 (vanilla's
+  default), 4.22 ms at 7.
