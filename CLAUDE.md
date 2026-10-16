@@ -88,6 +88,11 @@ and `fabric/build/libs/farfield-fabric-1.21.1-<version>.jar`.
   `(sleep 90; echo "farfield import"; sleep 20; echo stop) | ./gradlew.bat :neoforge:runServer --no-daemon --console plain > log`
   (Git Bash). Stopping with `stop` closes the LOD stores and logs their
   counters.
+- Client mode (E.6) is checked against a vanilla 1.21.1 server jar
+  (Mojang's piston-meta manifest, run with JDK 21, `online-mode=false`, a
+  fixed operator in `ops.json`): `runClient -PquickPlayServer=localhost:25565
+  -PclientUsername=Dev` joins it with a stable offline name. Use spectator
+  mode before `/tp` high up, or the player falls.
 - Scripted dev clients (window capture, chat commands, clicks) work only while
   the Windows session is unlocked and the user is not using the PC; ask first.
   `-PquickPlay=<save>` opens a world directly (`runClient`, both loaders);

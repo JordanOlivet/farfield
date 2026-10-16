@@ -1,7 +1,10 @@
 package io.lakio.farfield.fabric;
 
+import io.lakio.farfield.client.LodClient;
 import io.lakio.farfield.client.SettingsKey;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientChunkEvents;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 
@@ -11,5 +14,10 @@ public final class FarfieldFabricClient implements ClientModInitializer {
     public void onInitializeClient() {
         KeyBindingHelper.registerKeyBinding(SettingsKey.KEY);
         ClientTickEvents.END_CLIENT_TICK.register(SettingsKey::tick);
+        // Client mode (ADR-022): LODs built from the chunks a remote server sends.
+        ClientChunkEvents.CHUNK_LOAD.register(LodClient::onChunkLoad);
+        ClientChunkEvents.CHUNK_UNLOAD.register(LodClient::onChunkUnload);
+        ClientTickEvents.END_CLIENT_TICK.register(LodClient::tick);
+        ClientLifecycleEvents.CLIENT_STOPPING.register(mc -> LodClient.onClientStopping());
     }
 }

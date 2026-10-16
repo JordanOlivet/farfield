@@ -161,10 +161,15 @@ choice, an ADR.
   last pack pass ("nickel"): flicker, shapes and the water line gone;
   ADR-020 judged in game and amended by ADR-028 (fill). Fences, walls,
   panes and stairs are left out of E.7
-- [ ] E.6 Client mode (ADR-022): a client with Farfield on a server
+- [~] E.6 Client mode (ADR-022): a client with Farfield on a server
   without it builds and renders LODs from the chunks it receives, stored
   per remote world; command to force or rename the world identity.
   Checked with the dev client on a vanilla 1.21.1 server jar, then on a
+  real server. Done 2026-10-16 (ADR-032): `LodClient` drives the shared
+  pipeline on remote servers; checked on a vanilla 1.21.1 server jar with
+  both dev clients (chunks ingested, LODs drawn beyond the render
+  distance, stores closed on quit and on Disconnect, LODs back from disk
+  after a restart). Remains: the identity command, the user's check on a
   real server
 - [x] E.8 In-game settings screen (client): level of detail in pixels per
   voxel (ADR-027, default 6), texture distance (ADR-026, default all), LOD

@@ -40,7 +40,7 @@ public final class LodServer {
 
     private LodServer() {
         this.pipeline = new LodPipeline("server", level -> level instanceof ServerLevel,
-                level -> dimensionFolder((ServerLevel) level).resolve("farfield"));
+                level -> dimensionFolder((ServerLevel) level).resolve("farfield"), LevelChunk::isLightCorrect);
     }
 
     private static Path dimensionFolder(ServerLevel level) {

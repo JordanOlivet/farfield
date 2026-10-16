@@ -613,3 +613,31 @@ radius in blocks), read live every frame.
   without docs, chore, ci and test commits.
 - No dry run on Modrinth's staging server: both projects are unlisted, and
   the user can delete test uploads.
+
+## ADR-032 — Client mode, as built
+
+**Date**: 2026-10-16 · **Status**: accepted
+
+Implements the client mode of ADR-022 (plan item E.6).
+
+- `LodClient` runs one `LodPipeline` per connection to a remote server
+  (never in single player, nor for the host of a LAN game), fed by the
+  loaders' client chunk load and unload events, the block-change mixin and
+  the client tick. Stores live in
+  `<game dir>/farfield/servers/<address>/<seed hash>/<dimension>/`.
+- Light: vanilla applies the light the server sends through the client
+  level's light update queue, a few ticks after the chunk, and never marks
+  a client chunk's light correct. The pipeline takes a light predicate:
+  the server keeps `isLightCorrect`, the client waits for an empty light
+  update queue (then the usual 10 s fallback).
+- A dimension change closes that level, leaving the server closes the
+  pipeline, both in the background: waiting chunks are snapshotted on the
+  client thread, the store is written and closed on the maintenance
+  thread, and opening the same store again (going back, reconnecting)
+  waits for that close. When the game quits, the stores are written before
+  it exits (at most 30 s).
+- Until the protocol of ADR-013 exists, the client builds LODs on every
+  remote server, Farfield or not; a server with Farfield builds its own
+  LODs in parallel without sending them.
+- The command to force or rename a remote world's identity is not built
+  yet.

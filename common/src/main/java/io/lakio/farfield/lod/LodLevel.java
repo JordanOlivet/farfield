@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -52,6 +53,8 @@ public final class LodLevel {
     final AtomicLong snapshotsOfBorderChunks = new AtomicLong();
     /** Snapshots of chunks still waiting when the pipeline stopped. */
     final AtomicLong snapshotsAtStop = new AtomicLong();
+    /** Snapshots submitted and not ingested yet: a closing store waits for them. */
+    final AtomicInteger pending = new AtomicInteger();
     /** Counter at the last periodic log line. */
     long loggedSnapshots;
 

@@ -12,6 +12,7 @@ import java.nio.file.Path;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
@@ -46,6 +47,11 @@ import java.util.function.Predicate;
  *       mips every second, and syncs every 30 s.</li>
  * </ul>
  *
+ * <p>The client closes a level when the player changes dimension or leaves
+ * the server ({@link #closeLevel}, {@link #stopAsync}): its waiting chunks
+ * are snapshotted on the owner thread, the store is written and closed on
+ * the maintenance thread, so the game does not wait for the disk.
+ *
  * <p>Active pipelines are registered so that the block-change mixin can
  * reach the one that owns a level ({@link #blockChanged}).
  */
@@ -64,6 +70,12 @@ public final class LodPipeline {
     private final String name;
     private final Predicate<Level> accepts;
     private final Function<Level, Path> storage;
+    private final Predicate<LevelChunk> lightReady;
+    /**
+     * Stores being closed in the background, by folder, across pipelines (a
+     * reconnection starts a new one): opening one again waits for its close.
+     */
+    private static final Map<Path, CompletableFuture<Void>> CLOSING = new ConcurrentHashMap<>();
     private final Map<Level, LodLevel> levels = new ConcurrentHashMap<>();
     private final ExecutorService workers;
     private final ScheduledExecutorService maintenance;
@@ -76,12 +88,16 @@ public final class LodPipeline {
     /**
      * @param name    for thread names and logs ("server", "client")
      * @param accepts the levels this pipeline handles
-     * @param storage the folder of a level's LOD store, or null to leave the level alone
+     * @param storage    the folder of a level's LOD store, or null to leave the level alone
+     * @param lightReady whether a chunk's light is complete (server: its light stage ran;
+     *                   client: the light the server sent is applied)
      */
-    public LodPipeline(String name, Predicate<Level> accepts, Function<Level, Path> storage) {
+    public LodPipeline(String name, Predicate<Level> accepts, Function<Level, Path> storage,
+                       Predicate<LevelChunk> lightReady) {
         this.name = name;
         this.accepts = accepts;
         this.storage = storage;
+        this.lightReady = lightReady;
         int threads = Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() / 4));
         this.workers = Executors.newFixedThreadPool(threads, daemon("farfield-" + name + "-worker"));
         this.maintenance = Executors.newSingleThreadScheduledExecutor(daemon("farfield-" + name + "-maintenance"));
@@ -135,7 +151,7 @@ public final class LodPipeline {
         // draw light yet; a hole is worse).
         if (lod.due.remove(pos) != null) {
             lod.snapshotsAtUnload.incrementAndGet();
-            if (!chunk.isLightCorrect()) {
+            if (!lightReady.test(chunk)) {
                 lod.snapshotsWithoutLight.incrementAndGet();
             }
             submit(lod, ChunkSnapshot.take(level, chunk));
@@ -168,7 +184,7 @@ public final class LodPipeline {
                     continue;
                 }
                 LevelChunk chunk = d.chunk();
-                if (!chunk.isLightCorrect()) {
+                if (!lightReady.test(chunk)) {
                     if (now - d.tick() < LIGHT_WAIT_TICKS) {
                         continue;
                     }
@@ -199,6 +215,10 @@ public final class LodPipeline {
                 Path dir = storage.apply(level);
                 if (dir == null) {
                     return null;
+                }
+                CompletableFuture<Void> previous = CLOSING.get(dir);
+                if (previous != null) {
+                    previous.join(); // back in a dimension just left: its store is still closing
                 }
                 try {
                     lod = LodLevel.open(level, dir);
@@ -237,6 +257,7 @@ public final class LodPipeline {
 
     private void submit(LodLevel lod, ChunkSnapshot snapshot) {
         inFlight.incrementAndGet();
+        lod.pending.incrementAndGet();
         lod.snapshots.incrementAndGet();
         workers.execute(() -> {
             try {
@@ -245,9 +266,68 @@ public final class LodPipeline {
                 Farfield.LOG.error("LOD ingest of chunk {}, {} in {} failed", snapshot.chunkX, snapshot.chunkZ,
                         lod.name(), t);
             } finally {
+                lod.pending.decrementAndGet();
                 inFlight.decrementAndGet();
             }
         });
+    }
+
+    /**
+     * Owner thread: stops handling {@code level}. Its waiting chunks are
+     * snapshotted now, while in memory; once they are ingested, the
+     * maintenance thread writes and closes its store.
+     */
+    public void closeLevel(Level level) {
+        LodLevel lod = levels.remove(level);
+        if (lod == null) {
+            return;
+        }
+        for (LodLevel.Due d : lod.due.values()) {
+            lod.snapshotsAtStop.incrementAndGet();
+            submit(lod, ChunkSnapshot.take(lod.level, d.chunk()));
+        }
+        lod.due.clear();
+        CompletableFuture<Void> closed = new CompletableFuture<>();
+        CLOSING.put(lod.dir(), closed);
+        maintenance.execute(() -> {
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+            while (lod.pending.get() > 0 && System.nanoTime() < deadline) {
+                try {
+                    Thread.sleep(20);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            close(lod);
+            CLOSING.remove(lod.dir(), closed);
+            closed.complete(null);
+        });
+    }
+
+    /**
+     * Owner thread: closes every level in the background ({@link #closeLevel}),
+     * then ends the threads; {@link #awaitStopped} waits for it.
+     */
+    public void stopAsync() {
+        for (Level level : List.copyOf(levels.keySet())) {
+            closeLevel(level);
+        }
+        stopping = true;
+        ACTIVE.remove(this);
+        maintenance.execute(() -> {
+            workers.shutdown();
+            maintenance.shutdown();
+        });
+    }
+
+    /** Waits until a {@link #stopAsync} has written and closed every store, at most {@code seconds}. */
+    public void awaitStopped(long seconds) {
+        try {
+            maintenance.awaitTermination(seconds, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void maintain() {
@@ -326,20 +406,24 @@ public final class LodPipeline {
         }
         beforeClose.run();
         for (LodLevel lod : levels.values()) {
-            try {
-                lod.world().close();
-                Farfield.LOG.info("LOD store of {} ({}) closed: {} chunks ingested ({} live snapshots, {} at unload,"
-                                + " {} at stop, {} of border chunks, {} without complete light, {} block changes), {}"
-                                + " sections written, {} unchanged; {} chunks loaded, {} not snapshotted", lod.name(),
-                        name, lod.world().chunksIngested(), lod.snapshots.get(), lod.snapshotsAtUnload.get(),
-                        lod.snapshotsAtStop.get(),
-                        lod.snapshotsOfBorderChunks.get(), lod.snapshotsWithoutLight.get(), lod.blockChanges.get(),
-                        lod.world().sectionsWritten(), lod.world().sectionsUnchanged(), lod.loaded.size(),
-                        lod.due.size());
-            } catch (IOException e) {
-                Farfield.LOG.error("Closing the LOD store of {} failed", lod.name(), e);
-            }
+            close(lod);
         }
         levels.clear();
+    }
+
+    private void close(LodLevel lod) {
+        try {
+            lod.world().close();
+            Farfield.LOG.info("LOD store of {} ({}) closed: {} chunks ingested ({} live snapshots, {} at unload,"
+                            + " {} at stop, {} of border chunks, {} without complete light, {} block changes), {}"
+                            + " sections written, {} unchanged; {} chunks loaded, {} not snapshotted", lod.name(),
+                    name, lod.world().chunksIngested(), lod.snapshots.get(), lod.snapshotsAtUnload.get(),
+                    lod.snapshotsAtStop.get(),
+                    lod.snapshotsOfBorderChunks.get(), lod.snapshotsWithoutLight.get(), lod.blockChanges.get(),
+                    lod.world().sectionsWritten(), lod.world().sectionsUnchanged(), lod.loaded.size(),
+                    lod.due.size());
+        } catch (IOException e) {
+            Farfield.LOG.error("Closing the LOD store of {} failed", lod.name(), e);
+        }
     }
 }

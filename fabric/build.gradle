@@ -48,6 +48,14 @@ loom {
             if (project.hasProperty('quickPlay')) {
                 programArgs('--quickPlaySingleplayer', project.property('quickPlay') as String)
             }
+            // -PquickPlayServer=<host:port> joins that server directly (client mode checks).
+            if (project.hasProperty('quickPlayServer')) {
+                programArgs('--quickPlayMultiplayer', project.property('quickPlayServer') as String)
+            }
+            // -PclientUsername=<name>: a fixed offline name (operator rights on a test server).
+            if (project.hasProperty('clientUsername')) {
+                programArgs('--username', project.property('clientUsername') as String)
+            }
         }
         server {
             server()
