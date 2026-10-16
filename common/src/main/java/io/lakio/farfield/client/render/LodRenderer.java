@@ -214,6 +214,8 @@ public final class LodRenderer {
     private final ThreadLocal<BinaryGreedyMesher> mesher = ThreadLocal.withInitial(BinaryGreedyMesher::new);
     private final ThreadLocal<MeshBuffer> meshBuffer = ThreadLocal.withInitial(MeshBuffer::new);
     private final ThreadLocal<int[][]> borderPlanes = ThreadLocal.withInitial(() -> new int[6][LodSection.SIZE]);
+    private final ThreadLocal<byte[][]> borderLights =
+            ThreadLocal.withInitial(() -> new byte[6][LodSection.SIZE * LodSection.SIZE]);
     private int[] freeSlots = new int[0];
     private int freeSlotCount;
     private int slotCount;
@@ -685,9 +687,12 @@ public final class LodRenderer {
             int c = materials.classOf(m);
             return c == MaterialClassifier.PARTIAL ? MaterialClassifier.OPAQUE : c;
         };
-        int[][] solid = hasTranslucent(section, classes) ? neighborSolid(w, key, classes) : null;
+        boolean translucent = hasTranslucent(section, classes);
+        int[][] solid = translucent ? new int[6][] : null;
+        byte[][] light = new byte[6][];
+        readNeighbors(w, key, classes, solid, light);
         MeshBuffer out = meshBuffer.get();
-        mesher.get().mesh(section, classes, tintedMaterials, null, solid, out);
+        mesher.get().mesh(section, classes, tintedMaterials, null, solid, light, out);
         long[] all = new long[out.total()];
         int opaque = 0;
         int back = all.length;
@@ -720,9 +725,17 @@ public final class LodRenderer {
     }
 
     /** Solid border layers of the six same-level neighbors (null entries where none is stored). */
-    private int[][] neighborSolid(LodWorld w, long key, MaterialClassifier classes) throws IOException {
+    /**
+     * Reads the six same-level neighbors once: the light of their touching
+     * layers into {@code light} (faces on a section border are lit like the
+     * voxel in front of them, not in full sky light: underwater cliffs on a
+     * border were bright), and their solid voxels into {@code solid} when
+     * not null. Entries stay null for neighbors not stored.
+     */
+    private void readNeighbors(LodWorld w, long key, MaterialClassifier classes, int[][] solid, byte[][] light)
+            throws IOException {
         int[][] planes = borderPlanes.get();
-        int[][] result = new int[6][];
+        byte[][] lights = borderLights.get();
         int level = LodKey.level(key);
         for (int d = 0; d < 6; d++) {
             int y = LodKey.y(key) + STEP[d][1];
@@ -732,10 +745,12 @@ public final class LodRenderer {
             long neighbor = LodKey.pack(level, LodKey.x(key) + STEP[d][0], y, LodKey.z(key) + STEP[d][2]);
             LodSection section = w.exists(neighbor) ? w.read(neighbor) : null;
             if (section != null) {
-                result[d] = BinaryGreedyMesher.borderPlane(section, d, classes, true, planes[d]);
+                light[d] = BinaryGreedyMesher.borderLight(section, d, lights[d]);
+                if (solid != null) {
+                    solid[d] = BinaryGreedyMesher.borderPlane(section, d, classes, true, planes[d]);
+                }
             }
         }
-        return result;
     }
 
     /**

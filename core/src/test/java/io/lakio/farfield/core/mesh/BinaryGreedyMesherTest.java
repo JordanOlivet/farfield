@@ -81,6 +81,72 @@ class BinaryGreedyMesherTest {
     }
 
     @Test
+    void borderFacesTakeTheNeighborLayerLight() {
+        // A full stone section: every face lies on a border. Each neighbor
+        // has a light pattern on its touching layer and a decoy elsewhere.
+        LodSection section = new LodSection(0);
+        for (int y = 0; y < 32; y++) {
+            for (int z = 0; z < 32; z++) {
+                for (int x = 0; x < 32; x++) {
+                    section.set(x, y, z, 1);
+                }
+            }
+        }
+        section.compact();
+        byte[][] light = new byte[6][];
+        for (int d = 0; d < 6; d++) {
+            int axis = d >> 1;
+            int layer = (d & 1) != 0 ? 0 : 31;
+            LodSection neighbor = new LodSection(0);
+            for (int a = 0; a < 32; a++) {
+                for (int b = 0; b < 32; b++) {
+                    for (int c = 0; c < 32; c++) {
+                        // (a, b, c) = (depth, u, v) in the direction's axes.
+                        int x = axis == 0 ? a : axis == 1 ? c : b;
+                        int y = axis == 0 ? b : axis == 1 ? a : c;
+                        int z = axis == 0 ? c : axis == 1 ? b : a;
+                        boolean touching = a == layer;
+                        neighbor.skyLight().set(x, y, z, touching ? expectedSky(d, b, c) : 9);
+                        neighbor.blockLight().set(x, y, z, touching ? expectedBlock(b, c) : 9);
+                    }
+                }
+            }
+            light[d] = BinaryGreedyMesher.borderLight(neighbor, d, null);
+        }
+        mesher.mesh(section, CLASSES, null, null, null, light, out);
+        for (int d = 0; d < 6; d++) {
+            assertTrue(out.count(d) > 0, "faces of direction " + d);
+            for (int i = 0; i < out.count(d); i++) {
+                long q = out.quads(d)[i];
+                int u = switch (d >> 1) {
+                    case 0 -> Quad.y(q);
+                    case 1 -> Quad.z(q);
+                    default -> Quad.x(q);
+                };
+                int v = switch (d >> 1) {
+                    case 0 -> Quad.z(q);
+                    case 1 -> Quad.x(q);
+                    default -> Quad.y(q);
+                };
+                assertEquals(expectedSky(d, u, v), Quad.skyLight(q), "sky light, direction " + d);
+                assertEquals(expectedBlock(u, v), Quad.blockLight(q), "block light, direction " + d);
+            }
+        }
+
+        // Without neighbor light, opaque border faces keep full sky light.
+        mesher.mesh(section, CLASSES, null, out);
+        assertEquals(15, Quad.skyLight(out.quads(Quad.POS_X)[0]));
+    }
+
+    private static int expectedSky(int direction, int u, int v) {
+        return (direction * 5 + u * 3 + v) & 15;
+    }
+
+    private static int expectedBlock(int u, int v) {
+        return (u ^ v) & 15;
+    }
+
+    @Test
     void partialVoxelsHideOnlyTheTopBelowThem() {
         // Stone floor, a snow layer on half of it, a stone wall beside the snow.
         LodSection section = new LodSection(0);

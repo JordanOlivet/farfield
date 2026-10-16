@@ -33,8 +33,10 @@ import java.util.function.IntPredicate;
  * light is the sky and block light of the voxel in front of it; its fill
  * (coarse levels) is its voxel's, in eighths, and opaque voxels that are
  * not full mesh as {@link MaterialClassifier#PARTIAL}; in front of
- * a section border, the face voxel's own light when it is translucent
- * (water), else full sky light (open terrain at section tops). Ambient
+ * a section border, the light of the neighbor section's touching voxel
+ * when the caller gives it, else the face voxel's own light when it is
+ * translucent (water), else full sky light (open terrain at section tops).
+ * Ambient
  * occlusion is not part of the merge key.
  *
  * <p>Not thread-safe: one instance per worker; all buffers are reused.
@@ -78,6 +80,8 @@ public final class BinaryGreedyMesher {
     private int slotCount;
 
     private long facesEmitted;
+    /** Per direction, the light of the neighbor layer (see {@link #borderLight}); null entries unknown. */
+    private byte[][] neighborLight;
 
     /**
      * Meshes a section.
@@ -105,6 +109,20 @@ public final class BinaryGreedyMesher {
      */
     public void mesh(LodSection section, MaterialClassifier classifier, IntPredicate tinted, int[][] neighborOpaque,
                      int[][] neighborSolid, MeshBuffer out) {
+        mesh(section, classifier, tinted, neighborOpaque, neighborSolid, null, out);
+    }
+
+    /**
+     * Like {@link #mesh(LodSection, MaterialClassifier, IntPredicate, int[][], int[][], MeshBuffer)};
+     * faces on a section border take their light from {@code neighborLight}.
+     *
+     * @param neighborLight per direction, the light of the neighbor layer as
+     *                      {@link #borderLight} returns it; null, or a null
+     *                      entry, falls back to the rule of the class comment
+     */
+    public void mesh(LodSection section, MaterialClassifier classifier, IntPredicate tinted, int[][] neighborOpaque,
+                     int[][] neighborSolid, byte[][] neighborLight, MeshBuffer out) {
+        this.neighborLight = neighborLight;
         out.clear();
         facesEmitted = 0;
         if (!classify(section, classifier)) {
@@ -504,6 +522,16 @@ public final class BinaryGreedyMesher {
         if (nx >= 0 && ny >= 0 && nz >= 0 && nx < S && ny < S && nz < S) {
             return section.skyLight().get(nx, ny, nz) << 4 | section.blockLight().get(nx, ny, nz);
         }
+        byte[] border = neighborLight == null ? null : neighborLight[axis * 2 + (step > 0 ? 1 : 0)];
+        if (border != null) {
+            // Same plane layout as borderPlane: U then V of the direction's axes.
+            int uv = switch (axis) {
+                case 0 -> y * S + z;
+                case 1 -> z * S + x;
+                default -> x * S + y;
+            };
+            return border[uv] & 0xFF;
+        }
         if (translucent[index] != 0 || partial[index] != 0) {
             return section.skyLight().get(x, y, z) << 4 | section.blockLight().get(x, y, z);
         }
@@ -552,6 +580,45 @@ public final class BinaryGreedyMesher {
                 out.add(direction, quad);
             }
         }
+    }
+
+    /**
+     * Light of the layer of {@code neighbor} that touches a section across
+     * {@code direction}, for {@link #mesh(LodSection, MaterialClassifier, IntPredicate, int[][], int[][], byte[][], MeshBuffer)}:
+     * 1024 entries {@code u * 32 + v}, each sky light << 4 | block light.
+     */
+    public static byte[] borderLight(LodSection neighbor, int direction, byte[] out) {
+        byte[] plane = out != null ? out : new byte[PLANE];
+        int axis = direction >> 1;
+        int layer = (direction & 1) != 0 ? 0 : S - 1;
+        NibbleBricks sky = neighbor.skyLight();
+        NibbleBricks block = neighbor.blockLight();
+        for (int u = 0; u < S; u++) {
+            for (int v = 0; v < S; v++) {
+                int x;
+                int y;
+                int z;
+                switch (axis) {
+                    case 0 -> {
+                        x = layer;
+                        y = u;
+                        z = v;
+                    }
+                    case 1 -> {
+                        x = v;
+                        y = layer;
+                        z = u;
+                    }
+                    default -> {
+                        x = u;
+                        y = v;
+                        z = layer;
+                    }
+                }
+                plane[u * S + v] = (byte) (sky.get(x, y, z) << 4 | block.get(x, y, z));
+            }
+        }
+        return plane;
     }
 
     /**
