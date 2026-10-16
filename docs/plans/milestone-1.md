@@ -171,8 +171,8 @@ choice, an ADR.
   distance, stores closed on quit and on Disconnect, LODs back from disk
   after a restart). User's pass on the homelab server (NeoForge pack):
   exploring and reconnecting work; the Nether showed the fog problem of
-  ADR-033. Remains: the identity command, the dimension change checked
-  after the fog fix
+  ADR-033, fixed; Nether to Overworld and Disconnect checked in the same
+  pack ("C'est nikel"). Remains: the identity command
 - [x] E.8 In-game settings screen (client): level of detail in pixels per
   voxel (ADR-027, default 6), texture distance (ADR-026, default all), LOD
   drawing on and off, level colors; saved in the client config. The
