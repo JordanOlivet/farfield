@@ -537,3 +537,26 @@ Amends ADR-020 (downsampling rules).
   (L1 152 MB, L2 31 MB on the test world).
 - Level 0 keeps no fill: there the block state gives the height
   (`MaterialClassifier.PARTIAL`, drawn at its height by `lod.vert`).
+
+## ADR-029 — Client settings: file, screen and key
+
+**Date**: 2026-10-16 · **Status**: accepted
+
+Implements plan item E.8.
+
+- The LOD drawing settings (LOD drawing on or off, detail in pixels per
+  voxel, texture distance, level colors) are saved on the physical client
+  in `config/farfield-client.properties`: a commented properties file,
+  written through a temporary file, read by `RenderConfig` in `core`
+  (missing or invalid keys take their default, out-of-range values are
+  clamped). A dedicated server never writes it.
+- One settings screen in `common`, built from vanilla options widgets
+  (`OptionsSubScreen`), so it looks like the game's own pages on both
+  loaders. Values apply at once; the detail slider applies on release, as
+  each value re-selects the LOD sections. The file is written when the
+  screen closes and after each `/farfield render|detail|textures|debug
+  levels` command.
+- Openers: the Mods screen's "Config" button on NeoForge
+  (`IConfigScreenFactory`), Mod Menu's button on Fabric (optional
+  dependency, `modmenu` entrypoint), and a key binding, unbound by default
+  (Controls > Key Binds > Farfield), for Fabric installs without Mod Menu.

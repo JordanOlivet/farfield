@@ -1,6 +1,7 @@
 package io.lakio.farfield;
 
 import io.lakio.farfield.api.FarfieldApi;
+import io.lakio.farfield.lod.RenderSettings;
 import io.lakio.farfield.platform.Services;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,5 +21,6 @@ public final class Farfield {
                 Services.PLATFORM.getPlatformName(), FarfieldApi.API_VERSION,
                 Services.PLATFORM.isClient() ? "client" : "server");
         CpuUsage.start();
+        RenderSettings.load();
     }
 }

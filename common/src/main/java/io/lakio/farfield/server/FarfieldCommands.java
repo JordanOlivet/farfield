@@ -59,6 +59,7 @@ public final class FarfieldCommands {
     /** Single player: the distance up to which LOD faces show their textures (0: off). */
     private static int textures(CommandContext<CommandSourceStack> c, int blocks) {
         RenderSettings.setTextureDistance(blocks);
+        RenderSettings.save();
         Farfield.LOG.info("LOD texture distance set to {} by command",
                 RenderSettings.textureDistance() == RenderSettings.ALL_DISTANCES ? "all LODs"
                         : RenderSettings.textureDistance() + " blocks");
@@ -78,6 +79,7 @@ public final class FarfieldCommands {
     /** Single player: tints LOD faces by level, to see where each level hands over. */
     private static int debugLevels(CommandContext<CommandSourceStack> c, boolean on) {
         RenderSettings.setDebugLevels(on);
+        RenderSettings.save();
         Farfield.LOG.info("LOD level colors switched {} by command", on ? "on" : "off");
         c.getSource().sendSuccess(() -> Component.literal(on
                 ? "LOD level colors on: red 1 block, orange 2, yellow 4, green 8, blue 16 (single player only)."
@@ -88,6 +90,7 @@ public final class FarfieldCommands {
     /** Single player: switches LOD drawing on the client of the same process, to compare frame rates. */
     private static int render(CommandContext<CommandSourceStack> c, boolean on) {
         RenderSettings.set(on);
+        RenderSettings.save();
         Farfield.LOG.info("LOD rendering switched {} by command", on ? "on" : "off");
         c.getSource().sendSuccess(() -> Component.literal("LOD rendering " + (on ? "on" : "off")
                 + " (single player only: it acts on this game's own client)."), false);
@@ -97,6 +100,7 @@ public final class FarfieldCommands {
     /** Single player: the largest on-screen size of an LOD voxel before the finer level takes over. */
     private static int detail(CommandContext<CommandSourceStack> c, float pixels) {
         RenderSettings.setVoxelPixels(pixels);
+        RenderSettings.save();
         Farfield.LOG.info("LOD detail set to {} px per voxel by command", RenderSettings.voxelPixels());
         c.getSource().sendSuccess(() -> Component.literal("LOD detail: " + RenderSettings.voxelPixels()
                 + " px per voxel (lower is finer; default " + RenderSettings.DEFAULT_VOXEL_PIXELS

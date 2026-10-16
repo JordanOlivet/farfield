@@ -12,6 +12,12 @@
   "entrypoints": {
     "main": [
       "io.lakio.farfield.fabric.FarfieldFabric"
+    ],
+    "client": [
+      "io.lakio.farfield.fabric.FarfieldFabricClient"
+    ],
+    "modmenu": [
+      "io.lakio.farfield.fabric.FarfieldModMenu"
     ]
   },
   "mixins": [
@@ -22,5 +28,8 @@
     "fabric-api": "*",
     "minecraft": "${minecraft_version}",
     "java": ">=${java_version}"
+  },
+  "suggests": {
+    "modmenu": "*"
   }
 }

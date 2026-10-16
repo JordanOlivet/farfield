@@ -166,7 +166,11 @@ choice, an ADR.
   per remote world; command to force or rename the world identity.
   Checked with the dev client on a vanilla 1.21.1 server jar, then on a
   real server
-- [ ] E.8 In-game settings screen (client): level of detail in pixels per
+- [~] E.8 In-game settings screen (client): level of detail in pixels per
   voxel (ADR-027, default 6), texture distance (ADR-026, default all), LOD
   drawing on and off, level colors; saved in the client config. The
-  `/farfield` commands stay
+  `/farfield` commands stay. Done 2026-10-16 (ADR-029): screen opened from
+  the Mods screen (NeoForge), Mod Menu (Fabric) and a key, unbound by
+  default; checked in both dev clients (each opener, each setting applied
+  live, file written on close and by command). Remains: the user's pack
+  check

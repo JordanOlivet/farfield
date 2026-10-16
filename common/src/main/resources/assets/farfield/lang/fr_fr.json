@@ -1,0 +1,17 @@
+{
+  "farfield.options.title": "Paramètres de Farfield",
+  "farfield.options.rendering": "Terrain lointain",
+  "farfield.options.rendering.tooltip": "Dessine le terrain au-delà de la distance de rendu en niveaux de détail. Désactivé, seul ce que le jeu dessine reste visible.",
+  "farfield.options.detail": "Détail",
+  "farfield.options.detail.value": "%s px par voxel",
+  "farfield.options.detail.tooltip": "Taille maximale d'un voxel lointain à l'écran avant que le niveau plus fin prenne le relais. Plus bas est plus fin et coûte plus de mémoire vidéo et de temps GPU : 2 px utilise environ six fois la mémoire de la valeur par défaut, 6 px.",
+  "farfield.options.textures": "Textures",
+  "farfield.options.textures.off": "Désactivées",
+  "farfield.options.textures.all": "Toutes distances",
+  "farfield.options.textures.blocks": "Jusqu'à %s blocs",
+  "farfield.options.textures.tooltip": "Distance jusqu'à laquelle le terrain lointain montre les textures des blocs ; au-delà, les faces prennent leur couleur moyenne. Les textures ne coûtent presque rien au GPU. Par défaut : toutes distances.",
+  "farfield.options.level_colors": "Couleurs des niveaux",
+  "farfield.options.level_colors.tooltip": "Teinte le terrain lointain selon son niveau de détail : rouge 1 bloc, orange 2, jaune 4, vert 8, bleu 16 blocs par voxel.",
+  "key.categories.farfield": "Farfield",
+  "key.farfield.settings": "Ouvrir les paramètres"
+}

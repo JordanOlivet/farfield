@@ -1,30 +1,39 @@
 package io.lakio.farfield.lod;
 
+import io.lakio.farfield.Farfield;
+import io.lakio.farfield.core.config.RenderConfig;
+import io.lakio.farfield.platform.Services;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 /**
- * LOD drawing settings changed by command: {@code /farfield render on|off}
- * to compare frame rates in the same session, {@code /farfield detail <px>}
- * for the level of detail, {@code /farfield textures all|<blocks>} for the
- * distance textures reach, {@code /farfield debug levels on|off} to color
- * each LOD level. Side-neutral on purpose: the command lives on
- * the (integrated) server, the renderer on the client of the same process;
- * a dedicated server only stores the values.
+ * LOD drawing settings, set in the settings screen or by command:
+ * {@code /farfield render on|off} to compare frame rates in the same session,
+ * {@code /farfield detail <px>} for the level of detail,
+ * {@code /farfield textures all|<blocks>} for the distance textures reach,
+ * {@code /farfield debug levels on|off} to color each LOD level. Saved in
+ * {@code config/farfield-client.properties} on the physical client.
+ * Side-neutral on purpose: the command lives on the (integrated) server, the
+ * renderer on the client of the same process; a dedicated server only stores
+ * the values and never writes the file.
  */
 public final class RenderSettings {
 
-    /** Default target size of an LOD voxel on screen, in pixels, where a level hands over to the next. */
-    public static final float DEFAULT_VOXEL_PIXELS = 6f;
-    public static final float MIN_VOXEL_PIXELS = 1f;
-    public static final float MAX_VOXEL_PIXELS = 32f;
-    /** Texture distance meaning every LOD shows its textures, whatever its distance. */
-    public static final int ALL_DISTANCES = Integer.MAX_VALUE;
-    /** Default: textures on every LOD (ADR-026); the GPU cost was within noise. */
-    public static final int DEFAULT_TEXTURE_DISTANCE = ALL_DISTANCES;
-    public static final int MAX_TEXTURE_DISTANCE = 4096;
+    public static final float DEFAULT_VOXEL_PIXELS = RenderConfig.DEFAULT_VOXEL_PIXELS;
+    public static final float MIN_VOXEL_PIXELS = RenderConfig.MIN_VOXEL_PIXELS;
+    public static final float MAX_VOXEL_PIXELS = RenderConfig.MAX_VOXEL_PIXELS;
+    public static final int ALL_DISTANCES = RenderConfig.ALL_DISTANCES;
+    public static final int DEFAULT_TEXTURE_DISTANCE = RenderConfig.DEFAULT_TEXTURE_DISTANCE;
+    public static final int MAX_TEXTURE_DISTANCE = RenderConfig.MAX_TEXTURE_DISTANCE;
 
-    private static volatile boolean enabled = true;
-    private static volatile float voxelPixels = DEFAULT_VOXEL_PIXELS;
-    private static volatile boolean debugLevels;
-    private static volatile int textureDistance = DEFAULT_TEXTURE_DISTANCE;
+    private static final String FILE_NAME = "farfield-client.properties";
+
+    private static volatile boolean enabled = RenderConfig.DEFAULTS.enabled();
+    private static volatile float voxelPixels = RenderConfig.DEFAULTS.voxelPixels();
+    private static volatile boolean debugLevels = RenderConfig.DEFAULTS.levelColors();
+    private static volatile int textureDistance = RenderConfig.DEFAULTS.textureDistance();
 
     private RenderSettings() {
     }
@@ -47,7 +56,7 @@ public final class RenderSettings {
     }
 
     public static void setVoxelPixels(float pixels) {
-        voxelPixels = Math.max(MIN_VOXEL_PIXELS, Math.min(MAX_VOXEL_PIXELS, pixels));
+        voxelPixels = RenderConfig.clampVoxelPixels(pixels);
     }
 
     /**
@@ -60,7 +69,7 @@ public final class RenderSettings {
     }
 
     public static void setTextureDistance(int blocks) {
-        textureDistance = blocks == ALL_DISTANCES ? ALL_DISTANCES : Math.max(0, Math.min(MAX_TEXTURE_DISTANCE, blocks));
+        textureDistance = RenderConfig.clampTextureDistance(blocks);
     }
 
     /** Whether LOD faces are tinted by their level (red 0, orange 1, yellow 2, green 3, blue 4). */
@@ -70,5 +79,43 @@ public final class RenderSettings {
 
     public static void setDebugLevels(boolean value) {
         debugLevels = value;
+    }
+
+    /** Physical client only: reads the saved settings, or keeps the defaults. */
+    public static void load() {
+        if (!Services.PLATFORM.isClient()) {
+            return;
+        }
+        Path file = file();
+        try {
+            RenderConfig config = RenderConfig.read(file);
+            enabled = config.enabled();
+            voxelPixels = config.voxelPixels();
+            textureDistance = config.textureDistance();
+            debugLevels = config.levelColors();
+            Farfield.LOG.info(Files.exists(file) ? "LOD settings loaded from {}: {}" : "No {} yet, LOD settings at their defaults: {}",
+                    file.getFileName(), config);
+        } catch (IOException | RuntimeException e) {
+            Farfield.LOG.warn("Could not read {}, LOD settings keep their defaults", file, e);
+        }
+    }
+
+    /** Physical client only: writes the current settings. */
+    public static void save() {
+        if (!Services.PLATFORM.isClient()) {
+            return;
+        }
+        Path file = file();
+        RenderConfig config = new RenderConfig(enabled, voxelPixels, textureDistance, debugLevels);
+        try {
+            config.write(file);
+            Farfield.LOG.info("LOD settings saved to {}: {}", file.getFileName(), config);
+        } catch (IOException e) {
+            Farfield.LOG.warn("Could not write {}", file, e);
+        }
+    }
+
+    private static Path file() {
+        return Services.PLATFORM.getConfigDir().resolve(FILE_NAME);
     }
 }

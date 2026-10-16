@@ -1,0 +1,17 @@
+{
+  "farfield.options.title": "Farfield Settings",
+  "farfield.options.rendering": "Distant Terrain",
+  "farfield.options.rendering.tooltip": "Draw the terrain beyond the render distance as levels of detail. Off shows only what the game draws.",
+  "farfield.options.detail": "Detail",
+  "farfield.options.detail.value": "%s px per voxel",
+  "farfield.options.detail.tooltip": "Largest size of a distant voxel on screen before finer detail takes over. Lower is finer and costs more video memory and GPU time: 2 px uses about six times the memory of the default, 6 px.",
+  "farfield.options.textures": "Textures",
+  "farfield.options.textures.off": "Off",
+  "farfield.options.textures.all": "All Distances",
+  "farfield.options.textures.blocks": "Up to %s blocks",
+  "farfield.options.textures.tooltip": "Distance up to which distant terrain shows block textures; farther faces show their mean color. Textures cost almost nothing on the GPU. Default: all distances.",
+  "farfield.options.level_colors": "Level Colors",
+  "farfield.options.level_colors.tooltip": "Tint distant terrain by level of detail: red 1 block, orange 2, yellow 4, green 8, blue 16 blocks per voxel.",
+  "key.categories.farfield": "Farfield",
+  "key.farfield.settings": "Open Settings"
+}
