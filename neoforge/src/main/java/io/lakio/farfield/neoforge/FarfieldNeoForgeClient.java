@@ -1,6 +1,7 @@
 package io.lakio.farfield.neoforge;
 
 import io.lakio.farfield.client.FarfieldSettingsScreen;
+import io.lakio.farfield.client.FarfieldClientCommands;
 import io.lakio.farfield.client.LodClient;
 import io.lakio.farfield.client.SettingsKey;
 import net.minecraft.client.Minecraft;
@@ -9,6 +10,7 @@ import net.minecraft.world.level.chunk.LevelChunk;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
+import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
 import net.neoforged.neoforge.common.NeoForge;
@@ -40,5 +42,7 @@ final class FarfieldNeoForgeClient {
         });
         NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post e) -> LodClient.tick(Minecraft.getInstance()));
         NeoForge.EVENT_BUS.addListener((GameShuttingDownEvent e) -> LodClient.onClientStopping());
+        NeoForge.EVENT_BUS.addListener((RegisterClientCommandsEvent e) -> FarfieldClientCommands.register(
+                e.getDispatcher(), (source, line) -> source.sendSuccess(() -> line, false)));
     }
 }

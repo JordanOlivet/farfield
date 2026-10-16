@@ -161,7 +161,7 @@ choice, an ADR.
   last pack pass ("nickel"): flicker, shapes and the water line gone;
   ADR-020 judged in game and amended by ADR-028 (fill). Fences, walls,
   panes and stairs are left out of E.7
-- [~] E.6 Client mode (ADR-022): a client with Farfield on a server
+- [x] E.6 Client mode (ADR-022): a client with Farfield on a server
   without it builds and renders LODs from the chunks it receives, stored
   per remote world; command to force or rename the world identity.
   Checked with the dev client on a vanilla 1.21.1 server jar, then on a
@@ -172,7 +172,10 @@ choice, an ADR.
   after a restart). User's pass on the homelab server (NeoForge pack):
   exploring and reconnecting work; the Nether showed the fog problem of
   ADR-033, fixed; Nether to Overworld and Disconnect checked in the same
-  pack ("C'est nikel"). Remains: the identity command
+  pack ("C'est nikel"). Identity command (ADR-035) checked 2026-10-17 on
+  the vanilla server with both dev clients (rename moves the LODs and
+  reopens them, reset moves them back). Closed; the command was not tried
+  in the user's pack
 - [x] E.8 In-game settings screen (client): level of detail in pixels per
   voxel (ADR-027, default 6), texture distance (ADR-026, default all), LOD
   drawing on and off, level colors; saved in the client config. The

@@ -1,8 +1,11 @@
 package io.lakio.farfield.fabric;
 
+import io.lakio.farfield.client.FarfieldClientCommands;
 import io.lakio.farfield.client.LodClient;
 import io.lakio.farfield.client.SettingsKey;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
+import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientChunkEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -19,5 +22,7 @@ public final class FarfieldFabricClient implements ClientModInitializer {
         ClientChunkEvents.CHUNK_UNLOAD.register(LodClient::onChunkUnload);
         ClientTickEvents.END_CLIENT_TICK.register(LodClient::tick);
         ClientLifecycleEvents.CLIENT_STOPPING.register(mc -> LodClient.onClientStopping());
+        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) ->
+                FarfieldClientCommands.register(dispatcher, FabricClientCommandSource::sendFeedback));
     }
 }

@@ -689,3 +689,27 @@ fog where it looks best: none in the Overworld, a little in the Nether.
   and 126 MB at 4,096). With vanilla thick fog nothing is drawn beyond the
   game's terrain. Water and lava fog do not limit the selection: they come
   and go, and would evict every mesh.
+
+## ADR-035 — Naming a remote world
+
+**Date**: 2026-10-17 · **Status**: accepted
+
+Completes ADR-022's "command to force or rename the identity" (plan item
+E.6).
+
+- A client command with a root of its own, `/farfieldclient`, so it never
+  clashes with a server's `/farfield` (each loader registers it with its
+  client command source): `world` shows the server address, seed hash,
+  name and store folder; `world name <name>` names the current remote
+  world (the rest of the line, sanitized to lower-case letters, digits,
+  `.`, `-` and `_`, at most 64); `world reset` goes back to the automatic
+  identity.
+- A named world's LODs live in `<servers>/named/<name>/` instead of
+  `<servers>/<address>/<seed hash>/`; names are kept in
+  `<servers>/identities.properties`, keyed `<address>/<seed hash>`
+  (`RemoteWorldNames`, core).
+- Changing the identity closes the stores first (stop and wait), then: a
+  target folder that does not exist receives the current one (the LODs
+  follow: rename), an existing one is used as is and the current folder
+  stays (force); an emptied address or `named` folder is removed. The
+  pipeline starts again on the next tick from the new folder.
