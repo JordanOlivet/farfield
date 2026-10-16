@@ -29,6 +29,11 @@ point), `docs/DECISIONS.md` (ADRs, binding), the active plan in `docs/plans/`,
 .\gradlew.bat :fabric:runClient          # dev client (run dir: fabric\runs\client)
 ```
 
+Releases (ADR-031): push a tag `v<version from gradle.properties>[-alpha.N]`,
+e.g. `git tag v0.1.0-alpha.2 && git push origin v0.1.0-alpha.2`;
+`.github/workflows/release.yml` publishes both jars to Modrinth, CurseForge
+and a GitHub Release.
+
 Shippable jars: `neoforge/build/libs/farfield-neoforge-1.21.1-<version>.jar`
 and `fabric/build/libs/farfield-fabric-1.21.1-<version>.jar`.
 
