@@ -7,6 +7,7 @@ import com.mojang.blaze3d.vertex.BufferUploader;
 import io.lakio.farfield.Farfield;
 import io.lakio.farfield.client.LodWorldProvider;
 import io.lakio.farfield.core.LodKey;
+import io.lakio.farfield.core.config.RenderConfig;
 import io.lakio.farfield.core.lod.LodSection;
 import io.lakio.farfield.core.mesh.BinaryGreedyMesher;
 import io.lakio.farfield.core.mesh.MaterialClassifier;
@@ -30,6 +31,7 @@ import net.minecraft.client.resources.model.BakedModel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.Registries;
+import net.minecraft.util.Mth;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.Biomes;
 import net.minecraft.world.phys.Vec3;
@@ -193,7 +195,12 @@ public final class LodRenderer {
     private int uFogColor;
     private int uFog;
     private int uFogCylinder;
+    private static boolean pushedFog;
     private static boolean followVanillaFog;
+    private static boolean thickFogDimension;
+    /** Fog distance meaning no fog: beyond anything drawn. */
+    private static final float NO_FOG = 1e7f;
+    private double lastSelectionDistance = -1;
     private int uTranslucent;
     private int uDebugLevels;
     private int uBiomeBlend;
@@ -319,22 +326,54 @@ public final class LodRenderer {
     }
 
     /**
-     * Set by the fog mixin for every terrain frame: whether the LODs take the
-     * game's fog (thick dimension fog kept, water, lava, powder snow) instead
-     * of their own far fog (ADR-033).
+     * Set by the fog mixin for every terrain frame (ADR-033, ADR-034).
+     *
+     * @param pushed          the terrain fog was moved out to the player's fog distance
+     * @param followVanilla   the LODs take the game's fog as it is (thick dimension fog
+     *                        kept, water, lava, powder snow)
+     * @param thickDimension  the dimension has thick fog (the Nether)
      */
-    public static void setFollowVanillaFog(boolean follow) {
-        followVanillaFog = follow;
+    public static void setFogState(boolean pushed, boolean followVanilla, boolean thickDimension) {
+        pushedFog = pushed;
+        followVanillaFog = followVanilla;
+        thickFogDimension = thickDimension;
     }
 
-    /** Distance where the LOD fog starts, in blocks. */
-    public static float fogStart() {
-        return FOG_START;
+    /**
+     * Moves the game's terrain fog out to a fog distance (ADR-034): opaque at
+     * the distance (never closer than the far plane), from 60 % of it; for
+     * normal fog never before vanilla's own fog start, so near terrain stays
+     * as clear as without LODs. {@link RenderConfig#FOG_OFF}: no fog.
+     */
+    public static void pushFog(int distance, float farPlane, boolean normal) {
+        if (distance == RenderConfig.FOG_OFF) {
+            RenderSystem.setShaderFogStart(NO_FOG);
+            RenderSystem.setShaderFogEnd(NO_FOG * 2);
+            return;
+        }
+        float end = Math.max(distance, farPlane);
+        float start = end * 0.6f;
+        if (normal) {
+            start = Math.max(start, farPlane - Mth.clamp(farPlane / 10f, 4f, 64f));
+        }
+        RenderSystem.setShaderFogStart(Math.min(start, end));
+        RenderSystem.setShaderFogEnd(end);
     }
 
-    /** Distance where the LOD fog is opaque, in blocks. */
-    public static float fogEnd() {
-        return FOG_END;
+    /**
+     * How far sections are selected: nothing is drawn or kept beyond the
+     * fog, which hides it anyway (water and lava fog excepted: they come and
+     * go, and would evict every mesh).
+     */
+    private double selectionDistance() {
+        int distance = thickFogDimension ? RenderSettings.thickFogDistance() : RenderSettings.fogDistance();
+        if (distance == RenderConfig.FOG_OFF) {
+            return MAX_DISTANCE;
+        }
+        if (distance == RenderConfig.FOG_VANILLA) {
+            return 0; // the game's thick fog is opaque within its render distance
+        }
+        return Math.min(MAX_DISTANCE, distance);
     }
 
     /** Called from the level renderer mixin, after the sky, before the terrain. */
@@ -426,6 +465,11 @@ public final class LodRenderer {
         double dy = cam.y - selectedY;
         double dz = cam.z - selectedZ;
         updateDetail(mc, projection);
+        double distance = selectionDistance();
+        if (distance != lastSelectionDistance) {
+            lastSelectionDistance = distance;
+            selectionDirty = true;
+        }
         if (selectionDirty || dx * dx + dy * dy + dz * dz > RESELECT_DISTANCE_SQ
                 || frameStart - selectionTime > RESELECT_NANOS) {
             select(level, cam, frameStart);
@@ -609,7 +653,7 @@ public final class LodRenderer {
         selectionDirty = false;
         selections++;
         drawList.clear();
-        selector.select(cam.x, cam.y, cam.z, level.getMinBuildHeight(), level.getMaxBuildHeight(), MAX_DISTANCE,
+        selector.select(cam.x, cam.y, cam.z, level.getMinBuildHeight(), level.getMaxBuildHeight(), lastSelectionDistance,
                 sections, drawSink, wantSink);
         maxFallbacks = Math.max(maxFallbacks, selector.fallbacks());
         for (int i = 0, n = drawList.size(); i < n; i++) {
@@ -1112,11 +1156,13 @@ public final class LodRenderer {
         glUniform1i(uSodiumRule, sodiumRule ? 1 : 0);
         glUniform1i(uLightmap, LIGHTMAP_UNIT);
         glUniform4f(uFogColor, fogColor[0], fogColor[1], fogColor[2], 1f);
-        if (followVanillaFog) {
-            // The game's terrain fog, set up just before the LODs draw.
+        if (pushedFog || followVanillaFog) {
+            // The game's terrain fog, set up just before the LODs draw (moved out by
+            // the fog mixin, or kept); its shape only when kept, as the LOD fog was a sphere.
             glUniform2f(uFog, RenderSystem.getShaderFogStart(), RenderSystem.getShaderFogEnd());
-            glUniform1i(uFogCylinder, RenderSystem.getShaderFogShape() == FogShape.CYLINDER ? 1 : 0);
+            glUniform1i(uFogCylinder, followVanillaFog && RenderSystem.getShaderFogShape() == FogShape.CYLINDER ? 1 : 0);
         } else {
+            // The fog mixin did not run or left a mod's fog alone: the LODs' own far fog.
             glUniform2f(uFog, FOG_START, FOG_END);
             glUniform1i(uFogCylinder, 0);
         }

@@ -1,5 +1,6 @@
 package io.lakio.farfield.client;
 
+import io.lakio.farfield.core.config.RenderConfig;
 import io.lakio.farfield.lod.RenderSettings;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.OptionInstance;
@@ -20,6 +21,10 @@ public final class FarfieldSettingsScreen extends OptionsSubScreen {
     private static final int TEXTURE_STEP = 64;
     private static final int TEXTURE_STEPS = RenderSettings.MAX_TEXTURE_DISTANCE / TEXTURE_STEP;
     private static final int TEXTURE_ALL = TEXTURE_STEPS + 1;
+    private static final int FOG_STEP = 128;
+    /** Last step of the normal fog slider (off); the thick fog slider has one more (vanilla first). */
+    private static final int FOG_STEPS =
+            (RenderConfig.MAX_FOG_DISTANCE - RenderConfig.MIN_FOG_DISTANCE) / FOG_STEP + 1;
 
     public FarfieldSettingsScreen(Screen lastScreen) {
         super(lastScreen, Minecraft.getInstance().options, Component.translatable("farfield.options.title"));
@@ -44,12 +49,18 @@ public final class FarfieldSettingsScreen extends OptionsSubScreen {
                 new OptionInstance.IntRange(0, TEXTURE_ALL),
                 textureStep(RenderSettings.textureDistance()),
                 step -> RenderSettings.setTextureDistance(textureDistance(step))));
-        list.addBig(OptionInstance.createBoolean("farfield.options.dimension_fog",
-                OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.dimension_fog.tooltip")),
-                // The cycle button adds the caption itself, as for vanilla's ON / OFF.
-                (caption, extended) -> Component.translatable(extended
-                        ? "farfield.options.dimension_fog.extended" : "farfield.options.dimension_fog.vanilla"),
-                RenderSettings.extendDimensionFog(), RenderSettings::setExtendDimensionFog));
+        list.addBig(new OptionInstance<>("farfield.options.fog",
+                OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.fog.tooltip")),
+                (caption, step) -> Options.genericValueLabel(caption, fogLabel(fogDistance(step, false))),
+                new OptionInstance.IntRange(0, FOG_STEPS),
+                fogStep(RenderSettings.fogDistance(), false),
+                step -> RenderSettings.setFogDistance(fogDistance(step, false))));
+        list.addBig(new OptionInstance<>("farfield.options.thick_fog",
+                OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.thick_fog.tooltip")),
+                (caption, step) -> Options.genericValueLabel(caption, fogLabel(fogDistance(step, true))),
+                new OptionInstance.IntRange(0, FOG_STEPS + 1),
+                fogStep(RenderSettings.thickFogDistance(), true),
+                step -> RenderSettings.setThickFogDistance(fogDistance(step, true))));
         list.addBig(OptionInstance.createBoolean("farfield.options.level_colors",
                 OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.level_colors.tooltip")),
                 RenderSettings.debugLevels(), RenderSettings::setDebugLevels));
@@ -69,6 +80,43 @@ public final class FarfieldSettingsScreen extends OptionsSubScreen {
             return Component.translatable("farfield.options.textures.all");
         }
         return Component.translatable("farfield.options.textures.blocks", step * TEXTURE_STEP);
+    }
+
+    /**
+     * Fog distance sliders: {@link RenderConfig#MIN_FOG_DISTANCE} to
+     * {@link RenderConfig#MAX_FOG_DISTANCE} by {@link #FOG_STEP}, then off;
+     * the thick fog slider starts with vanilla.
+     */
+    private static int fogDistance(int step, boolean thick) {
+        if (thick) {
+            if (step == 0) {
+                return RenderConfig.FOG_VANILLA;
+            }
+            step--;
+        }
+        int blocks = RenderConfig.MIN_FOG_DISTANCE + step * FOG_STEP;
+        return blocks > RenderConfig.MAX_FOG_DISTANCE ? RenderConfig.FOG_OFF : blocks;
+    }
+
+    private static int fogStep(int blocks, boolean thick) {
+        int offset = thick ? 1 : 0;
+        if (blocks == RenderConfig.FOG_VANILLA) {
+            return 0;
+        }
+        if (blocks == RenderConfig.FOG_OFF) {
+            return FOG_STEPS + offset;
+        }
+        return Math.round((blocks - RenderConfig.MIN_FOG_DISTANCE) / (float) FOG_STEP) + offset;
+    }
+
+    private static Component fogLabel(int blocks) {
+        if (blocks == RenderConfig.FOG_OFF) {
+            return Component.translatable("farfield.options.fog.off");
+        }
+        if (blocks == RenderConfig.FOG_VANILLA) {
+            return Component.translatable("farfield.options.fog.vanilla");
+        }
+        return Component.translatable("farfield.options.fog.blocks", blocks);
     }
 
     private static int textureDistance(int step) {

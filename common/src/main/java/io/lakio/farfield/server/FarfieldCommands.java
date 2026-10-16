@@ -2,6 +2,7 @@ package io.lakio.farfield.server;
 
 import com.mojang.brigadier.CommandDispatcher;
 import io.lakio.farfield.Farfield;
+import io.lakio.farfield.core.config.RenderConfig;
 import io.lakio.farfield.lod.RenderSettings;
 import com.mojang.brigadier.arguments.FloatArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
@@ -49,6 +50,19 @@ public final class FarfieldCommands {
                         .then(Commands.argument("blocks", IntegerArgumentType.integer(0,
                                         RenderSettings.MAX_TEXTURE_DISTANCE))
                                 .executes(c -> textures(c, IntegerArgumentType.getInteger(c, "blocks")))))
+                .then(Commands.literal("fog")
+                        .executes(FarfieldCommands::showFog)
+                        .then(Commands.literal("off").executes(c -> fog(c, false, RenderConfig.FOG_OFF)))
+                        .then(Commands.argument("blocks", IntegerArgumentType.integer(RenderConfig.MIN_FOG_DISTANCE,
+                                        RenderConfig.MAX_FOG_DISTANCE))
+                                .executes(c -> fog(c, false, IntegerArgumentType.getInteger(c, "blocks"))))
+                        .then(Commands.literal("thick")
+                                .executes(FarfieldCommands::showFog)
+                                .then(Commands.literal("vanilla").executes(c -> fog(c, true, RenderConfig.FOG_VANILLA)))
+                                .then(Commands.literal("off").executes(c -> fog(c, true, RenderConfig.FOG_OFF)))
+                                .then(Commands.argument("blocks", IntegerArgumentType.integer(
+                                                RenderConfig.MIN_FOG_DISTANCE, RenderConfig.MAX_FOG_DISTANCE))
+                                        .executes(c -> fog(c, true, IntegerArgumentType.getInteger(c, "blocks"))))))
                 .then(Commands.literal("debug")
                         .then(Commands.literal("levels")
                                 .executes(c -> debugLevels(c, !RenderSettings.debugLevels()))
@@ -74,6 +88,33 @@ public final class FarfieldCommands {
         c.getSource().sendSuccess(() -> Component.literal(what
                 + " (default all; /farfield textures all|<blocks>, 0 turns them off; single player only)."), false);
         return 1;
+    }
+
+    /** Single player: where the fog becomes opaque, in normal or thick-fog dimensions (ADR-034). */
+    private static int fog(CommandContext<CommandSourceStack> c, boolean thick, int blocks) {
+        if (thick) {
+            RenderSettings.setThickFogDistance(blocks);
+        } else {
+            RenderSettings.setFogDistance(blocks);
+        }
+        RenderSettings.save();
+        Farfield.LOG.info("LOD {}fog distance set to {} by command", thick ? "thick " : "",
+                fogText(thick ? RenderSettings.thickFogDistance() : RenderSettings.fogDistance()));
+        return showFog(c);
+    }
+
+    private static int showFog(CommandContext<CommandSourceStack> c) {
+        String line = "LOD fog: " + fogText(RenderSettings.fogDistance()) + " (thick fog: "
+                + fogText(RenderSettings.thickFogDistance()) + "); /farfield fog [thick] off|<"
+                + RenderConfig.MIN_FOG_DISTANCE + ".." + RenderConfig.MAX_FOG_DISTANCE
+                + ">, /farfield fog thick vanilla; single player only.";
+        c.getSource().sendSuccess(() -> Component.literal(line), false);
+        return 1;
+    }
+
+    private static String fogText(int blocks) {
+        return blocks == RenderConfig.FOG_OFF ? "off" : blocks == RenderConfig.FOG_VANILLA ? "vanilla"
+                : blocks + " blocks";
     }
 
     /** Single player: tints LOD faces by level, to see where each level hands over. */

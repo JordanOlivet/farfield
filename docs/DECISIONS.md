@@ -663,3 +663,29 @@ Amends ADR-011 (hand-off with vanilla fog).
   `extend_dimension_fog`, default Vanilla), pushes thick fog back to the
   LOD horizon instead, like the normal fog of ADR-011.
 - Blindness and fog another mod changed are left alone, as before.
+
+## ADR-034 — Fog distances chosen by the player
+
+**Date**: 2026-10-16 · **Status**: accepted
+
+Amends ADR-011 and ADR-033; asked by the user, so each player places the
+fog where it looks best: none in the Overworld, a little in the Nether.
+
+- Two settings, as sliders in the settings screen and in the file: Fog
+  Distance for normal dimensions (`fog_distance`, 256 to 4,096 blocks by
+  128, or off; default 4,096, the look before) and Thick Fog Distance for
+  dimensions with thick fog (`thick_fog_distance`, vanilla, 256 to 4,096,
+  or off; default vanilla). It replaces ADR-033's Vanilla / Pushed Back
+  switch; a file with `extend_dimension_fog=true` reads as 4,096.
+  `/farfield fog [thick] off|<blocks>` and `/farfield fog thick vanilla`
+  set them in single player.
+- The fog is opaque at the chosen distance (never closer than the game's
+  far plane) and starts at 60 % of it; normal fog never starts before
+  vanilla's own fog start, so near terrain stays as clear as without LODs.
+  Off sets the fog beyond anything drawn: the edge of the LODs shows.
+- Nothing is selected beyond the fog, which hides it anyway: a closer fog
+  lightens the GPU and frees meshes (Fabric dev client, 4K, ocean view:
+  512 blocks drew 1,298 sections and kept 58 MB of quads, against 1,981
+  and 126 MB at 4,096). With vanilla thick fog nothing is drawn beyond the
+  game's terrain. Water and lava fog do not limit the selection: they come
+  and go, and would evict every mesh.

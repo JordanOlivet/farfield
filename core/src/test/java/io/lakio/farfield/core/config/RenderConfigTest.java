@@ -26,8 +26,9 @@ class RenderConfigTest {
         Path file = dir.resolve("sub").resolve("farfield-client.properties");
         for (RenderConfig config : new RenderConfig[] {
                 RenderConfig.DEFAULTS,
-                new RenderConfig(false, 2.5f, 0, true, true),
-                new RenderConfig(true, 12f, 768, false, false)}) {
+                new RenderConfig(false, 2.5f, 0, true, RenderConfig.FOG_OFF, 1024),
+                new RenderConfig(true, 12f, 768, false, 512, RenderConfig.FOG_OFF),
+                new RenderConfig(true, 6f, 0, false, 4096, RenderConfig.FOG_VANILLA)}) {
             config.write(file);
             assertEquals(config, RenderConfig.read(file));
         }
@@ -42,9 +43,21 @@ class RenderConfigTest {
                 detail_pixels_per_voxel=100
                 texture_distance=-5
                 level_colors=on
-                extend_dimension_fog=yes
+                fog_distance=10
+                thick_fog_distance=99999
                 """, StandardCharsets.UTF_8);
-        assertEquals(new RenderConfig(true, RenderConfig.MAX_VOXEL_PIXELS, 0, true, true), RenderConfig.read(file));
+        assertEquals(new RenderConfig(true, RenderConfig.MAX_VOXEL_PIXELS, 0, true, RenderConfig.MIN_FOG_DISTANCE,
+                RenderConfig.MAX_FOG_DISTANCE), RenderConfig.read(file));
+
+        Files.writeString(file, "fog_distance=OFF\nthick_fog_distance=vanilla\n", StandardCharsets.UTF_8);
+        assertEquals(new RenderConfig(true, RenderConfig.DEFAULT_VOXEL_PIXELS, RenderConfig.DEFAULT_TEXTURE_DISTANCE,
+                false, RenderConfig.FOG_OFF, RenderConfig.FOG_VANILLA), RenderConfig.read(file));
+
+        // The setting before ADR-034: pushed-back thick fog reads as the LOD horizon.
+        Files.writeString(file, "extend_dimension_fog=true\n", StandardCharsets.UTF_8);
+        assertEquals(RenderConfig.MAX_FOG_DISTANCE, RenderConfig.read(file).thickFogDistance());
+        Files.writeString(file, "extend_dimension_fog=true\nthick_fog_distance=768\n", StandardCharsets.UTF_8);
+        assertEquals(768, RenderConfig.read(file).thickFogDistance());
 
         Files.writeString(file, """
                 detail_pixels_per_voxel=fine
@@ -54,7 +67,7 @@ class RenderConfigTest {
 
         Files.writeString(file, "texture_distance=99999\ndetail_pixels_per_voxel=NaN\n", StandardCharsets.UTF_8);
         assertEquals(new RenderConfig(true, RenderConfig.DEFAULT_VOXEL_PIXELS, RenderConfig.MAX_TEXTURE_DISTANCE, false,
-                        false),
+                        RenderConfig.DEFAULT_FOG_DISTANCE, RenderConfig.DEFAULT_THICK_FOG_DISTANCE),
                 RenderConfig.read(file));
     }
 }
