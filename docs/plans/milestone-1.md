@@ -188,3 +188,10 @@ choice, an ADR.
   option: off at 0, else the vanilla radius. Checked in the Fabric dev
   client with Sodium at 0, 2 and 7 over a biome border in the ocean.
   Closed 2026-10-16 after the user's pack pass ("fini pack E9")
+- [~] E.10 Shaped blocks (ADR-036): fences, walls, panes and doors drawn
+  as the boxes of their shape on the finest level, stairs and top slabs
+  too instead of full cubes. Checked 2026-10-18 in the Fabric dev client
+  (render distance 2, level colors): a test row of fences, walls, glass
+  panes, iron bars, a stair roof, top slabs and doors continues the
+  vanilla part without a visible break, day and night. Remains: the
+  user's pack (villages, bamboo, Sodium), and the NeoForge dev client

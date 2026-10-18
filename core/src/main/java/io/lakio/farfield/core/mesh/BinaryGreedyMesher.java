@@ -39,6 +39,11 @@ import java.util.function.IntPredicate;
  * Ambient
  * occlusion is not part of the merge key.
  *
+ * <p>{@link MaterialClassifier#SHAPED} voxels do not merge: each box of
+ * their material gives one unit quad per face, its box index in the fill
+ * bits, lit like the voxel in front when the face reaches the voxel's side
+ * and like the shaped voxel itself otherwise.
+ *
  * <p>Not thread-safe: one instance per worker; all buffers are reused.
  */
 public final class BinaryGreedyMesher {
@@ -49,11 +54,15 @@ public final class BinaryGreedyMesher {
     private int[] opaque = new int[64];
     private int[] translucent = new int[64];
     private int[] partial = new int[64];
+    private int[] shaped = new int[64];
+    private boolean anyShaped;
 
     /** Opaque, translucent and partial X rows, index {@code y * 32 + z}, bit x. */
     private final int[] rowsOpaque = new int[PLANE];
     private final int[] rowsTranslucent = new int[PLANE];
     private final int[] rowsPartial = new int[PLANE];
+    /** Shaped X rows, same layout; they take no part in the greedy passes. */
+    private final int[] rowsShaped = new int[PLANE];
     /** Columns of the current axis, index {@code u * 32 + v}, bit = depth. */
     private final int[] colOpaque = new int[PLANE];
     private final int[] colTranslucent = new int[PLANE];
@@ -146,6 +155,9 @@ public final class BinaryGreedyMesher {
                 }
             }
         }
+        if (anyShaped) {
+            meshShaped(section, classifier, neighborOpaque, out);
+        }
     }
 
     /**
@@ -169,14 +181,18 @@ public final class BinaryGreedyMesher {
             opaque = new int[Math.max(n, opaque.length * 2)];
             translucent = new int[opaque.length];
             partial = new int[opaque.length];
+            shaped = new int[opaque.length];
         }
         boolean anyVisible = false;
+        anyShaped = false;
         for (int i = 0; i < n; i++) {
             int c = classifier.classOf(section.paletteEntry(i));
             opaque[i] = c == MaterialClassifier.OPAQUE ? 1 : 0;
             translucent[i] = c == MaterialClassifier.TRANSLUCENT ? 1 : 0;
             partial[i] = c == MaterialClassifier.PARTIAL ? 1 : 0;
+            shaped[i] = c == MaterialClassifier.SHAPED ? 1 : 0;
             anyVisible |= c != MaterialClassifier.AIR;
+            anyShaped |= c == MaterialClassifier.SHAPED;
         }
         if (!anyVisible) {
             return false;
@@ -187,7 +203,7 @@ public final class BinaryGreedyMesher {
                 return true;
             }
             int i = section.uniformIndex(b);
-            if (opaque[i] != 0 || translucent[i] != 0 || partial[i] != 0) {
+            if (opaque[i] != 0 || translucent[i] != 0 || partial[i] != 0 || shaped[i] != 0) {
                 return true;
             }
         }
@@ -213,6 +229,7 @@ public final class BinaryGreedyMesher {
         Arrays.fill(rowsOpaque, 0);
         Arrays.fill(rowsTranslucent, 0);
         Arrays.fill(rowsPartial, 0);
+        Arrays.fill(rowsShaped, 0);
         int bits = section.bits();
         int perLong = 64 / bits;
         long mask = (1L << bits) - 1;
@@ -225,7 +242,7 @@ public final class BinaryGreedyMesher {
                     if (data == null) {
                         int i = section.uniformIndex(b);
                         int[] target = opaque[i] != 0 ? rowsOpaque : translucent[i] != 0 ? rowsTranslucent
-                                : partial[i] != 0 ? rowsPartial : null;
+                                : partial[i] != 0 ? rowsPartial : shaped[i] != 0 ? rowsShaped : null;
                         if (target == null) {
                             continue;
                         }
@@ -248,6 +265,7 @@ public final class BinaryGreedyMesher {
                             int op = 0;
                             int tr = 0;
                             int pa = 0;
+                            int sh = 0;
                             for (int lx = 0; lx < 8; lx++) {
                                 if (left == 0) {
                                     current = data[++word];
@@ -259,10 +277,12 @@ public final class BinaryGreedyMesher {
                                 op |= opaque[i] << lx;
                                 tr |= translucent[i] << lx;
                                 pa |= partial[i] << lx;
+                                sh |= shaped[i] << lx;
                             }
                             rowsOpaque[row + lz] |= op << xShift;
                             rowsTranslucent[row + lz] |= tr << xShift;
                             rowsPartial[row + lz] |= pa << xShift;
+                            rowsShaped[row + lz] |= sh << xShift;
                         }
                     }
                 }
@@ -532,10 +552,71 @@ public final class BinaryGreedyMesher {
             };
             return border[uv] & 0xFF;
         }
-        if (translucent[index] != 0 || partial[index] != 0) {
+        if (translucent[index] != 0 || partial[index] != 0 || shaped[index] != 0) {
             return section.skyLight().get(x, y, z) << 4 | section.blockLight().get(x, y, z);
         }
         return 15 << 4;
+    }
+
+    /** Unit quads of the boxes of the shaped voxels (see the class comment). */
+    private void meshShaped(LodSection section, MaterialClassifier classifier, int[][] neighborOpaque,
+                            MeshBuffer out) {
+        for (int row = 0; row < PLANE; row++) {
+            int bits = rowsShaped[row];
+            int y = row / S;
+            int z = row % S;
+            while (bits != 0) {
+                int x = Integer.numberOfTrailingZeros(bits);
+                bits &= bits - 1;
+                int index = section.paletteIndex(x, y, z);
+                int material = section.paletteEntry(index);
+                int biome = !tintedIndex[index] ? -1 : splitBiomes ? section.biome(x >> 2, y >> 2, z >> 2)
+                        : sectionBiome;
+                int own = section.skyLight().get(x, y, z) << 4 | section.blockLight().get(x, y, z);
+                int boxes = Math.min(classifier.boxCount(material), ShapeBoxes.MAX);
+                for (int b = 0; b < boxes; b++) {
+                    int box = classifier.box(material, b);
+                    for (int d = 0; d < Quad.DIRECTIONS; d++) {
+                        int light = own;
+                        if (ShapeBoxes.touches(box, d)) {
+                            if (opaqueNeighbor(x, y, z, d, neighborOpaque)) {
+                                continue;
+                            }
+                            light = light(section, x, y, z, index, Quad.axis(d), Quad.positive(d) ? 1 : -1);
+                        }
+                        out.add(d, Quad.pack(x, y, z, 1, 1, d, material, biome, light >> 4 & 15, light & 15,
+                                b + 1));
+                        facesEmitted++;
+                    }
+                }
+            }
+        }
+    }
+
+    /** Whether the voxel next to (x, y, z) across {@code direction} is a full opaque one. */
+    private boolean opaqueNeighbor(int x, int y, int z, int direction, int[][] neighborOpaque) {
+        int step = Quad.positive(direction) ? 1 : -1;
+        int nx = x;
+        int ny = y;
+        int nz = z;
+        switch (Quad.axis(direction)) {
+            case 0 -> nx += step;
+            case 1 -> ny += step;
+            default -> nz += step;
+        }
+        if (nx >= 0 && ny >= 0 && nz >= 0 && nx < S && ny < S && nz < S) {
+            return (rowsOpaque[ny * S + nz] >>> nx & 1) != 0;
+        }
+        int[] plane = neighborOpaque == null ? null : neighborOpaque[direction];
+        if (plane == null) {
+            return false;
+        }
+        // The plane axes of borderPlane: U then V of the direction's axis.
+        return switch (Quad.axis(direction)) {
+            case 0 -> (plane[y] >>> z & 1) != 0;
+            case 1 -> (plane[z] >>> x & 1) != 0;
+            default -> (plane[x] >>> y & 1) != 0;
+        };
     }
 
     private int newSlot(int index, int biome, int light) {

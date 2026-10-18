@@ -2,6 +2,7 @@ package io.lakio.farfield.lod;
 
 import io.lakio.farfield.core.lod.MipBuilder;
 import io.lakio.farfield.core.mesh.MaterialClassifier;
+import io.lakio.farfield.core.mesh.ShapeBoxes;
 import io.lakio.farfield.core.world.MaterialTable;
 import net.minecraft.commands.arguments.blocks.BlockStateParser;
 import net.minecraft.core.BlockPos;
@@ -32,6 +33,20 @@ public final class BlockKeys {
 
     private static final Map<BlockState, String> STATE_KEYS = new ConcurrentHashMap<>();
     private static final Map<String, BlockState> STATES_BY_KEY = new ConcurrentHashMap<>();
+
+    /** {@link #resolve(String)} and {@link #boxes(String)}, for a world's material table. */
+    public static final MaterialTable.Resolver RESOLVER = new MaterialTable.Resolver() {
+        @Override
+        public int resolve(String key) {
+            return BlockKeys.resolve(key);
+        }
+
+        @Override
+        public int[] boxes(String key) {
+            BlockState state = state(key);
+            return state == null ? null : BlockKeys.boxes(state);
+        }
+    };
 
     private BlockKeys() {
     }
@@ -125,14 +140,63 @@ public final class BlockKeys {
         if (!shape.isEmpty()) {
             AABB b = shape.bounds();
             if (b.minX <= 0.01 && b.maxX >= 0.99 && b.minZ <= 0.01 && b.maxZ >= 0.99) {
-                // Lower than a cube and standing on the bottom (snow layers, bottom
-                // slabs, carpets): drawn at its own height on the finest level.
-                boolean partial = b.minY <= 0.01 && b.maxY < 0.99;
-                int meshClass = partial ? MaterialClassifier.PARTIAL : MaterialClassifier.OPAQUE;
-                return MaterialTable.pack(meshClass, MipBuilder.Shapes.COVER, partial ? heightSixteenths(state) : 16);
+                if (b.minY <= 0.01 && b.maxY < 0.99) {
+                    // Lower than a cube and standing on the bottom (snow layers, bottom
+                    // slabs, carpets): drawn at its own height on the finest level.
+                    return MaterialTable.pack(MaterialClassifier.PARTIAL, MipBuilder.Shapes.COVER,
+                            heightSixteenths(state));
+                }
+                // Stairs, top slabs: their boxes on the finest level.
+                return MaterialTable.pack(MaterialClassifier.SHAPED, MipBuilder.Shapes.COVER, 16);
+            }
+            if (hasCollision(state)) {
+                // Fences, walls, panes, doors: their boxes on the finest level. Without
+                // a collision (plants, torches, rails) a block stays out of the LODs.
+                return MaterialTable.pack(MaterialClassifier.SHAPED, MipBuilder.Shapes.SPARSE, 0);
             }
         }
         return MaterialTable.pack(MaterialClassifier.AIR, MipBuilder.Shapes.SPARSE);
+    }
+
+    private static boolean hasCollision(BlockState state) {
+        try {
+            return !state.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO).isEmpty();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
+    /**
+     * The boxes of a block's shape in sixteenths ({@link ShapeBoxes}), the
+     * {@link ShapeBoxes#MAX} largest when it has more; null without a usable shape.
+     */
+    public static int[] boxes(BlockState state) {
+        List<AABB> parts;
+        try {
+            parts = new ArrayList<>(state.getShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO).toAabbs());
+        } catch (RuntimeException e) {
+            return null;
+        }
+        if (parts.size() > ShapeBoxes.MAX) {
+            parts.sort(Comparator.comparingDouble((AABB a) -> a.getXsize() * a.getYsize() * a.getZsize()).reversed());
+        }
+        int n = Math.min(parts.size(), ShapeBoxes.MAX);
+        int[] boxes = new int[n];
+        for (int i = 0; i < n; i++) {
+            AABB a = parts.get(i);
+            int minX = Math.min(15, sixteenths(a.minX));
+            int minY = Math.min(15, sixteenths(a.minY));
+            int minZ = Math.min(15, sixteenths(a.minZ));
+            // At least one sixteenth thick, so thin parts keep their faces apart.
+            boxes[i] = ShapeBoxes.pack(minX, minY, minZ, Math.max(minX + 1, sixteenths(a.maxX)),
+                    Math.max(minY + 1, sixteenths(a.maxY)), Math.max(minZ + 1, sixteenths(a.maxZ)));
+        }
+        return n == 0 ? null : boxes;
+    }
+
+    /** A shape coordinate in sixteenths, 0..15 for a min and up to 16 for a max of a box. */
+    private static int sixteenths(double v) {
+        return Math.max(0, Math.min(16, (int) Math.round(v * 16)));
     }
 
     /**

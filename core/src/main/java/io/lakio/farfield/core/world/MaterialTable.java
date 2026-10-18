@@ -3,14 +3,16 @@ package io.lakio.farfield.core.world;
 import io.lakio.farfield.core.anvil.KeyRegistry;
 import io.lakio.farfield.core.lod.MipBuilder;
 import io.lakio.farfield.core.mesh.MaterialClassifier;
+import io.lakio.farfield.core.mesh.ShapeBoxes;
 
 import java.util.Arrays;
 
 /**
  * Per-material properties the engine needs, indexed by block-state id of a
- * world's {@link KeyRegistry}: the mesher's class, the downsampling shape
- * and the block's height in sixteenths. Resolved lazily from the key by the Minecraft side on first use and
- * cached; thread-safe.
+ * world's {@link KeyRegistry}: the mesher's class, the downsampling shape,
+ * the block's height in sixteenths and the boxes of
+ * {@link MaterialClassifier#SHAPED} blocks. Resolved lazily from the key by
+ * the Minecraft side on first use and cached; thread-safe.
  */
 public final class MaterialTable implements MaterialClassifier, MipBuilder.Shapes {
 
@@ -23,6 +25,15 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
          *         from any thread
          */
         int resolve(String key);
+
+        /**
+         * The boxes of a key {@link #resolve} classes as {@link MaterialClassifier#SHAPED}
+         * (1..{@link ShapeBoxes#MAX}, packed by {@link ShapeBoxes#pack}); called once per
+         * such key, from any thread. Null or empty: the whole voxel.
+         */
+        default int[] boxes(String key) {
+            return null;
+        }
     }
 
     /** Fallback for engines without a game: air keys are empty, all else full opaque cubes. */
@@ -34,10 +45,13 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
     };
 
     private static final int UNRESOLVED = -1;
+    private static final int[] WHOLE_VOXEL = {ShapeBoxes.pack(0, 0, 0, 16, 16, 16)};
 
     private final KeyRegistry keys;
     private final Resolver resolver;
     private volatile int[] packed = new int[0];
+    /** Boxes per material, set before {@link #packed} publishes the material; null when not shaped. */
+    private volatile int[][] boxes = new int[0][];
 
     public MaterialTable(KeyRegistry keys, Resolver resolver) {
         this.keys = keys;
@@ -69,6 +83,28 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
         return properties(material) >> 8 & 31;
     }
 
+    @Override
+    public int boxCount(int material) {
+        return classOf(material) != SHAPED ? 0 : boxesOf(material).length;
+    }
+
+    @Override
+    public int box(int material, int index) {
+        return classOf(material) != SHAPED ? 0 : boxesOf(material)[index];
+    }
+
+    /** Boxes of a material known to be shaped. */
+    private int[] boxesOf(int material) {
+        int[][] b = boxes;
+        if (material < b.length && b[material] != null) {
+            return b[material];
+        }
+        // Read without the lock before the resolving thread published them.
+        synchronized (this) {
+            return boxes[material];
+        }
+    }
+
     private int properties(int material) {
         int[] p = packed;
         if (material < p.length) {
@@ -88,15 +124,37 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
             Arrays.fill(p, packed.length, size, UNRESOLVED);
         }
         if (p[material] == UNRESOLVED) {
+            String key = keys.key(material);
             int value;
             try {
-                value = resolver.resolve(keys.key(material));
+                value = resolver.resolve(key);
             } catch (RuntimeException e) {
                 value = pack(OPAQUE, FULL);
+            }
+            if ((value & 15) == SHAPED) {
+                int[][] b = boxes;
+                if (material >= b.length) {
+                    b = Arrays.copyOf(b, p.length);
+                }
+                b[material] = shapeBoxes(key);
+                boxes = b;
             }
             p[material] = value;
         }
         packed = p;
         return p[material];
+    }
+
+    private int[] shapeBoxes(String key) {
+        int[] b;
+        try {
+            b = resolver.boxes(key);
+        } catch (RuntimeException e) {
+            b = null;
+        }
+        if (b == null || b.length == 0) {
+            return WHOLE_VOXEL;
+        }
+        return b.length > ShapeBoxes.MAX ? Arrays.copyOf(b, ShapeBoxes.MAX) : b.clone();
     }
 }

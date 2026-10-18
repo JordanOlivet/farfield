@@ -4,6 +4,7 @@ import com.mojang.blaze3d.platform.NativeImage;
 import io.lakio.farfield.Farfield;
 import io.lakio.farfield.core.anvil.KeyRegistry;
 import io.lakio.farfield.core.mesh.MaterialClassifier;
+import io.lakio.farfield.core.mesh.ShapeBoxes;
 import io.lakio.farfield.lod.BlockKeys;
 import io.lakio.farfield.mixin.client.SpriteContentsAccessor;
 import net.minecraft.client.Minecraft;
@@ -36,7 +37,9 @@ import java.util.Map;
  * of {@code Quad}): an untinted color, a biome-tinted color (both ABGR8 in
  * sRGB) and the face's tiles; then the height of the block's top in blocks
  * (float bits; below 1 for partial blocks and fluids, which the shader draws
- * at that height on the finest level). The face's color is {@code untinted + tinted *
+ * at that height on the finest level); then {@link #BOX_COUNT} boxes of a
+ * shaped block ({@code ShapeBoxes}, 0 past its last box; all 0 for other
+ * blocks), which the shader draws on the finest level. The face's color is {@code untinted + tinted *
  * tint} (summed in linear space), the tint coming from {@link BiomeTints}
  * for the quad's biome and the kind in the tinted color's alpha byte; the
  * untinted color's alpha is the face's coverage (water, glass, ice are below
@@ -61,9 +64,12 @@ import java.util.Map;
  */
 final class MaterialColors {
 
-    static final int STRIDE = 19;
+    static final int STRIDE = 27;
     /** Offset of the top height (float bits, in blocks) in a block state's entry. */
     static final int HEIGHT = 18;
+    /** Offset of the boxes of a shaped block in a block state's entry. */
+    static final int BOXES = 19;
+    static final int BOX_COUNT = ShapeBoxes.MAX;
 
     private static final int T = FaceTextures.TILE;
     private static final int PIXELS = T * T;
@@ -127,6 +133,10 @@ final class MaterialColors {
             String key = registry.key(id);
             flags[id] = build(key, id * STRIDE, meshClass == MaterialClassifier.OPAQUE, tints, probeBiome);
             colors[id * STRIDE + HEIGHT] = Float.floatToIntBits(height(key, meshClass));
+            int boxes = Math.min(classes.boxCount(id), BOX_COUNT);
+            for (int b = 0; b < BOX_COUNT; b++) {
+                colors[id * STRIDE + BOXES + b] = b < boxes ? classes.box(id, b) : 0;
+            }
             id++;
             if (System.nanoTime() > deadline) {
                 break;

@@ -177,6 +177,69 @@ class BinaryGreedyMesherTest {
     }
 
     @Test
+    void shapedVoxelsMeshTheirBoxes() {
+        // A stair on a stone floor, stone on its +X side: a bottom slab and a top half toward -X.
+        int stair = 30;
+        int[] boxes = {ShapeBoxes.pack(0, 0, 0, 16, 8, 16), ShapeBoxes.pack(0, 8, 0, 8, 16, 16)};
+        MaterialClassifier classes = new MaterialClassifier() {
+            @Override
+            public int classOf(int material) {
+                return material == stair ? SHAPED : CLASSES.classOf(material);
+            }
+
+            @Override
+            public int boxCount(int material) {
+                return material == stair ? boxes.length : 0;
+            }
+
+            @Override
+            public int box(int material, int index) {
+                return boxes[index];
+            }
+        };
+        LodSection section = new LodSection(0);
+        for (int z = 0; z < 32; z++) {
+            for (int x = 0; x < 32; x++) {
+                section.set(x, 0, z, 1);
+                section.skyLight().set(x, 2, z, 15);
+            }
+        }
+        section.set(5, 1, 5, stair);
+        section.set(6, 1, 5, 2);
+        section.skyLight().set(5, 1, 5, 9);
+        section.compact();
+        mesher.mesh(section, classes, null, out);
+
+        Map<Integer, Long> shaped = new HashMap<>();
+        boolean floorTopUnderStair = false;
+        boolean stoneSideTowardStair = false;
+        for (int d = 0; d < Quad.DIRECTIONS; d++) {
+            for (int i = 0; i < out.count(d); i++) {
+                long q = out.quads(d)[i];
+                if (Quad.material(q) == stair) {
+                    assertEquals(1, Quad.sizeU(q) * Quad.sizeV(q));
+                    assertEquals(5, Quad.x(q));
+                    assertEquals(1, Quad.y(q));
+                    assertEquals(5, Quad.z(q));
+                    assertNull(shaped.put((Quad.fill(q) - 1) * 8 + d, q), "one quad per box face");
+                }
+                floorTopUnderStair |= d == Quad.POS_Y && Quad.material(q) == 1 && Quad.y(q) == 0
+                        && Quad.x(q) <= 5 && 5 < Quad.x(q) + Quad.sizeV(q)
+                        && Quad.z(q) <= 5 && 5 < Quad.z(q) + Quad.sizeU(q);
+                stoneSideTowardStair |= d == Quad.NEG_X && Quad.material(q) == 2;
+            }
+        }
+        // Slab: +X against the stone and -Y on the floor are hidden. Top half: all six.
+        assertEquals(10, shaped.size());
+        assertNull(shaped.get(Quad.POS_X));
+        assertNull(shaped.get(Quad.NEG_Y));
+        assertEquals(9, Quad.skyLight(shaped.get(Quad.POS_Y)), "the slab top inside the voxel takes its light");
+        assertEquals(15, Quad.skyLight(shaped.get(8 + Quad.POS_Y)), "the top on the voxel side takes the light above");
+        assertTrue(floorTopUnderStair, "a shaped voxel hides no neighbor face");
+        assertTrue(stoneSideTowardStair, "a shaped voxel hides no neighbor face");
+    }
+
+    @Test
     void lowFillVoxelsMeshAsPartialWithTheirFill() {
         // A coarse floor (fill full) under a coarse snow cover filled to 3/16:
         // the cover hides the floor's top, the cover's top carries its fill

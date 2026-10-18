@@ -21,13 +21,16 @@ layout(std430, binding = 1) readonly buffer Sections {
 // color (alpha: coverage), a biome-tinted color (alpha byte: tint kind),
 // both ABGR8 in sRGB, and the face's atlas tiles (untinted + 1 low 16 bits,
 // tinted + 1 high 16 bits, 0 for none); then the height of the block's top
-// in blocks, float bits (snow layers, slabs, carpets, fluids at vanilla's 8/9).
+// in blocks, float bits (snow layers, slabs, carpets, fluids at vanilla's 8/9);
+// then 8 boxes of a shaped block (ShapeBoxes: min xyz, max xyz in sixteenths,
+// 5 bits each; 0 past its last box and for other blocks).
 layout(std430, binding = 2) readonly buffer Colors {
     uint colors[];
 };
 
-const uint COLOR_STRIDE = 19u;
+const uint COLOR_STRIDE = 27u;
 const uint HEIGHT_OFFSET = 18u;
+const uint BOX_OFFSET = 19u;
 
 uniform mat4 u_viewProj;    // the game's projection * view rotation
 uniform ivec3 u_cameraBlock;
@@ -84,6 +87,10 @@ void main() {
     p[vAxis] += float(cv * sizeV);
 
     float scale = float(1 << s.originLevel.w);
+    // Shaped blocks on the finest level (stairs, fences, walls, panes): the
+    // quad is one face of the box its fill bits select. Other quads select
+    // box 7 there, which is 0 for blocks that are not shaped.
+    uint box = s.originLevel.w == 0 ? colors[material * COLOR_STRIDE + BOX_OFFSET + (q.y >> 29)] : 0u;
     // Voxels lower than their cell: on the finest level, partial blocks take
     // their block's height (snow layers, slabs, carpets); on coarser levels,
     // every voxel takes its fill in eighths, so the sea and snow stand where
@@ -93,7 +100,17 @@ void main() {
     bool top = direction == 3u
             || (axis == 0u && cu == 1u)
             || (axis == 2u && cv == 1u);
-    if (top) {
+    if (box != 0u) {
+        vec3 lo = vec3(uvec3(box, box >> 5, box >> 10) & 31u) / 16.0;
+        vec3 hi = vec3(uvec3(box >> 15, box >> 20, box >> 25) & 31u) / 16.0;
+        p = vec3(voxel);
+        p[axis] += negative ? lo[axis] : hi[axis];
+        p[uAxis] += cu == 1u ? hi[uAxis] : lo[uAxis];
+        p[vAxis] += cv == 1u ? hi[vAxis] : lo[vAxis];
+        // Ambient occlusion as for the voxel's own face on that side.
+        v_voxel = p;
+        v_voxel[axis] = float(voxel[axis]) + float(direction & 1u);
+    } else if (top) {
         if (s.originLevel.w == 0) {
             float height = uintBitsToFloat(colors[material * COLOR_STRIDE + HEIGHT_OFFSET]);
             if (height < 1.0) {

@@ -1,9 +1,9 @@
 package io.lakio.farfield.core.mesh;
 
 /**
- * How the mesher treats a material: empty, an opaque cube, or a translucent
- * cube (water, glass, ice). The Minecraft side derives it from the block
- * state; the engine only sees the class.
+ * How the mesher treats a material: empty, an opaque cube, a translucent
+ * cube (water, glass, ice), a partial block or a set of boxes. The Minecraft
+ * side derives it from the block state; the engine only sees the class.
  */
 @FunctionalInterface
 public interface MaterialClassifier {
@@ -25,6 +25,23 @@ public interface MaterialClassifier {
      * voxels hide its faces. A renderer draws it at its own height.
      */
     int PARTIAL = 3;
+    /**
+     * A block drawn as the boxes of its shape ({@link #boxCount}, {@link #box})
+     * on the finest level: stairs, top slabs, fences, walls, panes, doors. It
+     * hides no neighbor face; full opaque neighbors hide the faces of its
+     * boxes that reach their side. Renderers treat it as opaque on coarser levels.
+     */
+    int SHAPED = 4;
 
     int classOf(int material);
+
+    /** Number of boxes of a {@link #SHAPED} material (1..{@link ShapeBoxes#MAX}), 0 for the others. */
+    default int boxCount(int material) {
+        return 0;
+    }
+
+    /** Box {@code index} of a {@link #SHAPED} material, packed by {@link ShapeBoxes#pack}. */
+    default int box(int material, int index) {
+        return 0;
+    }
 }

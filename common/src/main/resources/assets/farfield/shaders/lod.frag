@@ -248,6 +248,11 @@ void main() {
             textured += tile((v_tiles >> 16) - 1u, f, gx, gy).rgb * tint;
         }
         float fade = smoothstep(u_textureEnd * 0.75, u_textureEnd, distance);
+        // Opaque pass: the holes of textured faces stay open (glass panes, iron bars),
+        // as vanilla's cutout; untextured faces stay whole.
+        if (!u_translucent && mix(base.a, 1.0, fade) < 0.5) {
+            discard;
+        }
         color = mix(textured, color, fade);
         alpha = mix(base.a, alpha, fade);
     }

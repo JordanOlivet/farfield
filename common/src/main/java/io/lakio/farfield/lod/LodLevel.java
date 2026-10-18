@@ -65,7 +65,7 @@ public final class LodLevel {
     }
 
     static LodLevel open(Level level, Path dir) throws IOException {
-        return new LodLevel(level, dir, LodWorld.open(dir, BlockKeys::resolve));
+        return new LodLevel(level, dir, LodWorld.open(dir, BlockKeys.RESOLVER));
     }
 
     public Level level() {

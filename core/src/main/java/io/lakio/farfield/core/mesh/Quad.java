@@ -17,7 +17,8 @@ package io.lakio.farfield.core.mesh;
  *   bits 53-56  sky light in front of the face (0..15)
  *   bits 57-60  block light in front of the face (0..15)
  *   bits 61-63  fill of its voxels in eighths, minus one (7: full; coarse
- *               levels, see {@code LodSection#fill})
+ *               levels, see {@code LodSection#fill}); on the finest level,
+ *               the box index of a {@link MaterialClassifier#SHAPED} voxel
  * </pre>
  *
  * <p>Directions: 0 -X, 1 +X, 2 -Y, 3 +Y, 4 -Z, 5 +Z. A face lies on the side

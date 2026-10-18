@@ -713,3 +713,34 @@ E.6).
   follow: rename), an existing one is used as is and the current folder
   stays (force); an emptied address or `named` folder is removed. The
   pipeline starts again on the next tick from the new folder.
+
+## ADR-036 — Shaped blocks drawn as their boxes
+
+**Date**: 2026-10-18 · **Status**: accepted
+
+Amends ADR-020 and ADR-028 for the finest level; plan item E.10. Fences,
+walls and panes were invisible in LODs and stairs were full cubes.
+
+- A fifth mesher class, `MaterialClassifier.SHAPED`: a block that is not a
+  full cube and either covers its whole footprint without standing on the
+  bottom over a lower height (stairs, top slabs; `PARTIAL` keeps bottom
+  slabs, snow layers, carpets), or has a collision shape (fences, walls,
+  panes, doors, cactus, lily pads, lanterns). Blocks without a collision
+  shape (plants, torches, rails, signs) stay out of the LODs as before.
+- Its boxes are the block's outline shape (`VoxelShape.toAabbs`) in
+  sixteenths, at most 8 (the largest by volume), resolved once per block
+  state into the world's `MaterialTable` (`ShapeBoxes`, 30 bits per box).
+- On level 0 each box gives one unit quad per face, not merged; the box
+  index rides in the quad's fill bits, unused on level 0. A face that
+  reaches the voxel's side is lit by the voxel in front and hidden by a
+  full opaque neighbor; an inner face is lit by the shaped voxel itself.
+  A shaped voxel hides no neighbor face. `lod.vert` reads the box from
+  the material entry (stride 19 to 27 ints) and moves the corners.
+- Coarser levels treat shaped blocks as opaque, and the mip rules do not
+  change: stairs and top slabs weigh as covers, fences, walls and panes as
+  sparse blocks (ADR-020). No store rebuild.
+- The opaque pass now discards textured texels below half coverage, so
+  glass panes and iron bars show their frames as vanilla's cutout;
+  untextured (far) faces stay whole.
+- Cost: a stair is up to 12 quads instead of a share of merged faces;
+  bamboo forests and villages mesh larger level-0 sections.
