@@ -19,8 +19,10 @@ import java.util.Locale;
  * {@code /farfield import [threads]}, {@code /farfield import stop},
  * {@code /farfield import status}: build the LODs of the current dimension
  * from its region files. {@code /farfield render on|off}: switch LOD drawing
- * in single player. Operators, or the owner of a single-player world
- * (cheats off included).
+ * in single player. {@code /farfield spike generation [side]}: measures the
+ * cost of showing terrain not generated yet ({@link GenerationSpike}; test
+ * worlds only). Operators, or the owner of a single-player world (cheats off
+ * included).
  */
 public final class FarfieldCommands {
 
@@ -63,6 +65,11 @@ public final class FarfieldCommands {
                                 .then(Commands.argument("blocks", IntegerArgumentType.integer(
                                                 RenderConfig.MIN_FOG_DISTANCE, RenderConfig.MAX_FOG_DISTANCE))
                                         .executes(c -> fog(c, true, IntegerArgumentType.getInteger(c, "blocks"))))))
+                .then(Commands.literal("spike")
+                        .then(Commands.literal("generation")
+                                .executes(c -> generationSpike(c, 16))
+                                .then(Commands.argument("side", IntegerArgumentType.integer(1, 64))
+                                        .executes(c -> generationSpike(c, IntegerArgumentType.getInteger(c, "side"))))))
                 .then(Commands.literal("debug")
                         .then(Commands.literal("levels")
                                 .executes(c -> debugLevels(c, !RenderSettings.debugLevels()))
@@ -152,6 +159,21 @@ public final class FarfieldCommands {
     private static int showDetail(CommandContext<CommandSourceStack> c) {
         c.getSource().sendSuccess(() -> Component.literal("LOD detail: " + RenderSettings.voxelPixels()
                 + " px per voxel (lower is finer; default " + RenderSettings.DEFAULT_VOXEL_PIXELS + ")."), false);
+        return 1;
+    }
+
+    /** Spike S6: noise preview and generation costs in this dimension, reported in chat and in the log. */
+    private static int generationSpike(CommandContext<CommandSourceStack> c, int side) {
+        CommandSourceStack source = c.getSource();
+        boolean started = GenerationSpike.start(source.getLevel(), side,
+                line -> source.getServer().execute(() -> source.sendSuccess(() -> Component.literal(line), true)));
+        if (!started) {
+            source.sendFailure(Component.literal("A generation spike is already running."));
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal("Generation spike started in "
+                + source.getLevel().dimension().location() + ": noise preview, then " + side + "x" + side
+                + " chunks up to noise, surface and full. It generates far chunks into this world."), true);
         return 1;
     }
 

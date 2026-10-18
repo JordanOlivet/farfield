@@ -195,3 +195,8 @@ choice, an ADR.
   panes, iron bars, a stair roof, top slabs and doors continues the
   vanilla part without a visible break, day and night. Remains: the
   user's pack (villages, bamboo, Sodium), and the NeoForge dev client
+- [~] E.11 Terrain not generated yet (spike S6, ADR-037 proposed):
+  `/farfield spike generation [side]` measures generation through the
+  chunk system and the noise preview. Done on the NeoForge dev server
+  (vanilla). Remains: the user's choice on ADR-037, the spike in the
+  user's pack, then the noise preview and the throttled generator

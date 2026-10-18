@@ -744,3 +744,46 @@ walls and panes were invisible in LODs and stairs were full cubes.
   untextured (far) faces stay whole.
 - Cost: a stair is up to 12 quads instead of a share of merged faces;
   bamboo forests and villages mesh larger level-0 sections.
+
+## ADR-037 — Terrain not generated yet: spike S6 and proposal
+
+**Date**: 2026-10-18 · **Status**: proposed
+
+Plan item E.11, state-of-the-art open question 8 and spike S6. Numbers from
+`/farfield spike generation` (`GenerationSpike`) on the NeoForge dev
+server, vanilla 1.21.1 Overworld, the user's PC (16 logical threads), two
+runs of 256 and 1,024 chunks per step, fresh areas 20,000 to 50,000
+chunks from spawn.
+
+- **Generation by the game**, with Farfield's own chunk tickets: full
+  chunks at 50 to 75 chunks/s (13 to 20 ms of wall time per chunk, about
+  5 cores busy). Stopping at noise or surface is not cheaper through the
+  chunk system: 33 to 51 chunks/s on about 1.2 cores (it runs lower
+  statuses on few threads). A 4,096-block radius (206,000 chunks) takes
+  45 to 70 minutes. Vanilla saves the chunks: this is pregeneration.
+- **Noise preview**: the generator's `getBaseHeight` builds a `NoiseChunk`
+  per column, 2.3 ms per column and thread: a 1,000-chunk radius at one
+  column per chunk takes about 15 minutes on 8 threads. Vanilla's
+  preliminary surface level (`initialDensityWithoutJaggedness` scanned
+  down by cell height, as `NoiseChunk` does for aquifers) costs 0.25 ms:
+  32,000 columns/s on 8 threads, so the 4,096-block LOD range in about
+  6.5 s and a 1,000-chunk radius in about 100 s (S6 target: 5 s, out of
+  reach). It lies 12.5 blocks below the real ocean floor on average (max
+  61): no jaggedness (peaks) and cell resolution. Biome lookup adds
+  almost nothing.
+
+Proposal, to be confirmed by the user:
+
+1. Noise preview first: no world change, seconds for the current LOD
+   range. One column per chunk, nearest first; surface color from the
+   biome, water at sea level; stored apart from real LODs, replaced as
+   soon as a real chunk is ingested, and never drawn over real data.
+2. Then generation for the near ring: through the chunk system with
+   Farfield's tickets at full status, nearest first, throttled (cores and
+   TPS budget), chunks saved by vanilla like a pregenerator. LOD-only
+   generation without saving (drop the chunks after ingest) is deferred:
+   it needs to keep vanilla from saving them, which is risky with modded
+   world generation.
+3. Before building: the same spike in the user's pack (modded world
+   generation costs differ), and a bias correction of the preliminary
+   height measured there.
