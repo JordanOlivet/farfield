@@ -896,3 +896,41 @@ aura".
   crown blocks over real chunks, are left out.
 - Not yet: huge mushrooms, cactus, bamboo and other non-tree features,
   structures (villages); the exact tree shapes (mega trunks, acacia).
+
+## ADR-041 — Plants, huge mushrooms and villages in the noise preview
+
+**Date**: 2026-10-18 · **Status**: accepted
+
+Extends ADR-040. The user: "Rajoute d'abord champignons géants, cactus,
+bambou et structures comme les villages".
+
+- **Plants**: `PreviewTrees` also follows huge mushroom features (stem and
+  cap; red caps as domes over a 5-block stem, brown ones as one wide layer
+  of radius + 1), bamboo (12-block columns), block columns (cactus, as the
+  sum of their layers' mean heights), single blocks (pumpkins, melons) and
+  random patches (tries x 0.15). Blocks without a collision shape (grass,
+  flowers, sugar cane, berry bushes) are left out, as the LODs leave them
+  out. Each kind needs its ground: grass or snow (trees, bamboo), grass or
+  mycelium (huge mushrooms), sand (cactus).
+- **Tree kinds** carry a shape (blob, cone, flat, column) instead of the
+  cone flag; tile format 3, older tiles are built again.
+- **Villages**: `PreviewVillages` takes the world's structure sets that
+  hold structures of the `#minecraft:village` tag with a random spread
+  placement (vanilla's, and modded sets made the same way), asks the
+  placement for each region's candidate chunk with the game's own
+  frequency and exclusion rules (`isStructureChunk`), and keeps it when a
+  village of the set accepts the biome at its center. That is where the
+  game will try a village; the jigsaw may still fail there.
+- **Houses**: not the game's pieces. Ten to seventeen boxes around the
+  center (within 56 blocks, eight tries per house so a village by a lake
+  spreads along the shore), seeded by the world and the center so every
+  tile lays out the same ones, apart from each other, on land (not in
+  water, not on slopes over 6 blocks): walls 4 to 5 blocks over the
+  center's ground, a floor one block under the lowest corner, one roof row.
+  Materials by style from the structure's name: plains (oak walls, spruce
+  roof), desert (smooth and cut sandstone), savanna (acacia), taiga
+  (spruce, dark oak roof), snowy (spruce, snow roof). Stored in the tile
+  whose area holds the house's corner; no trees grow within the village
+  radius.
+- Not yet: other structures (outposts, temples, ruins), paths and farms,
+  the exact village layout.

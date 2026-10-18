@@ -8,7 +8,8 @@ import io.lakio.farfield.core.util.ByteWriter;
  * {@link #GRID} blocks, interpolated in between; per {@link #GRID}-block
  * cell the block seen on top and the one just under it; per chunk the
  * biome and its trees (ADR-040: positions, each of a {@link TreeKind});
- * for the whole tile the ground's material and the sea.
+ * the buildings of villages (ADR-041); for the whole tile the ground's
+ * material and the sea.
  *
  * <p>Heights are the first free block above the ground. Sample (i, k) lies
  * on the block corner (i * 4, k * 4) of the tile, so the last row and
@@ -24,8 +25,8 @@ public final class PreviewTile {
     public static final int CHUNKS = BLOCKS / 16;
     /** Blocks under the top one that show the filler (dirt under grass). */
     public static final int FILLER_DEPTH = 3;
-    /** Format 2 adds the trees; tiles of format 1 are built again. */
-    private static final int FORMAT = 2;
+    /** Format 2 adds the trees, 3 their shapes and the buildings; older tiles are built again. */
+    private static final int FORMAT = 3;
     /** Most tree kinds a tile holds (the kind rides in 8 bits of a tree). */
     public static final int MAX_KINDS = 255;
 
@@ -40,13 +41,42 @@ public final class PreviewTile {
     /** Per chunk, its trees: x | z << 4 (in the chunk) | kind << 8. */
     private final int[][] trees = new int[CHUNKS * CHUNKS][];
 
+    /** Crown shapes of a {@link TreeKind}. */
+    public static final int BLOB = 0;
+    /** A cone narrowing to a point: spruces and pines. */
+    public static final int CONE = 1;
+    /** One wide layer on top: brown huge mushrooms. */
+    public static final int FLAT = 2;
+    /** No crown: cactus, bamboo, single blocks. */
+    public static final int COLUMN = 3;
+
     /**
-     * A tree shape: its trunk and leaves materials, the trunk's height, and
-     * a crown of {@code crownHeight + 1} rows around the trunk's top, of
-     * radius {@code radius} (rounded rows narrowing at the top, or a cone
-     * narrowing to a point for spruces).
+     * A tree or plant shape: its trunk and crown materials, the trunk's
+     * height, and a crown of {@code crownHeight + 1} rows around the trunk's
+     * top, of radius {@code radius}, shaped by {@code shape}: {@link #BLOB}
+     * (rounded rows narrowing at the top), {@link #CONE}, {@link #FLAT} or
+     * {@link #COLUMN}.
      */
-    public record TreeKind(int trunk, int leaves, int height, int radius, int crownHeight, boolean cone) {
+    public record TreeKind(int trunk, int leaves, int height, int radius, int crownHeight, int shape) {
+    }
+
+    /**
+     * A building of a village: walls of {@code wall} over blocks [x, x +
+     * width) x [floor, top) x [z, z + depth) of the tile (x and z may leave
+     * the tile by a few blocks), and a roof layer of {@code roof} at {@code top}.
+     */
+    public record Building(int x, int z, int width, int depth, int floor, int top, int wall, int roof) {
+    }
+
+    private final java.util.List<Building> buildings = new java.util.ArrayList<>();
+
+    public void addBuilding(Building b) {
+        buildings.add(b);
+    }
+
+    /** The buildings whose corner lies in this tile. Do not modify. */
+    public java.util.List<Building> buildings() {
+        return buildings;
     }
 
     /** The index of a kind, added when new; -1 when the tile holds {@link #MAX_KINDS} already. */
@@ -188,6 +218,15 @@ public final class PreviewTile {
                 }
             }
         }
+        for (Building b : buildings) {
+            for (int cz = Math.max(0, (b.z() >> 4) - 1); cz <= Math.min(CHUNKS - 1, ((b.z() + b.depth()) >> 4) + 1); cz++) {
+                for (int cx = Math.max(0, (b.x() >> 4) - 1); cx <= Math.min(CHUNKS - 1, ((b.x() + b.width()) >> 4) + 1); cx++) {
+                    int i = cz * CHUNKS + cx;
+                    max[i] = (short) Math.max(max[i], b.top() + 1);
+                    min[i] = (short) Math.min(min[i], b.floor());
+                }
+            }
+        }
         return new Summary(min, max, water >= 0 ? seaLevel : Integer.MIN_VALUE);
     }
 
@@ -258,7 +297,7 @@ public final class PreviewTile {
             out.writeVarInt(k.height());
             out.writeVarInt(k.radius());
             out.writeVarInt(k.crownHeight());
-            out.writeVarInt(k.cone() ? 1 : 0);
+            out.writeVarInt(k.shape());
         }
         for (int[] list : trees) {
             int n = list == null ? 0 : list.length;
@@ -266,6 +305,17 @@ public final class PreviewTile {
             for (int i = 0; i < n; i++) {
                 out.writeVarInt(list[i]);
             }
+        }
+        out.writeVarInt(buildings.size());
+        for (Building b : buildings) {
+            out.writeInt(b.x());
+            out.writeInt(b.z());
+            out.writeVarInt(b.width());
+            out.writeVarInt(b.depth());
+            out.writeInt(b.floor());
+            out.writeInt(b.top());
+            out.writeVarInt(b.wall());
+            out.writeVarInt(b.roof());
         }
     }
 
@@ -298,7 +348,7 @@ public final class PreviewTile {
         int kinds = in.readVarInt();
         for (int i = 0; i < kinds; i++) {
             t.kinds.add(new TreeKind(in.readVarInt(), in.readVarInt(), in.readVarInt(), in.readVarInt(),
-                    in.readVarInt(), in.readVarInt() != 0));
+                    in.readVarInt(), in.readVarInt()));
         }
         for (int c = 0; c < t.trees.length; c++) {
             int n = in.readVarInt();
@@ -309,6 +359,11 @@ public final class PreviewTile {
                 }
                 t.trees[c] = list;
             }
+        }
+        int buildings = in.readVarInt();
+        for (int i = 0; i < buildings; i++) {
+            t.buildings.add(new Building(in.readInt(), in.readInt(), in.readVarInt(), in.readVarInt(), in.readInt(),
+                    in.readInt(), in.readVarInt(), in.readVarInt()));
         }
         return t;
     }

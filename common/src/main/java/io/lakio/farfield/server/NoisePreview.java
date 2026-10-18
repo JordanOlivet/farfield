@@ -42,6 +42,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.IntBinaryOperator;
 
 /**
  * Noise preview of terrain not generated yet (ADR-038, ADR-039), built by
@@ -51,10 +52,11 @@ import java.util.concurrent.atomic.AtomicLong;
  * blocks from the noise router's final density (each search starts from
  * the neighbor sample's height, then bisects to the block), the biome per
  * chunk and the surface blocks per 4-block cell, guessed from the biome and
- * the slope; then the biome's trees at their average density
+ * the slope; the houses of the villages to come ({@link PreviewVillages});
+ * then the biome's trees and plants at their average density
  * ({@link PreviewTrees}), at random but always the same places (seeded by
- * the world and the chunk), on grass and snow above the sea. The client
- * turns tiles into sections of every level.
+ * the world and the chunk), on the ground each needs, above the sea and
+ * away from villages. The client turns tiles into sections of every level.
  */
 final class NoisePreview {
 
@@ -94,6 +96,8 @@ final class NoisePreview {
         final BlockState fluid;
         final boolean end;
         final long seed;
+        final PreviewVillages villages;
+        final AtomicInteger villagesBuilt = new AtomicInteger();
         volatile LodWorld world;
         final Set<Long> done = ConcurrentHashMap.newKeySet();
         final Set<Long> inFlight = ConcurrentHashMap.newKeySet();
@@ -115,6 +119,7 @@ final class NoisePreview {
             fluid = settings.defaultFluid().isAir() ? null : settings.defaultFluid();
             end = key == Level.END;
             seed = level.getSeed();
+            villages = new PreviewVillages(level);
         }
 
         boolean solid(int x, int y, int z) {
@@ -202,8 +207,9 @@ final class NoisePreview {
         int built = d.built.getAndSet(0);
         long nanos = d.builtNanos.getAndSet(0);
         if (built > 0) {
-            Farfield.LOG.info("Noise preview of {}: {} tiles built in the last minute ({} ms each), {} left within"
-                    + " {} blocks", d.key.location(), built, nanos / 1_000_000 / built, d.left, (int) RANGE);
+            Farfield.LOG.info("Noise preview of {}: {} tiles built in the last minute ({} ms each, {} villages),"
+                    + " {} left within {} blocks", d.key.location(), built, nanos / 1_000_000 / built,
+                    d.villagesBuilt.getAndSet(0), d.left, (int) RANGE);
             d.reportedDone = false;
         } else if (d.left == 0 && !d.reportedDone) {
             Farfield.LOG.info("Noise preview of {}: every tile within {} blocks is built",
@@ -250,7 +256,8 @@ final class NoisePreview {
             }
             tile.setBelow(m.below);
             tile.setWater(m.water, d.seaLevel);
-            plantTrees(d, tile, tileX, tileZ, chunkBiomes, m);
+            List<PreviewVillages.Village> villages = villages(d, tile, x0, z0, m);
+            plantTrees(d, tile, tileX, tileZ, chunkBiomes, m, villages);
             world.preview().write(tileX, tileZ, tile);
             d.done.add(key);
             d.built.incrementAndGet();
@@ -264,9 +271,38 @@ final class NoisePreview {
         }
     }
 
-    /** Places each chunk's trees: the biome's average count, at random cells of grass or snow above the sea. */
+    /**
+     * Adds the houses of the villages near the tile whose corner lies in it;
+     * returns those villages (no trees grow in them).
+     */
+    private static List<PreviewVillages.Village> villages(Dimension d, PreviewTile tile, int x0, int z0, Materials m) {
+        int reach = PreviewVillages.RADIUS + 16;
+        IntBinaryOperator surface = (x, z) -> x >= x0 && z >= z0 && x < x0 + TILE && z < z0 + TILE
+                ? tile.height(x - x0, z - z0) : surface(d, x, z, UNKNOWN);
+        List<PreviewVillages.Village> villages = d.villages.within(x0 - reach, z0 - reach, x0 + TILE + reach,
+                z0 + TILE + reach, (x, z) -> d.biomes.getNoiseBiome(QuartPos.fromBlock(x),
+                        QuartPos.fromBlock(surface.applyAsInt(x, z)), QuartPos.fromBlock(z), d.sampler));
+        for (PreviewVillages.Village v : villages) {
+            if (v.x() >= x0 && v.z() >= z0 && v.x() < x0 + TILE && v.z() < z0 + TILE) {
+                d.villagesBuilt.incrementAndGet();
+            }
+            int[] materials = m.village(v.style());
+            for (PreviewVillages.House h : PreviewVillages.houses(v, d.seed, d.seaLevel, surface)) {
+                if (h.x() >= x0 && h.z() >= z0 && h.x() < x0 + TILE && h.z() < z0 + TILE) {
+                    tile.addBuilding(new PreviewTile.Building(h.x() - x0, h.z() - z0, h.width(), h.depth(), h.floor(),
+                            h.top(), materials[0], materials[1]));
+                }
+            }
+        }
+        return villages;
+    }
+
+    /**
+     * Places each chunk's trees and plants: the biome's average count, at
+     * random cells of the ground each needs, above the sea and outside villages.
+     */
     private void plantTrees(Dimension d, PreviewTile tile, int tileX, int tileZ, Holder<Biome>[] chunkBiomes,
-                            Materials m) {
+                            Materials m, List<PreviewVillages.Village> villages) {
         for (int cz = 0; cz < PreviewTile.CHUNKS; cz++) {
             for (int cx = 0; cx < PreviewTile.CHUNKS; cx++) {
                 PreviewTrees.BiomeTrees bt = trees.of(chunkBiomes[cz * PreviewTile.CHUNKS + cx]);
@@ -283,17 +319,35 @@ final class NoisePreview {
                     int bz = cz * 16 + random.nextInt(16);
                     PreviewTrees.Spec spec = bt.pick(random.nextDouble());
                     int top = tile.top(bx / PreviewTile.GRID, bz / PreviewTile.GRID);
-                    if (top != m.grass && top != m.snow || tile.height(bx, bz) <= d.seaLevel) {
+                    boolean ground = switch (spec.ground()) {
+                        case SOIL -> top == m.grass || top == m.snow;
+                        case FUNGAL -> top == m.grass || top == m.mycelium;
+                        case SAND -> top == m.sand;
+                    };
+                    if (!ground || tile.height(bx, bz) <= d.seaLevel || inVillage(villages, tileX * TILE + bx,
+                            tileZ * TILE + bz)) {
                         continue;
                     }
-                    int kind = tile.kind(new PreviewTile.TreeKind(m.id(spec.trunk()), m.id(spec.leaves()),
-                            spec.height(), spec.radius(), spec.crownHeight(), spec.cone()));
+                    int kind = tile.kind(new PreviewTile.TreeKind(m.id(spec.trunk()),
+                            spec.leaves() == null ? -1 : m.id(spec.leaves()), spec.height(), spec.radius(),
+                            spec.crownHeight(), spec.shape()));
                     if (kind >= 0) {
                         tile.addTree(bx, bz, kind);
                     }
                 }
             }
         }
+    }
+
+    private static boolean inVillage(List<PreviewVillages.Village> villages, int x, int z) {
+        for (PreviewVillages.Village v : villages) {
+            int dx = x - v.x();
+            int dz = z - v.z();
+            if (dx * dx + dz * dz < PreviewVillages.RADIUS * PreviewVillages.RADIUS) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The biome at the surface of each chunk's center, stored in the tile and returned. */
@@ -402,6 +456,21 @@ final class NoisePreview {
             stone = id(Blocks.STONE.defaultBlockState());
             snow = id(Blocks.SNOW_BLOCK.defaultBlockState());
             mycelium = id(Blocks.MYCELIUM.defaultBlockState());
+        }
+
+        /** Walls and roof of a village style ({@link PreviewVillages}). */
+        int[] village(int style) {
+            return switch (style) {
+                case PreviewVillages.DESERT -> new int[]{id(Blocks.SMOOTH_SANDSTONE.defaultBlockState()),
+                        id(Blocks.CUT_SANDSTONE.defaultBlockState())};
+                case PreviewVillages.SAVANNA -> new int[]{id(Blocks.ACACIA_PLANKS.defaultBlockState()),
+                        id(Blocks.ACACIA_LOG.defaultBlockState())};
+                case PreviewVillages.TAIGA -> new int[]{id(Blocks.SPRUCE_PLANKS.defaultBlockState()),
+                        id(Blocks.DARK_OAK_PLANKS.defaultBlockState())};
+                case PreviewVillages.SNOWY -> new int[]{id(Blocks.SPRUCE_PLANKS.defaultBlockState()), snow};
+                default -> new int[]{id(Blocks.OAK_PLANKS.defaultBlockState()),
+                        id(Blocks.SPRUCE_PLANKS.defaultBlockState())};
+            };
         }
 
         int id(BlockState state) {

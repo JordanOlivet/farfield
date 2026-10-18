@@ -23,10 +23,11 @@ import io.lakio.farfield.core.lod.LodSection;
  * preview's water shows no wall toward real water, and its land shows its
  * cliff toward a real sea.
  *
- * <p>Trees (ADR-040) stand on the interpolated surface: trunk and crown block
- * by block on the finest level; on coarser levels a voxel takes the tree's
- * material when trees fill a quarter of it, like the real mip rule's two
- * full children of eight. Trees of real chunks are left out.
+ * <p>Trees and plants (ADR-040) stand on the interpolated surface, village
+ * buildings (ADR-041) on their stored floor: block by block on the finest
+ * level; on coarser levels a voxel takes their material when they fill a
+ * quarter of it, like the real mip rule's two full children of eight.
+ * Those of real chunks are left out.
  */
 public final class PreviewVoxels {
 
@@ -215,6 +216,23 @@ public final class PreviewVoxels {
                 }
             }
         }
+        // Buildings stay within 16 blocks of their tile: the tiles around the footprint are enough.
+        for (int tz = Math.floorDiv(oz - 16, PreviewTile.BLOCKS); tz <= Math.floorDiv(oz + size + 16, PreviewTile.BLOCKS); tz++) {
+            for (int tx = Math.floorDiv(ox - 16, PreviewTile.BLOCKS); tx <= Math.floorDiv(ox + size + 16, PreviewTile.BLOCKS); tx++) {
+                PreviewTile tile = cache.tile(tx, tz);
+                if (tile == null) {
+                    continue;
+                }
+                for (PreviewTile.Building b : tile.buildings()) {
+                    int bx = tx * PreviewTile.BLOCKS + b.x();
+                    int bz = tz * PreviewTile.BLOCKS + b.z();
+                    if (mask != null && mask.real(bx >> 4, bz >> 4)) {
+                        continue;
+                    }
+                    stamp.building(b, bx, bz);
+                }
+            }
+        }
         return stamp.finish();
     }
 
@@ -259,21 +277,41 @@ public final class PreviewVoxels {
             for (int y = ground; y < top; y++) {
                 put(x, y, z, k.trunk(), chunkX, chunkZ);
             }
-            int rows = k.crownHeight();
+            if (k.shape() == PreviewTile.COLUMN) {
+                return;
+            }
+            int rows = k.shape() == PreviewTile.FLAT ? 0 : k.crownHeight();
             for (int r = 0; r <= rows; r++) {
                 int y = top - rows + r;
-                int radius = k.cone()
+                int radius = k.shape() == PreviewTile.CONE
                         ? Math.round(k.radius() * (rows - r) / (float) Math.max(1, rows))
-                        : r == rows ? Math.max(0, k.radius() - 1) : k.radius();
+                        : r == rows && rows > 0 ? Math.max(0, k.radius() - 1) : k.radius();
                 for (int dz = -radius; dz <= radius; dz++) {
                     for (int dx = -radius; dx <= radius; dx++) {
-                        if (!k.cone() && radius > 1 && Math.abs(dx) == radius && Math.abs(dz) == radius) {
+                        if (k.shape() != PreviewTile.CONE && radius > 1 && Math.abs(dx) == radius && Math.abs(dz) == radius) {
                             continue; // rounded corners
                         }
                         if (dx == 0 && dz == 0 && y < top) {
                             continue; // the trunk
                         }
                         put(x + dx, y, z + dz, k.leaves(), chunkX, chunkZ);
+                    }
+                }
+            }
+        }
+
+        /** Walls from the floor up, the roof layer on top. */
+        void building(PreviewTile.Building b, int x, int z) {
+            if (b.top() < oy || b.floor() >= oy + size) {
+                return;
+            }
+            int chunkX = x >> 4;
+            int chunkZ = z >> 4;
+            for (int y = Math.max(b.floor(), oy); y <= Math.min(b.top(), oy + size - 1); y++) {
+                int material = y == b.top() ? b.roof() : b.wall();
+                for (int dz = 0; dz < b.depth(); dz++) {
+                    for (int dx = 0; dx < b.width(); dx++) {
+                        put(x + dx, y, z + dz, material, chunkX, chunkZ);
                     }
                 }
             }

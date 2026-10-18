@@ -207,6 +207,6 @@ choice, an ADR.
   at every level (ADR-039), checked in the Fabric dev client and in the
   user's pack ("c'est beaucoup mieux"); flicker, holes and the gap beside
   real water fixed ("c'est good"). Trees at each biome's density
-  (ADR-040), checked in the Fabric dev client. Remains: the trees in the
-  user's pack, NeoForge, other features (huge mushrooms, cactus,
-  structures), and the spike in the user's large pack
+  (ADR-040), huge mushrooms, cactus, bamboo and villages (ADR-041),
+  checked in the Fabric dev client. Remains: all of it in the user's
+  pack, NeoForge, other structures, and the spike in the user's large pack

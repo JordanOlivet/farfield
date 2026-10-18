@@ -5,6 +5,15 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.mojang.serialization.JsonOps;
 import io.lakio.farfield.Farfield;
+import io.lakio.farfield.core.preview.PreviewTile;
+import net.minecraft.world.level.EmptyBlockGetter;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.levelgen.feature.BambooFeature;
+import net.minecraft.world.level.levelgen.feature.HugeBrownMushroomFeature;
+import net.minecraft.world.level.levelgen.feature.configurations.BlockColumnConfiguration;
+import net.minecraft.world.level.levelgen.feature.configurations.HugeMushroomFeatureConfiguration;
+import net.minecraft.world.level.levelgen.feature.configurations.RandomPatchConfiguration;
+import net.minecraft.world.level.levelgen.feature.configurations.SimpleBlockConfiguration;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderSet;
@@ -30,19 +39,37 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * The trees of each biome for the noise preview (ADR-040), read from its
- * vegetal decoration features: the tree features reached through random
- * selectors, with their trunk and leaves blocks, average trunk height and
- * crown size, and how many grow per chunk on average from the placement
- * modifiers (count, rarity, noise counts; read through their codecs, so
- * modded biomes using the vanilla modifiers work too). Not where they grow:
- * the preview places them at random, at that density.
+ * The trees and plants of each biome for the noise preview (ADR-040,
+ * ADR-041), read from its vegetal decoration features: tree features
+ * reached through random selectors and patches, with their trunk and leaves
+ * blocks, average trunk height and crown size; huge mushrooms (stem and
+ * cap); bamboo, block columns (cactus) and single blocks (pumpkins) as
+ * columns, unless their block has no collision (grass, flowers, sugar cane:
+ * out of the LODs anyway). How many grow per chunk on average comes from
+ * the placement modifiers (count, rarity, noise counts; read through their
+ * codecs, so modded biomes using the vanilla modifiers work too). Not where
+ * they grow: the preview places them at random, at that density, on the
+ * ground each one needs.
  */
 final class PreviewTrees {
 
-    /** A tree as the preview draws it. */
-    record Spec(BlockState trunk, BlockState leaves, int height, int radius, int crownHeight, boolean cone) {
+    /** The ground a plant grows on in the preview. */
+    enum Ground {
+        /** Grass or snow: trees, bamboo, pumpkins. */
+        SOIL,
+        /** Grass or mycelium: huge mushrooms. */
+        FUNGAL,
+        /** Sand: cactus. */
+        SAND
     }
+
+    /** A tree or plant as the preview draws it; {@code leaves} is null for columns. */
+    record Spec(BlockState trunk, BlockState leaves, int height, int radius, int crownHeight, int shape,
+                Ground ground) {
+    }
+
+    /** Patches try many spots around one; this share of the tries takes. */
+    private static final double PATCH_SUCCESS = 0.15;
 
     /** The trees of a biome: each spec with its average count per chunk. */
     record BiomeTrees(List<Spec> specs, double[] perChunk, double total) {
@@ -96,7 +123,7 @@ final class PreviewTrees {
             total += perChunk[i];
         }
         BiomeTrees trees = new BiomeTrees(specs, perChunk, total);
-        Farfield.LOG.info("Noise preview: {} grows {} trees per chunk of {} kinds ({})",
+        Farfield.LOG.info("Noise preview: {} grows {} trees and plants per chunk of {} kinds ({})",
                 biome.unwrapKey().map(k -> k.location().toString()).orElse("?"), String.format(java.util.Locale.ROOT, "%.2f", total),
                 specs.size(), specs.get(0).trunk().getBlock().getName().getString());
         return trees;
@@ -109,10 +136,23 @@ final class PreviewTrees {
         }
         FeatureConfiguration config = feature.config();
         if (feature.feature() instanceof TreeFeature && config instanceof TreeConfiguration tree) {
-            Spec spec = spec(tree);
-            if (spec != null) {
-                out.merge(spec, weight, Double::sum);
+            add(spec(tree), weight, out);
+        } else if (config instanceof HugeMushroomFeatureConfiguration mushroom) {
+            add(mushroom(mushroom, feature.feature() instanceof HugeBrownMushroomFeature), weight, out);
+        } else if (feature.feature() instanceof BambooFeature) {
+            add(column(Blocks.BAMBOO.defaultBlockState(), 12), weight, out);
+        } else if (config instanceof BlockColumnConfiguration column && !column.layers().isEmpty()) {
+            RandomSource random = RandomSource.create(42);
+            int height = 0;
+            for (BlockColumnConfiguration.Layer layer : column.layers()) {
+                height += Math.round((layer.height().getMinValue() + layer.height().getMaxValue()) / 2f);
             }
+            BlockState block = column.layers().get(column.layers().size() - 1).state().getState(random, BlockPos.ZERO);
+            add(column(block, height), weight, out);
+        } else if (config instanceof SimpleBlockConfiguration block) {
+            add(column(block.toPlace().getState(RandomSource.create(42), BlockPos.ZERO), 1), weight, out);
+        } else if (config instanceof RandomPatchConfiguration patch) {
+            collect(patch.feature().value().feature().value(), weight * patch.tries() * PATCH_SUCCESS, out, depth + 1);
         } else if (config instanceof RandomFeatureConfiguration random) {
             // The first entry whose chance passes, else the default.
             double left = 1;
@@ -130,6 +170,40 @@ final class PreviewTrees {
         } else if (config instanceof RandomBooleanFeatureConfiguration random) {
             collect(random.featureTrue.value().feature().value(), weight / 2, out, depth + 1);
             collect(random.featureFalse.value().feature().value(), weight / 2, out, depth + 1);
+        }
+    }
+
+    /** Adds a spec, unless it is missing or its trunk has no collision (not drawn in LODs). */
+    private static void add(Spec spec, double weight, Map<Spec, Double> out) {
+        if (spec == null) {
+            return;
+        }
+        try {
+            if (spec.trunk().getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO).isEmpty()) {
+                return;
+            }
+        } catch (RuntimeException e) {
+            return;
+        }
+        out.merge(spec, weight, Double::sum);
+    }
+
+    private static Spec column(BlockState block, int height) {
+        Ground ground = block.is(Blocks.CACTUS) ? Ground.SAND : Ground.SOIL;
+        return new Spec(block, null, clamp(height, 1, 24), 0, 0, PreviewTile.COLUMN, ground);
+    }
+
+    /** Red caps as rounded domes over a 5-block stem, brown ones as one wide layer. */
+    private static Spec mushroom(HugeMushroomFeatureConfiguration config, boolean brown) {
+        try {
+            RandomSource random = RandomSource.create(42);
+            BlockState stem = config.stemProvider.getState(random, BlockPos.ZERO);
+            BlockState cap = config.capProvider.getState(random, BlockPos.ZERO);
+            int radius = clamp(config.foliageRadius + (brown ? 1 : 0), 1, 6);
+            return new Spec(stem, cap, brown ? 4 : 5, radius, brown ? 0 : 3,
+                    brown ? PreviewTile.FLAT : PreviewTile.BLOB, Ground.FUNGAL);
+        } catch (RuntimeException e) {
+            return null;
         }
     }
 
@@ -157,7 +231,7 @@ final class PreviewTrees {
                 crownRadius = Math.max(crownRadius, (crownHeight + 2) / 4);
             }
             return new Spec(trunk, leaves, clamp(Math.round(height / (float) samples), 1, 40), clamp(crownRadius, 0, 6),
-                    crownHeight, cone);
+                    crownHeight, cone ? PreviewTile.CONE : PreviewTile.BLOB, Ground.SOIL);
         } catch (RuntimeException e) {
             return null;
         }

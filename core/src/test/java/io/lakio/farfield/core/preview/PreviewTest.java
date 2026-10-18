@@ -213,7 +213,7 @@ class PreviewTest {
                 t.setHeight(i, k, 70);
             }
         }
-        int oak = t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 5, 2, 3, false));
+        int oak = t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 5, 2, 3, PreviewTile.BLOB));
         t.addTree(16, 16, oak);
         return t;
     }
@@ -256,11 +256,42 @@ class PreviewTest {
         PreviewTile back = PreviewTile.decode(new ByteReader().reset(out.array(), 0, out.length()));
         int[] trees = back.trees(1, 1);
         assertEquals(1, trees.length);
-        assertEquals(new PreviewTile.TreeKind(LOG, LEAVES, 5, 2, 3, false), back.treeKind(trees[0] >>> 8));
+        assertEquals(new PreviewTile.TreeKind(LOG, LEAVES, 5, 2, 3, PreviewTile.BLOB), back.treeKind(trees[0] >>> 8));
         assertEquals(0, back.trees(0, 0).length);
         // The tree's top (76) counts for its chunk and the ones around.
         assertTrue(back.summary().spans(0, 0, 0, 0, 72, 80, 1));
         assertFalse(back.summary().spans(5, 5, 5, 5, 72, 80, 1));
+    }
+
+    @Test
+    void columnsFlatCapsAndBuildingsStand() {
+        PreviewTile t = forest();
+        int cactus = t.kind(new PreviewTile.TreeKind(LOG, -1, 3, 0, 0, PreviewTile.COLUMN));
+        int mushroom = t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 4, 2, 2, PreviewTile.FLAT));
+        t.addTree(40, 40, cactus);
+        t.addTree(60, 40, mushroom);
+        t.addBuilding(new PreviewTile.Building(80, 80, 5, 7, 69, 74, SAND, STONE));
+        LodSection s = PreviewVoxels.build(0, 1, 2, 1, (x, z) -> x == 0 && z == 0 ? t : null, null, AIR, -64,
+                -1, -1, -1, 0);
+        // Cactus: 70..72, nothing above.
+        assertEquals(LOG, s.material(40 - 32, 72 - 64, 40 - 32));
+        assertEquals(AIR, s.material(40 - 32, 73 - 64, 40 - 32));
+        // Flat cap: one layer of radius 2 at 74 over a trunk 70..73.
+        assertEquals(LOG, s.material(60 - 32, 73 - 64, 40 - 32));
+        assertEquals(LEAVES, s.material(62 - 32, 74 - 64, 40 - 32));
+        assertEquals(AIR, s.material(60 - 32, 75 - 64, 40 - 32));
+        // Building: walls from 69 to 73, roof at 74, over x 80..84 and z 80..86 (section 1, 2, 1 starts at 32, 64, 32).
+        LodSection house = PreviewVoxels.build(0, 2, 2, 2, (x, z) -> x == 0 && z == 0 ? t : null, null, AIR, -64,
+                -1, -1, -1, 0);
+        assertEquals(SAND, house.material(80 - 64, 71 - 64, 86 - 64));
+        assertEquals(STONE, house.material(84 - 64, 74 - 64, 80 - 64));
+        assertEquals(AIR, house.material(85 - 64, 72 - 64, 80 - 64));
+        assertTrue(t.summary().spans(5, 5, 5, 5, 72, 80, 1), "the building raises its chunk");
+        ByteWriter out = new ByteWriter(1024);
+        t.encode(out);
+        PreviewTile back = PreviewTile.decode(new ByteReader().reset(out.array(), 0, out.length()));
+        assertEquals(t.buildings(), back.buildings());
+        assertEquals(PreviewTile.FLAT, back.treeKind(mushroom).shape());
     }
 
     @Test
