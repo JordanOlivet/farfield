@@ -195,8 +195,12 @@ choice, an ADR.
   panes, iron bars, a stair roof, top slabs and doors continues the
   vanilla part without a visible break, day and night. Remains: the
   user's pack (villages, bamboo, Sodium), and the NeoForge dev client
-- [~] E.11 Terrain not generated yet (spike S6, ADR-037 proposed):
+- [~] E.11 Terrain not generated yet (spike S6, ADR-037, ADR-038):
   `/farfield spike generation [side]` measures generation through the
-  chunk system and the noise preview. Done on the NeoForge dev server
-  (vanilla). Remains: the user's choice on ADR-037, the spike in the
-  user's pack, then the noise preview and the throttled generator
+  chunk system and the noise preview (NeoForge dev server, the user's
+  Fabric pack). The user chose the noise preview first, switchable off
+  (ADR-038); the pregenerator later, optional. Noise preview done
+  2026-10-18: built by the integrated server, drawn at level 4 and masked
+  by real data, `noise_preview` setting, screen toggle and
+  `/farfield preview on|off`; checked in the Fabric dev client. Remains:
+  the user's pack, NeoForge, and the spike in the user's large pack

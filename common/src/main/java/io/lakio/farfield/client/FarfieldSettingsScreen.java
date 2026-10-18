@@ -61,6 +61,9 @@ public final class FarfieldSettingsScreen extends OptionsSubScreen {
                 new OptionInstance.IntRange(0, FOG_STEPS + 1),
                 fogStep(RenderSettings.thickFogDistance(), true),
                 step -> RenderSettings.setThickFogDistance(fogDistance(step, true))));
+        list.addBig(OptionInstance.createBoolean("farfield.options.noise_preview",
+                OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.noise_preview.tooltip")),
+                RenderSettings.noisePreview(), RenderSettings::setNoisePreview));
         list.addBig(OptionInstance.createBoolean("farfield.options.level_colors",
                 OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.level_colors.tooltip")),
                 RenderSettings.debugLevels(), RenderSettings::setDebugLevels));

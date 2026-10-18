@@ -13,13 +13,14 @@ import java.util.Properties;
 /**
  * The client's LOD drawing settings as saved in {@code config/farfield-client.properties}:
  * LOD drawing on or off, level of detail in pixels per voxel (ADR-027),
- * texture distance (ADR-026), level colors, and the fog distances of normal
- * dimensions and of dimensions with thick fog such as the Nether (ADR-034).
+ * texture distance (ADR-026), level colors, the fog distances of normal
+ * dimensions and of dimensions with thick fog such as the Nether (ADR-034),
+ * and the noise preview of terrain not generated yet (ADR-038).
  * Missing or invalid keys take their default, out-of-range values are
  * clamped, so a hand-edited file never stops the game.
  */
 public record RenderConfig(boolean enabled, float voxelPixels, int textureDistance, boolean levelColors,
-                           int fogDistance, int thickFogDistance) {
+                           int fogDistance, int thickFogDistance, boolean noisePreview) {
 
     /** Default target size of an LOD voxel on screen, in pixels, where a level hands over to the next. */
     public static final float DEFAULT_VOXEL_PIXELS = 6f;
@@ -43,7 +44,7 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
     public static final int DEFAULT_THICK_FOG_DISTANCE = FOG_VANILLA;
 
     public static final RenderConfig DEFAULTS = new RenderConfig(true, DEFAULT_VOXEL_PIXELS, DEFAULT_TEXTURE_DISTANCE,
-            false, DEFAULT_FOG_DISTANCE, DEFAULT_THICK_FOG_DISTANCE);
+            false, DEFAULT_FOG_DISTANCE, DEFAULT_THICK_FOG_DISTANCE, true);
 
     static final String ENABLED = "lod_rendering";
     static final String VOXEL_PIXELS = "detail_pixels_per_voxel";
@@ -51,6 +52,7 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
     static final String LEVEL_COLORS = "level_colors";
     static final String FOG_DISTANCE = "fog_distance";
     static final String THICK_FOG_DISTANCE = "thick_fog_distance";
+    static final String NOISE_PREVIEW = "noise_preview";
     /** Before ADR-034: true meant thick fog pushed back to the LOD horizon. Read only. */
     static final String EXTEND_DIMENSION_FOG = "extend_dimension_fog";
     private static final String ALL = "all";
@@ -62,6 +64,12 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
         textureDistance = clampTextureDistance(textureDistance);
         fogDistance = clampFogDistance(fogDistance);
         thickFogDistance = clampThickFogDistance(thickFogDistance);
+    }
+
+    /** The settings with the noise preview on. */
+    public RenderConfig(boolean enabled, float voxelPixels, int textureDistance, boolean levelColors,
+                        int fogDistance, int thickFogDistance) {
+        this(enabled, voxelPixels, textureDistance, levelColors, fogDistance, thickFogDistance, true);
     }
 
     public static float clampVoxelPixels(float pixels) {
@@ -101,7 +109,8 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
                 parseTextureDistance(p, DEFAULTS.textureDistance),
                 bool(p, LEVEL_COLORS, DEFAULTS.levelColors),
                 parseFogDistance(p, FOG_DISTANCE, DEFAULTS.fogDistance),
-                parseFogDistance(p, THICK_FOG_DISTANCE, thickFallback));
+                parseFogDistance(p, THICK_FOG_DISTANCE, thickFallback),
+                bool(p, NOISE_PREVIEW, DEFAULTS.noisePreview));
     }
 
     /** Writes the file through a temporary file, so a crash mid-write keeps the previous one. */
@@ -128,6 +137,8 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
             out.write("# The same in dimensions with thick fog (the Nether), or vanilla: LODs fade into\n");
             out.write("# the game's own fog. Default vanilla.\n");
             out.write(THICK_FOG_DISTANCE + "=" + fogText(thickFogDistance) + "\n");
+            out.write("# Show terrain not generated yet from the world's noise, coarsely (single player).\n");
+            out.write(NOISE_PREVIEW + "=" + noisePreview + "\n");
         }
         Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
     }

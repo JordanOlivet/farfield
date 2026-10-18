@@ -29,16 +29,20 @@ import java.util.function.Consumer;
  * server of single player) builds the LODs of its dimensions in
  * {@code <dimension folder>/farfield/} with a {@link LodPipeline}, and
  * {@code /farfield import} builds those of everything already generated
- * from the region files, skipping loaded chunks.
+ * from the region files, skipping loaded chunks. The integrated server also
+ * builds the noise preview of terrain not generated yet ({@link NoisePreview}).
  */
 public final class LodServer {
 
     private static volatile LodServer instance;
 
     private final LodPipeline pipeline;
+    /** Null on a dedicated server: no protocol sends the preview to clients yet (ADR-038). */
+    private final NoisePreview preview;
     private volatile ImportJob importJob;
 
-    private LodServer() {
+    private LodServer(boolean dedicated) {
+        this.preview = dedicated ? null : new NoisePreview();
         this.pipeline = new LodPipeline("server", level -> level instanceof ServerLevel,
                 level -> dimensionFolder((ServerLevel) level).resolve("farfield"), LevelChunk::isLightCorrect);
     }
@@ -50,7 +54,7 @@ public final class LodServer {
     // ---------------------------------------------------------------- loader events
 
     public static void onServerStarting(MinecraftServer server) {
-        instance = new LodServer();
+        instance = new LodServer(server.isDedicatedServer());
     }
 
     public static void onServerStopping(MinecraftServer server) {
@@ -79,6 +83,9 @@ public final class LodServer {
         LodServer s = instance;
         if (s != null) {
             s.pipeline.tick();
+            if (s.preview != null) {
+                s.preview.tick(server, s.pipeline);
+            }
         }
     }
 
@@ -97,6 +104,9 @@ public final class LodServer {
     }
 
     private void stop() {
+        if (preview != null) {
+            preview.stop();
+        }
         ImportJob job = importJob;
         if (job != null) {
             job.importer.cancel();

@@ -17,6 +17,8 @@
   "farfield.options.fog.blocks": "%s blocks",
   "farfield.options.fog.off": "Off",
   "farfield.options.fog.vanilla": "Vanilla",
+  "farfield.options.noise_preview": "Ungenerated Terrain Preview",
+  "farfield.options.noise_preview.tooltip": "Show terrain the world has not generated yet, coarsely, from the world seed: relief, water and a surface color, without trees or buildings. Real terrain replaces it as you explore. Single player only.",
   "farfield.options.level_colors": "Level Colors",
   "farfield.options.level_colors.tooltip": "Tint distant terrain by level of detail: red 1 block, orange 2, yellow 4, green 8, blue 16 blocks per voxel.",
   "key.categories.farfield": "Farfield",

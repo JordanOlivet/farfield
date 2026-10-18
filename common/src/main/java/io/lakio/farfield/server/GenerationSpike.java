@@ -118,7 +118,8 @@ final class GenerationSpike {
     }
 
     private record Noise(ServerLevel level, ChunkGenerator generator, RandomState state, BiomeSource biomes,
-                         Climate.Sampler sampler, DensityFunction density, NoiseSettings settings) {
+                         Climate.Sampler sampler, DensityFunction density, DensityFunction finalDensity,
+                         NoiseSettings settings) {
     }
 
     private static void noise(ServerLevel level, Random random, Consumer<String> report) throws Exception {
@@ -130,7 +131,7 @@ final class GenerationSpike {
         }
         RandomState state = chunks.randomState();
         Noise noise = new Noise(level, generator, state, generator.getBiomeSource(), state.sampler(),
-                state.router().initialDensityWithoutJaggedness(),
+                state.router().initialDensityWithoutJaggedness(), state.router().finalDensity(),
                 noiseGenerator.generatorSettings().value().noiseSettings());
         int threads = Math.max(1, Runtime.getRuntime().availableProcessors() / 2);
         ExecutorService pool = Executors.newFixedThreadPool(threads, r -> {
@@ -164,33 +165,82 @@ final class GenerationSpike {
         }
     }
 
-    /** How far the preliminary surface lies from the generator's ocean-floor height, over one square. */
+    /** Density thresholds tried for the surface, with a refinement to the block (see {@link #surface}). */
+    private static final double[] THRESHOLDS = {0.390625, 0.2, 0.1, 0.0};
+
+    /**
+     * How far the preliminary surface, and the surface found with other
+     * density thresholds refined to the block, lie from the generator's
+     * ocean-floor height, over one square.
+     */
     private static void accuracy(Noise noise, int x0, int z0, Consumer<String> report) {
+        // Preliminary surface, each threshold, then the final density at 0.
+        int variants = THRESHOLDS.length + 2;
+        long[] nanos = new long[variants];
         int columns = 0;
-        long sum = 0;
-        int max = 0;
-        int within8 = 0;
-        long signed = 0;
+        long[] sum = new long[variants];
+        long[] signed = new long[variants];
+        int[] max = new int[variants];
+        int[] within4 = new int[variants];
         for (int row = 0; row < NOISE_SIDE; row += 2) {
             for (int col = 0; col < NOISE_SIDE; col += 2) {
                 int x = x0 + col * 16;
                 int z = z0 + row * 16;
+                // getBaseHeight is the first free block above the floor.
                 int exact = noise.generator.getBaseHeight(x, z, Heightmap.Types.OCEAN_FLOOR_WG, noise.level, noise.state);
-                // getBaseHeight is the first free block above the floor; the preliminary level a cell top.
-                int d = preliminarySurface(noise, x, z) - (exact - 1);
                 columns++;
-                sum += Math.abs(d);
-                signed += d;
-                max = Math.max(max, Math.abs(d));
-                within8 += Math.abs(d) <= 8 ? 1 : 0;
+                for (int v = 0; v < variants; v++) {
+                    long t0 = System.nanoTime();
+                    int found = v == 0 ? preliminarySurface(noise, x, z)
+                            : v <= THRESHOLDS.length ? surface(noise, noise.density, x, z, THRESHOLDS[v - 1])
+                            : surface(noise, noise.finalDensity, x, z, 0);
+                    nanos[v] += System.nanoTime() - t0;
+                    int d = found - exact;
+                    sum[v] += Math.abs(d);
+                    signed[v] += d;
+                    max[v] = Math.max(max[v], Math.abs(d));
+                    within4[v] += Math.abs(d) <= 4 ? 1 : 0;
+                }
             }
         }
-        String line = String.format(Locale.ROOT,
-                "Noise preview accuracy: preliminary surface minus ocean floor over %d columns: mean %.1f blocks"
-                        + " (signed %.1f), max %d, %d%% within 8 blocks",
-                columns, sum / (double) columns, signed / (double) columns, max, within8 * 100 / columns);
-        Farfield.LOG.info(line);
-        report.accept(line);
+        for (int v = 0; v < variants; v++) {
+            String label = v == 0 ? "preliminary surface" : v <= THRESHOLDS.length
+                    ? "threshold " + THRESHOLDS[v - 1] + " refined" : "final density refined";
+            String line = String.format(Locale.ROOT,
+                    "Noise preview accuracy (%s): minus the ocean floor over %d columns: mean %.1f blocks"
+                            + " (signed %.1f), max %d, %d%% within 4 blocks; %.0f us per column on one thread",
+                    label, columns, sum[v] / (double) columns, signed[v] / (double) columns, max[v],
+                    within4[v] * 100 / columns, nanos[v] / 1e3 / columns);
+            Farfield.LOG.info(line);
+            report.accept(line);
+        }
+    }
+
+    /**
+     * The first free block above the highest point where the density without
+     * jaggedness exceeds {@code threshold}: scanned down by cell height, then
+     * refined to the block by bisection inside the cell.
+     */
+    private static int surface(Noise noise, DensityFunction density, int x, int z, double threshold) {
+        int minY = noise.settings.minY();
+        int step = noise.settings.getCellHeight();
+        for (int y = minY + noise.settings.height(); y >= minY; y -= step) {
+            if (density.compute(new DensityFunction.SinglePointContext(x, y, z)) > threshold) {
+                // Solid at y, free at y + step (or above the top): bisect.
+                int lo = y;
+                int hi = y + step;
+                while (hi - lo > 1) {
+                    int mid = (lo + hi) >>> 1;
+                    if (density.compute(new DensityFunction.SinglePointContext(x, mid, z)) > threshold) {
+                        lo = mid;
+                    } else {
+                        hi = mid;
+                    }
+                }
+                return lo + 1;
+            }
+        }
+        return minY;
     }
 
     /** One column per chunk over the square at (x0, z0), one task per row. */

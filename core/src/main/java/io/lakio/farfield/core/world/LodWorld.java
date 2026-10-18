@@ -55,6 +55,14 @@ public final class LodWorld implements AutoCloseable {
 
     /** Levels 0 (one voxel per block) to 4 (one voxel per 16 blocks). */
     public static final int LEVELS = 5;
+    /**
+     * Key level of the noise preview's sections (ADR-038): level-4 sections
+     * kept apart from the real levels, with level-4 coordinates; they never
+     * enter the mip levels.
+     */
+    public static final int PREVIEW_LEVEL = 8;
+    /** The level preview sections are drawn at. */
+    public static final int PREVIEW_DRAW_LEVEL = LEVELS - 1;
     private static final int LOCK_STRIPES = 64;
 
     private final KeyFile blockStateKeys;
@@ -175,6 +183,24 @@ public final class LodWorld implements AutoCloseable {
     /** True if a section is stored at {@code key}. Thread-safe, cheap. */
     public boolean exists(long key) throws IOException {
         return store.contains(key);
+    }
+
+    /** Key of the preview section at level-4 section coordinates (x, y, z). */
+    public static long previewKey(int x, int y, int z) {
+        return LodKey.pack(PREVIEW_LEVEL, x, y, z);
+    }
+
+    /**
+     * Writes a noise preview section ({@link #previewKey}) unless it is
+     * unchanged; listeners hear about it like any write. Thread-safe.
+     */
+    public boolean writePreview(long key, LodSection section) throws IOException {
+        if (LodKey.level(key) != PREVIEW_LEVEL) {
+            throw new IllegalArgumentException("not a preview key: " + LodKey.toString(key));
+        }
+        int[] length = new int[1];
+        byte[] old = store.readEncoded(key, length);
+        return write(key, section, old == null ? null : Arrays.copyOf(old, length[0]));
     }
 
     /**

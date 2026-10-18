@@ -17,6 +17,8 @@
   "farfield.options.fog.blocks": "%s blocs",
   "farfield.options.fog.off": "Désactivé",
   "farfield.options.fog.vanilla": "Vanilla",
+  "farfield.options.noise_preview": "Aperçu du terrain non généré",
+  "farfield.options.noise_preview.tooltip": "Montre le terrain que le monde n'a pas encore généré, grossièrement, à partir de la graine : relief, eau et couleur du sol, sans arbres ni constructions. Le vrai terrain le remplace à mesure que vous explorez. Solo uniquement.",
   "farfield.options.level_colors": "Couleurs des niveaux",
   "farfield.options.level_colors.tooltip": "Teinte le terrain lointain selon son niveau de détail : rouge 1 bloc, orange 2, jaune 4, vert 8, bleu 16 blocs par voxel.",
   "key.categories.farfield": "Farfield",

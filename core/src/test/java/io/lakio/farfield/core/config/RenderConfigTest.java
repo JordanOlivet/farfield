@@ -28,7 +28,8 @@ class RenderConfigTest {
                 RenderConfig.DEFAULTS,
                 new RenderConfig(false, 2.5f, 0, true, RenderConfig.FOG_OFF, 1024),
                 new RenderConfig(true, 12f, 768, false, 512, RenderConfig.FOG_OFF),
-                new RenderConfig(true, 6f, 0, false, 4096, RenderConfig.FOG_VANILLA)}) {
+                new RenderConfig(true, 6f, 0, false, 4096, RenderConfig.FOG_VANILLA),
+                new RenderConfig(true, 6f, 0, false, 4096, RenderConfig.FOG_VANILLA, false)}) {
             config.write(file);
             assertEquals(config, RenderConfig.read(file));
         }
@@ -48,6 +49,9 @@ class RenderConfigTest {
                 """, StandardCharsets.UTF_8);
         assertEquals(new RenderConfig(true, RenderConfig.MAX_VOXEL_PIXELS, 0, true, RenderConfig.MIN_FOG_DISTANCE,
                 RenderConfig.MAX_FOG_DISTANCE), RenderConfig.read(file));
+
+        Files.writeString(file, "noise_preview=off\n", StandardCharsets.UTF_8);
+        assertFalse(RenderConfig.read(file).noisePreview());
 
         Files.writeString(file, "fog_distance=OFF\nthick_fog_distance=vanilla\n", StandardCharsets.UTF_8);
         assertEquals(new RenderConfig(true, RenderConfig.DEFAULT_VOXEL_PIXELS, RenderConfig.DEFAULT_TEXTURE_DISTANCE,

@@ -13,7 +13,8 @@ import java.nio.file.Path;
  * {@code /farfield render on|off} to compare frame rates in the same session,
  * {@code /farfield detail <px>} for the level of detail,
  * {@code /farfield textures all|<blocks>} for the distance textures reach,
- * {@code /farfield debug levels on|off} to color each LOD level. Saved in
+ * {@code /farfield debug levels on|off} to color each LOD level,
+ * {@code /farfield preview on|off} for the noise preview. Saved in
  * {@code config/farfield-client.properties} on the physical client.
  * Side-neutral on purpose: the command lives on the (integrated) server, the
  * renderer on the client of the same process; a dedicated server only stores
@@ -36,6 +37,7 @@ public final class RenderSettings {
     private static volatile int textureDistance = RenderConfig.DEFAULTS.textureDistance();
     private static volatile int fogDistance = RenderConfig.DEFAULTS.fogDistance();
     private static volatile int thickFogDistance = RenderConfig.DEFAULTS.thickFogDistance();
+    private static volatile boolean noisePreview = RenderConfig.DEFAULTS.noisePreview();
 
     private RenderSettings() {
     }
@@ -108,6 +110,18 @@ public final class RenderSettings {
         thickFogDistance = RenderConfig.clampThickFogDistance(blocks);
     }
 
+    /**
+     * Whether terrain not generated yet shows from the world's noise
+     * (ADR-038): the integrated server builds it, the renderer draws it.
+     */
+    public static boolean noisePreview() {
+        return noisePreview;
+    }
+
+    public static void setNoisePreview(boolean value) {
+        noisePreview = value;
+    }
+
     /** Physical client only: reads the saved settings, or keeps the defaults. */
     public static void load() {
         if (!Services.PLATFORM.isClient()) {
@@ -122,6 +136,7 @@ public final class RenderSettings {
             debugLevels = config.levelColors();
             fogDistance = config.fogDistance();
             thickFogDistance = config.thickFogDistance();
+            noisePreview = config.noisePreview();
             Farfield.LOG.info(Files.exists(file) ? "LOD settings loaded from {}: {}" : "No {} yet, LOD settings at their defaults: {}",
                     file.getFileName(), config);
         } catch (IOException | RuntimeException e) {
@@ -136,7 +151,7 @@ public final class RenderSettings {
         }
         Path file = file();
         RenderConfig config = new RenderConfig(enabled, voxelPixels, textureDistance, debugLevels, fogDistance,
-                thickFogDistance);
+                thickFogDistance, noisePreview);
         try {
             config.write(file);
             Farfield.LOG.info("LOD settings saved to {}: {}", file.getFileName(), config);

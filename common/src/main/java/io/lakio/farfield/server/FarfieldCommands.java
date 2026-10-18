@@ -65,6 +65,10 @@ public final class FarfieldCommands {
                                 .then(Commands.argument("blocks", IntegerArgumentType.integer(
                                                 RenderConfig.MIN_FOG_DISTANCE, RenderConfig.MAX_FOG_DISTANCE))
                                         .executes(c -> fog(c, true, IntegerArgumentType.getInteger(c, "blocks"))))))
+                .then(Commands.literal("preview")
+                        .executes(c -> preview(c, !RenderSettings.noisePreview()))
+                        .then(Commands.literal("on").executes(c -> preview(c, true)))
+                        .then(Commands.literal("off").executes(c -> preview(c, false))))
                 .then(Commands.literal("spike")
                         .then(Commands.literal("generation")
                                 .executes(c -> generationSpike(c, 16))
@@ -122,6 +126,17 @@ public final class FarfieldCommands {
     private static String fogText(int blocks) {
         return blocks == RenderConfig.FOG_OFF ? "off" : blocks == RenderConfig.FOG_VANILLA ? "vanilla"
                 : blocks + " blocks";
+    }
+
+    /** Single player: shows terrain not generated yet from the world's noise (ADR-038). */
+    private static int preview(CommandContext<CommandSourceStack> c, boolean on) {
+        RenderSettings.setNoisePreview(on);
+        RenderSettings.save();
+        Farfield.LOG.info("LOD noise preview switched {} by command", on ? "on" : "off");
+        c.getSource().sendSuccess(() -> Component.literal(on
+                ? "Noise preview on: terrain not generated yet shows coarsely (single player only)."
+                : "Noise preview off."), false);
+        return 1;
     }
 
     /** Single player: tints LOD faces by level, to see where each level hands over. */

@@ -787,3 +787,46 @@ Proposal, to be confirmed by the user:
 3. Before building: the same spike in the user's pack (modded world
    generation costs differ), and a bias correction of the preliminary
    height measured there.
+
+## ADR-038 — Noise preview of terrain not generated yet
+
+**Date**: 2026-10-18 · **Status**: accepted
+
+Decides ADR-037. The user: noise preview first, and the player must be
+able to turn it off; a pregenerator comes later, as an option, since
+pregenerating is not the mod's goal; the spike in the user's large pack
+comes later too.
+
+- **Height**: the noise router's final density (`finalDensity`) scanned
+  down from the top by cell height, then bisected to the block. Measured
+  on the dev server over 1,024 columns: 1.0 block from the generator's
+  ocean floor on average, 98 % within 4 blocks, max 26, 0.73 ms per
+  column and thread. The preliminary surface level of ADR-037 lay 13
+  blocks low; the density without jaggedness at threshold 0, refined,
+  still 7.
+- **Data**: one column per chunk, so one level-4 voxel column (16 blocks).
+  Solid up to the surface, the top voxel filled to it in sixteenths
+  (ADR-028); a surface block guessed from the biome (sand, red sand,
+  mycelium, snow, stone, end stone, else grass block; sand or gravel under
+  water), stone below; water up to the sea level over lower ground; the
+  biome per cell for the tints. Stored in the dimension's LOD store as
+  sections of their own level (`LodWorld.PREVIEW_LEVEL`, level-4
+  coordinates), so they share its block state and biome ids, and never
+  enter the mip levels.
+- **Builder**: the integrated server only (single player, LAN host): no
+  protocol sends LODs to clients yet (ADR-013). Dimensions with a noise
+  generator and no ceiling. Every 2 s, the section columns (512 x 512
+  blocks) within the LOD range of a player, nearest first, on two
+  low-priority threads; a column already stored is skipped.
+- **Drawing**: the client draws stored preview sections within the
+  selection distance at level 4, beside the octree selection, and masks
+  every chunk column where the real level-4 data holds a voxel: a chunk
+  once ingested replaces its preview at once (the preview section is
+  meshed again when the real one is written). Preview never covers real
+  data; the vanilla hand-off applies as to all LODs.
+- **Setting**: `noise_preview` in `farfield-client.properties` (default
+  on), a toggle in the settings screen and `/farfield preview on|off`. Off
+  stops building and drawing; the stored preview stays.
+- Not in the preview: trees, structures, caves, overhangs, surface rules
+  (the surface block is a guess). A seam of a few blocks may show where it
+  meets real terrain. Not on servers (protocol), nor in the Nether.
