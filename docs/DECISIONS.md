@@ -830,3 +830,39 @@ comes later too.
 - Not in the preview: trees, structures, caves, overhangs, surface rules
   (the surface block is a guess). A seam of a few blocks may show where it
   meets real terrain. Not on servers (protocol), nor in the Nether.
+
+## ADR-039 — Noise preview as height tiles, drawn at every level
+
+**Date**: 2026-10-18 · **Status**: accepted
+
+Amends ADR-038 after the user's pass in the Fabric pack: the preview
+loaded and came back after a reconnect, but read as stacked 16-block
+boxes, with ugly transitions to the real LODs. The user asked for a finer
+silhouette and smoother transitions first (step 1), approximate trees
+later (step 2).
+
+- **Data**: tiles of 512 x 512 blocks (`PreviewTile`) in
+  `<dimension store>/preview/t.<x>.<z>.ffp`, zstd: the surface every 4
+  blocks (129 x 129 samples, the edges shared with the next tiles), the
+  top block and the filler under it per 4-block cell, the biome per
+  chunk, the ground block and the sea. The level-4 sections of ADR-038 are
+  gone (their `L8` folder is deleted at open).
+- **Heights**: the final density as in ADR-038, each sample's search
+  starting from its neighbor's height (up or down by cell height, then
+  bisected); a result with ground right above it (cave, overhang) is
+  searched again from the top. Vanilla interpolates its density over
+  4-block cells, so heights are interpolated bilinearly in between.
+- **Surface blocks**: from the biome as before, plus bare stone where two
+  samples 4 blocks apart differ by 8 blocks or more, terracotta in
+  badlands, sandstone under desert sand, dirt under grass, snow over snow
+  in mountains.
+- **Sections**: built by the client from the tiles at any level, on
+  demand (`PreviewVoxels`): a voxel column stands at the highest
+  interpolated block of its footprint (finer than 4 blocks) or the highest
+  sample in it (from 4 blocks); only a skin is built, one voxel under the
+  lowest neighbor. The renderer runs a second octree selection over the
+  tiles (`PreviewLayer`), so the preview is as fine as real terrain near
+  the camera and meets it at the same level.
+- **Mask**: per tile, the chunks whose real level-4 column holds a voxel;
+  a tile's sections enter the selection once its mask is read, and real
+  level-4 writes in it rebuild the mask and remesh its preview sections.

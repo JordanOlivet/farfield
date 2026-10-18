@@ -1,10 +1,11 @@
 package io.lakio.farfield.server;
 
 import io.lakio.farfield.Farfield;
-import io.lakio.farfield.core.lod.LodSection;
-import io.lakio.farfield.core.lod.PreviewColumns;
+import io.lakio.farfield.core.preview.PreviewStore;
+import io.lakio.farfield.core.preview.PreviewTile;
 import io.lakio.farfield.core.world.LodWorld;
 import io.lakio.farfield.lod.BlockKeys;
+import io.lakio.farfield.lod.LodLevel;
 import io.lakio.farfield.lod.LodPipeline;
 import io.lakio.farfield.lod.RenderSettings;
 import net.minecraft.core.BlockPos;
@@ -22,7 +23,6 @@ import net.minecraft.world.level.biome.Biomes;
 import net.minecraft.world.level.biome.Climate;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.levelgen.DensityFunction;
 import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
 import net.minecraft.world.level.levelgen.NoiseGeneratorSettings;
@@ -31,6 +31,7 @@ import net.minecraft.world.level.levelgen.RandomState;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -43,14 +44,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Noise preview of terrain not generated yet (ADR-038), built by the
- * integrated server: every {@link #UPDATE_TICKS} ticks, the section columns
- * (512 x 512 blocks) within {@link #RANGE} blocks of a player, nearest first,
- * on two low-priority threads. Each column of a chunk gets its surface from
- * the noise router's final density (scanned down by cell height, bisected
- * to the block), its biome, a surface block guessed from the biome, and
- * water up to the sea level; {@link PreviewColumns} turns them into level-4
- * sections stored under {@link LodWorld#previewKey}.
+ * Noise preview of terrain not generated yet (ADR-038, ADR-039), built by
+ * the integrated server: every {@link #UPDATE_TICKS} ticks, the tiles
+ * (512 x 512 blocks) within {@link #RANGE} blocks of a player, nearest
+ * first, on two low-priority threads. A tile holds the surface every 4
+ * blocks from the noise router's final density (each search starts from
+ * the neighbor sample's height, then bisects to the block), the biome per
+ * chunk and the surface blocks per 4-block cell, guessed from the biome and
+ * the slope. The client turns tiles into sections of every level.
  */
 final class NoisePreview {
 
@@ -59,7 +60,10 @@ final class NoisePreview {
     private static final int MAX_IN_FLIGHT = 8;
     /** The LOD range: the renderer draws nothing farther. */
     private static final double RANGE = 4096;
-    private static final int SECTION_BLOCKS = LodSection.SIZE * PreviewColumns.VOXEL_BLOCKS;
+    private static final int TILE = PreviewTile.BLOCKS;
+    private static final int UNKNOWN = Integer.MIN_VALUE;
+    /** A rise of this many blocks between two samples (4 blocks apart) shows bare stone. */
+    private static final int CLIFF_RISE = 8;
 
     private final ExecutorService pool = Executors.newFixedThreadPool(2, r -> {
         Thread t = new Thread(r, "farfield-noise-preview");
@@ -74,8 +78,6 @@ final class NoisePreview {
     /** What one dimension's preview needs, and its progress. */
     private static final class Dimension {
         final ResourceKey<Level> key;
-        final ChunkGenerator generator;
-        final RandomState state;
         final BiomeSource biomes;
         final Climate.Sampler sampler;
         final DensityFunction density;
@@ -95,8 +97,7 @@ final class NoisePreview {
 
         Dimension(ServerLevel level, NoiseBasedChunkGenerator generator) {
             key = level.dimension();
-            this.generator = generator;
-            state = level.getChunkSource().randomState();
+            RandomState state = level.getChunkSource().randomState();
             biomes = generator.getBiomeSource();
             sampler = state.sampler();
             density = state.router().finalDensity();
@@ -106,6 +107,10 @@ final class NoisePreview {
             defaultBlock = settings.defaultBlock();
             fluid = settings.defaultFluid().isAir() ? null : settings.defaultFluid();
             end = key == Level.END;
+        }
+
+        boolean solid(int x, int y, int z) {
+            return density.compute(new DensityFunction.SinglePointContext(x, y, z)) > 0;
         }
     }
 
@@ -120,10 +125,7 @@ final class NoisePreview {
                 continue;
             }
             Optional<Dimension> d = dimensions.computeIfAbsent(level.dimension(), k -> open(level));
-            if (d.isEmpty()) {
-                continue;
-            }
-            io.lakio.farfield.lod.LodLevel lod = pipeline.level(level);
+            LodLevel lod = d.isEmpty() ? null : pipeline.level(level);
             if (lod == null) {
                 continue;
             }
@@ -148,25 +150,30 @@ final class NoisePreview {
         return Optional.of(new Dimension(level, generator));
     }
 
-    /** Submits the nearest missing section columns, up to {@link #MAX_IN_FLIGHT} at a time. */
+    /** Submits the nearest missing tiles, up to {@link #MAX_IN_FLIGHT} at a time. */
     private void schedule(Dimension d, List<ServerPlayer> players) {
+        PreviewStore store = d.world.preview();
         List<long[]> candidates = new ArrayList<>();
-        Set<Long> seen = new java.util.HashSet<>();
+        Set<Long> seen = new HashSet<>();
         for (ServerPlayer p : players) {
-            int x0 = Math.floorDiv((int) Math.floor(p.getX() - RANGE), SECTION_BLOCKS);
-            int x1 = Math.floorDiv((int) Math.floor(p.getX() + RANGE), SECTION_BLOCKS);
-            int z0 = Math.floorDiv((int) Math.floor(p.getZ() - RANGE), SECTION_BLOCKS);
-            int z1 = Math.floorDiv((int) Math.floor(p.getZ() + RANGE), SECTION_BLOCKS);
+            int x0 = Math.floorDiv((int) Math.floor(p.getX() - RANGE), TILE);
+            int x1 = Math.floorDiv((int) Math.floor(p.getX() + RANGE), TILE);
+            int z0 = Math.floorDiv((int) Math.floor(p.getZ() - RANGE), TILE);
+            int z1 = Math.floorDiv((int) Math.floor(p.getZ() + RANGE), TILE);
             for (int x = x0; x <= x1; x++) {
                 for (int z = z0; z <= z1; z++) {
-                    double dx = Math.max(0, Math.max(x * SECTION_BLOCKS - p.getX(), p.getX() - (x + 1) * SECTION_BLOCKS));
-                    double dz = Math.max(0, Math.max(z * SECTION_BLOCKS - p.getZ(), p.getZ() - (z + 1) * SECTION_BLOCKS));
+                    double dx = Math.max(0, Math.max(x * (double) TILE - p.getX(), p.getX() - (x + 1) * (double) TILE));
+                    double dz = Math.max(0, Math.max(z * (double) TILE - p.getZ(), p.getZ() - (z + 1) * (double) TILE));
                     double distance = Math.sqrt(dx * dx + dz * dz);
-                    long column = column(x, z);
-                    if (distance > RANGE || d.done.contains(column) || !seen.add(column)) {
+                    long tile = PreviewStore.key(x, z);
+                    if (distance > RANGE || d.done.contains(tile) || !seen.add(tile)) {
                         continue;
                     }
-                    candidates.add(new long[]{column, (long) distance});
+                    if (store.contains(x, z)) {
+                        d.done.add(tile);
+                        continue;
+                    }
+                    candidates.add(new long[]{tile, (long) distance});
                 }
             }
         }
@@ -176,157 +183,219 @@ final class NoisePreview {
             if (d.inFlight.size() >= MAX_IN_FLIGHT) {
                 break;
             }
-            long column = c[0];
-            if (d.inFlight.add(column)) {
-                pool.execute(() -> build(d, column));
+            long tile = c[0];
+            if (d.inFlight.add(tile)) {
+                pool.execute(() -> build(d, tile));
             }
         }
-    }
-
-    private static long column(int x, int z) {
-        return (long) x << 32 | (z & 0xFFFFFFFFL);
     }
 
     private void report(Dimension d) {
         int built = d.built.getAndSet(0);
         long nanos = d.builtNanos.getAndSet(0);
         if (built > 0) {
-            Farfield.LOG.info("Noise preview of {}: {} section columns built in the last minute ({} ms each),"
-                            + " {} left within {} blocks", d.key.location(), built, nanos / 1_000_000 / built,
-                    d.left, (int) RANGE);
+            Farfield.LOG.info("Noise preview of {}: {} tiles built in the last minute ({} ms each), {} left within"
+                    + " {} blocks", d.key.location(), built, nanos / 1_000_000 / built, d.left, (int) RANGE);
             d.reportedDone = false;
         } else if (d.left == 0 && !d.reportedDone) {
-            Farfield.LOG.info("Noise preview of {}: every section column within {} blocks is built",
+            Farfield.LOG.info("Noise preview of {}: every tile within {} blocks is built",
                     d.key.location(), (int) RANGE);
             d.reportedDone = true;
         }
     }
 
-    /** Builds and stores one section column, unless it is stored already. */
-    private void build(Dimension d, long column) {
-        int x = (int) (column >> 32);
-        int z = (int) column;
+    /** Builds and stores one tile. */
+    private void build(Dimension d, long key) {
+        int tileX = PreviewStore.tileX(key);
+        int tileZ = PreviewStore.tileZ(key);
         long start = System.nanoTime();
         try {
             LodWorld world = d.world;
-            int minY = d.noise.minY();
-            int y0 = Math.floorDiv(minY, SECTION_BLOCKS);
-            int y1 = Math.floorDiv(minY + d.noise.height() - 1, SECTION_BLOCKS);
-            for (int y = y0; y <= y1; y++) {
-                if (world.exists(LodWorld.previewKey(x, y, z))) {
-                    d.done.add(column);
-                    return;
-                }
-            }
-            PreviewColumns columns = new PreviewColumns(world.air());
-            Materials m = new Materials(world, d);
-            for (int cz = 0; cz < PreviewColumns.SIZE; cz++) {
-                for (int cx = 0; cx < PreviewColumns.SIZE; cx++) {
+            PreviewTile tile = new PreviewTile();
+            int x0 = tileX * TILE;
+            int z0 = tileZ * TILE;
+            int previous = UNKNOWN;
+            for (int k = 0; k < PreviewTile.SAMPLES; k++) {
+                // Each row starts from the one above: neighbors are seeds, not results.
+                int seed = k == 0 ? UNKNOWN : tile.sample(0, k - 1);
+                for (int i = 0; i < PreviewTile.SAMPLES; i++) {
                     if (stopped) {
                         return;
                     }
-                    int bx = x * SECTION_BLOCKS + cx * PreviewColumns.VOXEL_BLOCKS + 8;
-                    int bz = z * SECTION_BLOCKS + cz * PreviewColumns.VOXEL_BLOCKS + 8;
-                    int surface = surface(d, bx, bz);
-                    Holder<Biome> biome = d.biomes.getNoiseBiome(QuartPos.fromBlock(bx), QuartPos.fromBlock(surface),
-                            QuartPos.fromBlock(bz), d.sampler);
-                    columns.set(cx, cz, surface, m.surface(biome, bx, surface, bz),
-                            world.biomes().id(BlockKeys.key(biome)));
+                    int h = surface(d, x0 + i * PreviewTile.GRID, z0 + k * PreviewTile.GRID, i == 0 ? seed : previous);
+                    tile.setHeight(i, k, h);
+                    previous = h;
                 }
             }
-            columns.setBelow(m.below);
-            columns.setWater(m.water, d.seaLevel);
-            for (int y = y0; y <= y1; y++) {
-                LodSection section = columns.build(y, minY);
-                if (section != null) {
-                    world.writePreview(LodWorld.previewKey(x, y, z), section);
+            Materials m = new Materials(world, d);
+            Holder<Biome>[] chunkBiomes = biomes(d, tile, x0, z0, world);
+            for (int cz = 0; cz < PreviewTile.CELLS; cz++) {
+                for (int cx = 0; cx < PreviewTile.CELLS; cx++) {
+                    int h = Math.max(Math.max(tile.sample(cx, cz), tile.sample(cx + 1, cz)),
+                            Math.max(tile.sample(cx, cz + 1), tile.sample(cx + 1, cz + 1)));
+                    int low = Math.min(Math.min(tile.sample(cx, cz), tile.sample(cx + 1, cz)),
+                            Math.min(tile.sample(cx, cz + 1), tile.sample(cx + 1, cz + 1)));
+                    Holder<Biome> biome = chunkBiomes[(cz >> 2) * PreviewTile.CHUNKS + (cx >> 2)];
+                    m.surface(biome, x0 + cx * PreviewTile.GRID, h, z0 + cz * PreviewTile.GRID, h - low >= CLIFF_RISE);
+                    tile.setCell(cx, cz, m.top, m.filler);
                 }
             }
-            d.done.add(column);
+            tile.setBelow(m.below);
+            tile.setWater(m.water, d.seaLevel);
+            world.preview().write(tileX, tileZ, tile);
+            d.done.add(key);
             d.built.incrementAndGet();
             d.builtNanos.addAndGet(System.nanoTime() - start);
         } catch (IOException | RuntimeException e) {
             if (!stopped) {
-                Farfield.LOG.warn("Noise preview of {}: section column {}, {} failed", d.key.location(), x, z, e);
+                Farfield.LOG.warn("Noise preview of {}: tile {}, {} failed", d.key.location(), tileX, tileZ, e);
             }
         } finally {
-            d.inFlight.remove(column);
+            d.inFlight.remove(key);
         }
     }
 
+    /** The biome at the surface of each chunk's center, stored in the tile and returned. */
+    @SuppressWarnings("unchecked")
+    private static Holder<Biome>[] biomes(Dimension d, PreviewTile tile, int x0, int z0, LodWorld world) {
+        Holder<Biome>[] out = new Holder[PreviewTile.CHUNKS * PreviewTile.CHUNKS];
+        for (int cz = 0; cz < PreviewTile.CHUNKS; cz++) {
+            for (int cx = 0; cx < PreviewTile.CHUNKS; cx++) {
+                int x = x0 + cx * 16 + 8;
+                int z = z0 + cz * 16 + 8;
+                int y = tile.sample(cx * 4 + 2, cz * 4 + 2);
+                Holder<Biome> biome = d.biomes.getNoiseBiome(QuartPos.fromBlock(x), QuartPos.fromBlock(y),
+                        QuartPos.fromBlock(z), d.sampler);
+                out[cz * PreviewTile.CHUNKS + cx] = biome;
+                tile.setBiome(cx, cz, world.biomes().id(BlockKeys.key(biome)));
+            }
+        }
+        return out;
+    }
+
     /**
-     * The first free block above the highest point where the final density
-     * is positive (solid), scanned down by cell height, then bisected.
+     * The first free block above the ground at (x, z): from {@code seed}
+     * (a neighbor's surface) up or down by cell height to the first change,
+     * then bisected to the block. A result with solid ground right above it
+     * (a cave, an overhang) is searched again from the top of the world.
      */
-    private static int surface(Dimension d, int x, int z) {
+    private static int surface(Dimension d, int x, int z, int seed) {
         int minY = d.noise.minY();
         int top = minY + d.noise.height() - 1;
         int step = d.noise.getCellHeight();
-        for (int y = top; y >= minY; y -= step) {
-            if (d.density.compute(new DensityFunction.SinglePointContext(x, y, z)) > 0) {
-                int lo = y;
-                int hi = Math.min(y + step, top + 1);
-                while (hi - lo > 1) {
-                    int mid = (lo + hi) >>> 1;
-                    if (d.density.compute(new DensityFunction.SinglePointContext(x, mid, z)) > 0) {
-                        lo = mid;
-                    } else {
-                        hi = mid;
-                    }
+        if (seed != UNKNOWN && seed > minY && seed <= top) {
+            int h;
+            if (d.solid(x, seed - 1, z)) {
+                int lo = seed - 1;
+                int hi = lo + step;
+                while (hi <= top && d.solid(x, hi, z)) {
+                    lo = hi;
+                    hi += step;
                 }
-                return lo + 1;
+                h = hi > top ? top + 1 : bisect(d, x, z, lo, hi);
+            } else {
+                int hi = seed - 1;
+                int lo = hi - step;
+                while (lo >= minY && !d.solid(x, lo, z)) {
+                    hi = lo;
+                    lo -= step;
+                }
+                h = lo < minY ? minY : bisect(d, x, z, lo, hi);
+            }
+            if (h > top || !d.solid(x, h + step, z) && !d.solid(x, h + 2 * step, z)) {
+                return h;
+            }
+        }
+        for (int y = top; y >= minY; y -= step) {
+            if (d.solid(x, y, z)) {
+                return bisect(d, x, z, y, Math.min(y + step, top + 1));
             }
         }
         return minY;
     }
 
-    /** Material ids of one world for the surface guesses. */
+    /** With {@code lo} solid and {@code hi} free: the first free block above the solid run, between them. */
+    private static int bisect(Dimension d, int x, int z, int lo, int hi) {
+        while (hi - lo > 1) {
+            int mid = (lo + hi) >>> 1;
+            if (d.solid(x, mid, z)) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        return lo + 1;
+    }
+
+    /** Material ids of one world for the surface guesses; {@link #surface} sets {@link #top} and {@link #filler}. */
     private static final class Materials {
         final LodWorld world;
         final Dimension d;
         final int below;
         final int water;
+        final int grass;
+        final int dirt;
+        final int sand;
+        final int sandstone;
+        final int redSand;
+        final int terracotta;
+        final int gravel;
+        final int stone;
+        final int snow;
+        final int mycelium;
+        int top;
+        int filler;
 
         Materials(LodWorld world, Dimension d) {
             this.world = world;
             this.d = d;
             below = id(d.defaultBlock);
             water = d.fluid == null ? -1 : id(d.fluid);
+            grass = id(Blocks.GRASS_BLOCK.defaultBlockState());
+            dirt = id(Blocks.DIRT.defaultBlockState());
+            sand = id(Blocks.SAND.defaultBlockState());
+            sandstone = id(Blocks.SANDSTONE.defaultBlockState());
+            redSand = id(Blocks.RED_SAND.defaultBlockState());
+            terracotta = id(Blocks.TERRACOTTA.defaultBlockState());
+            gravel = id(Blocks.GRAVEL.defaultBlockState());
+            stone = id(Blocks.STONE.defaultBlockState());
+            snow = id(Blocks.SNOW_BLOCK.defaultBlockState());
+            mycelium = id(Blocks.MYCELIUM.defaultBlockState());
         }
 
-        int id(BlockState state) {
+        private int id(BlockState state) {
             return world.blockStates().id(BlockKeys.key(state));
         }
 
-        /** The block seen on top of a column, guessed from its biome. */
-        int surface(Holder<Biome> biome, int x, int surfaceY, int z) {
+        private void set(int topMaterial, int fillerMaterial) {
+            top = topMaterial;
+            filler = fillerMaterial;
+        }
+
+        /** The blocks seen on top of a cell and just under it, guessed from its biome and slope. */
+        void surface(Holder<Biome> biome, int x, int surfaceY, int z, boolean steep) {
             if (d.end) {
-                return below;
+                set(below, below);
+            } else if (surfaceY < d.seaLevel && d.fluid != null) {
+                int floor = biome.value().getBaseTemperature() < 0.15f ? gravel : sand;
+                set(floor, floor);
+            } else if (biome.is(BiomeTags.IS_BADLANDS)) {
+                set(steep ? terracotta : redSand, terracotta);
+            } else if (biome.is(Biomes.DESERT) || biome.is(BiomeTags.IS_BEACH)) {
+                set(sand, sandstone);
+            } else if (steep || biome.is(Biomes.STONY_PEAKS) || biome.is(Biomes.STONY_SHORE)) {
+                set(stone, stone);
+            } else if (biome.value().coldEnoughToSnow(new BlockPos(x, surfaceY, z))) {
+                set(snow, biome.is(BiomeTags.IS_MOUNTAIN) ? snow : dirt);
+            } else if (biome.is(Biomes.MUSHROOM_FIELDS)) {
+                set(mycelium, dirt);
+            } else {
+                set(grass, dirt);
             }
-            if (surfaceY < d.seaLevel && d.fluid != null) {
-                return id(biome.value().getBaseTemperature() < 0.15f ? Blocks.GRAVEL.defaultBlockState()
-                        : Blocks.SAND.defaultBlockState());
-            }
-            if (biome.is(BiomeTags.IS_BADLANDS)) {
-                return id(Blocks.RED_SAND.defaultBlockState());
-            }
-            if (biome.is(Biomes.DESERT) || biome.is(BiomeTags.IS_BEACH)) {
-                return id(Blocks.SAND.defaultBlockState());
-            }
-            if (biome.is(Biomes.MUSHROOM_FIELDS)) {
-                return id(Blocks.MYCELIUM.defaultBlockState());
-            }
-            if (biome.is(Biomes.STONY_PEAKS) || biome.is(Biomes.STONY_SHORE)) {
-                return id(Blocks.STONE.defaultBlockState());
-            }
-            if (biome.value().coldEnoughToSnow(new BlockPos(x, surfaceY, z))) {
-                return id(Blocks.SNOW_BLOCK.defaultBlockState());
-            }
-            return id(Blocks.GRASS_BLOCK.defaultBlockState());
         }
     }
 
-    /** Stops building and waits for the running columns, before the stores close. */
+    /** Stops building and waits for the running tiles, before the stores close. */
     void stop() {
         stopped = true;
         pool.shutdownNow();

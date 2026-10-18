@@ -202,5 +202,8 @@ choice, an ADR.
   (ADR-038); the pregenerator later, optional. Noise preview done
   2026-10-18: built by the integrated server, drawn at level 4 and masked
   by real data, `noise_preview` setting, screen toggle and
-  `/farfield preview on|off`; checked in the Fabric dev client. Remains:
-  the user's pack, NeoForge, and the spike in the user's large pack
+  `/farfield preview on|off`; checked in the Fabric dev client. After the
+  user's pack pass (16-block boxes, ugly transitions): height tiles drawn
+  at every level (ADR-039), checked in the Fabric dev client. Remains:
+  the user's pack, NeoForge, step 2 (approximate trees and features), and
+  the spike in the user's large pack

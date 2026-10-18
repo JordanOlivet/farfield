@@ -192,7 +192,9 @@ final class MaterialColors {
     private boolean build(String key, int off, boolean opaque, BiomeTints tints, Biome probeBiome) {
         BlockState state = BlockKeys.state(key);
         if (state == null) {
-            Farfield.LOG.warn("LOD look of unknown block state {}: drawn gray", key);
+            if (!key.equals(PreviewLayer.MASK_KEY)) { // never drawn
+                Farfield.LOG.warn("LOD look of unknown block state {}: drawn gray", key);
+            }
             fillFlat(off, FALLBACK);
             return false;
         }

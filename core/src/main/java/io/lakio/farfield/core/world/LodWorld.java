@@ -6,6 +6,7 @@ import io.lakio.farfield.core.anvil.KeyRegistry;
 import io.lakio.farfield.core.anvil.SectionData;
 import io.lakio.farfield.core.lod.LodSection;
 import io.lakio.farfield.core.lod.MipBuilder;
+import io.lakio.farfield.core.preview.PreviewStore;
 import io.lakio.farfield.core.storage.SectionStore;
 import io.lakio.farfield.core.util.ByteWriter;
 
@@ -55,20 +56,13 @@ public final class LodWorld implements AutoCloseable {
 
     /** Levels 0 (one voxel per block) to 4 (one voxel per 16 blocks). */
     public static final int LEVELS = 5;
-    /**
-     * Key level of the noise preview's sections (ADR-038): level-4 sections
-     * kept apart from the real levels, with level-4 coordinates; they never
-     * enter the mip levels.
-     */
-    public static final int PREVIEW_LEVEL = 8;
-    /** The level preview sections are drawn at. */
-    public static final int PREVIEW_DRAW_LEVEL = LEVELS - 1;
     private static final int LOCK_STRIPES = 64;
 
     private final KeyFile blockStateKeys;
     private final KeyFile biomeKeys;
     private final MaterialTable materials;
     private final SectionStore store;
+    private final PreviewStore preview;
     private final int air;
     private final Object[] locks = new Object[LOCK_STRIPES];
     @SuppressWarnings("unchecked")
@@ -111,10 +105,12 @@ public final class LodWorld implements AutoCloseable {
         biomeKeys = KeyFile.open(dir.resolve("biomes.txt"));
         air = blockStateKeys.registry().id("minecraft:air");
         materials = new MaterialTable(blockStateKeys.registry(), resolver);
+        deleteOldPreview(dir.resolve("sections").resolve("L8"));
         store = new SectionStore(dir.resolve("sections"), () -> {
             blockStateKeys.persist();
             biomeKeys.persist();
         });
+        preview = new PreviewStore(dir.resolve("preview"));
         for (int i = 0; i < LOCK_STRIPES; i++) {
             locks[i] = new Object();
         }
@@ -131,6 +127,19 @@ public final class LodWorld implements AutoCloseable {
                 Files.writeString(mipsVersionFile, MIPS_VERSION);
             }
         }
+    }
+
+    /** The level-4 preview sections of ADR-038, replaced by the tiles of ADR-039. */
+    private static void deleteOldPreview(Path level) throws IOException {
+        if (!Files.isDirectory(level)) {
+            return;
+        }
+        try (var files = Files.list(level)) {
+            for (Path f : (Iterable<Path>) files::iterator) {
+                Files.delete(f);
+            }
+        }
+        Files.delete(level);
     }
 
     /**
@@ -185,22 +194,9 @@ public final class LodWorld implements AutoCloseable {
         return store.contains(key);
     }
 
-    /** Key of the preview section at level-4 section coordinates (x, y, z). */
-    public static long previewKey(int x, int y, int z) {
-        return LodKey.pack(PREVIEW_LEVEL, x, y, z);
-    }
-
-    /**
-     * Writes a noise preview section ({@link #previewKey}) unless it is
-     * unchanged; listeners hear about it like any write. Thread-safe.
-     */
-    public boolean writePreview(long key, LodSection section) throws IOException {
-        if (LodKey.level(key) != PREVIEW_LEVEL) {
-            throw new IllegalArgumentException("not a preview key: " + LodKey.toString(key));
-        }
-        int[] length = new int[1];
-        byte[] old = store.readEncoded(key, length);
-        return write(key, section, old == null ? null : Arrays.copyOf(old, length[0]));
+    /** The noise preview tiles of this world (ADR-039). */
+    public PreviewStore preview() {
+        return preview;
     }
 
     /**

@@ -69,10 +69,11 @@ import static org.lwjgl.opengl.GL46C.*;
  *       it exact). Missing meshes are built by {@link BinaryGreedyMesher} on
  *       two low-priority threads and uploaded on the render thread under a
  *       per-frame budget; a section the server rewrites is meshed again.</li>
- *   <li>Noise preview (ADR-038): the stored preview sections within the
- *       selection distance are drawn beside the selection at level 4, each
- *       chunk column masked where the real level-4 data holds a voxel; a
- *       real level-4 write meshes the preview sections above it again.</li>
+ *   <li>Noise preview (ADR-039, {@link PreviewLayer}): its own selection
+ *       over the preview tiles, at every level, with sections built from the
+ *       tiles on the mesher threads; chunks with real data are masked out. A
+ *       tile written again, or real data arriving in it, meshes its resident
+ *       preview sections again.</li>
  *   <li>Steady frames allocate nothing (primitive collections, reused
  *       matrices and buffers), so they add no garbage-collection pauses.</li>
  *   <li>GPU: quads in one storage buffer (first-fit ranges, grown on
@@ -267,9 +268,8 @@ public final class LodRenderer {
     private boolean selectionDirty = true;
     /** The noise preview setting the last selection ran with. */
     private boolean selectedPreview;
-    /** Level-4 section Y range of the current level, for the preview masks of the mesher threads. */
-    private volatile int previewY0;
-    private volatile int previewY1;
+    private final PreviewLayer previewLayer = new PreviewLayer(meshers);
+    private final LongOpenHashSet changedTiles = new LongOpenHashSet();
     /** Most sections a selection drew coarser than wanted since the last stat line. */
     private int maxFallbacks;
     private double loggedDetail = 1e-9;
@@ -647,6 +647,7 @@ public final class LodRenderer {
         double current = selector.detail();
         if (Math.abs(detail - current) > current * 0.02) {
             selector.setDetail(detail);
+            previewLayer.setDetail(detail);
             selectionDirty = true;
             if (Math.abs(detail - loggedDetail) > loggedDetail * 0.1) {
                 loggedDetail = detail;
@@ -670,7 +671,8 @@ public final class LodRenderer {
         maxFallbacks = Math.max(maxFallbacks, selector.fallbacks());
         selectedPreview = RenderSettings.noisePreview();
         if (selectedPreview) {
-            selectPreview(level, cam);
+            previewLayer.select(cam.x, cam.y, cam.z, level.getMinBuildHeight(), level.getMaxBuildHeight(),
+                    lastSelectionDistance, sections::ready, drawSink, wantSink);
         }
         for (int i = 0, n = drawList.size(); i < n; i++) {
             Resident r = resident.get(drawList.getLong(i));
@@ -680,85 +682,9 @@ public final class LodRenderer {
         }
     }
 
-    /** Stored preview sections within the selection distance: drawn when meshed, else requested. */
-    private void selectPreview(ClientLevel level, Vec3 cam) {
-        int size = LodSection.SIZE << LodWorld.PREVIEW_DRAW_LEVEL;
-        double distance = lastSelectionDistance;
-        int y0 = Math.floorDiv(level.getMinBuildHeight(), size);
-        int y1 = Math.floorDiv(level.getMaxBuildHeight() - 1, size);
-        previewY0 = y0;
-        previewY1 = y1;
-        int x0 = Math.floorDiv((int) Math.floor(cam.x - distance), size);
-        int x1 = Math.floorDiv((int) Math.floor(cam.x + distance), size);
-        int z0 = Math.floorDiv((int) Math.floor(cam.z - distance), size);
-        int z1 = Math.floorDiv((int) Math.floor(cam.z + distance), size);
-        for (int x = x0; x <= x1; x++) {
-            double dx = Math.max(0, Math.max(x * (double) size - cam.x, cam.x - (x + 1) * (double) size));
-            for (int z = z0; z <= z1; z++) {
-                double dz = Math.max(0, Math.max(z * (double) size - cam.z, cam.z - (z + 1) * (double) size));
-                if (dx * dx + dz * dz > distance * distance) {
-                    continue;
-                }
-                for (int y = y0; y <= y1; y++) {
-                    long key = LodWorld.previewKey(x, y, z);
-                    if (!sectionExists(key)) {
-                        continue;
-                    }
-                    if (resident.containsKey(key)) {
-                        drawList.add(key);
-                    } else {
-                        request(key);
-                    }
-                }
-            }
-        }
-    }
-
-    /** The level a section is drawn at: preview sections are level-4 ones. */
+    /** The level a section is drawn at (preview keys carry an offset). */
     private static int drawLevel(long key) {
-        int level = LodKey.level(key);
-        return level == LodWorld.PREVIEW_LEVEL ? LodWorld.PREVIEW_DRAW_LEVEL : level;
-    }
-
-    /**
-     * Clears the chunk columns of a preview section where the real level-4
-     * sections of the same place hold a voxel: real data replaces the preview.
-     */
-    private void maskPreview(LodWorld w, long key, LodSection preview) throws IOException {
-        int x = LodKey.x(key);
-        int z = LodKey.z(key);
-        int air = w.air();
-        int[] real = new int[LodSection.SIZE];
-        for (int y = previewY0; y <= previewY1; y++) {
-            long realKey = LodKey.pack(LodWorld.PREVIEW_DRAW_LEVEL, x, y, z);
-            LodSection section = w.exists(realKey) ? w.read(realKey) : null;
-            if (section == null) {
-                continue;
-            }
-            for (int cz = 0; cz < LodSection.SIZE; cz++) {
-                for (int cx = 0; cx < LodSection.SIZE; cx++) {
-                    if ((real[cz] >>> cx & 1) != 0) {
-                        continue;
-                    }
-                    for (int cy = 0; cy < LodSection.SIZE; cy++) {
-                        if (section.material(cx, cy, cz) != air) {
-                            real[cz] |= 1 << cx;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        for (int cz = 0; cz < LodSection.SIZE; cz++) {
-            int row = real[cz];
-            while (row != 0) {
-                int cx = Integer.numberOfTrailingZeros(row);
-                row &= row - 1;
-                for (int cy = 0; cy < LodSection.SIZE; cy++) {
-                    preview.set(cx, cy, cz, air);
-                }
-            }
-        }
+        return PreviewLayer.drawLevel(key);
     }
 
     private boolean sectionExists(long key) {
@@ -818,6 +744,7 @@ public final class LodRenderer {
         slotCount = 0;
         selectionDirty = true;
         world = next;
+        previewLayer.attach(next);
         if (world != null) {
             world.addListener(listener);
             Farfield.LOG.info("LOD renderer attached to a LOD store");
@@ -833,7 +760,7 @@ public final class LodRenderer {
         meshers.execute(() -> {
             MeshResult result;
             try {
-                LodSection section = w.read(key);
+                LodSection section = PreviewLayer.isPreview(key) ? previewLayer.build(w, key) : w.read(key);
                 result = section == null ? new MeshResult(gen, key, new long[0], 0, null, null) : mesh(w, gen, key, section);
             } catch (IOException | RuntimeException e) {
                 Farfield.LOG.debug("LOD mesh of {} failed", LodKey.toString(key), e);
@@ -845,9 +772,6 @@ public final class LodRenderer {
 
     /** Meshes a section: opaque quads first, then translucent ones. */
     private MeshResult mesh(LodWorld w, int gen, long key, LodSection section) throws IOException {
-        if (LodKey.level(key) == LodWorld.PREVIEW_LEVEL) {
-            maskPreview(w, key, section);
-        }
         MaterialClassifier materials = w.materials();
         // Partial and shaped blocks keep their shape on the finest level only;
         // coarser voxels hold more than the block and stay full.
@@ -858,16 +782,33 @@ public final class LodRenderer {
         boolean translucent = hasTranslucent(section, classes);
         int[][] solid = translucent ? new int[6][] : null;
         byte[][] light = new byte[6][];
-        readNeighbors(w, key, classes, solid, light);
+        if (PreviewLayer.isPreview(key)) {
+            // Preview terrain is in full sky light; its neighbors are built from the tiles.
+            solid = translucent ? previewLayer.solidNeighbors(w, key, classes, borderPlanes.get()) : null;
+        } else {
+            readNeighbors(w, key, classes, solid, light);
+        }
         MeshBuffer out = meshBuffer.get();
         mesher.get().mesh(section, classes, tintedMaterials, null, solid, light, out);
-        long[] all = new long[out.total()];
+        // Masked preview columns only hide faces: their own quads are dropped.
+        int dropped = PreviewLayer.isPreview(key) ? PreviewLayer.maskMaterial(w) : -1;
+        int total = 0;
+        for (int d = 0; d < Quad.DIRECTIONS; d++) {
+            long[] quads = out.quads(d);
+            for (int i = 0, c = out.count(d); i < c; i++) {
+                total += Quad.material(quads[i]) == dropped ? 0 : 1;
+            }
+        }
+        long[] all = new long[total];
         int opaque = 0;
         int back = all.length;
         for (int d = 0; d < Quad.DIRECTIONS; d++) {
             long[] quads = out.quads(d);
             for (int i = 0, c = out.count(d); i < c; i++) {
                 long q = quads[i];
+                if (Quad.material(q) == dropped) {
+                    continue;
+                }
                 if (classes.classOf(Quad.material(q)) == MaterialClassifier.TRANSLUCENT) {
                     all[--back] = q;
                 } else {
@@ -942,14 +883,7 @@ public final class LodRenderer {
             if (resident.containsKey(key.longValue())) {
                 stale.add(key.longValue());
             }
-            if (LodKey.level(key) == LodWorld.PREVIEW_DRAW_LEVEL) {
-                for (int y = previewY0; y <= previewY1; y++) {
-                    long preview = LodWorld.previewKey(LodKey.x(key), y, LodKey.z(key));
-                    if (resident.containsKey(preview)) {
-                        stale.add(preview);
-                    }
-                }
-            }
+            previewLayer.realWritten(key);
             // Translucent faces of the neighbors were culled against the old data.
             long k = key;
             for (int d = 0; d < 6; d++) {
@@ -963,6 +897,19 @@ public final class LodRenderer {
                     stale.add(neighbor);
                 }
             }
+        }
+        if (previewLayer.drainChanges(changedTiles)) {
+            selectionDirty = true;
+        }
+        if (!changedTiles.isEmpty()) {
+            LongIterator keys = resident.keySet().iterator();
+            while (keys.hasNext()) {
+                long k = keys.nextLong();
+                if (PreviewLayer.isPreview(k) && changedTiles.contains(PreviewLayer.tileOf(k))) {
+                    stale.add(k);
+                }
+            }
+            changedTiles.clear();
         }
         LongIterator it = stale.iterator();
         while (it.hasNext() && requested.size() < MAX_IN_FLIGHT) {

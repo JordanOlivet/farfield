@@ -124,23 +124,4 @@ class LodWorldTest {
             assertNull(world.read(LodKey.pack(0, 100, 0, 100)));
         }
     }
-
-    @Test
-    void previewSectionsStayApartFromTheMipLevels() throws IOException {
-        try (LodWorld world = LodWorld.open(dir, MaterialTable.SIMPLE)) {
-            List<Long> written = new ArrayList<>();
-            world.addListener(written::add);
-            LodSection section = new LodSection(world.air());
-            section.set(1, 2, 3, world.blockStates().id("minecraft:stone"));
-            long key = LodWorld.previewKey(5, 0, -7);
-            assertTrue(world.writePreview(key, section));
-            assertEquals(List.of(key), written);
-            assertTrue(!world.hasDirtyMips(), "a preview section dirties no mip level");
-            assertTrue(!world.writePreview(key, section), "unchanged: not written again");
-            LodSection read = world.read(key);
-            assertNotNull(read);
-            assertEquals(world.blockStates().id("minecraft:stone"), read.material(1, 2, 3));
-            assertTrue(!world.exists(LodKey.pack(LodWorld.PREVIEW_DRAW_LEVEL, 5, 0, -7)));
-        }
-    }
 }
