@@ -31,7 +31,10 @@ import java.util.function.LongPredicate;
  * they live beside the real ones in the mesh cache. Chunks with real LOD
  * data are masked out: per tile, the chunks whose real level-4 column holds
  * a voxel; a tile's sections exist for the selection only once its mask is
- * known. A real write in a tile refreshes its mask in the background while
+ * known. The mask also holds each real chunk's ground and fluid top (from
+ * the real level-4 voxels and their fill): preview columns beside a real
+ * sea go down to its floor, and the real column's mask materials hide only
+ * what the real terrain covers. A real write in a tile refreshes its mask in the background while
  * the old one stays in use (dropping it made the tile vanish for a frame on
  * every write: flicker, and holes next to explored land); only a mask that
  * changed meshes the tile again.
@@ -42,8 +45,10 @@ final class PreviewLayer {
     private static final byte EXISTS = 1;
     private static final byte ABSENT = 2;
     private static final int TOP_LEVEL = LodWorld.LEVELS - 1;
-    /** Block-state key of the mask material: unknown to the game, so opaque, never drawn. */
-    static final String MASK_KEY = "farfield:preview_mask";
+    /** Mask layout: 32 rows of real-chunk bits (z, bit x), then per chunk (z * 32 + x) the ground, then the fluid top. */
+    private static final int GROUND = PreviewTile.CHUNKS;
+    private static final int FLUID = GROUND + PreviewTile.CHUNKS * PreviewTile.CHUNKS;
+    private static final int MASK_INTS = FLUID + PreviewTile.CHUNKS * PreviewTile.CHUNKS;
     private static final int[][] STEP = {{-1, 0, 0}, {1, 0, 0}, {0, -1, 0}, {0, 1, 0}, {0, 0, -1}, {0, 0, 1}};
 
     private final LodSelector selector = new LodSelector(LodWorld.LEVELS, 4.0);
@@ -197,9 +202,6 @@ final class PreviewLayer {
         int cz0 = Math.floorMod(bz, PreviewTile.BLOCKS) >> 4;
         int chunks = size >> 4;
         int y0 = LodKey.y(plain) * size;
-        if (!summary.spans(cx0, cz0, cx0 + chunks - 1, cz0 + chunks - 1, y0, y0 + size, s)) {
-            return false;
-        }
         long tile = PreviewStore.key(tileX, tileZ);
         int[] mask = masks.get(tile);
         if (mask == null) {
@@ -207,12 +209,23 @@ final class PreviewLayer {
             return false;
         }
         int bits = chunks >= 32 ? -1 : ((1 << chunks) - 1) << cx0;
+        boolean preview = false;
         for (int cz = cz0; cz < cz0 + chunks; cz++) {
-            if ((mask[cz] & bits) != bits) {
-                return true;
+            preview |= (mask[cz] & bits) != bits;
+        }
+        if (!preview) {
+            return false; // every chunk has real data
+        }
+        // Real chunks around go down to their ground: so do the preview columns beside them.
+        int lowest = Integer.MAX_VALUE;
+        for (int cz = Math.max(0, cz0 - 1); cz <= Math.min(PreviewTile.CHUNKS - 1, cz0 + chunks); cz++) {
+            for (int cx = Math.max(0, cx0 - 1); cx <= Math.min(PreviewTile.CHUNKS - 1, cx0 + chunks); cx++) {
+                if ((mask[cz] >>> cx & 1) != 0) {
+                    lowest = Math.min(lowest, mask[GROUND + cz * PreviewTile.CHUNKS + cx]);
+                }
             }
         }
-        return false; // every chunk has real data
+        return summary.spans(cx0, cz0, cx0 + chunks - 1, cz0 + chunks - 1, y0, y0 + size, s, lowest);
     }
 
     /**
@@ -259,14 +272,23 @@ final class PreviewLayer {
         return raced != null ? raced : mask;
     }
 
-    /** The chunks of a tile whose real level-4 column holds a voxel. Any thread. */
+    /**
+     * The chunks of a tile whose real level-4 column holds a voxel, with
+     * their ground (the first block above the highest solid voxel's fill)
+     * and fluid top (the same for the highest translucent voxel above it).
+     * Any thread.
+     */
     private int[] readMask(LodWorld w, long tile) throws IOException {
-        int[] mask = new int[PreviewTile.CHUNKS];
+        int[] mask = new int[MASK_INTS];
+        java.util.Arrays.fill(mask, GROUND, MASK_INTS, Integer.MIN_VALUE);
         int x = PreviewStore.tileX(tile);
         int z = PreviewStore.tileZ(tile);
         int size = LodSection.SIZE << TOP_LEVEL;
+        int voxel = 1 << TOP_LEVEL;
         int air = w.air();
-        for (int y = Math.floorDiv(minY, size); y <= Math.floorDiv(maxY - 1, size); y++) {
+        MaterialClassifier classes = w.materials();
+        // From the top down: the first fluid and the first ground seen in each column.
+        for (int y = Math.floorDiv(maxY - 1, size); y >= Math.floorDiv(minY, size); y--) {
             long key = LodKey.pack(TOP_LEVEL, x, y, z);
             LodSection real = w.exists(key) ? w.read(key) : null;
             if (real == null) {
@@ -274,16 +296,36 @@ final class PreviewLayer {
             }
             for (int cz = 0; cz < LodSection.SIZE; cz++) {
                 for (int cx = 0; cx < LodSection.SIZE; cx++) {
-                    if ((mask[cz] >>> cx & 1) != 0) {
+                    int c = cz * PreviewTile.CHUNKS + cx;
+                    if (mask[GROUND + c] != Integer.MIN_VALUE) {
                         continue;
                     }
-                    for (int cy = 0; cy < LodSection.SIZE; cy++) {
-                        if (real.material(cx, cy, cz) != air) {
-                            mask[cz] |= 1 << cx;
+                    for (int cy = LodSection.SIZE - 1; cy >= 0; cy--) {
+                        int material = real.material(cx, cy, cz);
+                        if (material == air) {
+                            continue;
+                        }
+                        mask[cz] |= 1 << cx;
+                        int top = (y * LodSection.SIZE + cy) * voxel + real.fill().get(cx, cy, cz) + 1;
+                        if (classes.classOf(material) == MaterialClassifier.TRANSLUCENT) {
+                            if (mask[FLUID + c] == Integer.MIN_VALUE) {
+                                mask[FLUID + c] = top;
+                            }
+                        } else {
+                            mask[GROUND + c] = top;
                             break;
                         }
                     }
                 }
+            }
+        }
+        // Fluid without ground under it in the store: its bottom stands for the ground.
+        for (int c = 0; c < PreviewTile.CHUNKS * PreviewTile.CHUNKS; c++) {
+            if (mask[GROUND + c] == Integer.MIN_VALUE && mask[FLUID + c] != Integer.MIN_VALUE) {
+                mask[GROUND + c] = minY;
+            }
+            if (mask[FLUID + c] == Integer.MIN_VALUE) {
+                mask[FLUID + c] = mask[GROUND + c];
             }
         }
         return mask;
@@ -304,25 +346,54 @@ final class PreviewLayer {
             }
         };
         return PreviewVoxels.build(drawLevel(key), LodKey.x(key), LodKey.y(key), LodKey.z(key), tiles, maskOf(w),
-                w.air(), minY, maskMaterial(w), layerAxis, layerIndex);
+                w.air(), minY, maskGround(w), maskFluid(w), layerAxis, layerIndex);
     }
 
-    /** The material id of masked columns, whose quads {@code LodRenderer} drops. */
-    static int maskMaterial(LodWorld w) {
-        return w.blockStates().id(MASK_KEY);
+    /** The material ids of real columns, whose quads {@code LodRenderer} drops. */
+    static int maskGround(LodWorld w) {
+        return w.blockStates().id(PreviewVoxels.MASK_GROUND_KEY);
+    }
+
+    static int maskFluid(LodWorld w) {
+        return w.blockStates().id(PreviewVoxels.MASK_FLUID_KEY);
     }
 
     private PreviewVoxels.Mask maskOf(LodWorld w) {
-        return (chunkX, chunkZ) -> {
-            long tile = PreviewStore.key(Math.floorDiv(chunkX, PreviewTile.CHUNKS), Math.floorDiv(chunkZ, PreviewTile.CHUNKS));
-            int[] mask;
-            try {
-                mask = mask(w, tile);
-            } catch (IOException e) {
-                return false;
+        return new PreviewVoxels.Mask() {
+            @Override
+            public boolean real(int chunkX, int chunkZ) {
+                int[] mask = maskAt(chunkX, chunkZ);
+                return mask != null
+                        && (mask[Math.floorMod(chunkZ, PreviewTile.CHUNKS)] >>> Math.floorMod(chunkX, PreviewTile.CHUNKS) & 1) != 0;
             }
-            return (mask[Math.floorMod(chunkZ, PreviewTile.CHUNKS)] >>> Math.floorMod(chunkX, PreviewTile.CHUNKS) & 1) != 0;
+
+            @Override
+            public int ground(int chunkX, int chunkZ) {
+                int[] mask = maskAt(chunkX, chunkZ);
+                return mask == null ? Integer.MIN_VALUE : mask[GROUND + chunk(chunkX, chunkZ)];
+            }
+
+            @Override
+            public int fluidTop(int chunkX, int chunkZ) {
+                int[] mask = maskAt(chunkX, chunkZ);
+                return mask == null ? Integer.MIN_VALUE : mask[FLUID + chunk(chunkX, chunkZ)];
+            }
+
+            private int[] maskAt(int chunkX, int chunkZ) {
+                long tile = PreviewStore.key(Math.floorDiv(chunkX, PreviewTile.CHUNKS),
+                        Math.floorDiv(chunkZ, PreviewTile.CHUNKS));
+                try {
+                    return mask(w, tile);
+                } catch (IOException e) {
+                    return null;
+                }
+            }
         };
+    }
+
+    /** A chunk's index in its tile's mask, {@code z * 32 + x}. */
+    private static int chunk(int chunkX, int chunkZ) {
+        return Math.floorMod(chunkZ, PreviewTile.CHUNKS) * PreviewTile.CHUNKS + Math.floorMod(chunkX, PreviewTile.CHUNKS);
     }
 
     /**

@@ -141,7 +141,16 @@ public final class PreviewTile {
          * surface or the sea.
          */
         public boolean spans(int cx0, int cz0, int cx1, int cz1, int y0, int y1, int voxel) {
-            int lo = Integer.MAX_VALUE;
+            return spans(cx0, cz0, cx1, cz1, y0, y1, voxel, Integer.MAX_VALUE);
+        }
+
+        /**
+         * Like {@link #spans(int, int, int, int, int, int, int)}, the columns
+         * going down to {@code lowest} at least (a preview column beside a
+         * real sea goes down to the real floor).
+         */
+        public boolean spans(int cx0, int cz0, int cx1, int cz1, int y0, int y1, int voxel, int lowest) {
+            int lo = lowest;
             int hi = sea;
             for (int cz = Math.max(0, cz0 - 1); cz <= Math.min(CHUNKS - 1, cz1 + 1); cz++) {
                 for (int cx = Math.max(0, cx0 - 1); cx <= Math.min(CHUNKS - 1, cx1 + 1); cx++) {

@@ -791,12 +791,15 @@ public final class LodRenderer {
         MeshBuffer out = meshBuffer.get();
         mesher.get().mesh(section, classes, tintedMaterials, null, solid, light, out);
         // Masked preview columns only hide faces: their own quads are dropped.
-        int dropped = PreviewLayer.isPreview(key) ? PreviewLayer.maskMaterial(w) : -1;
+        boolean preview = PreviewLayer.isPreview(key);
+        int dropped = preview ? PreviewLayer.maskGround(w) : -1;
+        int droppedFluid = preview ? PreviewLayer.maskFluid(w) : -1;
         int total = 0;
         for (int d = 0; d < Quad.DIRECTIONS; d++) {
             long[] quads = out.quads(d);
             for (int i = 0, c = out.count(d); i < c; i++) {
-                total += Quad.material(quads[i]) == dropped ? 0 : 1;
+                int m = Quad.material(quads[i]);
+                total += m == dropped || m == droppedFluid ? 0 : 1;
             }
         }
         long[] all = new long[total];
@@ -806,7 +809,7 @@ public final class LodRenderer {
             long[] quads = out.quads(d);
             for (int i = 0, c = out.count(d); i < c; i++) {
                 long q = quads[i];
-                if (Quad.material(q) == dropped) {
+                if (Quad.material(q) == dropped || Quad.material(q) == droppedFluid) {
                     continue;
                 }
                 if (classes.classOf(Quad.material(q)) == MaterialClassifier.TRANSLUCENT) {

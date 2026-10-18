@@ -3,6 +3,7 @@ package io.lakio.farfield.lod;
 import io.lakio.farfield.core.lod.MipBuilder;
 import io.lakio.farfield.core.mesh.MaterialClassifier;
 import io.lakio.farfield.core.mesh.ShapeBoxes;
+import io.lakio.farfield.core.preview.PreviewVoxels;
 import io.lakio.farfield.core.world.MaterialTable;
 import net.minecraft.commands.arguments.blocks.BlockStateParser;
 import net.minecraft.core.BlockPos;
@@ -104,6 +105,10 @@ public final class BlockKeys {
 
     /** {@link MaterialTable.Resolver} from block states; unknown keys are opaque cubes. */
     public static int resolve(String key) {
+        if (key.equals(PreviewVoxels.MASK_FLUID_KEY)) {
+            // The preview's real-fluid mask: hides preview water faces, not land ones.
+            return MaterialTable.pack(MaterialClassifier.TRANSLUCENT, MipBuilder.Shapes.FULL);
+        }
         BlockState state = state(key);
         if (state == null) {
             return MaterialTable.pack(MaterialClassifier.OPAQUE, MipBuilder.Shapes.FULL);

@@ -5,6 +5,7 @@ import io.lakio.farfield.Farfield;
 import io.lakio.farfield.core.anvil.KeyRegistry;
 import io.lakio.farfield.core.mesh.MaterialClassifier;
 import io.lakio.farfield.core.mesh.ShapeBoxes;
+import io.lakio.farfield.core.preview.PreviewVoxels;
 import io.lakio.farfield.lod.BlockKeys;
 import io.lakio.farfield.mixin.client.SpriteContentsAccessor;
 import net.minecraft.client.Minecraft;
@@ -192,7 +193,7 @@ final class MaterialColors {
     private boolean build(String key, int off, boolean opaque, BiomeTints tints, Biome probeBiome) {
         BlockState state = BlockKeys.state(key);
         if (state == null) {
-            if (!key.equals(PreviewLayer.MASK_KEY)) { // never drawn
+            if (!key.startsWith(PreviewVoxels.MASK_GROUND_KEY)) { // the preview's masks: never drawn
                 Farfield.LOG.warn("LOD look of unknown block state {}: drawn gray", key);
             }
             fillFlat(off, FALLBACK);

@@ -84,7 +84,7 @@ class PreviewTest {
     void levelZeroColumnsStandOnTheInterpolatedSurface() {
         PreviewTile t = slope();
         // Section (0, 1, 0) at level 0: blocks 0..31 on X and Z, 32..63 on Y.
-        LodSection s = PreviewVoxels.build(0, 0, 1, 0, (x, z) -> x == 0 && z == 0 ? t : null, null, AIR, -64, -1, -1, 0);
+        LodSection s = PreviewVoxels.build(0, 0, 1, 0, (x, z) -> x == 0 && z == 0 ? t : null, null, AIR, -64, -1, -1, -1, 0);
         assertNotNull(s);
         // Column x 4: surface 55 (blocks up to 54), sand on top, sand filler, water up to 62.
         assertEquals(SAND, s.material(4, 54 - 32, 0));
@@ -112,14 +112,14 @@ class PreviewTest {
         }
         PreviewVoxels.Tiles tiles = (x, z) -> x == 0 && z == 0 ? t : null;
         // Flat land: only the top block, the skin stops one block under the neighbors' surface.
-        LodSection flat = PreviewVoxels.build(0, 0, 2, 0, tiles, null, AIR, -64, -1, -1, 0);
+        LodSection flat = PreviewVoxels.build(0, 0, 2, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
         assertEquals(GRASS, flat.material(20, 69 - 64, 20));
         assertEquals(AIR, flat.material(20, 68 - 64, 20));
         // The pit's side: down to one block under the lowest neighbor, filler then ground.
         int h = t.height(17, 16);
         int lowest = Math.min(Math.min(t.height(16, 16), t.height(18, 16)), Math.min(t.height(17, 15), t.height(17, 17)));
         assertTrue(h - lowest >= 5, "a steep side: " + h + " over " + lowest);
-        LodSection side = PreviewVoxels.build(0, 0, 1, 0, tiles, null, AIR, -64, -1, -1, 0);
+        LodSection side = PreviewVoxels.build(0, 0, 1, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
         assertEquals(GRASS, side.material(17, h - 1 - 32, 16));
         assertEquals(DIRT, side.material(17, h - 4 - 32, 16));
         assertEquals(STONE, side.material(17, h - 5 - 32, 16));
@@ -131,7 +131,7 @@ class PreviewTest {
     void coarseColumnsTakeTheHighestSampleAndTheirFill() {
         PreviewTile t = slope();
         // Level 4 (16 blocks), section (0, 0, 0): voxel column 0 covers samples 0..4: highest 66.
-        LodSection s = PreviewVoxels.build(4, 0, 0, 0, (x, z) -> x == 0 && z == 0 ? t : null, null, AIR, -64, -1, -1, 0);
+        LodSection s = PreviewVoxels.build(4, 0, 0, 0, (x, z) -> x == 0 && z == 0 ? t : null, null, AIR, -64, -1, -1, -1, 0);
         assertEquals(GRASS, s.material(0, 4, 0));
         assertEquals(1, s.fill().get(0, 4, 0), "66 - 64 = 2 blocks: 2/16");
         assertEquals(DIRT, s.material(0, 3, 0), "the filler reaches into the voxel below");
@@ -143,23 +143,71 @@ class PreviewTest {
     void realChunksAndMissingTilesStayEmpty() {
         PreviewTile t = slope();
         LodSection s = PreviewVoxels.build(0, 0, 1, 0, (x, z) -> x == 0 && z == 0 ? t : null,
-                (cx, cz) -> cx == 0 && cz == 0, AIR, -64, -1, -1, 0);
+                (cx, cz) -> cx == 0 && cz == 0, AIR, -64, -1, -1, -1, 0);
         assertEquals(AIR, s.material(4, 54 - 32, 4), "chunk 0, 0 is real");
-        LodSection hidden = PreviewVoxels.build(0, 0, 1, 0, (x, z) -> x == 0 && z == 0 ? t : null,
-                (cx, cz) -> cx == 0 && cz == 0, AIR, -64, 9, -1, 0);
-        assertEquals(9, hidden.material(4, 54 - 32, 4), "real chunks hold the mask material");
-        assertEquals(9, hidden.material(4, 60 - 32, 4), "water included");
+        // Chunk 0, 0 is real: sea floor at 40, water up to 63.
+        PreviewVoxels.Mask sea = new PreviewVoxels.Mask() {
+            @Override
+            public boolean real(int cx, int cz) {
+                return cx == 0 && cz == 0;
+            }
+
+            @Override
+            public int ground(int cx, int cz) {
+                return 40;
+            }
+
+            @Override
+            public int fluidTop(int cx, int cz) {
+                return 63;
+            }
+        };
+        LodSection hidden = PreviewVoxels.build(0, 0, 1, 0, (x, z) -> x == 0 && z == 0 ? t : null, sea, AIR, -64,
+                9, 8, -1, 0);
+        assertEquals(AIR, hidden.material(4, 38 - 32, 4), "under the real ground's voxel");
+        assertEquals(9, hidden.material(4, 39 - 32, 4), "real ground");
+        assertEquals(8, hidden.material(4, 40 - 32, 4), "real fluid");
+        assertEquals(8, hidden.material(4, 62 - 32, 4));
+        assertEquals(AIR, hidden.material(4, 63 - 32, 4));
         assertEquals(SAND, hidden.material(4, 54 - 32, 20));
-        assertEquals(SAND, s.material(4, 54 - 32, 20), "chunk 0, 1 is not");
-        assertNull(PreviewVoxels.build(0, 40, 1, 0, (x, z) -> x == 0 && z == 0 ? t : null, null, AIR, -64, -1, -1, 0));
+        assertNull(PreviewVoxels.build(0, 40, 1, 0, (x, z) -> x == 0 && z == 0 ? t : null, null, AIR, -64, -1, -1, -1, 0));
+    }
+
+    @Test
+    void columnsBesideARealSeaGoDownToItsFloor() {
+        PreviewTile t = slope();
+        PreviewVoxels.Tiles tiles = (x, z) -> x == 0 && z == 0 ? t : null;
+        PreviewVoxels.Mask deep = new PreviewVoxels.Mask() {
+            @Override
+            public boolean real(int cx, int cz) {
+                return cx == 0 && cz == 0;
+            }
+
+            @Override
+            public int ground(int cx, int cz) {
+                return 20;
+            }
+
+            @Override
+            public int fluidTop(int cx, int cz) {
+                return 63;
+            }
+        };
+        // Column x 16, z 5 (chunk 1, 0) stands at 67, beside the real chunk 0, 0 whose floor is at 20.
+        LodSection low = PreviewVoxels.build(0, 0, 0, 0, tiles, deep, AIR, -64, 9, 8, -1, 0);
+        assertEquals(STONE, low.material(16, 25, 5), "the cliff goes down to the real floor");
+        assertEquals(STONE, low.material(16, 19, 5));
+        assertEquals(AIR, low.material(16, 18, 5));
+        // A column with only preview neighbors keeps its thin skin.
+        assertEquals(AIR, low.material(16, 25, 20));
     }
 
     @Test
     void aLayerBuildMatchesTheWholeSection() {
         PreviewTile t = slope();
         PreviewVoxels.Tiles tiles = (x, z) -> x == 0 && z == 0 ? t : null;
-        LodSection whole = PreviewVoxels.build(1, 0, 0, 0, tiles, null, AIR, -64, -1, -1, 0);
-        LodSection layer = PreviewVoxels.build(1, 0, 0, 0, tiles, null, AIR, -64, -1, 0, 0);
+        LodSection whole = PreviewVoxels.build(1, 0, 0, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
+        LodSection layer = PreviewVoxels.build(1, 0, 0, 0, tiles, null, AIR, -64, -1, -1, 0, 0);
         for (int y = 0; y < LodSection.SIZE; y++) {
             for (int z = 0; z < LodSection.SIZE; z++) {
                 assertEquals(whole.material(0, y, z), layer.material(0, y, z));
