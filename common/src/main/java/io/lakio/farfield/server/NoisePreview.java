@@ -51,7 +51,10 @@ import java.util.concurrent.atomic.AtomicLong;
  * blocks from the noise router's final density (each search starts from
  * the neighbor sample's height, then bisects to the block), the biome per
  * chunk and the surface blocks per 4-block cell, guessed from the biome and
- * the slope. The client turns tiles into sections of every level.
+ * the slope; then the biome's trees at their average density
+ * ({@link PreviewTrees}), at random but always the same places (seeded by
+ * the world and the chunk), on grass and snow above the sea. The client
+ * turns tiles into sections of every level.
  */
 final class NoisePreview {
 
@@ -72,6 +75,9 @@ final class NoisePreview {
         return t;
     });
     private final Map<ResourceKey<Level>, Optional<Dimension>> dimensions = new ConcurrentHashMap<>();
+    private final PreviewTrees trees = new PreviewTrees();
+    /** Most trees placed in one chunk, whatever the biome says. */
+    private static final int MAX_TREES_PER_CHUNK = 48;
     private volatile boolean stopped;
     private long ticks;
 
@@ -87,6 +93,7 @@ final class NoisePreview {
         /** The sea's fluid, null when the dimension has none (the End). */
         final BlockState fluid;
         final boolean end;
+        final long seed;
         volatile LodWorld world;
         final Set<Long> done = ConcurrentHashMap.newKeySet();
         final Set<Long> inFlight = ConcurrentHashMap.newKeySet();
@@ -107,6 +114,7 @@ final class NoisePreview {
             defaultBlock = settings.defaultBlock();
             fluid = settings.defaultFluid().isAir() ? null : settings.defaultFluid();
             end = key == Level.END;
+            seed = level.getSeed();
         }
 
         boolean solid(int x, int y, int z) {
@@ -242,6 +250,7 @@ final class NoisePreview {
             }
             tile.setBelow(m.below);
             tile.setWater(m.water, d.seaLevel);
+            plantTrees(d, tile, tileX, tileZ, chunkBiomes, m);
             world.preview().write(tileX, tileZ, tile);
             d.done.add(key);
             d.built.incrementAndGet();
@@ -252,6 +261,38 @@ final class NoisePreview {
             }
         } finally {
             d.inFlight.remove(key);
+        }
+    }
+
+    /** Places each chunk's trees: the biome's average count, at random cells of grass or snow above the sea. */
+    private void plantTrees(Dimension d, PreviewTile tile, int tileX, int tileZ, Holder<Biome>[] chunkBiomes,
+                            Materials m) {
+        for (int cz = 0; cz < PreviewTile.CHUNKS; cz++) {
+            for (int cx = 0; cx < PreviewTile.CHUNKS; cx++) {
+                PreviewTrees.BiomeTrees bt = trees.of(chunkBiomes[cz * PreviewTile.CHUNKS + cx]);
+                if (bt.total() <= 0) {
+                    continue;
+                }
+                long chunkX = tileX * (long) PreviewTile.CHUNKS + cx;
+                long chunkZ = tileZ * (long) PreviewTile.CHUNKS + cz;
+                java.util.Random random = new java.util.Random(d.seed ^ chunkX * 341873128712L ^ chunkZ * 132897987541L);
+                double expected = Math.min(MAX_TREES_PER_CHUNK, bt.total());
+                int n = (int) expected + (random.nextDouble() < expected - (int) expected ? 1 : 0);
+                for (int i = 0; i < n; i++) {
+                    int bx = cx * 16 + random.nextInt(16);
+                    int bz = cz * 16 + random.nextInt(16);
+                    PreviewTrees.Spec spec = bt.pick(random.nextDouble());
+                    int top = tile.top(bx / PreviewTile.GRID, bz / PreviewTile.GRID);
+                    if (top != m.grass && top != m.snow || tile.height(bx, bz) <= d.seaLevel) {
+                        continue;
+                    }
+                    int kind = tile.kind(new PreviewTile.TreeKind(m.id(spec.trunk()), m.id(spec.leaves()),
+                            spec.height(), spec.radius(), spec.crownHeight(), spec.cone()));
+                    if (kind >= 0) {
+                        tile.addTree(bx, bz, kind);
+                    }
+                }
+            }
         }
     }
 
@@ -363,7 +404,7 @@ final class NoisePreview {
             mycelium = id(Blocks.MYCELIUM.defaultBlockState());
         }
 
-        private int id(BlockState state) {
+        int id(BlockState state) {
             return world.blockStates().id(BlockKeys.key(state));
         }
 

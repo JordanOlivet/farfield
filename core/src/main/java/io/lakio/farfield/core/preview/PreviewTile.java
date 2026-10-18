@@ -7,7 +7,8 @@ import io.lakio.farfield.core.util.ByteWriter;
  * The noise preview of 512 x 512 blocks (ADR-039): the surface height every
  * {@link #GRID} blocks, interpolated in between; per {@link #GRID}-block
  * cell the block seen on top and the one just under it; per chunk the
- * biome; for the whole tile the ground's material and the sea.
+ * biome and its trees (ADR-040: positions, each of a {@link TreeKind});
+ * for the whole tile the ground's material and the sea.
  *
  * <p>Heights are the first free block above the ground. Sample (i, k) lies
  * on the block corner (i * 4, k * 4) of the tile, so the last row and
@@ -23,7 +24,10 @@ public final class PreviewTile {
     public static final int CHUNKS = BLOCKS / 16;
     /** Blocks under the top one that show the filler (dirt under grass). */
     public static final int FILLER_DEPTH = 3;
-    private static final int FORMAT = 1;
+    /** Format 2 adds the trees; tiles of format 1 are built again. */
+    private static final int FORMAT = 2;
+    /** Most tree kinds a tile holds (the kind rides in 8 bits of a tree). */
+    public static final int MAX_KINDS = 255;
 
     private final short[] heights = new short[SAMPLES * SAMPLES];
     private final int[] top = new int[CELLS * CELLS];
@@ -32,6 +36,52 @@ public final class PreviewTile {
     private int below;
     private int water = -1;
     private int seaLevel;
+    private final java.util.List<TreeKind> kinds = new java.util.ArrayList<>();
+    /** Per chunk, its trees: x | z << 4 (in the chunk) | kind << 8. */
+    private final int[][] trees = new int[CHUNKS * CHUNKS][];
+
+    /**
+     * A tree shape: its trunk and leaves materials, the trunk's height, and
+     * a crown of {@code crownHeight + 1} rows around the trunk's top, of
+     * radius {@code radius} (rounded rows narrowing at the top, or a cone
+     * narrowing to a point for spruces).
+     */
+    public record TreeKind(int trunk, int leaves, int height, int radius, int crownHeight, boolean cone) {
+    }
+
+    /** The index of a kind, added when new; -1 when the tile holds {@link #MAX_KINDS} already. */
+    public int kind(TreeKind kind) {
+        int i = kinds.indexOf(kind);
+        if (i >= 0) {
+            return i;
+        }
+        if (kinds.size() >= MAX_KINDS) {
+            return -1;
+        }
+        kinds.add(kind);
+        return kinds.size() - 1;
+    }
+
+    public TreeKind treeKind(int index) {
+        return kinds.get(index);
+    }
+
+    /** Adds a tree at block (bx, bz) of the tile. */
+    public void addTree(int bx, int bz, int kind) {
+        int c = (bz >> 4) * CHUNKS + (bx >> 4);
+        int[] list = trees[c];
+        int[] grown = list == null ? new int[1] : java.util.Arrays.copyOf(list, list.length + 1);
+        grown[grown.length - 1] = (bx & 15) | (bz & 15) << 4 | kind << 8;
+        trees[c] = grown;
+    }
+
+    /** The trees of a chunk of the tile, each {@code x | z << 4 | kind << 8}; never null. */
+    public int[] trees(int chunkX, int chunkZ) {
+        int[] list = trees[chunkZ * CHUNKS + chunkX];
+        return list == null ? NO_TREES : list;
+    }
+
+    private static final int[] NO_TREES = new int[0];
 
     public void setHeight(int i, int k, int surfaceY) {
         heights[k * SAMPLES + i] = (short) surfaceY;
@@ -124,6 +174,20 @@ public final class PreviewTile {
                 max[cz * CHUNKS + cx] = (short) hi;
             }
         }
+        for (int cz = 0; cz < CHUNKS; cz++) {
+            for (int cx = 0; cx < CHUNKS; cx++) {
+                for (int t : trees(cx, cz)) {
+                    TreeKind k = kinds.get(t >>> 8);
+                    int topY = height(cx * 16 + (t & 15), cz * 16 + (t >> 4 & 15)) + k.height() + 1;
+                    for (int nz = Math.max(0, cz - 1); nz <= Math.min(CHUNKS - 1, cz + 1); nz++) {
+                        for (int nx = Math.max(0, cx - 1); nx <= Math.min(CHUNKS - 1, cx + 1); nx++) {
+                            int i = nz * CHUNKS + nx;
+                            max[i] = (short) Math.max(max[i], topY);
+                        }
+                    }
+                }
+            }
+        }
         return new Summary(min, max, water >= 0 ? seaLevel : Integer.MIN_VALUE);
     }
 
@@ -187,6 +251,22 @@ public final class PreviewTile {
         for (int v : biomes) {
             out.writeVarInt(v + 1);
         }
+        out.writeVarInt(kinds.size());
+        for (TreeKind k : kinds) {
+            out.writeVarInt(k.trunk());
+            out.writeVarInt(k.leaves());
+            out.writeVarInt(k.height());
+            out.writeVarInt(k.radius());
+            out.writeVarInt(k.crownHeight());
+            out.writeVarInt(k.cone() ? 1 : 0);
+        }
+        for (int[] list : trees) {
+            int n = list == null ? 0 : list.length;
+            out.writeVarInt(n);
+            for (int i = 0; i < n; i++) {
+                out.writeVarInt(list[i]);
+            }
+        }
     }
 
     public static PreviewTile decode(ByteReader in) {
@@ -214,6 +294,21 @@ public final class PreviewTile {
         }
         for (int i = 0; i < t.biomes.length; i++) {
             t.biomes[i] = in.readVarInt() - 1;
+        }
+        int kinds = in.readVarInt();
+        for (int i = 0; i < kinds; i++) {
+            t.kinds.add(new TreeKind(in.readVarInt(), in.readVarInt(), in.readVarInt(), in.readVarInt(),
+                    in.readVarInt(), in.readVarInt() != 0));
+        }
+        for (int c = 0; c < t.trees.length; c++) {
+            int n = in.readVarInt();
+            if (n > 0) {
+                int[] list = new int[n];
+                for (int i = 0; i < n; i++) {
+                    list[i] = in.readVarInt();
+                }
+                t.trees[c] = list;
+            }
         }
         return t;
     }

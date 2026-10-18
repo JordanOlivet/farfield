@@ -202,6 +202,75 @@ class PreviewTest {
         assertEquals(AIR, low.material(16, 25, 20));
     }
 
+    private static final int LOG = 6;
+    private static final int LEAVES = 7;
+
+    /** Flat land at 70 (ground top at 69) with one oak-like tree at block (16, 16). */
+    private static PreviewTile forest() {
+        PreviewTile t = slope();
+        for (int k = 0; k < PreviewTile.SAMPLES; k++) {
+            for (int i = 0; i < PreviewTile.SAMPLES; i++) {
+                t.setHeight(i, k, 70);
+            }
+        }
+        int oak = t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 5, 2, 3, false));
+        t.addTree(16, 16, oak);
+        return t;
+    }
+
+    @Test
+    void treesStandOnTheSurfaceBlockByBlock() {
+        PreviewTile t = forest();
+        LodSection s = PreviewVoxels.build(0, 0, 2, 0, (x, z) -> x == 0 && z == 0 ? t : null, null, AIR, -64,
+                -1, -1, -1, 0);
+        // Trunk from 70 to 74, crown rows 72 to 75 (radius 2, then 1 on top).
+        assertEquals(LOG, s.material(16, 70 - 64, 16));
+        assertEquals(LOG, s.material(16, 74 - 64, 16));
+        assertEquals(LEAVES, s.material(16, 75 - 64, 16));
+        assertEquals(LEAVES, s.material(18, 73 - 64, 16));
+        assertEquals(AIR, s.material(18, 73 - 64, 18), "rounded corner");
+        assertEquals(AIR, s.material(18, 75 - 64, 16), "narrower top row");
+        assertEquals(AIR, s.material(16, 76 - 64, 16));
+        assertEquals(GRASS, s.material(16, 69 - 64, 16), "the ground under the trunk");
+    }
+
+    @Test
+    void coarseLevelsKeepWellFilledTreeVoxels() {
+        PreviewTile t = forest();
+        // Level 2 (4 blocks): the crown fills voxel (4, 18, 4), blocks 16..19 x 72..75 x 16..19, well over a quarter.
+        LodSection s = PreviewVoxels.build(2, 0, 0, 0, (x, z) -> x == 0 && z == 0 ? t : null, null, AIR, -64,
+                -1, -1, -1, 0);
+        assertEquals(LEAVES, s.material(4, 18, 4));
+        // Level 4 (16 blocks): one tree is far less than a quarter of a voxel.
+        LodSection far = PreviewVoxels.build(4, 0, 0, 0, (x, z) -> x == 0 && z == 0 ? t : null, null, AIR, -64,
+                -1, -1, -1, 0);
+        assertEquals(GRASS, far.material(1, 4, 1), "the ground voxel, no crown over it");
+        assertEquals(AIR, far.material(1, 5, 1));
+    }
+
+    @Test
+    void treesRoundTripAndRaiseTheSummary() {
+        PreviewTile t = forest();
+        ByteWriter out = new ByteWriter(1024);
+        t.encode(out);
+        PreviewTile back = PreviewTile.decode(new ByteReader().reset(out.array(), 0, out.length()));
+        int[] trees = back.trees(1, 1);
+        assertEquals(1, trees.length);
+        assertEquals(new PreviewTile.TreeKind(LOG, LEAVES, 5, 2, 3, false), back.treeKind(trees[0] >>> 8));
+        assertEquals(0, back.trees(0, 0).length);
+        // The tree's top (76) counts for its chunk and the ones around.
+        assertTrue(back.summary().spans(0, 0, 0, 0, 72, 80, 1));
+        assertFalse(back.summary().spans(5, 5, 5, 5, 72, 80, 1));
+    }
+
+    @Test
+    void treesOfRealChunksAreLeftOut() {
+        PreviewTile t = forest();
+        LodSection s = PreviewVoxels.build(0, 0, 2, 0, (x, z) -> x == 0 && z == 0 ? t : null,
+                (cx, cz) -> cx == 1 && cz == 1, AIR, -64, -1, -1, -1, 0);
+        assertEquals(AIR, s.material(16, 72 - 64, 16));
+    }
+
     @Test
     void aLayerBuildMatchesTheWholeSection() {
         PreviewTile t = slope();

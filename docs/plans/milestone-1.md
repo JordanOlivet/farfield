@@ -204,6 +204,9 @@ choice, an ADR.
   by real data, `noise_preview` setting, screen toggle and
   `/farfield preview on|off`; checked in the Fabric dev client. After the
   user's pack pass (16-block boxes, ugly transitions): height tiles drawn
-  at every level (ADR-039), checked in the Fabric dev client. Remains:
-  the user's pack, NeoForge, step 2 (approximate trees and features), and
-  the spike in the user's large pack
+  at every level (ADR-039), checked in the Fabric dev client and in the
+  user's pack ("c'est beaucoup mieux"); flicker, holes and the gap beside
+  real water fixed ("c'est good"). Trees at each biome's density
+  (ADR-040), checked in the Fabric dev client. Remains: the trees in the
+  user's pack, NeoForge, other features (huge mushrooms, cactus,
+  structures), and the spike in the user's large pack

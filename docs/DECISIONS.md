@@ -866,3 +866,33 @@ later (step 2).
 - **Mask**: per tile, the chunks whose real level-4 column holds a voxel;
   a tile's sections enter the selection once its mask is read, and real
   level-4 writes in it rebuild the mask and remesh its preview sections.
+
+## ADR-040 — Trees in the noise preview
+
+**Date**: 2026-10-18 · **Status**: accepted
+
+Step 2 of the preview (ADR-039). The user: approximate trees and other
+features, not the real ones but "des trucs random aux endroits où il y en
+aura".
+
+- **What grows**: each biome's vegetal decoration features, followed
+  through random selectors (weighted, simple, boolean) down to tree
+  features: trunk and leaves blocks, average trunk height, crown radius and
+  height from the trunk and foliage placers (8 samples), cone crowns for
+  spruce and pine placers. Read once per biome (`PreviewTrees`), logged.
+- **How many**: the average count per chunk from the placement modifiers,
+  read through their codec form (count with its int provider, rarity,
+  noise threshold and noise based counts), so modded biomes built from the
+  vanilla modifiers work. At most 48 per chunk.
+- **Where**: at random cells of the chunk, seeded by the world seed and
+  the chunk, on grass or snow above the sea, at the interpolated surface.
+  Stored in the tile (format 2: tree kinds, then per chunk the trees);
+  tiles of format 1 fail to decode, are deleted at open and built again.
+- **Drawing** (`PreviewVoxels`): trunk and crown block by block on level
+  0; on coarser levels a voxel takes the tree's material when trees fill a
+  quarter of it (two full children of eight in the real mip rule), so
+  forests stay as canopy far away and lone trees fade. Tree tops raise the
+  tile summary of their chunk and its neighbors. Trees of real chunks, and
+  crown blocks over real chunks, are left out.
+- Not yet: huge mushrooms, cactus, bamboo and other non-tree features,
+  structures (villages); the exact tree shapes (mega trunks, acacia).

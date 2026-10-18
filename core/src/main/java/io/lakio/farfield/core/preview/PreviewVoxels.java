@@ -22,6 +22,11 @@ import io.lakio.farfield.core.lod.LodSection;
  * {@code maskFluid}, a translucent one, up to the real fluid's top. So the
  * preview's water shows no wall toward real water, and its land shows its
  * cliff toward a real sea.
+ *
+ * <p>Trees (ADR-040) stand on the interpolated surface: trunk and crown block
+ * by block on the finest level; on coarser levels a voxel takes the tree's
+ * material when trees fill a quarter of it, like the real mip rule's two
+ * full children of eight. Trees of real chunks are left out.
  */
 public final class PreviewVoxels {
 
@@ -166,6 +171,7 @@ public final class PreviewVoxels {
                 }
             }
         }
+        section = trees(section, level, ox, oy, oz, cache, mask, air, layerAxis, layerIndex);
         if (section != null) {
             for (int cz = 0; cz < LodSection.BIOME_CELLS_PER_AXIS; cz++) {
                 for (int cx = 0; cx < LodSection.BIOME_CELLS_PER_AXIS; cx++) {
@@ -185,6 +191,146 @@ public final class PreviewVoxels {
             }
         }
         return section;
+    }
+
+    /** Stamps the trees whose blocks fall in the section (see the class comment). */
+    private static LodSection trees(LodSection section, int level, int ox, int oy, int oz, TileCache cache, Mask mask,
+                                    int air, int layerAxis, int layerIndex) {
+        int s = 1 << level;
+        int size = S * s;
+        Stamp stamp = new Stamp(section, level, ox, oy, oz, size, mask, air, layerAxis, layerIndex);
+        // Crowns reach less than a chunk: the chunks around the footprint are enough.
+        for (int chunkZ = (oz >> 4) - 1; chunkZ <= ((oz + size - 1) >> 4) + 1; chunkZ++) {
+            for (int chunkX = (ox >> 4) - 1; chunkX <= ((ox + size - 1) >> 4) + 1; chunkX++) {
+                PreviewTile tile = cache.tile(Math.floorDiv(chunkX, PreviewTile.CHUNKS), Math.floorDiv(chunkZ, PreviewTile.CHUNKS));
+                if (tile == null || mask != null && mask.real(chunkX, chunkZ)) {
+                    continue;
+                }
+                for (int t : tile.trees(Math.floorMod(chunkX, PreviewTile.CHUNKS), Math.floorMod(chunkZ, PreviewTile.CHUNKS))) {
+                    PreviewTile.TreeKind k = tile.treeKind(t >>> 8);
+                    int bx = chunkX * 16 + (t & 15);
+                    int bz = chunkZ * 16 + (t >> 4 & 15);
+                    int ground = tile.height(Math.floorMod(bx, PreviewTile.BLOCKS), Math.floorMod(bz, PreviewTile.BLOCKS));
+                    stamp.tree(k, bx, ground, bz, chunkX, chunkZ);
+                }
+            }
+        }
+        return stamp.finish();
+    }
+
+    /** Writes tree blocks into a section, or counts them per voxel on coarse levels. */
+    private static final class Stamp {
+        private final int level;
+        private final int s;
+        private final int ox;
+        private final int oy;
+        private final int oz;
+        private final int size;
+        private final Mask mask;
+        private final int air;
+        private final int layerAxis;
+        private final int layerIndex;
+        private final int[] counts;
+        private final int[] materials;
+        private LodSection section;
+
+        Stamp(LodSection section, int level, int ox, int oy, int oz, int size, Mask mask, int air, int layerAxis,
+              int layerIndex) {
+            this.section = section;
+            this.level = level;
+            this.s = 1 << level;
+            this.ox = ox;
+            this.oy = oy;
+            this.oz = oz;
+            this.size = size;
+            this.mask = mask;
+            this.air = air;
+            this.layerAxis = layerAxis;
+            this.layerIndex = layerIndex;
+            counts = level > 0 ? new int[S * S * S] : null;
+            materials = level > 0 ? new int[S * S * S] : null;
+        }
+
+        void tree(PreviewTile.TreeKind k, int x, int ground, int z, int chunkX, int chunkZ) {
+            int top = ground + k.height();
+            if (top + 1 < oy || ground >= oy + size) {
+                return;
+            }
+            for (int y = ground; y < top; y++) {
+                put(x, y, z, k.trunk(), chunkX, chunkZ);
+            }
+            int rows = k.crownHeight();
+            for (int r = 0; r <= rows; r++) {
+                int y = top - rows + r;
+                int radius = k.cone()
+                        ? Math.round(k.radius() * (rows - r) / (float) Math.max(1, rows))
+                        : r == rows ? Math.max(0, k.radius() - 1) : k.radius();
+                for (int dz = -radius; dz <= radius; dz++) {
+                    for (int dx = -radius; dx <= radius; dx++) {
+                        if (!k.cone() && radius > 1 && Math.abs(dx) == radius && Math.abs(dz) == radius) {
+                            continue; // rounded corners
+                        }
+                        if (dx == 0 && dz == 0 && y < top) {
+                            continue; // the trunk
+                        }
+                        put(x + dx, y, z + dz, k.leaves(), chunkX, chunkZ);
+                    }
+                }
+            }
+        }
+
+        private void put(int x, int y, int z, int material, int chunkX, int chunkZ) {
+            int lx = x - ox;
+            int ly = y - oy;
+            int lz = z - oz;
+            if (lx < 0 || ly < 0 || lz < 0 || lx >= size || ly >= size || lz >= size) {
+                return;
+            }
+            if (mask != null && ((x >> 4) != chunkX || (z >> 4) != chunkZ) && mask.real(x >> 4, z >> 4)) {
+                return; // a crown reaching over real terrain
+            }
+            int vx = lx >> level;
+            int vy = ly >> level;
+            int vz = lz >> level;
+            if (layerAxis == 0 && vx != layerIndex || layerAxis == 1 && vy != layerIndex
+                    || layerAxis == 2 && vz != layerIndex) {
+                return;
+            }
+            if (level == 0) {
+                if (section == null) {
+                    section = new LodSection(air);
+                }
+                if (section.material(vx, vy, vz) == air) {
+                    section.set(vx, vy, vz, material);
+                }
+                return;
+            }
+            int i = (vy * S + vz) * S + vx;
+            counts[i]++;
+            materials[i] = material;
+        }
+
+        LodSection finish() {
+            if (level == 0) {
+                return section;
+            }
+            int threshold = Math.max(1, s * s * s / 4);
+            for (int i = 0; i < counts.length; i++) {
+                if (counts[i] < threshold) {
+                    continue;
+                }
+                int vx = i % S;
+                int vz = i / S % S;
+                int vy = i / (S * S);
+                if (section == null) {
+                    section = new LodSection(air);
+                }
+                if (section.material(vx, vy, vz) == air) {
+                    section.set(vx, vy, vz, materials[i]);
+                }
+            }
+            return section;
+        }
     }
 
     /**
