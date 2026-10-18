@@ -14,6 +14,7 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -30,7 +31,10 @@ import java.util.function.LongPredicate;
  * they live beside the real ones in the mesh cache. Chunks with real LOD
  * data are masked out: per tile, the chunks whose real level-4 column holds
  * a voxel; a tile's sections exist for the selection only once its mask is
- * known.
+ * known. A real write in a tile refreshes its mask in the background while
+ * the old one stays in use (dropping it made the tile vanish for a frame on
+ * every write: flicker, and holes next to explored land); only a mask that
+ * changed meshes the tile again.
  */
 final class PreviewLayer {
 
@@ -49,6 +53,8 @@ final class PreviewLayer {
     /** Per tile, its chunks with real data: 32 rows (z) of bits (x). */
     private final Map<Long, int[]> masks = new ConcurrentHashMap<>();
     private final Set<Long> maskPending = ConcurrentHashMap.newKeySet();
+    /** Tiles whose real data changed since their mask was last read. */
+    private final Set<Long> maskDirty = ConcurrentHashMap.newKeySet();
     /** Tiles whose sections must be meshed again: written again, or their real data changed. */
     private final ConcurrentLinkedQueue<Long> changedTiles = new ConcurrentLinkedQueue<>();
     private final LongConsumer tileListener = changedTiles::add;
@@ -89,6 +95,7 @@ final class PreviewLayer {
         existence.clear();
         masks.clear();
         maskPending.clear();
+        maskDirty.clear();
         changedTiles.clear();
         if (next != null) {
             next.preview().addListener(tileListener);
@@ -123,13 +130,14 @@ final class PreviewLayer {
         }, plain -> draw.accept(toPreview(plain)), plain -> want.accept(toPreview(plain)));
     }
 
-    /** A real section was written: a level-4 one changes its tile's mask. Render thread. */
+    /** A real section was written: a level-4 one may change its tile's mask. Render thread. */
     void realWritten(long key) {
-        if (LodKey.level(key) == TOP_LEVEL) {
+        LodWorld w = world;
+        if (w != null && LodKey.level(key) == TOP_LEVEL) {
             long tile = PreviewStore.key(LodKey.x(key), LodKey.z(key));
-            if (masks.remove(tile) != null) {
-                masksChanged = true;
-                changedTiles.add(tile);
+            if (masks.containsKey(tile)) {
+                maskDirty.add(tile);
+                requestMask(w, tile);
             }
         }
     }
@@ -207,18 +215,35 @@ final class PreviewLayer {
         return false; // every chunk has real data
     }
 
+    /**
+     * Reads a tile's mask in the background, again while real data keeps
+     * changing in it; the mask in use stays until the new one replaces it.
+     */
     private void requestMask(LodWorld w, long tile) {
         if (!maskPending.add(tile)) {
             return;
         }
         executor.execute(() -> {
             try {
-                mask(w, tile);
-                masksChanged = true;
+                do {
+                    maskDirty.remove(tile);
+                    int[] fresh = readMask(w, tile);
+                    int[] old = masks.put(tile, fresh);
+                    if (old == null || !Arrays.equals(old, fresh)) {
+                        masksChanged = true;
+                        if (old != null) {
+                            changedTiles.add(tile);
+                        }
+                    }
+                } while (maskDirty.contains(tile) && world == w);
             } catch (IOException | RuntimeException e) {
-                // Asked again at the next selection.
+                // Asked again at the next selection or write.
             } finally {
                 maskPending.remove(tile);
+            }
+            // A write between the last read and the release above.
+            if (maskDirty.contains(tile) && world == w) {
+                requestMask(w, tile);
             }
         });
     }
@@ -229,7 +254,14 @@ final class PreviewLayer {
         if (mask != null) {
             return mask;
         }
-        mask = new int[PreviewTile.CHUNKS];
+        mask = readMask(w, tile);
+        int[] raced = masks.putIfAbsent(tile, mask);
+        return raced != null ? raced : mask;
+    }
+
+    /** The chunks of a tile whose real level-4 column holds a voxel. Any thread. */
+    private int[] readMask(LodWorld w, long tile) throws IOException {
+        int[] mask = new int[PreviewTile.CHUNKS];
         int x = PreviewStore.tileX(tile);
         int z = PreviewStore.tileZ(tile);
         int size = LodSection.SIZE << TOP_LEVEL;
@@ -254,7 +286,6 @@ final class PreviewLayer {
                 }
             }
         }
-        masks.put(tile, mask);
         return mask;
     }
 
