@@ -1,0 +1,1 @@
+J'ai identifié la ligne grise en escalier : c'est une face latérale d'eau que vanilla dessine contre les chunks non chargés, normalement masquée par le brouillard, pas un bug des LODs. Je note ce point ouvert, arrête le client et commite.

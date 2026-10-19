@@ -1,0 +1,1 @@
+**Pas encore géré** : les barrières, murets et vitres sont toujours invisibles en LOD, et les escaliers sont des cubes pleins.

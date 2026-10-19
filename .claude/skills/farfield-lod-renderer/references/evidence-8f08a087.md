@@ -1,0 +1,4 @@
+[23:34:48] [Render thread/WARN] (Farfield) LOD rendering disabled: OpenGL 4.6 is not available (3.2.0 NVIDIA 596.49)
+[23:35:54] [Render thread/INFO] (Farfield) LOD renderer ready on NVIDIA GeForce RTX 4070 Ti SUPER/PCIe/SSE2, OpenGL 4.6.0 NVIDIA 596.49 (64 MB of quads to start)
+[Assistant] Je demande le contexte 4.6 via un mixin sur la création de fenêtre. Si la carte refuse, il rejoue la création en 3.2 et le rendu LOD se désactive proprement.
+[Assistant] Deux bugs trouvés à l'écran, corrigés : 1. La nuit, les LODs restaient éclairées comme en plein jour. Elles suivent maintenant la luminosité du ciel de vanilla (heure, pluie, orage).

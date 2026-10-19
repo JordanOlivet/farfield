@@ -1,0 +1,2 @@
+user: "vas-y textures. Parcontre, je pense qu'ilo faudra là aussi permettre de choisir la distance à laquelle ont arrête de mettre les textures. Car je pense que si on l'arrête trop proche, ça va paraitre bi…"
+Assistant (ADR-025 entry): "Textures repeat once per block at every LOD level and fade into the mean color over the last quarter of a distance in blocks, by default 512, set with `/farfield textures <0..4096>` (0: off) and later in the settings screen (E.8)."

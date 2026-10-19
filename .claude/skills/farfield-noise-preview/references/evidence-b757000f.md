@@ -1,0 +1,2 @@
+- Core: `PreviewTile` (heights every 4 blocks, 129 x 129 samples shared at tile edges, bilinear per block; top and filler per 4-block cell;
+[20:18:05] [Server thread/INFO] (Farfield) Noise preview of minecraft:overworld: every tile within 4096 blocks is built

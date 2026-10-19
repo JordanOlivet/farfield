@@ -1,0 +1,1 @@
+After ADR-034 the user answered "C'est good, enchaine": approval on the report; the pack log still dates from before the 23:57 jar, so the sliders were not tried in the pack.

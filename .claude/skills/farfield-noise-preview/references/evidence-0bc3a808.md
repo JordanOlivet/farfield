@@ -1,0 +1,1 @@
+The mask material of real columns rose to the preview's height, so it also hid the preview land's side facing real water. Real columns now hold an opaque mask up to the real ground and a translucent mask (`farfield:preview_mask_fluid`, class translucent in `BlockKeys`) up to the real fluid's top: preview water still shows no wall toward real water, preview land shows its cliff.

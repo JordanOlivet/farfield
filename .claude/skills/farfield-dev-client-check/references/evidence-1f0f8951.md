@@ -1,0 +1,2 @@
+[22:38:45] [Render thread/INFO] (Minecraft) [System] [CHAT] The nearest #minecraft:village (minecraft:village_plains) is at [5840, ~, -384] (361 blocks away)
+Un village de plaine est attendu en (5840, -384), et l'aperçu en a déjà placé 5 dans les tuiles construites. Je le regarde de loin, à environ 230 blocs, pour que ses chunks ne se chargent pas.

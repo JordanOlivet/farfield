@@ -1,0 +1,1 @@
+[Render thread/INFO] [Farfield/]: LOD renderer: 1989 sections drawn, 14868 resident, 136 MB of 256 MB quads used, 0 meshing, 0 meshes uploaded and 0 freed, 30 selections since last line; per frame 479 us on the render thread

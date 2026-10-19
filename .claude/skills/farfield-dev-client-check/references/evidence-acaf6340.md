@@ -1,0 +1,1 @@
+Image notice: "[Image: original 3866x2090, displayed at 2000x1081. Multiply coordinates by 1.93 to map to original image.]" followed by the PowerShell call `click.ps1 1930 1420` to open the Mods screen, and `click.ps1 260 625; click.ps1 467 1741` to select Farfield and press Config.

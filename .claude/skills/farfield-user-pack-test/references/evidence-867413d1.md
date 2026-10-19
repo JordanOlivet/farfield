@@ -1,0 +1,1 @@
+Pour reprendre la prochaine fois : copie le jar Fabric dans ton pack, fais `/locate structure #minecraft:village` sur ta copie de monde, puis dis-moi ce que tu vois.

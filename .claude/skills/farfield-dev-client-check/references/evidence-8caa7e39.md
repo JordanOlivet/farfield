@@ -1,0 +1,1 @@
+detail_run.sh written in the episode: "# Usage: detail_run.sh <log> <pixels...>: for each detail, set it, wait until\n# meshing settles on two consecutive stat lines, capture, print the stat line." with the loop `if [ "$n" -ge $((start + 2)) ]; then ... grep -q " 0 meshing, [0-9]\{1,3\} meshes uploaded"`

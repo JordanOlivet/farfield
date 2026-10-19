@@ -1,0 +1,1 @@
+unzip -p ~/.gradle/caches/neoformruntime/intermediate_results/mergeWithSources_118eb182d135e81ea5145c68e53629c374a2f39b_output.jar net/minecraft/client/Options.java | grep -n "biomeBlendRadius" | head -5 → 385:    private final OptionInstance<Integer> biomeBlendRadius = new OptionInstance<>(

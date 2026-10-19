@@ -1,0 +1,2 @@
+{"parentUuid":"ff45f134-4a3a-4bd7-9235-158bfa7e48af","type":"assistant","message":{"content":[{"type":"text","text":"Mauvais endroit : la commande de téléportation n'est pas passée, on est resté sur la dernière position sauvegardée (désert). Je la renvoie."}]}}
+tool_result: "sent: /tp @s -289 120 700 0 20\r\n[00:24:49] [Render thread/INFO] (Minecraft) [System] [CHAT] Teleported Player420 to -288.500000, 120.000000, 700.500000"

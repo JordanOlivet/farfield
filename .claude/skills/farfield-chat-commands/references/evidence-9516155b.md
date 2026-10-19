@@ -1,0 +1,1 @@
+/farfieldclient world name Home Server  --  log: [CHAT] This world now keeps its LODs in named\home_server: its LODs moved there.  --  Un nom avec une espace ne passait pas au premier essai : l'argument ne prenait qu'un mot. C'est corrigé et revérifié.

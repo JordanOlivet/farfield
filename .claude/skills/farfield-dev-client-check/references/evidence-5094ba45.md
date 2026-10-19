@@ -1,0 +1,1 @@
+PowerShell: `Get-Content "C:\Users\Lakio\source\repos\farfield\neoforge\run\options.txt").Count` returned `141`. Assistant: "Le `options.txt` du client de dev NeoForge avait perdu sa ligne `version`, si bien que le jeu l'ignorait en entier. Je l'ai réparé. Ça ne concerne que le dossier de dev, pas ton installation."

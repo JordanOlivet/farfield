@@ -1,0 +1,4 @@
+publish / Prepare release	UNKNOWN STEP	2026-10-16T12:20:19.5726459Z ^[[36;1m  echo "::error::Tag $TAG does not match version=$FILE_VERSION in gradle.properties"^[[0m
+publish / Publish NeoForge	UNKNOWN STEP	2026-10-16T12:21:54.9357232Z 🎉 Successfully published the assets to CurseForge, Modrinth
+{"assets":["farfield-fabric-1.21.1-0.1.0-alpha.1.jar","farfield-neoforge-1.21.1-0.1.0-alpha.1.jar"],"body":"Changes since 0.1.0-pre-alpha:\n\n- feat(render): biome blending of LOD tints\n- fix(render): border faces lit by the neighbor section\n- feat(client): in-game settings screen (E.8)\n- Create IDEAS.md","isPrerelease":true,"name":"Farfield 0.1.0-alpha.1"}
+404

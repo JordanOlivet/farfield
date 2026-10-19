@@ -1,0 +1,46 @@
+---
+name: farfield-lod-renderer
+description: Use when editing the LOD renderer, shaders, or GL context.
+category: minecraft-modding
+---
+
+# Farfield LOD renderer
+
+The renderer needs an OpenGL 4.6 context on both loaders, and only Fabric can fall short: vanilla 1.21.1 asks GLFW for a 3.2 context. Keep the context request in `WindowMixin` (`common/src/main/java/io/lakio/farfield/mixin/client/WindowMixin.java`) as an `@Inject` before `glfwCreateWindow`, never a `@Redirect`: Sodium redirects the same call, Mixin then skips one of the two depending on load order, and the game silently runs on 3.2 with LODs disabled (log: `@Redirect conflict`, then `OpenGL 4.6 is not available`). The inject probes 4.6 with a hidden window and puts vanilla's 3.2 hints back if it fails; it stays `require = 0` because NeoForge creates its window earlier at 4.6 with no such call. On Fabric, check for `OpenGL 4.6 context available` in the log.
+
+- Frame cost: the render path allocates nothing per frame, caches the section selection, culls back faces, and times the GPU. Judge cost from the `LOD renderer` stat line (render-thread and GPU microseconds per frame), not from F3 alone: F3 fps moves with the scene.
+- A/B: `/farfield render off` at the same camera spot gives the no-LOD baseline.
+- Flicker: never evict a mesh the selector still falls back to. Evicting a non-drawn parent makes LODs snap to the coarse level every few seconds. Prove a fix with the stat line: meshes uploaded and freed stay near 0 in steady state.
+- Optional mixins stay `require = 0`, so a mod that conflicts with one does not crash the game or a dedicated server.
+- Keep the success-branch log line (renderer name and GL version). A path that logs nothing on success cannot be verified.
+
+Verify in game with the `sections drawn` stat line and the procedure in `farfield-dev-client-check`.
+
+## Matching vanilla at the edge
+
+Compare a shade or a seam with numbers, not by eye: sample the same surface on both sides of the edge from a full-resolution capture, and split vanilla from LOD pixels with `/farfield debug levels` (tinted pixels are LOD).
+
+To localize a new seam inside LODs, capture the same camera spot before and after the change, diff the two grayscale images (`abs(a - b)`, amplified about 6x), and check where the difference lands. A difference that falls on the 32-block section grid points at the shader or the per-section data, not at the terrain.
+
+- Hand-off: `lod.frag` discards a fragment only on a chunk section the game really draws: compiled (a bit grid of `LevelRenderer.isSectionCompiled`, rebuilt every 8 frames; Sodium overrides the method) and within the terrain renderer's own distance rule (Sodium: the section grown by one block, render distance on both axes; vanilla: `ChunkTrackingView.isInViewDistance`). A circle overlaps whole sections (translucent ice blended twice); a rule without the compiled grid leaves holes on chunks still building. A section enters Sodium's render lists one frame after it is compiled: LODs give way only once it has stayed compiled for two passes, else a band shows nothing for one frame. The outer 3 chunks of the grid are read every frame.
+- One-frame flicker: ask for a video, extract frames with ffmpeg (named by time), and let the user point the frame. Reproduce by flying with the forward key held (AZERTY: Z, scan code 0x11) and 40 PrintWindow captures; detect one-frame holes as dark gray 16-px blocks present in one capture and absent in both neighbors. Validate the detector on the failing run before trusting a 0.
+- Light: quads carry sky and block light; `lod.frag` samples vanilla's lightmap filtered at `level / 16`, like `minecraft_sample_lightmap`, bound from `lightTexture().turnOnLightLayer()` then `RenderSystem.getShaderTexture(2)` on unit 11 (the atlas uses 10). An exact `texelFetch` reads about 5 % brighter. Never re-derive the lightmap formula.
+- Ambient occlusion: every level stores its opaque voxels (1024 ints, 4 KB per section) in a storage buffer by slot (section info.z = 1). Each slot also holds a neighbor table (27 ints: its 26 resident same-level neighbors, own slot + 1 or 0), written on upload by `linkNeighbors` and cleared on eviction in `LodRenderer`. `lod.frag` applies vanilla's smooth-light formula per fragment and reads the voxels across section borders. Never treat a neighbor outside the section as open: that draws a straight lighter line on every section border. Never stop occlusion at one level: that draws a curved ring. Opaque pass only.
+- `FogRendererMixin` moves vanilla's normal terrain fog out to the LOD fog; it leaves alone any fog whose end is not the far plane.
+- Dimension fog (`extend_dimension_fog` in `farfield-client.properties`, labelled Vanilla / Pushed Back on the settings screen): Vanilla (`false`) keeps the dimension's own fog, so in the Nether the LODs fade into it and look like no LODs. Pushed Back (`true`) moves the LOD fog out to the far plane, opaque at `MAX_DISTANCE` (4096 blocks). Pushed Back does not remove fog: cutting the LODs off at 4096 without it leaves a hard edge.
+
+## Geometry and data
+
+- Quad layout: material 16 bits, biome 9, sky and block light 4 + 4, fill 3 (8 bytes). Check new fields against the largest worlds' key tables (6,460 states, 127 biomes in a 398-mod pack).
+- Heights: on level 0, `MaterialClassifier.PARTIAL` blocks (snow layers, bottom slabs, carpets) keep their height from the color table; on coarser levels every voxel carries a fill (ADR-028) and `lod.vert` lowers top edges to it. Fluid tops sit at vanilla's still-water height, 8/9 of a block, on every level: level 0 takes it from the color table (`MaterialColors.height`), coarse levels lower the top by the same ninth in blocks after the fill. A fluid at a full block next to vanilla water leaves a dark 1-px line on the chunk edge. Changing the mip rules means bumping `MIPS_VERSION` in `LodWorld`, so worlds rebuild their coarse levels once at open (logged when queued and when done).
+- Level of detail is screen-space (ADR-023): `detail = focal px / (32 * voxelPixels)`, default 6 px (ADR-027), `/farfield detail N`. Apply a new detail only once two consecutive frames agree within 2 %: the first frame's projection can be infinite or wrong.
+- Colors: `MaterialColors` (baked face tiles and their mean colors, untinted + tinted parts, block heights) and `BiomeTints`. Resource reload and level change rebuild both tables.
+- Biome blending (grass, foliage, water tints): the vertex shader passes the untinted part, the tinted part and the quad's biome; `lod.frag` picks the tint per fragment as a mean over a (2r+1)-block square, r = `u_biomeBlend` (vanilla's Biome Blend option, read from `mc.options`). Surface biome per 4x4 column is per section in `biomeColumns` (binding 7, written by `SurfaceBiomes`); neighbors come from the neighbor table, as for occlusion. Radius 0 must render exactly as before the feature.
+- Mask material: a preview section over real chunks is filled with an opaque material (`PreviewLayer.MASK_KEY`, unknown to the game, never drawn). `LodRenderer` drops its quads, both when counting and when splitting opaque from translucent, so the preview's faces toward real terrain are hidden with no wall of water or ground at the border. Keep the mask out of the block-state warning path (`MaterialColors` skips it).
+- Translucent pass: each section stores opaque quads first; the translucent draw offsets `gl_VertexID` with the command's `first`. Translucent faces cull against neighbor solid layers.
+- Every visual distance is a user choice, shipped with its command (`/farfield textures`, `/farfield detail`) and an entry in the E.8 settings screen. Defaults are the best quality the measured cost allows (the user's call: no measurable cost, so the best value stays the default, and the trade-off is left to the settings screen later). Measure the cost at that default and record it in the ADR.
+
+- Vanilla-mirroring settings: when the user asks a LOD effect to follow a vanilla option (Biome Blend, render distance, fog), read the live vanilla option value and copy its semantics exactly. When the vanilla option is off, do nothing extra, so the output matches the pre-feature build.
+
+Known open gaps (E.7 in the milestone plan):
+- Fences, walls and panes are invisible in LODs; stairs are full cubes.

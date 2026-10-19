@@ -1,0 +1,2 @@
+Tool result after `cat neoforge/run/options.txt`: "renderDistance:8\npauseOnLostFocus:false\nonboardAccessibility:false\ntutorialStep:none\nskipMultiplayerWarning:true\njoinedFirstServer:true\nrenderClouds:\"false\"" with "-rw-r--r-- 1 Lakio 197121 157 Oct 15 13:58 neoforge/run/options.txt"
+Assistant: "Le `options.txt` NeoForge ne fait plus que 6 lignes. Il a sans doute été tronqué quand j'ai tué le JVM pendant une sauvegarde des options."

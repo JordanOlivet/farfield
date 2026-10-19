@@ -1,0 +1,1 @@
+L=/c/Users/Lakio/source/repos/farfield/fabric/runs/client/logs/latest.log; start=$(date +%s); until [ $(stat -c %Y $L) -ge $start ] 2>/dev/null && grep -aq "sections drawn\|LOD rendering disabled\|Crash\|Exception in" $L; do sleep 2; done;

@@ -1,0 +1,4 @@
+[23:34:48] [Render thread/WARN] (Farfield) LOD rendering disabled: OpenGL 4.6 is not available (3.2.0 NVIDIA 596.49)
+[23:36:24] [Render thread/INFO] (Farfield) LOD renderer: 936 sections drawn, 6304 resident, 49 MB of 64 MB quads used, 0 meshing, 1594 us of render-thread time per frame over 3436 frames
+Binary file /c/Users/Lakio/AppData/Local/Temp/claude/C--Users-Lakio-source-repos-farfield/9daea23d-d5a4-42b8-a0f3-7f3580e121d0/scratchpad/fabric-client.log matches
+[Assistant] Le client Fabric tourne bien. C'est le fichier de log qui a été écrasé par la fin de l'ancien run. Je lis plutôt le `latest.log` du jeu.

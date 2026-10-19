@@ -1,0 +1,1 @@
+{"action": "create", "reason": "Spike S5 benchmark workflow established: run command, corpus layout, output fields, JVM pin, and first measured numbers. A future session resuming S5 or re-measuring after importer changes needs this without re-deriving it.", "evidence": "references/evidence-7cb5fd13.md"}

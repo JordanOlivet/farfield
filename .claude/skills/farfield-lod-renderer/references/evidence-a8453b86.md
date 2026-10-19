@@ -1,0 +1,3 @@
+[15oct.2026 13:59:27.284] [Render thread/INFO] [Farfield/]: LOD detail: 8.0 px per voxel, focal 1269.4832 px (window height 2019, projection m11 1.2575365), sections split within 5,0 section sizes
+Before the fix: "[15oct.2026 13:56:58.860] ... LOD renderer: 0 sections drawn ... detail 117,3" then "LOD renderer: 1199 sections drawn, 9102 resident ... 9971 meshes uploaded and 438 freed"
+Commit message: "On NeoForge the first frame's projection gave a detail of 117 instead of 5, so the first selection asked for level-0 meshes that were freed right after (438 freed)."

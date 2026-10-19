@@ -1,0 +1,1 @@
+PowerShell: `Get-Process java | Where-Object { $_.MainWindowTitle -like "Minecraft*" }; ... $_.CloseMainWindow(); Start-Sleep -Seconds 15; Get-CimInstance Win32_Process ... Select-Object ProcessId; (Get-Content "...\neoforge\run\options.txt").Count` returned `141`.

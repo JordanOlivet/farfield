@@ -1,0 +1,2 @@
+[15oct.2026 17:06:06.736] [Server thread/INFO] [Farfield/]: LOD store of minecraft:overworld: rebuilding its coarse levels with the current mip rules (once, 27432 level-1 sections queued)
+[15oct.2026 17:06:22.256] [farfield-server-maintenance-1/INFO] [Farfield/]: LOD store of minecraft:overworld: coarse levels rebuilt with the current mip rules (33041 sections written in the last pass)

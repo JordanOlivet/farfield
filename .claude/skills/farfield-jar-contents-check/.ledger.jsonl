@@ -1,0 +1,3 @@
+{"action": "create", "reason": "Dev-only dependencies (zstd-jni, lmdbjava) and bench sources must stay out of the shipped NeoForge and Fabric jars. An empty grep proves absence only after a positive control, so the check needs both.", "evidence": "references/evidence-6271d60f.md"}
+{"action": "patch", "reason": "Mixins compile but are only applied at runtime if the refmap in the jar lists them. This skill is the jar-inspection skill, so the refmap check belongs here, and the trigger must name it.", "evidence": "references/evidence-0c5fa24e.md"}
+{"action": "patch", "reason": "Adds the concrete step that proved a new client mixin reached the Fabric jar. Positive control keeps the grep honest, as step 3 does for leak checks.", "evidence": "references/evidence-0c5fa24e.md"}

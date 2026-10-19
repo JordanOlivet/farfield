@@ -1,0 +1,1 @@
+fini pack E8b, c'est nikel. Pour le mélange des biomes, suis la config de minecraft. Si le biome blend vanilla n'est pas activé on ne fait rien, sinon on suite la valeur qui est défini en vanilla

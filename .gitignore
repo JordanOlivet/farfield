@@ -22,5 +22,9 @@ bin/
 Thumbs.db
 
 # Tooling
+# Claude Code: only the project skills are shared, so another machine works the same way
 .claude/
+!/.claude/
+/.claude/*
+!/.claude/skills/
 __pycache__/

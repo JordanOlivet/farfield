@@ -1,0 +1,1 @@
+its caption twice ("Dimension Fog: Dimension Fog: Pushed Back"): fixed, checked in a new start ("Dimension Fog: Vanilla").

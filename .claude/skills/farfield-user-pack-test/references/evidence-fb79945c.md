@@ -1,0 +1,1 @@
+Assistant to user: "**Essai dans ton pack** (inutile de relancer `/farfield import`, rien ne change dans les données LOD) ... Change chaque réglage, ferme la page, relance le jeu et vérifie que les valeurs sont restées."

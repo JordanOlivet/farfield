@@ -1,0 +1,2 @@
+Task notification: "Background command \"Start the NeoForge dev client for a texture check\" failed with exit code 127"
+Then the game log kept writing: "[15oct.2026 13:57:58.867] [Render thread/INFO] [Farfield/]: LOD renderer: 1199 sections drawn, 9102 resident ..."

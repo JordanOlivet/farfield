@@ -1,0 +1,2 @@
+{"tool_use":"Edit","old_string":"a line exactly on a color border (red 0, orange 1, ...) is a level crack. ...","new_string":"a line exactly on a color border (red 0, orange 1, ...) is a level crack: coarse voxels must stand at their fill height (ADR-028), not at the top of their cell."}
+Appended paragraph in the same run: "Measure such lines with a slit detector (pixels much darker than 3 rows above and below, inside water) before and after, at the same view."

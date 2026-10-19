@@ -1,0 +1,3 @@
+Command: ./gradlew.bat :core:importBench --no-daemon -q --args="C:/Users/Lakio/farfield-corpus/amplified --threads 1,8 --repeat 2"
+Output: "== threads=8 run=2: 0.26 s, 16,458 chunks/s imported, 29,483 chunks/s read, 186 MB/s compressed ... worker time per chunk read (us): read 7.1, decompress 71.2, decode 62.5 (per imported), sink 0.3"
+Agent: "Premier run OK : amplified 8 threads ≈ 16 k chunks/s importés (cible 2 000)."

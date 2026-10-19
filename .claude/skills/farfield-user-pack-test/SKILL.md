@@ -1,0 +1,17 @@
+---
+name: farfield-user-pack-test
+description: Use when handing a Farfield jar to the user for a pack test.
+category: minecraft-modding
+---
+
+# Farfield user pack test
+
+Hand a jar to the user only after the dev check passed (`farfield-dev-client-check`) and the jar is committed. The user's pack is the real check; the dev client is not.
+
+1. Every time a new jar is ready for the user, even at the end of a turn that only reports a feature as done, build both loader jars, commit, and copy them to the fixed folder `C:\Users\Lakio\farfield-test-jars\`, overwriting the same version name. Then delete the superseded builds of the same loaders from that folder (the `-pre-alpha` jars stayed next to the new `0.1.0` pair), so the folder holds only the pair under test and the user cannot pick the wrong jar.
+2. Ask the user to close the game and copy his world folder. He tests the copy, never the live save.
+3. Send a numbered procedure: which jar goes in which loader's mods folder, remove the older Farfield jar first, start the instance, open the copy. Run `/farfield import` and wait for the `LOD import ... done` chat line only when the change touches stored LOD data (storage format, downsampling). A render-only change (colors, water, fog) or a client-settings change (a settings screen, `config/*.properties`) needs no re-import: say so in the procedure. For settings, the check is each value surviving a relaunch. A bump of `MIPS_VERSION` needs no import either: the world rebuilds its coarse levels once at open. Warn the user that the first open is slower, and that the far view is only judged after the rebuild's end line (`coarse levels rebuilt`).
+4. Name the views to check: distance by day and by night, F3 fps with LODs on and then off (`/farfield render off` at the same camera spot), and the look of leaves and water.
+5. Ask for the game log, not only screenshots. The lines to read back: the import done line, the `LOD CPU usage` line, the `LOD renderer` stat line, and the `LOD store ... closed` line. Read them with `grep -a`. The log to read is the instance's own `logs/latest.log` (CurseForge: `curseforge/minecraft/Instances/<pack>/logs/latest.log`), not the run dir's. For a client-mode server (no Farfield on the server), also read `Client mode: building the LODs of` at each join or dimension change, the `LOD store of <dimension> (client) closed` lines, and `Left the remote server`. On a dimension change the old store closes right after the new `Client mode` line; that is the check that the switch was clean.
+6. Say what stays unverified: the user's own flight and the visual quality. Name the known gaps from `farfield-lod-renderer` still open in this build, so the user does not report them as new bugs. Fences, walls, panes and stairs are drawn since ADR-036 (2026-10-18); they are no longer gaps.
+7. End with one action for the user, such as "reply `fini pack N`", and keep each pass's result in the progress log. When the user defers the test to a later session, the closing message restates the resume line: jar path, the first step to run, and what to report back. When the user answers with a verdict ("fini pack N", "nickel"), tick the plan item it closes, quote his words in the log, and write into the item any scope the pass did not cover (for example "fences and stairs left out"), so the next session does not reopen it.

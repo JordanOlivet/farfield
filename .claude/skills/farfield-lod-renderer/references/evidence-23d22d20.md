@@ -1,0 +1,1 @@
+"originalFile":"---\nname: farfield-lod-renderer\ndescription: Use when editing the LOD renderer, shaders, or GL context.\ncategory: minecraft-modding\n---\n\n# Farfield LOD renderer\n\nThe renderer needs an OpenGL 4.6 context on both loaders... - Lighting: LOD faces take vanilla's sky brightness (`ClientLevel.getSkyDarken`). Verify on a night screenshot.

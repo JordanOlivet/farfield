@@ -1,0 +1,1 @@
+Bash `ls -la /c/Users/Lakio/farfield-test-jars/` output: `farfield-fabric-1.21.1-0.1.0.jar`, `farfield-fabric-1.21.1-0.1.0-pre-alpha.jar`, `farfield-neoforge-1.21.1-0.1.0.jar`, `farfield-neoforge-1.21.1-0.1.0-pre-alpha.jar`. Assistant: "Ne garde pas le `-pre-alpha` dans le dossier mods."

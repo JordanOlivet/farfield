@@ -1,0 +1,2 @@
+user: "fini pack E7h. C'est nikel"
+assistant Bash: python - <<'EOF' ... a="- [~] E.7 Visual pass" ... b2="...Closed 2026-10-16 after the user's last pack pass ("nickel"): flicker, shapes and the water line gone; ADR-020 judged in game and amended by ADR-028 (fill). Fences, walls, panes and stairs are left out of E.7"
