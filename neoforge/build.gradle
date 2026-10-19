@@ -55,6 +55,9 @@ dependencies {
     additionalRuntimeClasspath "io.airlift:aircompressor:${aircompressor_version}"
 }
 
+// Client and server share the default run dir.
+registerPrepareRuns(file('run'), file('run'))
+
 // Dev servers read console commands (scripted checks pipe them in).
 tasks.matching { it.name == 'runServer' }.configureEach {
     standardInput = System.in

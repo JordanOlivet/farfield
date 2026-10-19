@@ -1,6 +1,86 @@
+import groovy.json.JsonSlurper
+
+import java.security.MessageDigest
+
 plugins {
     // see https://fabricmc.net/develop/ for new versions
     id 'fabric-loom' version '1.8-SNAPSHOT' apply false
     // see https://projects.neoforged.net/neoforged/moddevgradle for new versions
     id 'net.neoforged.moddev' version '2.0.49-beta' apply false
+    // Toolchains for the vanilla server below (JDK 21, as the game).
+    id 'jvm-toolchains'
+}
+
+// Vanilla server for client mode checks (E.6, ADR-042): Mojang's server jar,
+// run dir runs/vanilla-server (gitignored), set up from dev/server.
+def vanillaServerDir = file('runs/vanilla-server')
+
+tasks.register('setupVanillaServer') {
+    group = 'farfield'
+    description = "Downloads the vanilla ${minecraft_version} server jar and copies the missing dev/server templates."
+    doLast {
+        def jar = new File(vanillaServerDir, 'server.jar')
+        if (!jar.exists()) {
+            def json = new JsonSlurper()
+            def manifest = json.parse(new URL('https://piston-meta.mojang.com/mc/game/version_manifest_v2.json'))
+            def version = manifest.versions.find { it.id == minecraft_version }
+            if (version == null) {
+                throw new GradleException("Minecraft ${minecraft_version} is not in Mojang's version manifest")
+            }
+            def server = json.parse(new URL(version.url)).downloads.server
+            def part = new File(vanillaServerDir, 'server.jar.part')
+            part.parentFile.mkdirs()
+            new URL(server.url).withInputStream { input -> part.withOutputStream { it << input } }
+            def sha1 = MessageDigest.getInstance('SHA-1').digest(part.bytes).encodeHex().toString()
+            if (sha1 != server.sha1) {
+                part.delete()
+                throw new GradleException("Vanilla server jar: SHA-1 ${sha1}, expected ${server.sha1}")
+            }
+            part.renameTo(jar)
+            logger.lifecycle("Downloaded the vanilla ${minecraft_version} server to ${relativePath(jar)}")
+        }
+        DevTemplates.copyMissing(file('dev/server'), vanillaServerDir).each {
+            logger.lifecycle("Created ${relativePath(it)} from dev/")
+        }
+    }
+}
+
+// Reads console commands from stdin, as the dev servers.
+tasks.register('runVanillaServer', Exec) {
+    group = 'farfield'
+    description = "Runs the vanilla ${minecraft_version} server in runs/vanilla-server."
+    dependsOn 'setupVanillaServer'
+    workingDir vanillaServerDir
+    standardInput = System.in
+    def java = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(java_version)
+    }
+    doFirst {
+        commandLine java.get().executablePath.asFile.absolutePath, '-Xmx2G', '-jar', 'server.jar', 'nogui'
+    }
+}
+
+// Jars for the user's pack tests: both loader jars into farfield.testJars.dir
+// (local.properties), replacing the Farfield jars already there.
+tasks.register('copyTestJars') {
+    group = 'farfield'
+    description = 'Builds both loader jars and puts them alone in the farfield.testJars.dir folder.'
+    dependsOn ':neoforge:jar', ':fabric:remapJar'
+    doLast {
+        def dir = findProperty('farfield.testJars.dir')
+        if (!dir) {
+            throw new GradleException('Set farfield.testJars.dir in local.properties (see local.properties.example)')
+        }
+        def target = file(dir)
+        target.mkdirs()
+        target.listFiles().findAll { it.name ==~ /farfield-(neoforge|fabric)-.*\.jar/ }.each { it.delete() }
+        def jars = [project(':neoforge').tasks.jar, project(':fabric').tasks.remapJar].collect { it.archiveFile.get().asFile }
+        jars.each { jar ->
+            copy {
+                from jar
+                into target
+            }
+            logger.lifecycle("Copied ${jar.name} to ${target}")
+        }
+    }
 }

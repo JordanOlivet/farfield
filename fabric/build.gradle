@@ -66,6 +66,8 @@ loom {
     }
 }
 
+registerPrepareRuns(file('runs/client'), file('runs/server'))
+
 // Dev servers read console commands (scripted checks pipe them in).
 tasks.matching { it.name == 'runServer' }.configureEach {
     standardInput = System.in

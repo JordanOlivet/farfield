@@ -934,3 +934,41 @@ bambou et structures comme les villages".
   radius.
 - Not yet: other structures (outposts, temples, ruins), paths and farms,
   the exact village layout.
+
+## ADR-042 — Machine-independent dev setup
+
+**Date**: 2026-10-19 · **Status**: accepted
+
+The user works from a second PC and wants the setup to hold on any dev
+machine: "il faut que ça soit assez générique pour que cela s'applique sur
+n'importe quel pc de dev". Paths of one machine were written in tracked
+files, the dev run dirs were hand-made, and each server had a random seed.
+
+- **`local.properties`** at the repository root, gitignored, from the
+  tracked `local.properties.example`: the machine's paths as keys
+  (`farfield.corpus.dir`, `farfield.testJars.dir`, `farfield.gameLogs.dir`).
+  `settings.gradle` makes every key a project property of every project;
+  `-P` wins. Tracked files cite the key, never a path outside the
+  repository. Progress logs and skill evidence keep the paths they recorded
+  (history is not rewritten).
+- **Run dirs from `dev/`**: `prepareRuns` (each loader, before `runClient`
+  and `runServer`) copies the files of `dev/client` and `dev/server` missing
+  from the run dirs and never overwrites one. The templates hold
+  `options.txt`, `server.properties`, `eula.txt`, `ops.json` (offline `Dev`
+  operator) and one test world as a bare `level.dat`: seed
+  `-6818606149209278498`, spawn 48, 75, 32, noon without daylight cycle,
+  weather or mob spawning, spectator for new players. Chunks generate on
+  first visit, so every machine has the same terrain and coordinates are
+  shared (`docs/test-worlds.md`).
+- **`runVanillaServer`** (root project): downloads the vanilla server jar of
+  `minecraft_version` from Mojang's piston-meta manifest (SHA-1 checked)
+  into `runs/vanilla-server`, copies `dev/server`, runs it on JDK 21 with
+  stdin, for client mode checks.
+- **`copyTestJars`**: builds both loader jars and leaves them alone in
+  `farfield.testJars.dir`, replacing the older Farfield jars there.
+- **Project skills** in `.claude/skills/` are tracked; autoharness usage
+  counters (`.ledger.jsonl`, `.sidecar.json`) and the rest of `.claude/`
+  stay local. User-level Claude settings, memory and tools stay per machine.
+- Not covered: other operating systems (the scripted checks rely on
+  PowerShell and Win32), the reference corpus itself (private worlds, 3.5
+  GB; `docs/corpus.md` says what kinds of worlds to use).

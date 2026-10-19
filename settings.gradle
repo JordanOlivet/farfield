@@ -34,6 +34,22 @@ plugins {
 
 rootProject.name = 'farfield'
 
+// Machine-specific settings, such as paths outside the repository (ADR-042):
+// local.properties, gitignored, see local.properties.example. Its keys become
+// project properties; -P on the command line wins.
+def localProperties = new Properties()
+def localPropertiesFile = file('local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withReader('UTF-8') { localProperties.load(it) }
+}
+gradle.beforeProject { p ->
+    localProperties.each { key, value ->
+        if (!p.hasProperty(key as String)) {
+            p.ext.set(key as String, value)
+        }
+    }
+}
+
 // Pure Java, no Minecraft: the engine (core) and the public API surface (api).
 include('api')
 include('core')

@@ -8,9 +8,9 @@ category: benchmarking
 
 Run from the repo root (Windows, Gradle wrapper):
 
-`.\gradlew.bat :core:importBench --no-daemon -q --args="C:/Users/Lakio/farfield-corpus/<world> --threads 1,8,16 --repeat 2"`
+`.\gradlew.bat :core:importBench --no-daemon -q --args="<farfield.corpus.dir>/<world> --threads 1,8,16 --repeat 2"`
 
-- Corpus root: `C:\Users\Lakio\farfield-corpus\<world>`. The region dir is resolved automatically.
+- Corpus root: the `farfield.corpus.dir` key of `local.properties` (read it, then write the path out in `--args`; Gradle does not expand it there). The region dir is resolved automatically.
 - Options: `--threads`, `--repeat`, `--all-status`, `--limit-regions N`, `--center X,Z`.
 - The full corpus is long. Run it as a background script with a log, and wait per the background-command skill.
 - Read `chunks/s imported` first, then `chunks/s read`. `skippedStatus` counts non-full chunks. `worker time per chunk` shows the dominant stage.

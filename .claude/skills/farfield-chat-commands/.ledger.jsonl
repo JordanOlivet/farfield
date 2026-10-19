@@ -1,1 +1,0 @@
-{"action": "create", "reason": "No skill covers Farfield chat commands. This window built /farfieldclient world (name, reset, show) on Fabric and NeoForge; a multi-word name failed on the first try, and the fix and its rules are reusable for any future command.", "evidence": "references/evidence-9516155b.md"}

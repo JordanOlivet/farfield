@@ -29,6 +29,10 @@ jmh {
     if (project.hasProperty('jmhProfilers')) {
         profilers = (project.property('jmhProfilers') as String).split(',').toList()
     }
+    // Corpus root of the benchmarks that read a world (docs/corpus.md, ADR-042).
+    if (project.hasProperty('farfield.corpus.dir')) {
+        jvmArgsAppend = ["-Dfarfield.corpus=${project.property('farfield.corpus.dir')}".toString()]
+    }
 }
 
 // End-to-end import throughput on a corpus world (spike S5, plan item B.4):

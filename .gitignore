@@ -3,9 +3,12 @@
 build/
 out/
 
-# Minecraft dev runs
+# Minecraft dev runs (set up from dev/, ADR-042)
 run/
 runs/
+
+# Machine-specific settings (ADR-042)
+local.properties
 
 # IDE
 .idea/
@@ -27,4 +30,7 @@ Thumbs.db
 !/.claude/
 /.claude/*
 !/.claude/skills/
+# autoharness usage counters change every session
+.claude/skills/**/.ledger.jsonl
+.claude/skills/**/.sidecar.json
 __pycache__/

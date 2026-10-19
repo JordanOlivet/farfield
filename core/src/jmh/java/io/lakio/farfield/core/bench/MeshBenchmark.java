@@ -43,7 +43,7 @@ import java.util.stream.Stream;
  * Single-thread cost of meshing one 32x32x32 LOD section (spike S2, C.3), on
  * every non-empty section of the largest region file of a corpus world,
  * with its real neighbors. Corpus root: {@code farfield.corpus} system
- * property (default {@code C:\Users\Lakio\farfield-corpus}).
+ * property, set from {@code farfield.corpus.dir} in {@code local.properties}.
  */
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
@@ -66,7 +66,11 @@ public class MeshBenchmark {
 
     @Setup(Level.Trial)
     public void load() throws IOException {
-        Path corpus = Path.of(System.getProperty("farfield.corpus", "C:\\Users\\Lakio\\farfield-corpus"));
+        String root = System.getProperty("farfield.corpus");
+        if (root == null) {
+            throw new IllegalStateException("set farfield.corpus.dir in local.properties (docs/corpus.md)");
+        }
+        Path corpus = Path.of(root);
         Path regionDir = corpus.resolve(world).resolve("region");
         Path largest;
         try (Stream<Path> files = Files.list(regionDir)) {

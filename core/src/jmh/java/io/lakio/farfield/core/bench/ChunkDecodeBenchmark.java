@@ -33,8 +33,9 @@ import java.util.stream.Stream;
 /**
  * Single-thread cost per chunk of the import stages, on the chunks of the
  * largest region file of a corpus world (spike S5, B.4). The corpus root is
- * the {@code farfield.corpus} system property (default
- * {@code C:\Users\Lakio\farfield-corpus}, see {@code docs/corpus.md}).
+ * the {@code farfield.corpus} system property, set from
+ * {@code farfield.corpus.dir} in {@code local.properties} (see
+ * {@code docs/corpus.md}).
  *
  * <p>Each invocation processes the next chunk of the region, cycling, so the
  * score is the average over the region's real chunk mix.
@@ -64,7 +65,11 @@ public class ChunkDecodeBenchmark {
 
     @Setup(Level.Trial)
     public void load() throws IOException {
-        Path corpus = Path.of(System.getProperty("farfield.corpus", "C:\\Users\\Lakio\\farfield-corpus"));
+        String root = System.getProperty("farfield.corpus");
+        if (root == null) {
+            throw new IllegalStateException("set farfield.corpus.dir in local.properties (docs/corpus.md)");
+        }
+        Path corpus = Path.of(root);
         Path regionDir = corpus.resolve(world).resolve("region");
         Path largest;
         try (Stream<Path> files = Files.list(regionDir)) {

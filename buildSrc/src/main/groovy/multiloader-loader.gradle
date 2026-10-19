@@ -41,3 +41,23 @@ tasks.named('sourcesJar', Jar) {
     dependsOn(configurations.commonResources)
     from(configurations.commonResources)
 }
+
+// Dev run dirs (ADR-042): runClient and runServer first copy the missing
+// files of dev/client and dev/server into the run dirs. Each loader calls
+// this with its own run dirs.
+ext.registerPrepareRuns = { File clientDir, File serverDir ->
+    def prepareRuns = tasks.register('prepareRuns') {
+        group = 'farfield'
+        description = 'Copies the missing dev/ templates into the dev run dirs.'
+        doLast {
+            [(rootProject.file('dev/client')): clientDir, (rootProject.file('dev/server')): serverDir].each { from, into ->
+                DevTemplates.copyMissing(from, into).each {
+                    logger.lifecycle("Created ${project.relativePath(it)} from dev/")
+                }
+            }
+        }
+    }
+    tasks.matching { it.name in ['runClient', 'runServer'] }.configureEach {
+        dependsOn prepareRuns
+    }
+}

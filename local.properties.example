@@ -1,0 +1,16 @@
+# Machine-specific settings for Farfield development (ADR-042).
+# Copy this file to local.properties (gitignored) and fill in the paths of
+# this machine. Use forward slashes: a backslash is an escape here.
+# Gradle reads every key as a project property; -P on the command line wins.
+
+# Reference world corpus, one folder per world (docs/corpus.md). Read by the
+# JMH benchmarks; the bench tasks take <farfield.corpus.dir>/<world> in --args.
+farfield.corpus.dir=C:/Users/<you>/farfield-corpus
+
+# Folder that receives both loader jars for pack tests (gradlew copyTestJars).
+farfield.testJars.dir=C:/Users/<you>/farfield-test-jars
+
+# logs/ folder of the Minecraft install where the pack tests run, for reading
+# its latest.log (not read by Gradle). Vanilla launcher default:
+# C:/Users/<you>/AppData/Roaming/.minecraft/logs
+farfield.gameLogs.dir=C:/Users/<you>/AppData/Roaming/.minecraft/logs

@@ -1,0 +1,13 @@
+version:3955
+lang:en_us
+renderDistance:8
+simulationDistance:12
+renderClouds:"false"
+pauseOnLostFocus:false
+onboardAccessibility:false
+tutorialStep:none
+skipMultiplayerWarning:true
+joinedFirstServer:true
+narrator:0
+soundCategory_master:0.0
+key_key.farfield.settings:key.keyboard.f7

@@ -1,1 +1,0 @@
-{"action": "create", "reason": "Spike S1 storage measurement tooling and first findings. Future storage encoder or container work reuses the same task and crash harness; project-level because it names this repo's corpus and tasks.", "evidence": "references/evidence-f8b70c88.md"}

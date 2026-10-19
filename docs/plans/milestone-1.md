@@ -27,6 +27,12 @@ choice, an ADR.
   generated amplified terrain, a 1.20.1 world with a Distant Horizons
   database), stored outside the repository. The user's large server world
   can be added later
+- [~] A.9 Machine-independent dev setup (ADR-042): `local.properties` for
+  the machine's paths, run dirs set up from `dev/` with one test world
+  (`docs/test-worlds.md`), `runVanillaServer`, `copyTestJars`, project
+  skills tracked. Verified: `runVanillaServer` from scratch, both dev
+  servers on a fresh world from the template, `copyTestJars`. Remains: a
+  dev client opening the template save, and a clone on the second machine
 
 ## M1.B — Spike S5: region-file import (feeds S1 and S2 with real data)
 

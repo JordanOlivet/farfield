@@ -1,0 +1,2 @@
+#Dev servers only: running one means agreeing to the Minecraft EULA (https://aka.ms/MinecraftEULA).
+eula=true

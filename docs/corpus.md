@@ -1,7 +1,7 @@
 # Reference world corpus
 
 The worlds every spike measures against (plan item A.8). They live outside the
-repository, in `C:\Users\Lakio\farfield-corpus\<name>\` (copies of
+repository, in `<farfield.corpus.dir>/<name>/` (`local.properties`, ADR-042; copies of
 `level.dat` and the region folders only; the source saves are never touched).
 To rebuild the corpus on another machine, use any worlds of the same kinds;
 numbers in progress logs always name the corpus world they come from.

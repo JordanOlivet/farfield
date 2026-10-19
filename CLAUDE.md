@@ -23,11 +23,28 @@ point), `docs/DECISIONS.md` (ADRs, binding), the active plan in `docs/plans/`,
 ```powershell
 .\gradlew.bat build --no-daemon          # all projects, core unit tests, one jar per loader
 .\gradlew.bat :core:test                 # engine unit tests only
-.\gradlew.bat :neoforge:runServer        # dev server (run dir: neoforge\run, eula.txt required)
+.\gradlew.bat :neoforge:runServer        # dev server (run dir: neoforge\run)
 .\gradlew.bat :neoforge:runClient        # dev client (run dir: neoforge\run)
-.\gradlew.bat :fabric:runServer          # dev server (run dir: fabric\runs\server, eula.txt required)
+.\gradlew.bat :fabric:runServer          # dev server (run dir: fabric\runs\server)
 .\gradlew.bat :fabric:runClient          # dev client (run dir: fabric\runs\client)
+.\gradlew.bat runVanillaServer           # vanilla server for client mode checks (runs\vanilla-server)
+.\gradlew.bat copyTestJars               # both loader jars into farfield.testJars.dir, for pack tests
 ```
+
+## Machine setup (ADR-042)
+
+- Copy `local.properties.example` to `local.properties` (gitignored) and set
+  this machine's paths. Anything machine-specific goes there, as a key;
+  never write a path outside the repository into a tracked file, cite the
+  key instead (`<farfield.corpus.dir>/<world>`).
+- Run dirs are gitignored and set up from `dev/`: `runClient`, `runServer`
+  and `runVanillaServer` first copy the files missing from the run dir
+  (`eula.txt`, `server.properties`, `ops.json`, `options.txt`, the test
+  world), and never overwrite one. The test world, its seed and the places
+  worth a look: `docs/test-worlds.md`. To reset a run dir file or the test
+  world, delete it; the next run copies it again.
+- Project skills are in `.claude/skills/` (tracked); autoharness counters
+  (`.ledger.jsonl`, `.sidecar.json`) stay local.
 
 Releases (ADR-031): push a tag `v<version from gradle.properties>[-alpha.N]`,
 e.g. `git tag v0.1.0-alpha.2 && git push origin v0.1.0-alpha.2`;
@@ -79,18 +96,18 @@ and `fabric/build/libs/farfield-fabric-1.21.1-<version>.jar`.
 
 - `core` logic: JUnit 5 unit tests and, for hot paths, JMH benchmarks.
 - Minecraft side: dev servers/clients boot with no error, then the user tests
-  in his real install. His game logs are in
-  `C:\Users\Lakio\AppData\Roaming\.minecraft\logs\latest.log`, not in the run
-  dirs.
+  in his real install. His game log is `latest.log` in the
+  `farfield.gameLogs.dir` folder of `local.properties`, not in the run dirs.
 - Prove a code path ran from logs: a path that logs nothing on success cannot
   be verified, add one `info` line on the success branch.
 - Dev servers read console commands from stdin, so a check can be scripted:
   `(sleep 90; echo "farfield import"; sleep 20; echo stop) | ./gradlew.bat :neoforge:runServer --no-daemon --console plain > log`
   (Git Bash). Stopping with `stop` closes the LOD stores and logs their
   counters.
-- Client mode (E.6) is checked against a vanilla 1.21.1 server jar
-  (Mojang's piston-meta manifest, run with JDK 21, `online-mode=false`, a
-  fixed operator in `ops.json`): `runClient -PquickPlayServer=localhost:25565
+- Client mode (E.6) is checked against the vanilla 1.21.1 server of
+  `runVanillaServer` (downloaded from Mojang's piston-meta manifest, JDK 21,
+  `online-mode=false`, `Dev` operator, the test world; reads stdin like the
+  dev servers): `runClient -PquickPlayServer=localhost:25565
   -PclientUsername=Dev` joins it with a stable offline name. Use spectator
   mode before `/tp` high up, or the player falls.
 - Scripted dev clients (window capture, chat commands, clicks) work only while
