@@ -311,6 +311,8 @@ public final class LodRenderer {
     private long quadsSubmitted;
     /** Drawn sections in the pre-pass that may discard ({@link #DISCARD}). */
     private long discardSections;
+    /** Sections in view the game draws entirely, skipped ({@link #gameDrawsAll}). */
+    private long leftToGame;
     private long nextStats;
 
     /** A variant of the LOD program and its uniform locations. */
@@ -548,6 +550,7 @@ public final class LodRenderer {
             draws[l] = 0;
         }
         int count = 0;
+        int renderDistance = mc.options.getEffectiveRenderDistance();
         for (int i = 0, n = drawList.size(); i < n; i++) {
             long key = drawList.getLong(i);
             Resident r = resident.get(key);
@@ -556,6 +559,10 @@ public final class LodRenderer {
             }
             int faces = visibleFaces(key, cam);
             if (faces == 0) {
+                continue;
+            }
+            if (gameDrawsAll(key, cam, renderDistance)) {
+                leftToGame++; // every fragment would give way to the game's terrain
                 continue;
             }
             count++;
@@ -754,19 +761,21 @@ public final class LodRenderer {
         Farfield.LOG.info("LOD renderer: {} sections drawn, {} resident, {} MB of {} MB quads used, {} meshing,"
                         + " {} meshes uploaded and {} freed, {} selections since last line; per frame {} us on the"
                         + " render thread and {} us on the GPU (depth pre-pass {}, opaque {}, translucent {}), {} of"
-                        + " {} quads sent (face directions), {} sections may discard, over {} frames; detail {}; at"
-                        + " most {} coarse fallbacks per selection", count, resident.size(),
+                        + " {} quads sent (face directions), {} sections may discard, {} left to the game, over {}"
+                        + " frames; detail {}; at most {} coarse fallbacks per selection", count, resident.size(),
                 arena.used() * 8 >> 20, arena.capacity() * 8 >> 20, requested.size(), meshesUploaded, meshesEvicted,
                 selections, frameNanos / 1000 / Math.max(1, timedFrames),
                 (gpuPassNanos[0] + gpuPassNanos[1] + gpuPassNanos[2]) / 1000 / Math.max(1, gpuFrames),
                 RenderSettings.depthPrepass() ? gpuPassNanos[0] / 1000 / Math.max(1, gpuFrames) + " us" : "off",
                 gpuPassNanos[1] / 1000 / Math.max(1, gpuFrames), gpuPassNanos[2] / 1000 / Math.max(1, gpuFrames),
                 quadsSubmitted / Math.max(1, timedFrames), quadsInView / Math.max(1, timedFrames),
-                discardSections / Math.max(1, timedFrames), timedFrames, String.format("%.1f", selector.detail()), maxFallbacks);
+                discardSections / Math.max(1, timedFrames), leftToGame / Math.max(1, timedFrames), timedFrames,
+                String.format("%.1f", selector.detail()), maxFallbacks);
         maxFallbacks = 0;
         quadsInView = 0;
         quadsSubmitted = 0;
         discardSections = 0;
+        leftToGame = 0;
         frameNanos = 0;
         timedFrames = 0;
         java.util.Arrays.fill(gpuPassNanos, 0);
@@ -1261,6 +1270,72 @@ public final class LodRenderer {
      * Whether a section overlaps the grid of sections the game may draw: only
      * there can its fragments give way to the game's terrain (lod.frag).
      */
+    /**
+     * Whether the game draws every chunk section a LOD section covers, by
+     * the rule of {@code vanillaDraws} in {@code lod.frag}: every fragment of
+     * the section would be discarded, so it is not drawn at all (ADR-047).
+     * Levels 0 and 1 only (8 and 64 chunk sections); the Sodium distance
+     * keeps a block of margin against float rounding, so a section is never
+     * skipped where the shader would keep a fragment.
+     */
+    private boolean gameDrawsAll(long key, Vec3 cam, int renderDistance) {
+        int level = drawLevel(key);
+        if (level > 1 || gridWidth <= 0) {
+            return false;
+        }
+        int chunks = 2 << level;
+        int sx0 = LodKey.x(key) * chunks;
+        int sy0 = LodKey.y(key) * chunks;
+        int sz0 = LodKey.z(key) * chunks;
+        int camX = (int) Math.floor(cam.x);
+        int camY = (int) Math.floor(cam.y);
+        int camZ = (int) Math.floor(cam.z);
+        for (int sy = sy0; sy < sy0 + chunks; sy++) {
+            for (int sz = sz0; sz < sz0 + chunks; sz++) {
+                for (int sx = sx0; sx < sx0 + chunks; sx++) {
+                    int gx = sx - gridMinX;
+                    int gy = sy - gridMinY;
+                    int gz = sz - gridMinZ;
+                    if (gx < 0 || gy < 0 || gz < 0 || gx >= gridWidth || gz >= gridWidth || gy >= gridHeight) {
+                        return false;
+                    }
+                    int bit = (gz * gridWidth + gx) * gridHeight + gy;
+                    if ((drawnBits[bit >> 5] >>> (bit & 31) & 1) == 0) {
+                        return false;
+                    }
+                    if (sodiumRule) {
+                        double d = renderDistance * 16 - 1;
+                        double nx = nearest(sx * 16 - camX, cam.x - camX);
+                        double ny = nearest(sy * 16 - camY, cam.y - camY);
+                        double nz = nearest(sz * 16 - camZ, cam.z - camZ);
+                        if (nx * nx + nz * nz >= d * d || Math.abs(ny) >= d) {
+                            return false;
+                        }
+                    } else {
+                        if (Math.abs(sy - (camY >> 4)) > renderDistance) {
+                            return false;
+                        }
+                        int cx = Math.max(0, Math.abs(sx - (camX >> 4)) - 1);
+                        int cz = Math.max(0, Math.abs(sz - (camZ >> 4)) - 1);
+                        int far = Math.max(cx, cz);
+                        int near = Math.min(cx, cz);
+                        if (near * near + far * far >= renderDistance * renderDistance) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    /** Sodium's nearest point of a section grown by one block, on one axis, relative to the camera. */
+    private static double nearest(int offset, double cameraFrac) {
+        int lo = offset - 1;
+        int hi = offset + 17;
+        return (lo > 0 ? lo : hi < 0 ? hi : 0) - cameraFrac;
+    }
+
     private boolean nearGame(long key) {
         int size = LodSection.SIZE << drawLevel(key);
         long x = LodKey.x(key) * (long) size;

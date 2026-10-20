@@ -234,6 +234,11 @@ choice, an ADR.
   is mostly per pixel: textures off saves 8 %, 2.4 times less geometry
   (detail 12) only 30 %. Remains: the user's pack; the per-pixel cost is
   a separate item (early depth test, overdraw)
+- [-] E.14 GPU occlusion culling of hidden sections (ADR-047): built and
+  measured on branch `experiment/occlusion-culling`, 2 to 7 % of the draws
+  culled for no GPU gain (the game's near terrain hides the horizon, and
+  it is not in the LOD depth). Dropped. Kept instead: sections the game
+  draws entirely are not drawn (GPU -4 to -6 % in an amplified world)
 - [~] E.13 Per-pixel GPU cost (ADR-043): depth pre-pass for opaque faces,
   shaded passes with early depth tests, GPU time split per pass on the
   stat line, `/farfield debug prepass` for comparisons. Measured

@@ -1088,3 +1088,35 @@ Both together: GPU time -42 %, frame rate +62 % (about 184 to 299 fps,
 vanilla terrain included). Face directions alone: -5 %, or -15 % with
 the pre-pass, whose vertex work they halve (pre-pass 935 to 720 us).
 Render thread: 413 to 462 us per frame in every case.
+
+## ADR-047 — GPU occlusion culling tried, not kept; sections the game draws are skipped
+
+**Date**: 2026-10-20 · **Status**: accepted (amends ADR-007's "GPU culling")
+
+The user asked for GPU culling of hidden sections. Built and measured on
+branch `experiment/occlusion-culling` (commit `7fa2d7b`): two phases (the
+depth pre-pass of the sections visible last frame, a max-depth pyramid of
+it by compute shader, every draw command tested against it and compacted,
+the other visible sections drawn with `glMultiDrawArraysIndirectCount`),
+tight per-section quad bounds (a level-3 section is 256 blocks tall and its
+whole box always reached the sky over a ridge), and the LOD sections the
+game draws entirely as near occluders (finest level, no see-through faces).
+Images unchanged, no popping by construction.
+
+Measured in the Fabric dev client, uncapped: 2 to 6 % of the draws culled
+in the test world, 3 to 7 % in an amplified world, GPU time unchanged or
+worse, render thread +60 to +100 us. The terrain that hides the horizon is
+the game's own near terrain, drawn after the LODs and outside their depth;
+the few LOD sections fully under it make poor occluders (most hold leaves).
+
+- **Not kept**: occlusion culling, the depth pyramid, the tight bounds.
+  Worth another look only if the LODs ever draw after the game's terrain
+  (its depth available) or for a far tier where LOD terrain hides LOD.
+- **Kept**: a LOD section whose every chunk section the game draws (the
+  rule of `vanillaDraws` in `lod.frag`, run on the CPU over the same
+  compiled-sections grid; levels 0 and 1; one block of margin on Sodium's
+  float distance) is not drawn at all, since every fragment would be
+  discarded. Measured in the amplified world, three views: GPU -4 to -6 %
+  (2,833 to 2,722, 2,690 to 2,526, 3,602 to 3,428 us), 35 to 44 sections
+  skipped, images unchanged over the LODs. The stat line gives the
+  sections left to the game.
