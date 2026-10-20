@@ -239,6 +239,11 @@ choice, an ADR.
   culled for no GPU gain (the game's near terrain hides the horizon, and
   it is not in the LOD depth). Dropped. Kept instead: sections the game
   draws entirely are not drawn (GPU -4 to -6 % in an amplified world)
+- [ ] E.15 (not scheduled) Draw the LODs after the game's opaque terrain,
+  with the game's depth converted into theirs, so the near terrain hides
+  LOD pixels and, with the culling of `experiment/occlusion-culling`,
+  whole sections: `docs/analysis/lods-after-vanilla.md`. Waits for real
+  usage feedback on the current performance
 - [~] E.13 Per-pixel GPU cost (ADR-043): depth pre-pass for opaque faces,
   shaded passes with early depth tests, GPU time split per pass on the
   stat line, `/farfield debug prepass` for comparisons. Measured
