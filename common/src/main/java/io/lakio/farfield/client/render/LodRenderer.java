@@ -556,6 +556,7 @@ public final class LodRenderer {
             return;
         }
         long frameStart = System.nanoTime();
+        RenderSettings.resize(meshers, RenderSettings.effectiveThreads(RenderSettings.meshThreads()), "LOD mesher");
         frame++;
         readGpuTimers();
         applyRewrites();

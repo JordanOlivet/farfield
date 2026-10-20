@@ -39,6 +39,8 @@ public final class RenderSettings {
     private static volatile int thickFogDistance = RenderConfig.DEFAULTS.thickFogDistance();
     private static volatile boolean noisePreview = RenderConfig.DEFAULTS.noisePreview();
     private static volatile boolean depthPrepass = true;
+    private static volatile int meshThreads = RenderConfig.DEFAULTS.meshThreads();
+    private static volatile int previewThreads = RenderConfig.DEFAULTS.previewThreads();
 
     private RenderSettings() {
     }
@@ -99,6 +101,48 @@ public final class RenderSettings {
         depthPrepass = value;
     }
 
+    /** Threads that mesh LOD sections, as set: 1 to 8, or {@link RenderConfig#AUTO}. Applied live. */
+    public static int meshThreads() {
+        return meshThreads;
+    }
+
+    public static void setMeshThreads(int value) {
+        meshThreads = RenderConfig.clampThreads(value);
+    }
+
+    /** Threads that build the noise preview, as set: 1 to 8, or {@link RenderConfig#AUTO}. Applied live. */
+    public static int previewThreads() {
+        return previewThreads;
+    }
+
+    public static void setPreviewThreads(int value) {
+        previewThreads = RenderConfig.clampThreads(value);
+    }
+
+    /** The thread count a setting stands for on this machine ({@link RenderConfig#threads}). */
+    public static int effectiveThreads(int setting) {
+        return RenderConfig.threads(setting, Runtime.getRuntime().availableProcessors());
+    }
+
+    /**
+     * Resizes a pool to {@code threads} (growing raises the maximum first,
+     * shrinking lowers the core size first, as the executor requires); a
+     * thread past the new size ends after its current task.
+     */
+    public static void resize(java.util.concurrent.ThreadPoolExecutor pool, int threads, String name) {
+        if (pool.getCorePoolSize() == threads) {
+            return;
+        }
+        if (threads > pool.getMaximumPoolSize()) {
+            pool.setMaximumPoolSize(threads);
+            pool.setCorePoolSize(threads);
+        } else {
+            pool.setCorePoolSize(threads);
+            pool.setMaximumPoolSize(threads);
+        }
+        Farfield.LOG.info("{} threads: {}", name, threads);
+    }
+
     /**
      * Where the fog becomes opaque in normal dimensions, in blocks, or
      * {@link RenderConfig#FOG_OFF} (ADR-034).
@@ -151,6 +195,8 @@ public final class RenderSettings {
             fogDistance = config.fogDistance();
             thickFogDistance = config.thickFogDistance();
             noisePreview = config.noisePreview();
+            meshThreads = config.meshThreads();
+            previewThreads = config.previewThreads();
             Farfield.LOG.info(Files.exists(file) ? "LOD settings loaded from {}: {}" : "No {} yet, LOD settings at their defaults: {}",
                     file.getFileName(), config);
         } catch (IOException | RuntimeException e) {
@@ -165,7 +211,7 @@ public final class RenderSettings {
         }
         Path file = file();
         RenderConfig config = new RenderConfig(enabled, voxelPixels, textureDistance, debugLevels, fogDistance,
-                thickFogDistance, noisePreview);
+                thickFogDistance, noisePreview, meshThreads, previewThreads);
         try {
             config.write(file);
             Farfield.LOG.info("LOD settings saved to {}: {}", file.getFileName(), config);

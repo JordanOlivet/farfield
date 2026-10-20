@@ -29,11 +29,31 @@ class RenderConfigTest {
                 new RenderConfig(false, 2.5f, 0, true, RenderConfig.FOG_OFF, 1024),
                 new RenderConfig(true, 12f, 768, false, 512, RenderConfig.FOG_OFF),
                 new RenderConfig(true, 6f, 0, false, 4096, RenderConfig.FOG_VANILLA),
-                new RenderConfig(true, 6f, 0, false, 4096, RenderConfig.FOG_VANILLA, false)}) {
+                new RenderConfig(true, 6f, 0, false, 4096, RenderConfig.FOG_VANILLA, false),
+                new RenderConfig(true, 6f, 0, false, 4096, RenderConfig.FOG_VANILLA, true, 3, RenderConfig.AUTO)}) {
             config.write(file);
             assertEquals(config, RenderConfig.read(file));
         }
         assertFalse(Files.exists(file.resolveSibling("farfield-client.properties.tmp")), "temporary file moved");
+    }
+
+    @Test
+    void threadCounts() throws IOException {
+        Path file = dir.resolve("farfield-client.properties");
+        Files.writeString(file, "mesh_threads=AUTO\npreview_threads=99\n", StandardCharsets.UTF_8);
+        RenderConfig config = RenderConfig.read(file);
+        assertEquals(RenderConfig.AUTO, config.meshThreads());
+        assertEquals(RenderConfig.MAX_THREADS, config.previewThreads());
+        Files.writeString(file, "mesh_threads=-2\npreview_threads=many\n", StandardCharsets.UTF_8);
+        config = RenderConfig.read(file);
+        assertEquals(RenderConfig.AUTO, config.meshThreads());
+        assertEquals(RenderConfig.AUTO, config.previewThreads());
+        // Auto: one thread per four logical processors, 1 to 4.
+        assertEquals(1, RenderConfig.threads(RenderConfig.AUTO, 2));
+        assertEquals(2, RenderConfig.threads(RenderConfig.AUTO, 8));
+        assertEquals(4, RenderConfig.threads(RenderConfig.AUTO, 16));
+        assertEquals(4, RenderConfig.threads(RenderConfig.AUTO, 64));
+        assertEquals(6, RenderConfig.threads(6, 4));
     }
 
     @Test

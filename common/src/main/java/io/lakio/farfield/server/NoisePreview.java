@@ -70,12 +70,14 @@ final class NoisePreview {
     /** A rise of this many blocks between two samples (4 blocks apart) shows bare stone. */
     private static final int CLIFF_RISE = 8;
 
-    private final ExecutorService pool = Executors.newFixedThreadPool(2, r -> {
-        Thread t = new Thread(r, "farfield-noise-preview");
-        t.setDaemon(true);
-        t.setPriority(Thread.MIN_PRIORITY);
-        return t;
-    });
+    /** Sized by the preview threads setting ({@link RenderSettings#previewThreads}), checked every update. */
+    private final java.util.concurrent.ThreadPoolExecutor pool =
+            (java.util.concurrent.ThreadPoolExecutor) Executors.newFixedThreadPool(2, r -> {
+                Thread t = new Thread(r, "farfield-noise-preview");
+                t.setDaemon(true);
+                t.setPriority(Thread.MIN_PRIORITY);
+                return t;
+            });
     private final Map<ResourceKey<Level>, Optional<Dimension>> dimensions = new ConcurrentHashMap<>();
     private final PreviewTrees trees = new PreviewTrees();
     /** Most trees placed in one chunk, whatever the biome says. */
@@ -131,6 +133,7 @@ final class NoisePreview {
         if (++ticks % UPDATE_TICKS != 0 || stopped || !RenderSettings.noisePreview()) {
             return;
         }
+        RenderSettings.resize(pool, RenderSettings.effectiveThreads(RenderSettings.previewThreads()), "Noise preview");
         boolean report = ticks % REPORT_TICKS == 0;
         for (ServerLevel level : server.getAllLevels()) {
             List<ServerPlayer> players = level.players();
@@ -163,7 +166,7 @@ final class NoisePreview {
         return Optional.of(new Dimension(level, generator));
     }
 
-    /** Submits the nearest missing tiles, up to {@link #MAX_IN_FLIGHT} at a time. */
+    /** Submits the nearest missing tiles, up to {@link #MAX_IN_FLIGHT} (or two per thread) at a time. */
     private void schedule(Dimension d, List<ServerPlayer> players) {
         PreviewStore store = d.world.preview();
         List<long[]> candidates = new ArrayList<>();
@@ -193,7 +196,7 @@ final class NoisePreview {
         d.left = candidates.size();
         candidates.sort((a, b) -> Long.compare(a[1], b[1]));
         for (long[] c : candidates) {
-            if (d.inFlight.size() >= MAX_IN_FLIGHT) {
+            if (d.inFlight.size() >= Math.max(MAX_IN_FLIGHT, 2 * pool.getCorePoolSize())) {
                 break;
             }
             long tile = c[0];

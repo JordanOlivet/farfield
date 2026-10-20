@@ -64,6 +64,10 @@ public final class FarfieldSettingsScreen extends OptionsSubScreen {
         list.addBig(OptionInstance.createBoolean("farfield.options.noise_preview",
                 OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.noise_preview.tooltip")),
                 RenderSettings.noisePreview(), RenderSettings::setNoisePreview));
+        list.addBig(threadSlider("farfield.options.mesh_threads", RenderSettings.meshThreads(),
+                RenderSettings::setMeshThreads));
+        list.addBig(threadSlider("farfield.options.preview_threads", RenderSettings.previewThreads(),
+                RenderSettings::setPreviewThreads));
         list.addBig(OptionInstance.createBoolean("farfield.options.level_colors",
                 OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.level_colors.tooltip")),
                 RenderSettings.debugLevels(), RenderSettings::setDebugLevels));
@@ -73,6 +77,19 @@ public final class FarfieldSettingsScreen extends OptionsSubScreen {
     public void removed() {
         super.removed();
         RenderSettings.save();
+    }
+
+    /** A thread count slider: Auto first (the count it stands for on this machine shown), then 1 to 8. */
+    private static OptionInstance<Integer> threadSlider(String key, int value,
+                                                        java.util.function.IntConsumer setter) {
+        return new OptionInstance<>(key,
+                OptionInstance.cachedConstantTooltip(Component.translatable(key + ".tooltip")),
+                (caption, threads) -> Options.genericValueLabel(caption, threads == RenderConfig.AUTO
+                        ? Component.translatable("farfield.options.threads.auto", RenderSettings.effectiveThreads(threads))
+                        : Component.literal(Integer.toString(threads))),
+                new OptionInstance.IntRange(RenderConfig.AUTO, RenderConfig.MAX_THREADS),
+                value,
+                setter::accept);
     }
 
     private static Component textureLabel(int step) {
