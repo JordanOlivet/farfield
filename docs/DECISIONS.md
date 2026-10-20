@@ -1120,3 +1120,48 @@ the few LOD sections fully under it make poor occluders (most hold leaves).
   (2,833 to 2,722, 2,690 to 2,526, 3,602 to 3,428 us), 35 to 44 sections
   skipped, images unchanged over the LODs. The stat line gives the
   sections left to the game.
+
+## ADR-048 — Indexed quads, a section cache, thread settings, coarser far preview
+
+**Date**: 2026-10-20 · **Status**: accepted
+
+After the occlusion culling trial (ADR-047) the user asked for other gains,
+in the order proposed: rendering, LOD building, the noise preview, then a
+measure of the shaded pass. All measured in the Fabric dev client,
+frame rate uncapped, RTX 3070 Laptop, 2582x1550, `farfield-test`.
+
+- **4 vertices per quad**: indexed indirect draws
+  (`glMultiDrawElementsIndirect`, 5-int commands) over one shared index
+  buffer of 131,072 quads (indices `4q, 4q+1, 4q+3, 4q, 4q+3, 4q+2`); the
+  base vertex is the group's start times 4, `lod.vert` reads the quad at
+  `gl_VertexID / 4` and the corner at `gl_VertexID % 4`. A longer run takes
+  several commands. Same view, same sections: GPU 2,874-2,896 to
+  2,310-2,336 us per frame (-19 %), about 300 to 360 fps, same image.
+- **Decoded section cache** for the mesher threads (`SectionCache`, 1,024
+  sections, least recently used out): a mesh reads its section and six
+  neighbors. The store's write listener invalidates an entry and stamps
+  the key; a read that started before a write is not kept. Reading fell
+  from 62 to 14 us of a 1.4 ms job: a small gain, larger when reads are
+  slow (934 us per job at a cold start). A "LOD meshing" stat line gives
+  jobs, threads, time per job, read time and cache hits.
+- **Thread settings**: `mesh_threads` and `preview_threads`, Auto by
+  default (one per four logical processors, 1 to 4: 2 on 8, 4 on 16) or 1
+  to 8; two sliders with Auto first; both pools resize live.
+- **Far preview tiles computed coarser**: heights every 4 blocks up to
+  1,024 blocks from a player, 8 up to 2,048, 16 beyond, the samples between
+  filled bilinearly; a tile is built again finer when a player comes
+  closer (tile format 5 stores the grid, in the summary too). Neighbor
+  border layers of preview sections compute only their three rows of
+  columns and leave trees out. The 233 tiles within 4,096 blocks: about
+  2 minutes with 4 threads, against about 6 with 2 threads and the full
+  grid; no seam seen.
+- **Shaded pass, measured** (temporary switches, removed): of 2,330 us,
+  ambient occlusion costs 228, biome blending 65, textures 73; with all
+  three off the opaque pass still takes 1,322 us. The rest is geometry
+  paid in both the pre-pass and the shaded pass, so the next GPU lever is
+  fewer quads, not the shader.
+
+Open: preview section meshing still costs 2.5 to 3.7 ms per job without
+any store read (whole-section builds, tree stamping); a vanilla section
+waiting for its neighbors (`hasAllNeighbors`) is compiled but not drawn
+and the LODs give way there (one transient hole seen at the vanilla edge).

@@ -239,6 +239,11 @@ choice, an ADR.
   culled for no GPU gain (the game's near terrain hides the horizon, and
   it is not in the LOD depth). Dropped. Kept instead: sections the game
   draws entirely are not drawn (GPU -4 to -6 % in an amplified world)
+- [x] E.16 Performance pass (ADR-048): 4 vertices per quad (GPU -19 %),
+  decoded section cache for meshing, mesher and preview thread settings
+  with Auto, far preview tiles on a coarser grid (full preview about
+  3 times faster), shaded pass cost measured. Checked in the Fabric dev
+  client. Remains: the user's pack, NeoForge
 - [ ] E.15 (not scheduled) Draw the LODs after the game's opaque terrain,
   with the game's depth converted into theirs, so the near terrain hides
   LOD pixels and, with the culling of `experiment/occlusion-culling`,
