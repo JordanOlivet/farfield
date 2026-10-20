@@ -226,7 +226,8 @@ choice, an ADR.
   run of visible groups (`FaceDirections`, unit tested against every face
   plane in the box). Beyond its box on every axis a section sends three of
   its six directions; the stat line gives the quads sent against those of
-  the drawn sections. Measured 2026-10-20 in the Fabric dev client
+  the drawn sections. Uncapped (ADR-046): GPU -5 % alone, -15 % with
+  the pre-pass. First measured at the 120 fps cap in the Fabric dev client
   (vanilla rendering, RTX 3070 Laptop, 2582x1550, 793 sections, same
   camera): 807,024 of 1,412,036 quads sent (57 %), GPU 3,450 us per frame
   against 3,526 to 3,558 before (-3 %), render thread +80 us. The GPU time
@@ -240,5 +241,6 @@ choice, an ADR.
   frame without, 2,554 us with (-25 %), same image over the LODs, day and
   night. Pre-pass without discard where nothing can be cut (ADR-044):
   pre-pass 780 to 521 us, -31 % against no pre-pass in the same run,
-  same image. Remains: NeoForge and Sodium, the user's pack, a view with
+  same image. Uncapped (ADR-046), E.12 and E.13 together: GPU 4,950 to
+  2,880 us per frame (-42 %), 184 to 299 fps. Remains: NeoForge and Sodium, the user's pack, a view with
   glass panes beyond the vanilla distance, then the shaded opaque pass

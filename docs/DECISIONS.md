@@ -1064,3 +1064,27 @@ one water material up to the sea level and nothing froze.
   (one more biome sample per sea cell).
 - Not covered: icebergs and other frozen-ocean features; snow on ice
   (vanilla puts none).
+
+## ADR-046 — GPU gains of E.12 and E.13 measured without a frame cap
+
+**Date**: 2026-10-20 · **Status**: accepted (completes ADR-043 and ADR-044)
+
+The measurements of ADR-043 and ADR-044 ran at vanilla's default 120 fps
+cap, where the laptop GPU lowered its clocks. Measured again uncapped
+(`maxFps:260`, vsync off), Fabric dev client, RTX 3070 Laptop,
+2582x1550, `farfield-test` at `/tp @s 48 180 32 45 25`, 1,417,837 quads
+in the drawn sections. One run; a temporary switch turned the face
+directions off (every direction drawn); each value is the second stat
+line after a switch, two rounds:
+
+| Pre-pass | Face directions | GPU per frame | Frames in 30 s |
+|---|---|---|---|
+| Off | Off (before E.12) | 4,930 to 4,977 us | 5,506 to 5,559 |
+| Off | On | 4,666 to 4,732 us | 5,767 to 5,851 |
+| On | Off | 3,374 to 3,384 us | 7,790 to 7,818 |
+| On | On | 2,875 to 2,889 us | 8,955 to 8,989 |
+
+Both together: GPU time -42 %, frame rate +62 % (about 184 to 299 fps,
+vanilla terrain included). Face directions alone: -5 %, or -15 % with
+the pre-pass, whose vertex work they halve (pre-pass 935 to 720 us).
+Render thread: 413 to 462 us per frame in every case.
