@@ -10,7 +10,8 @@ import io.lakio.farfield.core.lod.LodSection;
  * rule); the top voxel shows the top block of the cell where that highest
  * surface lies, the next
  * {@link PreviewTile#FILLER_DEPTH} blocks its filler, then the tile's
- * ground; water fills up to the sea. Only a skin is built: a column goes
+ * ground; water fills up to the sea, its top block ice over frozen cells
+ * (the voxel holding it, on coarse levels). Only a skin is built: a column goes
  * one voxel below the lowest of its four neighbors, so cliffs stay closed
  * and nothing is buried; next to a chunk with real data the neighbor's
  * height is the real ground's, so a preview column beside a real sea goes
@@ -137,6 +138,7 @@ public final class PreviewVoxels {
                 int filler = tile.filler(cellX, cellZ);
                 int water = tile.water();
                 int sea = tile.seaLevel();
+                boolean frozen = tile.frozen(cellX, cellZ);
                 for (int vy = 0; vy < S; vy++) {
                     if (layerAxis == 1 && vy != layerIndex) {
                         continue;
@@ -158,7 +160,8 @@ public final class PreviewVoxels {
                         }
                     } else if (water >= 0 && bottom < sea) {
                         blocks = Math.min(s, sea - bottom);
-                        material = water;
+                        // The voxel holding the sea's top block shows it, as the real mip rule's view from above.
+                        material = frozen && bottom + s >= sea ? tile.ice() : water;
                     } else {
                         break;
                     }

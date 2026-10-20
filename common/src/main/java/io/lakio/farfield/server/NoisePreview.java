@@ -52,7 +52,7 @@ import java.util.function.IntBinaryOperator;
  * blocks from the noise router's final density (each search starts from
  * the neighbor sample's height, then bisects to the block), the biome per
  * chunk and the surface blocks per 4-block cell, guessed from the biome and
- * the slope; the houses of the villages to come ({@link PreviewVillages});
+ * the slope, and whether the sea freezes over it (vanilla's rule); the houses of the villages to come ({@link PreviewVillages});
  * then the biome's trees and plants at their average density
  * ({@link PreviewTrees}), at random but always the same places (seeded by
  * the world and the chunk), on the ground each needs, above the sea and
@@ -252,10 +252,22 @@ final class NoisePreview {
                     Holder<Biome> biome = chunkBiomes[(cz >> 2) * PreviewTile.CHUNKS + (cx >> 2)];
                     m.surface(biome, x0 + cx * PreviewTile.GRID, h, z0 + cz * PreviewTile.GRID, h - low >= CLIFF_RISE);
                     tile.setCell(cx, cz, m.top, m.filler);
+                    // Vanilla's freeze_top_layer: the sea's top block turns to ice where the
+                    // biome there is too cold to rain (frozen oceans: a noise leaves open water).
+                    // The cell's own biome at the sea's top, as vanilla, not the chunk's: one
+                    // chunk-wide biome left whole chunks of open water in a frozen sea.
+                    if (m.ice >= 0 && low < d.seaLevel) {
+                        int x = x0 + cx * PreviewTile.GRID + PreviewTile.GRID / 2;
+                        int z = z0 + cz * PreviewTile.GRID + PreviewTile.GRID / 2;
+                        Holder<Biome> surface = d.biomes.getNoiseBiome(QuartPos.fromBlock(x),
+                                QuartPos.fromBlock(d.seaLevel - 1), QuartPos.fromBlock(z), d.sampler);
+                        tile.setFrozen(cx, cz, !surface.value().warmEnoughToRain(new BlockPos(x, d.seaLevel - 1, z)));
+                    }
                 }
             }
             tile.setBelow(m.below);
             tile.setWater(m.water, d.seaLevel);
+            tile.setIce(m.ice);
             List<PreviewVillages.Village> villages = villages(d, tile, x0, z0, m);
             plantTrees(d, tile, tileX, tileZ, chunkBiomes, m, villages);
             world.preview().write(tileX, tileZ, tile);
@@ -438,6 +450,8 @@ final class NoisePreview {
         final int stone;
         final int snow;
         final int mycelium;
+        /** Ice over a frozen water sea; -1 for other fluids. */
+        final int ice;
         int top;
         int filler;
 
@@ -446,6 +460,7 @@ final class NoisePreview {
             this.d = d;
             below = id(d.defaultBlock);
             water = d.fluid == null ? -1 : id(d.fluid);
+            ice = d.fluid != null && d.fluid.is(Blocks.WATER) ? id(Blocks.ICE.defaultBlockState()) : -1;
             grass = id(Blocks.GRASS_BLOCK.defaultBlockState());
             dirt = id(Blocks.DIRT.defaultBlockState());
             sand = id(Blocks.SAND.defaultBlockState());

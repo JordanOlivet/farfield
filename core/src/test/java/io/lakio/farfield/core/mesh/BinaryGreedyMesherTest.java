@@ -147,6 +147,70 @@ class BinaryGreedyMesherTest {
     }
 
     @Test
+    void emptyColumnsHideWaterWallsWhenUnknown() {
+        // A sea on x < 16 (stone 0..9, water 10..20), nothing on x >= 16 (a chunk
+        // without data), except one column at z = 3 with a stone floor (a real pit).
+        LodSection section = new LodSection(0);
+        for (int z = 0; z < 32; z++) {
+            for (int x = 0; x < 16; x++) {
+                for (int y = 0; y <= 20; y++) {
+                    section.set(x, y, z, y < 10 ? 1 : 10);
+                }
+            }
+        }
+        section.set(16, 0, 3, 1);
+        section.compact();
+        mesher.mesh(section, CLASSES, null, out);
+        assertTrue(waterWall(3) && waterWall(7), "by default the empty side is open: water walls");
+        mesher.setEmptyColumnsUnknown(true);
+        mesher.mesh(section, CLASSES, null, out);
+        assertTrue(waterWall(3), "the pit's column holds stone: its water wall stays");
+        assertTrue(!waterWall(7), "an empty column hides the water wall");
+        boolean stoneWall = false;
+        for (int i = 0; i < out.count(Quad.POS_X); i++) {
+            long q = out.quads(Quad.POS_X)[i];
+            stoneWall |= Quad.material(q) == 1 && Quad.x(q) == 15;
+        }
+        assertTrue(stoneWall, "the ground keeps its wall");
+        mesher.setEmptyColumnsUnknown(false);
+
+        // The same rule for a neighbor's border layer: its empty columns read as solid.
+        // As the -X neighbor, the section touches with its layer x = 31: empty everywhere.
+        int[] plane = BinaryGreedyMesher.borderPlane(section, Quad.NEG_X, CLASSES, true, null);
+        assertEquals(0, plane[5]);
+        BinaryGreedyMesher.addEmptyColumns(section, Quad.NEG_X, CLASSES, plane);
+        for (int u = 0; u < 32; u++) {
+            assertEquals(-1, plane[u], "row y = " + u);
+        }
+        // As the +X neighbor, with layer x = 0: full columns, nothing added.
+        plane = BinaryGreedyMesher.borderPlane(section, Quad.POS_X, CLASSES, true, null);
+        BinaryGreedyMesher.addEmptyColumns(section, Quad.POS_X, CLASSES, plane);
+        assertEquals(-1, plane[20]);
+        assertEquals(0, plane[21], "above the water, columns that hold something stay open");
+        // As the -Z neighbor, with layer z = 31 (rows by x, bits along y): x >= 16 empty.
+        plane = BinaryGreedyMesher.borderPlane(section, Quad.NEG_Z, CLASSES, true, null);
+        BinaryGreedyMesher.addEmptyColumns(section, Quad.NEG_Z, CLASSES, plane);
+        assertEquals((1 << 21) - 1, plane[15]);
+        assertEquals(-1, plane[16]);
+        // Vertical directions are left alone.
+        plane = BinaryGreedyMesher.borderPlane(section, Quad.NEG_Y, CLASSES, true, null);
+        BinaryGreedyMesher.addEmptyColumns(section, Quad.NEG_Y, CLASSES, plane);
+        assertEquals(0, plane[20]);
+    }
+
+    /** Whether the last mesh has a +X water face at x = 15 covering row z. */
+    private boolean waterWall(int z) {
+        for (int i = 0; i < out.count(Quad.POS_X); i++) {
+            long q = out.quads(Quad.POS_X)[i];
+            // X faces span (U, V) = (Y, Z).
+            if (Quad.material(q) == 10 && Quad.x(q) == 15 && Quad.z(q) <= z && z < Quad.z(q) + Quad.sizeV(q)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @Test
     void partialVoxelsHideOnlyTheTopBelowThem() {
         // Stone floor, a snow layer on half of it, a stone wall beside the snow.
         LodSection section = new LodSection(0);

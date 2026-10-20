@@ -215,8 +215,12 @@ choice, an ADR.
   user's pack ("c'est beaucoup mieux"); flicker, holes and the gap beside
   real water fixed ("c'est good"). Trees at each biome's density
   (ADR-040), huge mushrooms, cactus, bamboo and villages (ADR-041),
-  checked in the Fabric dev client. Remains: all of it in the user's
-  pack, NeoForge, other structures, and the spike in the user's large pack
+  checked in the Fabric dev client. Frozen seas (ADR-045): ice on the
+  sea's top block where vanilla freezes it, checked in the Fabric dev
+  client on the test world's frozen ocean (2026-10-20). Remains: all of
+  it in the user's pack, NeoForge, other structures (icebergs), the real
+  terrain's edge wall seen through preview water (left for later by the
+  user), and the spike in the user's large pack
 - [~] E.12 Draw only the face directions that can face the camera: each
   section's quads grouped by pass and direction, one indirect command per
   run of visible groups (`FaceDirections`, unit tested against every face

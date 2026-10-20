@@ -214,6 +214,12 @@ bool vanillaDraws(ivec3 block) {
         }
         return n.x * n.x + n.z * n.z < d * d && abs(n.y) < d;
     }
+    // Vanilla's section graph (SectionOcclusionGraph.getRelativeFrom) never
+    // reaches a section more than the render distance above or below the
+    // camera's section: compiled, but not drawn (holes under a high camera).
+    if (abs(section.y - (u_cameraBlock.y >> 4)) > u_renderDistance) {
+        return false;
+    }
     // Vanilla's ChunkTrackingView.isInViewDistance, around the camera's chunk.
     ivec2 c = abs(section.xz - (u_cameraBlock.xz >> 4)) - 1;
     c = max(c, ivec2(0));

@@ -1041,3 +1041,26 @@ nothing: the driver already dropped the unused outputs.
   without identical over the LOD part. Absolute times move between runs
   on this laptop (frame rate capped near 118 fps, GPU clocks follow the
   load): compare within one run.
+
+## ADR-045 — Frozen seas in the noise preview
+
+**Date**: 2026-10-20 · **Status**: accepted (extends ADR-039)
+
+The user saw, at the border between real LODs and the noise preview, open
+preview water beside real ice: "le seedgen devrait mettre de la glace à la
+place de la première couche d'eau dans les biomes gelés". The preview had
+one water material up to the sea level and nothing froze.
+
+- **Per cell of 4 blocks**, a frozen bit (tile format 4; older tiles are
+  built again): the cell is under the sea and vanilla's freeze_top_layer
+  rule holds there, `!biome.warmEnoughToRain(pos)` at the sea's top block,
+  with the cell's own biome at that height. A first version took the
+  chunk's biome (sampled at the sea floor) and left whole chunks of open
+  water in a frozen sea. The frozen-ocean temperature noise leaves open
+  water as vanilla does.
+- **Voxels**: the voxel holding the sea's top block is the tile's ice
+  (`Blocks.ICE`, water seas only), on every level, at the sea's fill.
+- Cost: tiles took 2,462 ms each instead of 2,220 in the test world
+  (one more biome sample per sea cell).
+- Not covered: icebergs and other frozen-ocean features; snow on ice
+  (vanilla puts none).

@@ -20,7 +20,11 @@ import java.util.function.IntPredicate;
  *       layer as one bit per column: opaque voxels for every face, and
  *       optionally solid (opaque or translucent) voxels for translucent
  *       faces only, so water bodies spanning sections show no inner walls
- *       while opaque borders stay closed.</li>
+ *       while opaque borders stay closed. Optionally
+ *       ({@link #setEmptyColumnsUnknown}), a vertical column empty over the
+ *       whole section counts as solid for horizontal translucent faces: in
+ *       stored terrain it is a chunk without data, not a pit beside the
+ *       water, so the water draws no wall into it.</li>
  *   <li>Face columns are transposed into one 32x32 plane per depth, split by
  *       material, and each plane is merged greedily with bit operations:
  *       take the lowest run of set bits in a row, extend it over the next
@@ -71,6 +75,11 @@ public final class BinaryGreedyMesher {
     private final int[] solidRows = new int[PLANE];
     /** Visible faces of the current direction, same layout as the columns. */
     private final int[] faces = new int[PLANE];
+    /** Per z, bit x: the vertical column (x, z) holds nothing in the section. */
+    private final int[] emptyAlongX = new int[S];
+    /** Per x, bit z: the same columns, transposed. */
+    private final int[] emptyAlongZ = new int[S];
+    private boolean emptyColumnsUnknown;
     /** Faces of the current direction per depth: index {@code depth * 32 + u}, bit v. */
     private final int[] planes = new int[PLANE];
     private final int[] scratch = new int[S];
@@ -91,6 +100,15 @@ public final class BinaryGreedyMesher {
     private long facesEmitted;
     /** Per direction, the light of the neighbor layer (see {@link #borderLight}); null entries unknown. */
     private byte[][] neighborLight;
+
+    /**
+     * Whether a vertical column empty over the whole section counts as solid
+     * for horizontal translucent faces (see the class comment). Off by
+     * default; for stored terrain, where a missing chunk reads as air.
+     */
+    public void setEmptyColumnsUnknown(boolean value) {
+        emptyColumnsUnknown = value;
+    }
 
     /**
      * Meshes a section.
@@ -139,6 +157,7 @@ public final class BinaryGreedyMesher {
         }
         classifyTints(section, tinted);
         buildRows(section);
+        emptyColumns();
         splitPartialFill(section);
 
         for (int axis = 0; axis < 3; axis++) {
@@ -149,7 +168,7 @@ public final class BinaryGreedyMesher {
                 int[] plus = neighborOpaque == null ? null : neighborOpaque[axis * 2 + 1];
                 int[] minusSolid = neighborSolid == null ? null : neighborSolid[axis * 2];
                 int[] plusSolid = neighborSolid == null ? null : neighborSolid[axis * 2 + 1];
-                if (cullFaces(axis == 1, sign == 1, minus, plus, minusSolid, plusSolid)) {
+                if (cullFaces(axis, sign == 1, minus, plus, minusSolid, plusSolid)) {
                     buildPlanes();
                     mergePlanes(section, direction, out);
                 }
@@ -290,6 +309,61 @@ public final class BinaryGreedyMesher {
         }
     }
 
+    /** Fills {@link #emptyAlongX} and {@link #emptyAlongZ} from the rows. */
+    private void emptyColumns() {
+        if (!emptyColumnsUnknown) {
+            return;
+        }
+        for (int z = 0; z < S; z++) {
+            int any = 0;
+            for (int y = 0; y < S; y++) {
+                int i = y * S + z;
+                any |= rowsOpaque[i] | rowsTranslucent[i] | rowsPartial[i] | rowsShaped[i];
+            }
+            emptyAlongX[z] = ~any;
+        }
+        System.arraycopy(emptyAlongX, 0, emptyAlongZ, 0, S);
+        Bits.transpose32(emptyAlongZ, 0);
+    }
+
+    /**
+     * Adds to a neighbor's border plane (as {@link #borderPlane} returns it,
+     * with {@code solid}) the columns of the neighbor's touching layer that
+     * are empty over the whole neighbor section, for horizontal directions:
+     * see {@link #setEmptyColumnsUnknown}.
+     */
+    public static void addEmptyColumns(LodSection neighbor, int direction, MaterialClassifier classifier,
+                                       int[] plane) {
+        int axis = direction >> 1;
+        if (axis == 1) {
+            return;
+        }
+        int layer = (direction & 1) != 0 ? 0 : S - 1;
+        // X faces span (U, V) = (Y, Z): column z empty sets bit z in every row.
+        // Z faces span (X, Y): column x empty sets the whole row x.
+        int emptyZ = 0;
+        for (int w = 0; w < S; w++) {
+            boolean empty = true;
+            for (int y = 0; y < S && empty; y++) {
+                int material = axis == 0 ? neighbor.material(layer, y, w) : neighbor.material(w, y, layer);
+                empty = classifier.classOf(material) == MaterialClassifier.AIR;
+            }
+            if (!empty) {
+                continue;
+            }
+            if (axis == 0) {
+                emptyZ |= 1 << w;
+            } else {
+                plane[w] = -1;
+            }
+        }
+        if (emptyZ != 0) {
+            for (int u = 0; u < S; u++) {
+                plane[u] |= emptyZ;
+            }
+        }
+    }
+
     /**
      * Opaque voxels whose fill is below full (coarse levels) mesh as partial
      * ones: they hide only the top of the voxel below and stand at their fill.
@@ -381,9 +455,10 @@ public final class BinaryGreedyMesher {
     }
 
     /** Computes the visible faces of one direction; returns false if there are none. */
-    private boolean cullFaces(boolean yAxis, boolean positive, int[] minusNeighbor, int[] plusNeighbor,
+    private boolean cullFaces(int axis, boolean positive, int[] minusNeighbor, int[] plusNeighbor,
                               int[] minusSolid,
                               int[] plusSolid) {
+        boolean yAxis = axis == 1;
         int any = 0;
         for (int u = 0; u < S; u++) {
             int minusRow = minusNeighbor == null ? 0 : minusNeighbor[u];
@@ -408,7 +483,9 @@ public final class BinaryGreedyMesher {
                 long t = (tr & 0xFFFFFFFFL) << 1
                         | (minusSolidRow >>> v & 1L)
                         | (plusSolidRow >>> v & 1L) << 33;
-                long solid = c | t;
+                // Empty columns read as unknown: they hide horizontal translucent faces only.
+                int unknown = !emptyColumnsUnknown || yAxis ? 0 : axis == 0 ? emptyAlongX[v] : emptyAlongZ[u];
+                long solid = c | t | (unknown & 0xFFFFFFFFL) << 1;
                 // Partial voxels hide only the top face of the voxel below them,
                 // and only full opaque voxels hide their faces.
                 long p = (pa & 0xFFFFFFFFL) << 1;

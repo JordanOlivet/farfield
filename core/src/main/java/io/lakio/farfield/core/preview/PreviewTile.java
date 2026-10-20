@@ -8,8 +8,9 @@ import io.lakio.farfield.core.util.ByteWriter;
  * {@link #GRID} blocks, interpolated in between; per {@link #GRID}-block
  * cell the block seen on top and the one just under it; per chunk the
  * biome and its trees (ADR-040: positions, each of a {@link TreeKind});
- * the buildings of villages (ADR-041); for the whole tile the ground's
- * material and the sea.
+ * the buildings of villages (ADR-041); per cell whether the sea's top
+ * block freezes; for the whole tile the ground's material, the sea and its
+ * ice.
  *
  * <p>Heights are the first free block above the ground. Sample (i, k) lies
  * on the block corner (i * 4, k * 4) of the tile, so the last row and
@@ -25,8 +26,8 @@ public final class PreviewTile {
     public static final int CHUNKS = BLOCKS / 16;
     /** Blocks under the top one that show the filler (dirt under grass). */
     public static final int FILLER_DEPTH = 3;
-    /** Format 2 adds the trees, 3 their shapes and the buildings; older tiles are built again. */
-    private static final int FORMAT = 3;
+    /** Format 2 adds the trees, 3 their shapes and the buildings, 4 the ice; older tiles are built again. */
+    private static final int FORMAT = 4;
     /** Most tree kinds a tile holds (the kind rides in 8 bits of a tree). */
     public static final int MAX_KINDS = 255;
 
@@ -37,6 +38,9 @@ public final class PreviewTile {
     private int below;
     private int water = -1;
     private int seaLevel;
+    private int ice = -1;
+    /** One bit per cell, {@code cz * CELLS + cx}: the sea's top block is ice there. */
+    private final long[] frozen = new long[CELLS * CELLS / 64];
     private final java.util.List<TreeKind> kinds = new java.util.ArrayList<>();
     /** Per chunk, its trees: x | z << 4 (in the chunk) | kind << 8. */
     private final int[][] trees = new int[CHUNKS * CHUNKS][];
@@ -185,6 +189,30 @@ public final class PreviewTile {
         return seaLevel;
     }
 
+    /** The material of the frozen sea's top block; -1: none. */
+    public void setIce(int material) {
+        ice = material;
+    }
+
+    public int ice() {
+        return ice;
+    }
+
+    /** Whether the sea's top block is {@link #ice()} over a cell (vanilla's freeze_top_layer). */
+    public void setFrozen(int cx, int cz, boolean value) {
+        int i = cz * CELLS + cx;
+        if (value) {
+            frozen[i >> 6] |= 1L << i;
+        } else {
+            frozen[i >> 6] &= ~(1L << i);
+        }
+    }
+
+    public boolean frozen(int cx, int cz) {
+        int i = cz * CELLS + cx;
+        return ice >= 0 && (frozen[i >> 6] >>> i & 1) != 0;
+    }
+
     /** Lowest and highest sample of each chunk (its 5 x 5 samples), as {@link Summary}. */
     public Summary summary() {
         short[] min = new short[CHUNKS * CHUNKS];
@@ -272,6 +300,10 @@ public final class PreviewTile {
         out.writeVarInt(below);
         out.writeVarInt(water + 1);
         out.writeInt(seaLevel);
+        out.writeVarInt(ice + 1);
+        for (long bits : frozen) {
+            out.writeLong(bits);
+        }
         // Rows of height deltas: small numbers for the compressor.
         for (int k = 0; k < SAMPLES; k++) {
             int previous = k == 0 ? 0 : sample(0, k - 1);
@@ -328,6 +360,10 @@ public final class PreviewTile {
         t.below = in.readVarInt();
         t.water = in.readVarInt() - 1;
         t.seaLevel = in.readInt();
+        t.ice = in.readVarInt() - 1;
+        for (int i = 0; i < t.frozen.length; i++) {
+            t.frozen[i] = in.readLong();
+        }
         for (int k = 0; k < SAMPLES; k++) {
             int previous = k == 0 ? 0 : t.sample(0, k - 1);
             for (int i = 0; i < SAMPLES; i++) {

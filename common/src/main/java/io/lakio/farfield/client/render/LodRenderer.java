@@ -846,6 +846,8 @@ public final class LodRenderer {
             readNeighbors(w, key, classes, solid, light);
         }
         MeshBuffer out = meshBuffer.get();
+        // Stored terrain reads missing chunks as air: no water walls into them.
+        mesher.get().setEmptyColumnsUnknown(!PreviewLayer.isPreview(key));
         mesher.get().mesh(section, classes, tintedMaterials, null, solid, light, out);
         // Masked preview columns only hide faces: their own quads are dropped.
         boolean preview = PreviewLayer.isPreview(key);
@@ -910,13 +912,19 @@ public final class LodRenderer {
         return false;
     }
 
-    /** Solid border layers of the six same-level neighbors (null entries where none is stored). */
     /**
      * Reads the six same-level neighbors once: the light of their touching
      * layers into {@code light} (faces on a section border are lit like the
      * voxel in front of them, not in full sky light: underwater cliffs on a
      * border were bright), and their solid voxels into {@code solid} when
-     * not null. Entries stay null for neighbors not stored.
+     * not null. Entries stay null for neighbors not stored, except the
+     * horizontal ones of {@code solid}: there the edge of the known world
+     * counts as solid, so water draws no wall toward chunks without data
+     * (seen through the noise preview's water, or hanging over the void);
+     * opaque ground keeps its wall. The neighbors' empty columns count as
+     * solid the same way ({@link BinaryGreedyMesher#setEmptyColumnsUnknown}):
+     * a section holds four chunks or more, some of them without data. A
+     * neighbor written later meshes this section again ({@link #applyRewrites}).
      */
     private void readNeighbors(LodWorld w, long key, MaterialClassifier classes, int[][] solid, byte[][] light)
             throws IOException {
@@ -934,9 +942,21 @@ public final class LodRenderer {
                 light[d] = BinaryGreedyMesher.borderLight(section, d, lights[d]);
                 if (solid != null) {
                     solid[d] = BinaryGreedyMesher.borderPlane(section, d, classes, true, planes[d]);
+                    BinaryGreedyMesher.addEmptyColumns(section, d, classes, solid[d]);
                 }
+            } else if (solid != null && STEP[d][1] == 0) {
+                solid[d] = FULL_PLANE;
             }
         }
+    }
+
+    /** A neighbor layer solid everywhere (read only). */
+    private static final int[] FULL_PLANE = filledPlane();
+
+    private static int[] filledPlane() {
+        int[] plane = new int[LodSection.SIZE];
+        java.util.Arrays.fill(plane, -1);
+        return plane;
     }
 
     /**

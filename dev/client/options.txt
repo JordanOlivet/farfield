@@ -11,3 +11,5 @@ joinedFirstServer:true
 narrator:0
 soundCategory_master:0.0
 key_key.farfield.settings:key.keyboard.f7
+maxFps:260
+enableVsync:false

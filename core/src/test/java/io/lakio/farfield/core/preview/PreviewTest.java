@@ -127,6 +127,41 @@ class PreviewTest {
         assertEquals(AIR, side.material(17, lowest - 2 - 32, 16), "nothing under the skin");
     }
 
+    private static final int ICE = 8;
+
+    @Test
+    void frozenCellsTopTheSeaWithIce() {
+        // Cells 0..1 x 0..1 of the slope's sea (ground 50 to 57, sea 63) freeze.
+        PreviewTile t = slope();
+        t.setIce(ICE);
+        for (int cz = 0; cz < 2; cz++) {
+            for (int cx = 0; cx < 2; cx++) {
+                t.setFrozen(cx, cz, true);
+            }
+        }
+        ByteWriter out = new ByteWriter(1024);
+        t.encode(out);
+        PreviewTile back = PreviewTile.decode(new ByteReader().reset(out.array(), 0, out.length()));
+        assertTrue(back.frozen(1, 1));
+        assertFalse(back.frozen(2, 1));
+        assertEquals(ICE, back.ice());
+        PreviewVoxels.Tiles tiles = (x, z) -> x == 0 && z == 0 ? back : null;
+        // Level 0: the top block (62) is ice, the water under it stays; an open cell keeps water on top.
+        LodSection fine = PreviewVoxels.build(0, 0, 1, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
+        assertEquals(ICE, fine.material(1, 62 - 32, 1));
+        assertEquals(WATER, fine.material(1, 61 - 32, 1));
+        assertEquals(WATER, fine.material(1, 62 - 32, 9));
+        // Level 2: the voxel holding block 62 (60..63) is ice, at the sea's fill.
+        LodSection coarse = PreviewVoxels.build(2, 0, 0, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
+        assertEquals(ICE, coarse.material(0, 15, 0));
+        assertEquals(11, coarse.fill().get(0, 15, 0), "3 blocks of 4 (60..62): 12/16");
+        assertEquals(WATER, coarse.material(0, 14, 0));
+        assertEquals(WATER, coarse.material(0, 15, 4));
+        // Without ice material nothing freezes.
+        t.setIce(-1);
+        assertFalse(t.frozen(0, 0));
+    }
+
     @Test
     void coarseColumnsTakeTheHighestSampleAndTheirFill() {
         PreviewTile t = slope();
