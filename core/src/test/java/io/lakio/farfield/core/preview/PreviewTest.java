@@ -128,6 +128,51 @@ class PreviewTest {
     }
 
     @Test
+    void coarseTreesByAreaMatchBlockByBlock() {
+        // A dense forest of every crown shape on rolling ground, some crowns over a real chunk.
+        PreviewTile t = slope();
+        for (int k = 0; k < PreviewTile.SAMPLES; k++) {
+            for (int i = 0; i < PreviewTile.SAMPLES; i++) {
+                t.setHeight(i, k, 70 + (int) (6 * Math.sin(i / 5.0) + 6 * Math.cos(k / 7.0)));
+            }
+        }
+        int[] kinds = {
+                t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 7, 2, 3, PreviewTile.BLOB)),
+                t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 9, 3, 6, PreviewTile.CONE)),
+                t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 6, 3, 0, PreviewTile.FLAT)),
+                t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 12, 0, 0, PreviewTile.COLUMN))};
+        java.util.Random random = new java.util.Random(3);
+        for (int n = 0; n < 4000; n++) {
+            t.addTree(random.nextInt(PreviewTile.BLOCKS), random.nextInt(PreviewTile.BLOCKS),
+                    kinds[random.nextInt(kinds.length)]);
+        }
+        PreviewVoxels.Tiles tiles = (x, z) -> x == 0 && z == 0 ? t : null;
+        PreviewVoxels.Mask mask = (cx, cz) -> cx == 9 && cz == 9;
+        for (int level = 1; level <= 4; level++) {
+            int size = LodSection.SIZE << level;
+            int sy = Math.floorDiv(70, size);
+            for (int sx = 0; sx < PreviewTile.BLOCKS / size; sx++) {
+                LodSection byArea = PreviewVoxels.build(level, sx, sy, 0, tiles, mask, AIR, -64, -1, -1, -1, 0);
+                PreviewVoxels.blockByBlockTrees = true;
+                LodSection byBlock;
+                try {
+                    byBlock = PreviewVoxels.build(level, sx, sy, 0, tiles, mask, AIR, -64, -1, -1, -1, 0);
+                } finally {
+                    PreviewVoxels.blockByBlockTrees = false;
+                }
+                for (int y = 0; y < LodSection.SIZE; y++) {
+                    for (int z = 0; z < LodSection.SIZE; z++) {
+                        for (int x = 0; x < LodSection.SIZE; x++) {
+                            assertEquals(byBlock.material(x, y, z), byArea.material(x, y, z),
+                                    "level " + level + " section " + sx + " voxel " + x + "," + y + "," + z);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
     void coarseTilesFillTheirSamplesBetween() {
         // Heights computed every 16 blocks (every 4th sample): a plane rising 2 blocks per sample along X.
         PreviewTile t = new PreviewTile();

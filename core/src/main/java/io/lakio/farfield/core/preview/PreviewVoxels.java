@@ -61,6 +61,8 @@ public final class PreviewVoxels {
 
     private static final int S = LodSection.SIZE;
     private static final int NONE = Integer.MIN_VALUE;
+    /** Tests only: count coarse tree voxels block by block, as the finest level does. */
+    static boolean blockByBlockTrees;
 
     private PreviewVoxels() {
     }
@@ -287,6 +289,10 @@ public final class PreviewVoxels {
             if (top + 1 < oy || ground >= oy + size) {
                 return;
             }
+            if (level > 0 && layerAxis < 0 && !blockByBlockTrees && !overReal(x, z, k.radius(), chunkX, chunkZ)) {
+                treeByArea(k, x, ground, top, z);
+                return;
+            }
             for (int y = ground; y < top; y++) {
                 put(x, y, z, k.trunk(), chunkX, chunkZ);
             }
@@ -311,6 +317,92 @@ public final class PreviewVoxels {
                     }
                 }
             }
+        }
+
+        /** Whether a crown of {@code radius} around (x, z) reaches a real chunk other than its own. */
+        private boolean overReal(int x, int z, int radius, int chunkX, int chunkZ) {
+            if (mask == null) {
+                return false;
+            }
+            for (int cz = (z - radius) >> 4; cz <= (z + radius) >> 4; cz++) {
+                for (int cx = (x - radius) >> 4; cx <= (x + radius) >> 4; cx++) {
+                    if ((cx != chunkX || cz != chunkZ) && mask.real(cx, cz)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        /**
+         * The counts {@link #tree} gives on a coarse level, from areas instead
+         * of blocks (a forest section of level 4 holds some 11,000 trees):
+         * the trunk as a vertical run, each crown row as its square cut by the
+         * voxel grid, less its rounded corners and the trunk under the top.
+         * Same rows in the same order, so each voxel keeps the same last
+         * material.
+         */
+        private void treeByArea(PreviewTile.TreeKind k, int x, int ground, int top, int z) {
+            int lx = x - ox;
+            int lz = z - oz;
+            if (lx >= 0 && lz >= 0 && lx < size && lz < size) {
+                for (int y = Math.max(ground, oy); y < Math.min(top, oy + size); ) {
+                    int vy = (y - oy) >> level;
+                    int end = Math.min(Math.min(top, oy + size), oy + (vy + 1) * s);
+                    add(lx >> level, vy, lz >> level, end - y, k.trunk());
+                    y = end;
+                }
+            }
+            if (k.shape() == PreviewTile.COLUMN) {
+                return;
+            }
+            int rows = k.shape() == PreviewTile.FLAT ? 0 : k.crownHeight();
+            for (int r = 0; r <= rows; r++) {
+                int y = top - rows + r;
+                if (y < oy || y >= oy + size) {
+                    continue;
+                }
+                int vy = (y - oy) >> level;
+                int radius = k.shape() == PreviewTile.CONE
+                        ? Math.round(k.radius() * (rows - r) / (float) Math.max(1, rows))
+                        : r == rows && rows > 0 ? Math.max(0, k.radius() - 1) : k.radius();
+                boolean rounded = k.shape() != PreviewTile.CONE && radius > 1;
+                int x0 = Math.max(lx - radius, 0);
+                int x1 = Math.min(lx + radius, size - 1);
+                int z0 = Math.max(lz - radius, 0);
+                int z1 = Math.min(lz + radius, size - 1);
+                for (int vz = z0 >> level; vz <= z1 >> level; vz++) {
+                    int a0 = Math.max(z0, vz * s);
+                    int a1 = Math.min(z1, vz * s + s - 1);
+                    for (int vx = x0 >> level; vx <= x1 >> level; vx++) {
+                        int b0 = Math.max(x0, vx * s);
+                        int b1 = Math.min(x1, vx * s + s - 1);
+                        int blocks = (a1 - a0 + 1) * (b1 - b0 + 1);
+                        if (rounded) {
+                            blocks -= inside(lx - radius, lz - radius, b0, b1, a0, a1)
+                                    + inside(lx + radius, lz - radius, b0, b1, a0, a1)
+                                    + inside(lx - radius, lz + radius, b0, b1, a0, a1)
+                                    + inside(lx + radius, lz + radius, b0, b1, a0, a1);
+                        }
+                        if (y < top) {
+                            blocks -= inside(lx, lz, b0, b1, a0, a1);
+                        }
+                        if (blocks > 0) {
+                            add(vx, vy, vz, blocks, k.leaves());
+                        }
+                    }
+                }
+            }
+        }
+
+        private static int inside(int x, int z, int x0, int x1, int z0, int z1) {
+            return x >= x0 && x <= x1 && z >= z0 && z <= z1 ? 1 : 0;
+        }
+
+        private void add(int vx, int vy, int vz, int blocks, int material) {
+            int i = (vy * S + vz) * S + vx;
+            counts[i] += blocks;
+            materials[i] = material;
         }
 
         /** Walls from the floor up, the roof layer on top. */
