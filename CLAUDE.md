@@ -31,6 +31,11 @@ point), `docs/DECISIONS.md` (ADRs, binding), the active plan in `docs/plans/`,
 .\gradlew.bat copyTestJars               # both loader jars into farfield.testJars.dir, for pack tests
 ```
 
+Double-click launchers at the root (they open the test world `farfield-test`
+directly and remove a stale `session.lock` first): `client-fabric.bat`,
+`client-neoforge.bat`, and `clients.bat` for both at once (builds once, then
+one window per client). Extra arguments go to Gradle.
+
 ## Machine setup (ADR-042)
 
 - Copy `local.properties.example` to `local.properties` (gitignored) and set
