@@ -1004,3 +1004,40 @@ occlusion, biome blending, textures).
   without identical over the LOD part (4 pixels of 4 million off by more
   than 2 levels). Remaining costs to look at next: the pre-pass itself
   (vertex and raster work, about 800 us) and the shaded opaque pass.
+
+## ADR-044 — Depth pre-pass without discard where nothing can be cut
+
+**Date**: 2026-10-20 · **Status**: accepted (amends ADR-043)
+
+The pre-pass of ADR-043 cost about 800 us. Measured in one dev client run
+by switching variants: vertex work alone (rasterizer discard) 345 us, the
+pre-pass without any discard 456 to 474 us, without the cutout test 560
+us. A `discard` anywhere in the depth shader costs about 320 us even when
+it rarely runs: the GPU then tests and writes depth after the shader. A
+lighter vertex shader (no color, light or occlusion outputs) changed
+nothing: the driver already dropped the unused outputs.
+
+- **Two pre-pass lists**: sections that cannot discard (outside the grid of
+  sections the game may draw, and no opaque face with holes) draw first
+  with a depth shader without any discard (`DEPTH_ONLY` + `SOLID`, early
+  tests); the others then draw with the discarding one, mostly behind
+  depth already written. The shaded opaque pass draws both lists in one
+  call, as before.
+- **Faces with holes**: `MaterialColors.CUTOUT`, the top bit of a face's
+  tinted color word, set when its baked texture has a texel under half
+  coverage (the opaque pass cuts out below 0.5). Opaque materials have
+  their holes filled first (leaves), so few faces carry it (panes, bars).
+  The discarding shaders read the texture only for those faces. Per
+  material, `MaterialColors.cutout` gives the flag to the mesher threads,
+  true while the material's look is not built; a section meshed then is
+  meshed again once the table is complete.
+- **Hand-off test only near the game's terrain**: `lod.vert` flags a
+  section that overlaps the compiled-sections grid (`v_handoff`); the
+  fragment shader skips the grid lookup elsewhere.
+- The stat line gives the drawn sections that may discard.
+- Measured, same view and run (793 sections, 171 may discard): 3,630 us
+  per frame without pre-pass, 2,497 us with (pre-pass 521, opaque 1,768,
+  translucent 208), -31 % (ADR-043's version: -25 %); captures with and
+  without identical over the LOD part. Absolute times move between runs
+  on this laptop (frame rate capped near 118 fps, GPU clocks follow the
+  load): compare within one run.

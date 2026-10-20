@@ -234,5 +234,7 @@ choice, an ADR.
   stat line, `/farfield debug prepass` for comparisons. Measured
   2026-10-20 in the Fabric dev client (same view as E.12): 3,421 us per
   frame without, 2,554 us with (-25 %), same image over the LODs, day and
-  night. Remains: NeoForge and Sodium, the user's pack, then the cost of
-  the pre-pass itself (about 800 us) and of the shaded opaque pass
+  night. Pre-pass without discard where nothing can be cut (ADR-044):
+  pre-pass 780 to 521 us, -31 % against no pre-pass in the same run,
+  same image. Remains: NeoForge and Sodium, the user's pack, a view with
+  glass panes beyond the vanilla distance, then the shaded opaque pass

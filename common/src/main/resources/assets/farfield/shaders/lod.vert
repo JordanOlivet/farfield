@@ -18,7 +18,8 @@ layout(std430, binding = 1) readonly buffer Sections {
 };
 
 // Per block-state id and face direction (MaterialColors): an untinted
-// color (alpha: coverage), a biome-tinted color (alpha byte: tint kind),
+// color (alpha: coverage), a biome-tinted color (alpha byte: tint kind,
+// top bit: the texture has holes to cut out),
 // both ABGR8 in sRGB, and the face's atlas tiles (untinted + 1 low 16 bits,
 // tinted + 1 high 16 bits, 0 for none); then the height of the block's top
 // in blocks, float bits (snow layers, slabs, carpets, fluids at vanilla's 8/9);
@@ -41,6 +42,8 @@ uniform ivec3 u_cameraBlock;
 uniform vec3 u_cameraFrac;
 uniform vec2 u_depthRange;  // near, far of the LOD depth mapping
 uniform bool u_translucent; // translucent pass (water, glass, ice)
+uniform ivec3 u_gridMin;    // section coordinates of the compiled-sections grid's corner (lod.frag)
+uniform ivec2 u_gridSize;   // its width (x and z) and height, in sections
 
 out vec3 v_relative;
 out vec2 v_texCoord;      // block units along the face's U and V axes: one tile per block
@@ -56,6 +59,8 @@ out vec3 v_voxel;          // section-local position in voxels, for ambient occl
 flat out uint v_direction;
 flat out uint v_slot;      // section slot (Occupancy), with v_occluders
 flat out uint v_occluders;
+flat out uint v_cutout;     // 1: the face's texture has holes (opaque pass cuts them out)
+flat out uint v_handoff;    // 1: the section overlaps the grid where the game may draw (hand-off test)
 
 const uint CORNER_U[6] = uint[](0u, 1u, 1u, 0u, 1u, 0u);
 const uint CORNER_V[6] = uint[](0u, 0u, 1u, 0u, 1u, 1u);
@@ -148,20 +153,28 @@ void main() {
     v_texCoord = vec2(p[uAxis], p[vAxis]) * scale;
 
     uint face = material * COLOR_STRIDE + direction * 3u;
+    uint tinted = colors[face + 1u];
+    v_tiles = colors[face + 2u];
+    v_cutout = tinted >> 31;
+    v_direction = direction;
+    // Only sections within the compiled-sections grid can give way to the game's terrain.
+    ivec3 gridLo = u_gridMin * 16;
+    ivec3 gridHi = (u_gridMin + ivec3(u_gridSize.x, u_gridSize.y, u_gridSize.x)) * 16;
+    ivec3 sectionHi = s.originLevel.xyz + (32 << s.originLevel.w);
+    v_handoff = all(lessThan(s.originLevel.xyz, gridHi)) && all(greaterThan(sectionHi, gridLo)) ? 1u : 0u;
+#ifndef DEPTH_ONLY
     vec4 untinted = unpackUnorm4x8(colors[face]);
     vec3 color = toLinear(untinted.rgb);
-    uint tinted = colors[face + 1u];
     // The tint itself is chosen per fragment: biome blending varies along the face.
     bool hasTint = (tinted & 0xFFFFFFu) != 0u;
     v_tinted = hasTint ? toLinear(unpackUnorm4x8(tinted).rgb) : vec3(0.0);
-    v_tintKind = hasTint ? tinted >> 24 : 0xFFFFFFFFu;
+    v_tintKind = hasTint ? (tinted >> 24) & 0x7Fu : 0xFFFFFFFFu;
     v_biome = (q.y >> 12) & 0x1FFu;
     v_flat = vec4(color, untinted.a);
-    v_tiles = colors[face + 2u];
     v_light = SHADE[direction];
     v_lightmap = ivec2(int((q.y >> 25) & 15u), int((q.y >> 21) & 15u));
     v_level = s.originLevel.w;
-    v_direction = direction;
     v_slot = uint(gl_BaseInstance);
     v_occluders = s.info.z;
+#endif
 }

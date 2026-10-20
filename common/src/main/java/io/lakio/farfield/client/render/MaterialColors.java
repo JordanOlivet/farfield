@@ -42,7 +42,8 @@ import java.util.Map;
  * shaped block ({@code ShapeBoxes}, 0 past its last box; all 0 for other
  * blocks), which the shader draws on the finest level. The face's color is {@code untinted + tinted *
  * tint} (summed in linear space), the tint coming from {@link BiomeTints}
- * for the quad's biome and the kind in the tinted color's alpha byte; the
+ * for the quad's biome and the kind in the tinted color's alpha byte (its
+ * top bit: {@link #CUTOUT}, set on faces without tint too); the
  * untinted color's alpha is the face's coverage (water, glass, ice are below
  * 1). Tiles: untinted tile + 1 in the low 16 bits, tinted tile + 1 in the
  * high 16 bits, 0 for none; the textured color is
@@ -66,6 +67,12 @@ import java.util.Map;
 final class MaterialColors {
 
     static final int STRIDE = 27;
+    /**
+     * Top bit of a face's tinted color word (its alpha byte holds the tint
+     * kind, below 8): the face's texture has texels under half coverage, which
+     * the opaque pass cuts out; the depth pre-pass reads the texture only then.
+     */
+    static final int CUTOUT = 1 << 31;
     /** Offset of the top height (float bits, in blocks) in a block state's entry. */
     static final int HEIGHT = 18;
     /** Offset of the boxes of a shaped block in a block state's entry. */
@@ -86,6 +93,8 @@ final class MaterialColors {
     private int count;
     /** Published to the mesher threads; replaced, never modified. */
     private volatile boolean[] tinted = new boolean[0];
+    /** Per id: a face has {@link #CUTOUT}; read by the mesher threads as {@link #tinted}. */
+    private volatile boolean[] cutout = new boolean[0];
 
     private final FaceTextures textures;
     private final Map<TextureAtlasSprite, Sprite> sprites = new IdentityHashMap<>();
@@ -126,6 +135,7 @@ final class MaterialColors {
             colors = Arrays.copyOf(colors, Math.max(size, colors.length / STRIDE * 2) * STRIDE);
         }
         boolean[] flags = Arrays.copyOf(tinted, size);
+        boolean[] holes = Arrays.copyOf(cutout, size);
         long deadline = System.nanoTime() + BUDGET_NANOS;
         int first = count;
         int id = count;
@@ -133,6 +143,9 @@ final class MaterialColors {
             int meshClass = classes.classOf(id);
             String key = registry.key(id);
             flags[id] = build(key, id * STRIDE, meshClass == MaterialClassifier.OPAQUE, tints, probeBiome);
+            for (int d = 0; d < 6; d++) {
+                holes[id] |= (colors[id * STRIDE + d * 3 + 1] & CUTOUT) != 0;
+            }
             colors[id * STRIDE + HEIGHT] = Float.floatToIntBits(height(key, meshClass));
             int boxes = Math.min(classes.boxCount(id), BOX_COUNT);
             for (int b = 0; b < BOX_COUNT; b++) {
@@ -145,6 +158,7 @@ final class MaterialColors {
         }
         count = id;
         tinted = Arrays.copyOf(flags, id);
+        cutout = Arrays.copyOf(holes, id);
         return first;
     }
 
@@ -173,12 +187,24 @@ final class MaterialColors {
         sprites.clear();
         textures.reset();
         tinted = new boolean[0];
+        cutout = new boolean[0];
     }
 
     /** Whether a material's quads must carry their biome; true for materials not built yet. Any thread. */
     boolean tinted(int material) {
         boolean[] t = tinted;
         return material >= t.length || t[material];
+    }
+
+    /** Whether a material's faces may have holes to cut out ({@link #CUTOUT}); true for materials not built yet. Any thread. */
+    boolean cutout(int material) {
+        boolean[] c = cutout;
+        return material >= c.length || c[material];
+    }
+
+    /** Whether a material's look is built (its {@link #cutout} flag is final). Any thread. */
+    boolean built(int material) {
+        return material < cutout.length;
     }
 
     int[] colors() {
@@ -364,6 +390,14 @@ final class MaterialColors {
         int untintedTile = tile(u, a);
         int tintedTile = anyTint && untintedTile >= 0 ? tile(t, a) : -1;
         colors[c + 2] = untintedTile < 0 ? 0 : (untintedTile + 1) | (tintedTile < 0 ? 0 : (tintedTile + 1) << 16);
+        if (untintedTile >= 0) {
+            for (int i = 0; i < PIXELS; i++) {
+                if (a[i] < 0.5f) {
+                    colors[c + 1] |= CUTOUT; // the texture has holes the opaque pass cuts out
+                    break;
+                }
+            }
+        }
         return anyTint;
     }
 

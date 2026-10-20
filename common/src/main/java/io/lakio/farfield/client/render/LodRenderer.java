@@ -148,6 +148,12 @@ public final class LodRenderer {
      * that can face the camera ({@link FaceDirections}).
      */
     private static final int GROUPS = 2 * Quad.DIRECTIONS;
+    /** Command lists: opaque quads of sections that cannot discard a fragment... */
+    private static final int SOLID = 0;
+    /** ...opaque quads of sections that may (near the game's terrain, or faces with holes)... */
+    private static final int DISCARD = 1;
+    /** ...and translucent quads. */
+    private static final int TRANSLUCENT = 2;
 
     private boolean initialized;
     private boolean disabled;
@@ -157,6 +163,8 @@ public final class LodRenderer {
     private Shader depthOnly;
     /** Shaded passes after the pre-pass, with early depth tests. */
     private Shader earlyZ;
+    /** Opaque depth pre-pass of sections that cannot discard: no discard, so early depth tests. */
+    private Shader depthSolid;
     private GlBuffer quads;
     private GlBuffer sectionInfo;
     private GlBuffer colorBuffer;
@@ -221,6 +229,8 @@ public final class LodRenderer {
     private final Long2ObjectOpenHashMap<Resident> resident = new Long2ObjectOpenHashMap<>();
     private final LongOpenHashSet requested = new LongOpenHashSet();
     private final LongOpenHashSet stale = new LongOpenHashSet();
+    /** Sections meshed before the looks of their materials were built: meshed again once they are. */
+    private final LongOpenHashSet provisional = new LongOpenHashSet();
     private final Long2ByteOpenHashMap existence = new Long2ByteOpenHashMap();
     private final ConcurrentLinkedQueue<MeshResult> done = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<Long> rewritten = new ConcurrentLinkedQueue<>();
@@ -281,8 +291,10 @@ public final class LodRenderer {
     private final Matrix4f cullMatrix = new Matrix4f();
     private final Matrix4f viewProj = new Matrix4f();
     private final float[] matrix = new float[16];
-    private IntBuffer commands = MemoryUtil.memAllocInt(4 * 1024);
-    private IntBuffer translucentCommands = MemoryUtil.memAllocInt(4 * 1024);
+    /** Draw commands per list ({@link #SOLID}, {@link #DISCARD}, {@link #TRANSLUCENT}), in indirect buffer order. */
+    private final IntBuffer[] commands = {
+            MemoryUtil.memAllocInt(4 * 1024), MemoryUtil.memAllocInt(4 * 1024), MemoryUtil.memAllocInt(4 * 1024)};
+    private final int[] draws = new int[3];
 
     // Statistics for the periodic log line.
     private long frame;
@@ -297,6 +309,8 @@ public final class LodRenderer {
     /** Quads of the drawn sections, and those of the directions that can face the camera (sent to the GPU). */
     private long quadsInView;
     private long quadsSubmitted;
+    /** Drawn sections in the pre-pass that may discard ({@link #DISCARD}). */
+    private long discardSections;
     private long nextStats;
 
     /** A variant of the LOD program and its uniform locations. */
@@ -352,6 +366,8 @@ public final class LodRenderer {
         int opaqueCount;
         /** Start of each quad group in the range ({@link #GROUPS}), then {@link #quadCount}. */
         int[] groups = new int[GROUPS + 1];
+        /** Some opaque faces have holes to cut out (or were meshed before their colors were built). */
+        boolean cutout;
         /** Its opaque voxels are in the occupancy buffer (ambient occlusion). */
         boolean occluders;
         /** Last time the selection used it: drawn, or relied on to descend to its children. */
@@ -363,8 +379,9 @@ public final class LodRenderer {
     }
 
     /** {@code groups}: start of each quad group ({@link #GROUPS}), then the quad count. */
-    private record MeshResult(int generation, long key, long[] quads, int[] groups, int[] occupancy,
-                              int[] biomeColumns) {
+    /** {@code provisional}: {@code cutout} was guessed for materials whose looks were not built yet. */
+    private record MeshResult(int generation, long key, long[] quads, int[] groups, boolean cutout,
+                              boolean provisional, int[] occupancy, int[] biomeColumns) {
     }
 
     private static final int[] NO_GROUPS = new int[GROUPS + 1];
@@ -459,6 +476,7 @@ public final class LodRenderer {
             plain = new Shader("");
             depthOnly = new Shader("#define DEPTH_ONLY\n");
             earlyZ = new Shader("#define EARLY_Z\n");
+            depthSolid = new Shader("#define DEPTH_ONLY\n#define SOLID\n");
         } catch (RuntimeException e) {
             disabled = true;
             Farfield.LOG.error("LOD rendering disabled: shader setup failed", e);
@@ -525,11 +543,11 @@ public final class LodRenderer {
         }
 
         updateFrustum(viewRotation, projection);
-        commands.clear();
-        translucentCommands.clear();
+        for (int l = 0; l < commands.length; l++) {
+            commands[l].clear();
+            draws[l] = 0;
+        }
         int count = 0;
-        int opaqueDraws = 0;
-        int translucentDraws = 0;
         for (int i = 0, n = drawList.size(); i < n; i++) {
             long key = drawList.getLong(i);
             Resident r = resident.get(key);
@@ -542,14 +560,16 @@ public final class LodRenderer {
             }
             count++;
             quadsInView += r.quadCount;
-            opaqueDraws += addCommands(r, false, faces);
-            translucentDraws += addCommands(r, true, faces);
+            boolean discards = r.cutout || nearGame(key);
+            discardSections += discards ? 1 : 0;
+            addCommands(r, discards ? DISCARD : SOLID, faces);
+            addCommands(r, TRANSLUCENT, faces);
         }
         if (frame % 60 == 0) {
             evictUnused(frameStart);
         }
         if (count > 0) {
-            draw(opaqueDraws, translucentDraws, cam, viewRotation, projection, mc);
+            draw(cam, viewRotation, projection, mc);
         }
         frameNanos += System.nanoTime() - frameStart;
         timedFrames++;
@@ -734,18 +754,19 @@ public final class LodRenderer {
         Farfield.LOG.info("LOD renderer: {} sections drawn, {} resident, {} MB of {} MB quads used, {} meshing,"
                         + " {} meshes uploaded and {} freed, {} selections since last line; per frame {} us on the"
                         + " render thread and {} us on the GPU (depth pre-pass {}, opaque {}, translucent {}), {} of"
-                        + " {} quads sent (face directions), over {} frames; detail {}; at most {} coarse fallbacks"
-                        + " per selection", count, resident.size(),
+                        + " {} quads sent (face directions), {} sections may discard, over {} frames; detail {}; at"
+                        + " most {} coarse fallbacks per selection", count, resident.size(),
                 arena.used() * 8 >> 20, arena.capacity() * 8 >> 20, requested.size(), meshesUploaded, meshesEvicted,
                 selections, frameNanos / 1000 / Math.max(1, timedFrames),
                 (gpuPassNanos[0] + gpuPassNanos[1] + gpuPassNanos[2]) / 1000 / Math.max(1, gpuFrames),
                 RenderSettings.depthPrepass() ? gpuPassNanos[0] / 1000 / Math.max(1, gpuFrames) + " us" : "off",
                 gpuPassNanos[1] / 1000 / Math.max(1, gpuFrames), gpuPassNanos[2] / 1000 / Math.max(1, gpuFrames),
                 quadsSubmitted / Math.max(1, timedFrames), quadsInView / Math.max(1, timedFrames),
-                timedFrames, String.format("%.1f", selector.detail()), maxFallbacks);
+                discardSections / Math.max(1, timedFrames), timedFrames, String.format("%.1f", selector.detail()), maxFallbacks);
         maxFallbacks = 0;
         quadsInView = 0;
         quadsSubmitted = 0;
+        discardSections = 0;
         frameNanos = 0;
         timedFrames = 0;
         java.util.Arrays.fill(gpuPassNanos, 0);
@@ -768,6 +789,7 @@ public final class LodRenderer {
         resident.clear();
         requested.clear();
         stale.clear();
+        provisional.clear();
         existence.clear();
         drawList.clear();
         done.clear();
@@ -795,11 +817,11 @@ public final class LodRenderer {
             MeshResult result;
             try {
                 LodSection section = PreviewLayer.isPreview(key) ? previewLayer.build(w, key) : w.read(key);
-                result = section == null ? new MeshResult(gen, key, new long[0], NO_GROUPS, null, null)
+                result = section == null ? new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null)
                         : mesh(w, gen, key, section);
             } catch (IOException | RuntimeException e) {
                 Farfield.LOG.debug("LOD mesh of {} failed", LodKey.toString(key), e);
-                result = new MeshResult(gen, key, new long[0], NO_GROUPS, null, null);
+                result = new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null);
             }
             done.add(result);
         });
@@ -844,13 +866,20 @@ public final class LodRenderer {
         }
         long[] all = new long[groups[GROUPS]];
         int[] next = java.util.Arrays.copyOf(groups, GROUPS);
+        boolean cutout = false;
+        boolean provisional = false;
         for (int d = 0; d < Quad.DIRECTIONS; d++) {
             long[] quads = out.quads(d);
             for (int i = 0, c = out.count(d); i < c; i++) {
                 long q = quads[i];
                 int m = Quad.material(q);
                 if (m != dropped && m != droppedFluid) {
-                    all[next[group(classes, m, d)]++] = q;
+                    int g = group(classes, m, d);
+                    all[next[g]++] = q;
+                    if (g < Quad.DIRECTIONS) {
+                        cutout |= colors.cutout(m);
+                        provisional |= !colors.built(m);
+                    }
                 }
             }
         }
@@ -865,7 +894,7 @@ public final class LodRenderer {
         for (int i = 0; i < packed.length; i++) {
             packed[i] = columns[2 * i] | columns[2 * i + 1] << 16;
         }
-        return new MeshResult(gen, key, all, groups, occupied, packed);
+        return new MeshResult(gen, key, all, groups, cutout, provisional, occupied, packed);
     }
 
     private static int group(MaterialClassifier classes, int material, int direction) {
@@ -985,6 +1014,12 @@ public final class LodRenderer {
             r.quadCount = m.quads.length;
             r.opaqueCount = m.groups[Quad.DIRECTIONS];
             r.groups = m.groups;
+            r.cutout = m.cutout;
+            if (m.provisional) {
+                provisional.add(m.key);
+            } else {
+                provisional.remove(m.key);
+            }
             r.occluders = m.occupancy != null;
             if (r.occluders) {
                 long needed = (long) (r.slot + 1) * OCCUPANCY_INTS * 4;
@@ -1159,6 +1194,10 @@ public final class LodRenderer {
             }
         }
         int first = colors.update(world.blockStates(), world.materials(), tints, plains);
+        if (!provisional.isEmpty() && colors.count() == world.blockStates().size()) {
+            stale.addAll(provisional);
+            provisional.clear();
+        }
         if (first >= 0) {
             int stride = MaterialColors.STRIDE;
             long needed = (long) colors.count() * stride * 4;
@@ -1199,16 +1238,27 @@ public final class LodRenderer {
     }
 
     /**
-     * Writes the draw commands of one pass of a section: its groups whose
-     * direction is in {@code faces}, adjacent groups in one command.
-     *
-     * @return the number of commands written
+     * Whether a section overlaps the grid of sections the game may draw: only
+     * there can its fragments give way to the game's terrain (lod.frag).
      */
-    private int addCommands(Resident r, boolean translucent, int faces) {
-        int first = translucent ? Quad.DIRECTIONS : 0;
+    private boolean nearGame(long key) {
+        int size = LodSection.SIZE << drawLevel(key);
+        long x = LodKey.x(key) * (long) size;
+        long y = LodKey.y(key) * (long) size;
+        long z = LodKey.z(key) * (long) size;
+        return x < (gridMinX + gridWidth) * 16L && x + size > gridMinX * 16L
+                && y < (gridMinY + gridHeight) * 16L && y + size > gridMinY * 16L
+                && z < (gridMinZ + gridWidth) * 16L && z + size > gridMinZ * 16L;
+    }
+
+    /**
+     * Writes the draw commands of a section into a list: its groups of that
+     * pass whose direction is in {@code faces}, adjacent groups in one command.
+     */
+    private void addCommands(Resident r, int list, int faces) {
+        int first = list == TRANSLUCENT ? Quad.DIRECTIONS : 0;
         int runStart = r.groups[first];
         int runEnd = runStart;
-        int draws = 0;
         for (int d = 0; d < Quad.DIRECTIONS; d++) {
             int start = r.groups[first + d];
             int end = r.groups[first + d + 1];
@@ -1216,31 +1266,27 @@ public final class LodRenderer {
                 continue;
             }
             if (start != runEnd) {
-                draws += addCommand(translucent, runStart, runEnd, r.slot);
+                addCommand(list, runStart, runEnd, r.slot);
                 runStart = start;
             }
             runEnd = end;
         }
-        return draws + addCommand(translucent, runStart, runEnd, r.slot);
+        addCommand(list, runStart, runEnd, r.slot);
     }
 
-    private int addCommand(boolean translucent, int start, int end, int slot) {
+    private void addCommand(int list, int start, int end, int slot) {
         if (end == start) {
-            return 0;
+            return;
         }
-        IntBuffer out = translucent ? translucentCommands : commands;
+        IntBuffer out = commands[list];
         if (out.remaining() < 4) {
             out = MemoryUtil.memRealloc(out, out.capacity() * 2);
-            if (translucent) {
-                translucentCommands = out;
-            } else {
-                commands = out;
-            }
+            commands[list] = out;
         }
         // gl_VertexID starts at "first": the shader reads the quads from the group's start.
         out.put((end - start) * 6).put(1).put(start * 6).put(slot);
         quadsSubmitted += end - start;
-        return 1;
+        draws[list]++;
     }
 
     /**
@@ -1310,17 +1356,21 @@ public final class LodRenderer {
                 : textureDistance == RenderSettings.ALL_DISTANCES ? Float.MAX_VALUE : textureDistance);
     }
 
-    private void draw(int opaqueDraws, int translucentDraws, Vec3 cam, Matrix4f viewRotation, Matrix4f projection,
-                      Minecraft mc) {
-        long opaqueBytes = (long) opaqueDraws * 16;
+    private void draw(Vec3 cam, Matrix4f viewRotation, Matrix4f projection, Minecraft mc) {
+        int solidDraws = draws[SOLID];
+        int discardDraws = draws[DISCARD];
+        int translucentDraws = draws[TRANSLUCENT];
+        long opaqueBytes = (long) (solidDraws + discardDraws) * 16;
         long bytes = opaqueBytes + (long) translucentDraws * 16;
         if (bytes > indirect.size()) {
             indirect.grow(Math.max(bytes, indirect.size() * 2), 0);
         }
-        commands.flip();
-        indirect.upload(0, commands);
-        translucentCommands.flip();
-        indirect.upload(opaqueBytes, translucentCommands);
+        long offset = 0;
+        for (IntBuffer list : commands) {
+            list.flip();
+            indirect.upload(offset, list);
+            offset += (long) list.remaining() * 4;
+        }
 
         viewProj.set(projection).mul(viewRotation);
 
@@ -1357,13 +1407,22 @@ public final class LodRenderer {
         // Depth pre-pass: the shaded passes then run the full fragment shader
         // (ambient occlusion, biome blending, textures) once per pixel instead
         // of once per overlapping face; its discards would otherwise switch
-        // off the early depth test.
+        // off the early depth test. Sections that cannot discard go first,
+        // with a shader without discard, so the pre-pass keeps early tests
+        // for them and the others mostly land behind depth already written.
         boolean prepass = RenderSettings.depthPrepass();
         Shader shaded = prepass ? earlyZ : plain;
+        int opaqueDraws = solidDraws + discardDraws;
         if (prepass && opaqueDraws > 0) {
-            use(depthOnly, cam, mc, false);
             RenderSystem.colorMask(false, false, false, false);
-            glMultiDrawArraysIndirect(GL_TRIANGLES, 0, opaqueDraws, 0);
+            if (solidDraws > 0) {
+                use(depthSolid, cam, mc, false);
+                glMultiDrawArraysIndirect(GL_TRIANGLES, 0, solidDraws, 0);
+            }
+            if (discardDraws > 0) {
+                use(depthOnly, cam, mc, false);
+                glMultiDrawArraysIndirect(GL_TRIANGLES, (long) solidDraws * 16, discardDraws, 0);
+            }
             RenderSystem.colorMask(true, true, true, true);
         }
         if (timed) {
