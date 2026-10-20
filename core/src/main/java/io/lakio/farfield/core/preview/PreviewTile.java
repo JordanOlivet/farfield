@@ -12,6 +12,11 @@ import io.lakio.farfield.core.util.ByteWriter;
  * block freezes; for the whole tile the ground's material, the sea and its
  * ice.
  *
+ * <p>A far tile computes its heights every {@link #grid()} blocks only (8
+ * or 16 instead of {@link #GRID}) and fills the samples between them
+ * bilinearly ({@link #fillBetweenSamples}), so readers never see the
+ * difference; it is built again finer when a player comes closer.
+ *
  * <p>Heights are the first free block above the ground. Sample (i, k) lies
  * on the block corner (i * 4, k * 4) of the tile, so the last row and
  * column repeat the first ones of the next tiles and the surface is
@@ -26,12 +31,17 @@ public final class PreviewTile {
     public static final int CHUNKS = BLOCKS / 16;
     /** Blocks under the top one that show the filler (dirt under grass). */
     public static final int FILLER_DEPTH = 3;
-    /** Format 2 adds the trees, 3 their shapes and the buildings, 4 the ice; older tiles are built again. */
-    private static final int FORMAT = 4;
+    /**
+     * Format 2 adds the trees, 3 their shapes and the buildings, 4 the ice,
+     * 5 the grid the heights were computed on; older tiles are built again.
+     */
+    private static final int FORMAT = 5;
     /** Most tree kinds a tile holds (the kind rides in 8 bits of a tree). */
     public static final int MAX_KINDS = 255;
 
     private final short[] heights = new short[SAMPLES * SAMPLES];
+    /** Blocks between the heights computed from the noise: {@link #GRID}, 8 or 16. */
+    private int grid = GRID;
     private final int[] top = new int[CELLS * CELLS];
     private final int[] filler = new int[CELLS * CELLS];
     private final int[] biomes = new int[CHUNKS * CHUNKS];
@@ -116,6 +126,41 @@ public final class PreviewTile {
     }
 
     private static final int[] NO_TREES = new int[0];
+
+    public int grid() {
+        return grid;
+    }
+
+    public void setGrid(int blocks) {
+        grid = blocks;
+    }
+
+    /**
+     * Fills every sample between those on multiples of {@code step} (in
+     * samples; {@code SAMPLES - 1} must be a multiple of it) bilinearly,
+     * rounded to the nearest block.
+     */
+    public void fillBetweenSamples(int step) {
+        if (step <= 1) {
+            return;
+        }
+        for (int k = 0; k < SAMPLES; k++) {
+            int k0 = k / step * step;
+            int k1 = Math.min(k0 + step, SAMPLES - 1);
+            for (int i = 0; i < SAMPLES; i++) {
+                if (i % step == 0 && k % step == 0) {
+                    continue;
+                }
+                int i0 = i / step * step;
+                int i1 = Math.min(i0 + step, SAMPLES - 1);
+                float u = i1 == i0 ? 0 : (i - i0) / (float) (i1 - i0);
+                float v = k1 == k0 ? 0 : (k - k0) / (float) (k1 - k0);
+                float top = sample(i0, k0) * (1 - u) + sample(i1, k0) * u;
+                float bottom = sample(i0, k1) * (1 - u) + sample(i1, k1) * u;
+                setHeight(i, k, Math.round(top * (1 - v) + bottom * v));
+            }
+        }
+    }
 
     public void setHeight(int i, int k, int surfaceY) {
         heights[k * SAMPLES + i] = (short) surfaceY;
@@ -255,15 +300,15 @@ public final class PreviewTile {
                 }
             }
         }
-        return new Summary(min, max, water >= 0 ? seaLevel : Integer.MIN_VALUE);
+        return new Summary(min, max, water >= 0 ? seaLevel : Integer.MIN_VALUE, grid);
     }
 
     /**
      * What decides which sections of a tile hold something: per chunk the
      * lowest and highest surface; the sea level, or {@code Integer.MIN_VALUE}
-     * without sea.
+     * without sea; the grid its heights were computed on ({@link #grid()}).
      */
-    public record Summary(short[] chunkMin, short[] chunkMax, int sea) {
+    public record Summary(short[] chunkMin, short[] chunkMax, int sea, int grid) {
 
         /**
          * Whether blocks [y0, y1) may hold voxels over chunks [cx0, cx1] x
@@ -297,6 +342,7 @@ public final class PreviewTile {
 
     public void encode(ByteWriter out) {
         out.writeVarInt(FORMAT);
+        out.writeVarInt(grid);
         out.writeVarInt(below);
         out.writeVarInt(water + 1);
         out.writeInt(seaLevel);
@@ -357,6 +403,7 @@ public final class PreviewTile {
             throw new IllegalArgumentException("unknown preview tile format " + format);
         }
         PreviewTile t = new PreviewTile();
+        t.grid = in.readVarInt();
         t.below = in.readVarInt();
         t.water = in.readVarInt() - 1;
         t.seaLevel = in.readInt();

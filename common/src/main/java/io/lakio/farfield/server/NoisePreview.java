@@ -101,7 +101,8 @@ final class NoisePreview {
         final PreviewVillages villages;
         final AtomicInteger villagesBuilt = new AtomicInteger();
         volatile LodWorld world;
-        final Set<Long> done = ConcurrentHashMap.newKeySet();
+        /** Tiles stored or built, with the grid of their heights. */
+        final Map<Long, Integer> done = new ConcurrentHashMap<>();
         final Set<Long> inFlight = ConcurrentHashMap.newKeySet();
         final AtomicInteger built = new AtomicInteger();
         final AtomicLong builtNanos = new AtomicLong();
@@ -182,14 +183,19 @@ final class NoisePreview {
                     double dz = Math.max(0, Math.max(z * (double) TILE - p.getZ(), p.getZ() - (z + 1) * (double) TILE));
                     double distance = Math.sqrt(dx * dx + dz * dz);
                     long tile = PreviewStore.key(x, z);
-                    if (distance > RANGE || d.done.contains(tile) || !seen.add(tile)) {
+                    int grid = grid(distance);
+                    if (distance > RANGE || !seen.add(tile)) {
                         continue;
                     }
-                    if (store.contains(x, z)) {
-                        d.done.add(tile);
+                    Integer built = d.done.get(tile);
+                    if (built == null && store.contains(x, z)) {
+                        built = store.summary(x, z).grid();
+                        d.done.put(tile, built);
+                    }
+                    if (built != null && built <= grid) {
                         continue;
                     }
-                    candidates.add(new long[]{tile, (long) distance});
+                    candidates.add(new long[]{tile, (long) distance, grid});
                 }
             }
         }
@@ -200,8 +206,9 @@ final class NoisePreview {
                 break;
             }
             long tile = c[0];
+            int grid = (int) c[2];
             if (d.inFlight.add(tile)) {
-                pool.execute(() -> build(d, tile));
+                pool.execute(() -> build(d, tile, grid));
             }
         }
     }
@@ -222,7 +229,17 @@ final class NoisePreview {
     }
 
     /** Builds and stores one tile. */
-    private void build(Dimension d, long key) {
+    /**
+     * Blocks between the heights a tile computes at a distance: {@link
+     * PreviewTile#GRID} up to 1,024 blocks, 8 up to 2,048, 16 beyond. The
+     * LODs there draw voxels of 8 blocks from about 1,250 blocks and of 16
+     * from about 2,500 at the default detail.
+     */
+    static int grid(double distance) {
+        return distance <= 1024 ? PreviewTile.GRID : distance <= 2048 ? 8 : 16;
+    }
+
+    private void build(Dimension d, long key, int grid) {
         int tileX = PreviewStore.tileX(key);
         int tileZ = PreviewStore.tileZ(key);
         long start = System.nanoTime();
@@ -232,10 +249,11 @@ final class NoisePreview {
             int x0 = tileX * TILE;
             int z0 = tileZ * TILE;
             int previous = UNKNOWN;
-            for (int k = 0; k < PreviewTile.SAMPLES; k++) {
+            int step = grid / PreviewTile.GRID;
+            for (int k = 0; k < PreviewTile.SAMPLES; k += step) {
                 // Each row starts from the one above: neighbors are seeds, not results.
-                int seed = k == 0 ? UNKNOWN : tile.sample(0, k - 1);
-                for (int i = 0; i < PreviewTile.SAMPLES; i++) {
+                int seed = k == 0 ? UNKNOWN : tile.sample(0, k - step);
+                for (int i = 0; i < PreviewTile.SAMPLES; i += step) {
                     if (stopped) {
                         return;
                     }
@@ -244,6 +262,8 @@ final class NoisePreview {
                     previous = h;
                 }
             }
+            tile.fillBetweenSamples(step);
+            tile.setGrid(grid);
             Materials m = new Materials(world, d);
             Holder<Biome>[] chunkBiomes = biomes(d, tile, x0, z0, world);
             for (int cz = 0; cz < PreviewTile.CELLS; cz++) {
@@ -274,7 +294,7 @@ final class NoisePreview {
             List<PreviewVillages.Village> villages = villages(d, tile, x0, z0, m);
             plantTrees(d, tile, tileX, tileZ, chunkBiomes, m, villages);
             world.preview().write(tileX, tileZ, tile);
-            d.done.add(key);
+            d.done.put(key, grid);
             d.built.incrementAndGet();
             d.builtNanos.addAndGet(System.nanoTime() - start);
         } catch (IOException | RuntimeException e) {

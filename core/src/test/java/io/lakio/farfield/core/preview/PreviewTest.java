@@ -127,6 +127,28 @@ class PreviewTest {
         assertEquals(AIR, side.material(17, lowest - 2 - 32, 16), "nothing under the skin");
     }
 
+    @Test
+    void coarseTilesFillTheirSamplesBetween() {
+        // Heights computed every 16 blocks (every 4th sample): a plane rising 2 blocks per sample along X.
+        PreviewTile t = new PreviewTile();
+        for (int k = 0; k < PreviewTile.SAMPLES; k += 4) {
+            for (int i = 0; i < PreviewTile.SAMPLES; i += 4) {
+                t.setHeight(i, k, 60 + 2 * i);
+            }
+        }
+        t.fillBetweenSamples(4);
+        t.setGrid(16);
+        assertEquals(62, t.sample(1, 0));
+        assertEquals(66, t.sample(3, 7));
+        assertEquals(60 + 2 * 128, t.sample(128, 127));
+        ByteWriter out = new ByteWriter(1024);
+        t.encode(out);
+        PreviewTile back = PreviewTile.decode(new ByteReader().reset(out.array(), 0, out.length()));
+        assertEquals(16, back.grid());
+        assertEquals(16, back.summary().grid());
+        assertEquals(PreviewTile.GRID, new PreviewTile().grid());
+    }
+
     private static final int ICE = 8;
 
     @Test
@@ -347,6 +369,16 @@ class PreviewTest {
             for (int z = 0; z < LodSection.SIZE; z++) {
                 assertEquals(whole.material(0, y, z), layer.material(0, y, z));
                 assertEquals(AIR, layer.material(1, y, z));
+            }
+        }
+        // Layers along Z (the last one) and Y, with only the columns they need.
+        LodSection back = PreviewVoxels.build(1, 0, 0, 0, tiles, null, AIR, -64, -1, -1, 2, 31);
+        // Level-1 voxel row 27 holds blocks 54 and 55: the slope's surface on part of the section.
+        LodSection floor = PreviewVoxels.build(1, 0, 0, 0, tiles, null, AIR, -64, -1, -1, 1, 27);
+        for (int a = 0; a < LodSection.SIZE; a++) {
+            for (int b = 0; b < LodSection.SIZE; b++) {
+                assertEquals(whole.material(a, b, 31), back.material(a, b, 31));
+                assertEquals(whole.material(a, 27, b), floor.material(a, 27, b));
             }
         }
     }

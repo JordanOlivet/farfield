@@ -74,7 +74,8 @@ public final class PreviewVoxels {
      * @param maskFluid  the material of real fluid
      * @param layerAxis  -1 for the whole section, else 0, 1 or 2: only voxels
      *                   whose coordinate on that axis is {@code layerIndex}
-     *                   (the border layer a neighbor section meshes against)
+     *                   (the border layer a neighbor section meshes against),
+     *                   without trees or buildings
      */
     public static LodSection build(int level, int sx, int sy, int sz, Tiles tiles, Mask mask, int air, int minY,
                                    int maskGround, int maskFluid, int layerAxis, int layerIndex) {
@@ -91,8 +92,13 @@ public final class PreviewVoxels {
         int[] ground = new int[n];
         int[] fluid = new int[n];
         int[] cell = new int[1];
-        for (int k = -1; k <= S; k++) {
-            for (int i = -1; i <= S; i++) {
+        // A layer along X or Z needs only its own row of columns and the two beside it.
+        int iMin = layerAxis == 0 ? layerIndex - 1 : -1;
+        int iMax = layerAxis == 0 ? layerIndex + 1 : S;
+        int kMin = layerAxis == 2 ? layerIndex - 1 : -1;
+        int kMax = layerAxis == 2 ? layerIndex + 1 : S;
+        for (int k = kMin; k <= kMax; k++) {
+            for (int i = iMin; i <= iMax; i++) {
                 int c = (k + 1) * (S + 2) + i + 1;
                 int bx = ox + i * s;
                 int bz = oz + k * s;
@@ -175,7 +181,11 @@ public final class PreviewVoxels {
                 }
             }
         }
-        section = trees(section, level, ox, oy, oz, cache, mask, air, layerAxis, layerIndex);
+        if (layerAxis < 0) {
+            // Layers only hide a neighbor's water faces: trees there are left out (a
+            // water face against a trunk on a section border stays, behind the trunk).
+            section = trees(section, level, ox, oy, oz, cache, mask, air, layerAxis, layerIndex);
+        }
         if (section != null) {
             for (int cz = 0; cz < LodSection.BIOME_CELLS_PER_AXIS; cz++) {
                 for (int cx = 0; cx < LodSection.BIOME_CELLS_PER_AXIS; cx++) {
