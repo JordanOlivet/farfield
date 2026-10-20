@@ -140,6 +140,7 @@ public final class LodRenderer {
     private static final byte EXISTS = 1;
     private static final byte ABSENT = 2;
     private static final int TIMER_SLOTS = 4;
+    private static final int TIMESTAMPS = 4;
     private static final int[][] STEP = {{-1, 0, 0}, {1, 0, 0}, {0, -1, 0}, {0, 1, 0}, {0, 0, -1}, {0, 0, 1}};
     /**
      * Quad groups of a section, in range order: opaque quads by direction,
@@ -150,7 +151,12 @@ public final class LodRenderer {
 
     private boolean initialized;
     private boolean disabled;
-    private GlProgram program;
+    /** One pass, discards in the shaded shader (the depth pre-pass switched off). */
+    private Shader plain;
+    /** Opaque depth pre-pass: only the hand-off and cutout discards. */
+    private Shader depthOnly;
+    /** Shaded passes after the pre-pass, with early depth tests. */
+    private Shader earlyZ;
     private GlBuffer quads;
     private GlBuffer sectionInfo;
     private GlBuffer colorBuffer;
@@ -180,8 +186,6 @@ public final class LodRenderer {
     private int gridMinZ;
     private int gridWidth = -1;
     private int gridHeight;
-    private int uGridMin;
-    private int uGridSize;
     private GlBuffer indirect;
     private int vao;
     private RangeAllocator arena;
@@ -198,31 +202,16 @@ public final class LodRenderer {
     /** Changes on every resource reload: the colors are built again. */
     private BakedModel missingModel;
     private ClientLevel colorLevel;
-    private int uViewProj;
-    private int uCameraBlock;
-    private int uCameraFrac;
-    private int uDepthRange;
-    private int uRenderDistance;
-    private int uSodiumRule;
     /** Sodium or a fork draws the terrain: its section rule decides where LODs give way. */
     private boolean sodiumRule;
-    private int uLightmap;
-    private int uFogColor;
-    private int uFog;
-    private int uFogCylinder;
     private static boolean pushedFog;
     private static boolean followVanillaFog;
     private static boolean thickFogDimension;
     /** Fog distance meaning no fog: beyond anything drawn. */
     private static final float NO_FOG = 1e7f;
     private double lastSelectionDistance = -1;
-    private int uTranslucent;
-    private int uDebugLevels;
-    private int uBiomeBlend;
-    private int uAtlas;
-    private int uAtlasSize;
-    private int uTextureEnd;
-    private final int[] timerQueries = new int[TIMER_SLOTS * 2];
+    /** Per slot: before the passes, after the depth pre-pass, after the opaque pass, at the end. */
+    private final int[] timerQueries = new int[TIMER_SLOTS * TIMESTAMPS];
     private final boolean[] timerPending = new boolean[TIMER_SLOTS];
     private int timerSlot;
 
@@ -299,7 +288,8 @@ public final class LodRenderer {
     private long frame;
     private long frameNanos;
     private long timedFrames;
-    private long gpuNanos;
+    /** GPU time of the depth pre-pass, the opaque pass and the translucent pass. */
+    private final long[] gpuPassNanos = new long[TIMESTAMPS - 1];
     private long gpuFrames;
     private int selections;
     private int meshesUploaded;
@@ -308,6 +298,51 @@ public final class LodRenderer {
     private long quadsInView;
     private long quadsSubmitted;
     private long nextStats;
+
+    /** A variant of the LOD program and its uniform locations. */
+    private static final class Shader {
+        final GlProgram program;
+        final int viewProj;
+        final int cameraBlock;
+        final int cameraFrac;
+        final int depthRange;
+        final int renderDistance;
+        final int gridMin;
+        final int gridSize;
+        final int sodiumRule;
+        final int lightmap;
+        final int fogColor;
+        final int fog;
+        final int fogCylinder;
+        final int translucent;
+        final int debugLevels;
+        final int biomeBlend;
+        final int atlas;
+        final int atlasSize;
+        final int textureEnd;
+
+        Shader(String defines) {
+            program = new GlProgram("lod.vert", "lod.frag", defines);
+            viewProj = program.uniform("u_viewProj");
+            cameraBlock = program.uniform("u_cameraBlock");
+            cameraFrac = program.uniform("u_cameraFrac");
+            depthRange = program.uniform("u_depthRange");
+            renderDistance = program.uniform("u_renderDistance");
+            gridMin = program.uniform("u_gridMin");
+            gridSize = program.uniform("u_gridSize");
+            sodiumRule = program.uniform("u_sodiumRule");
+            lightmap = program.uniform("u_lightmap");
+            fogColor = program.uniform("u_fogColor");
+            fog = program.uniform("u_fog");
+            fogCylinder = program.uniform("u_fogCylinder");
+            translucent = program.uniform("u_translucent");
+            debugLevels = program.uniform("u_debugLevels");
+            biomeBlend = program.uniform("u_biomeBlend");
+            atlas = program.uniform("u_atlas");
+            atlasSize = program.uniform("u_atlasSize");
+            textureEnd = program.uniform("u_textureEnd");
+        }
+    }
 
     private static final class Resident {
         final int slot;
@@ -421,34 +456,18 @@ public final class LodRenderer {
             return false;
         }
         try {
-            program = new GlProgram("lod.vert", "lod.frag");
+            plain = new Shader("");
+            depthOnly = new Shader("#define DEPTH_ONLY\n");
+            earlyZ = new Shader("#define EARLY_Z\n");
         } catch (RuntimeException e) {
             disabled = true;
             Farfield.LOG.error("LOD rendering disabled: shader setup failed", e);
             return false;
         }
-        uViewProj = program.uniform("u_viewProj");
-        uCameraBlock = program.uniform("u_cameraBlock");
-        uCameraFrac = program.uniform("u_cameraFrac");
-        uDepthRange = program.uniform("u_depthRange");
-        uRenderDistance = program.uniform("u_renderDistance");
-        uGridMin = program.uniform("u_gridMin");
-        uGridSize = program.uniform("u_gridSize");
-        uSodiumRule = program.uniform("u_sodiumRule");
         sodiumRule = classExists("net.caffeinemc.mods.sodium.client.SodiumClientMod")
                 || classExists("org.embeddedt.embeddium.impl.Embeddium")
                 || classExists("me.jellysquid.mods.sodium.client.SodiumClientMod");
         Farfield.LOG.info("LOD hand-off follows the {} section rule", sodiumRule ? "Sodium" : "vanilla");
-        uLightmap = program.uniform("u_lightmap");
-        uFogColor = program.uniform("u_fogColor");
-        uFog = program.uniform("u_fog");
-        uFogCylinder = program.uniform("u_fogCylinder");
-        uTranslucent = program.uniform("u_translucent");
-        uDebugLevels = program.uniform("u_debugLevels");
-        uBiomeBlend = program.uniform("u_biomeBlend");
-        uAtlas = program.uniform("u_atlas");
-        uAtlasSize = program.uniform("u_atlasSize");
-        uTextureEnd = program.uniform("u_textureEnd");
         glGenQueries(timerQueries);
         quads = new GlBuffer(INITIAL_QUADS * 8);
         arena = new RangeAllocator(INITIAL_QUADS);
@@ -714,10 +733,14 @@ public final class LodRenderer {
         nextStats = System.nanoTime() + 30_000_000_000L;
         Farfield.LOG.info("LOD renderer: {} sections drawn, {} resident, {} MB of {} MB quads used, {} meshing,"
                         + " {} meshes uploaded and {} freed, {} selections since last line; per frame {} us on the"
-                        + " render thread and {} us on the GPU, {} of {} quads sent (face directions), over {} frames;"
-                        + " detail {}; at most {} coarse fallbacks per selection", count, resident.size(),
+                        + " render thread and {} us on the GPU (depth pre-pass {}, opaque {}, translucent {}), {} of"
+                        + " {} quads sent (face directions), over {} frames; detail {}; at most {} coarse fallbacks"
+                        + " per selection", count, resident.size(),
                 arena.used() * 8 >> 20, arena.capacity() * 8 >> 20, requested.size(), meshesUploaded, meshesEvicted,
-                selections, frameNanos / 1000 / Math.max(1, timedFrames), gpuNanos / 1000 / Math.max(1, gpuFrames),
+                selections, frameNanos / 1000 / Math.max(1, timedFrames),
+                (gpuPassNanos[0] + gpuPassNanos[1] + gpuPassNanos[2]) / 1000 / Math.max(1, gpuFrames),
+                RenderSettings.depthPrepass() ? gpuPassNanos[0] / 1000 / Math.max(1, gpuFrames) + " us" : "off",
+                gpuPassNanos[1] / 1000 / Math.max(1, gpuFrames), gpuPassNanos[2] / 1000 / Math.max(1, gpuFrames),
                 quadsSubmitted / Math.max(1, timedFrames), quadsInView / Math.max(1, timedFrames),
                 timedFrames, String.format("%.1f", selector.detail()), maxFallbacks);
         maxFallbacks = 0;
@@ -725,7 +748,7 @@ public final class LodRenderer {
         quadsSubmitted = 0;
         frameNanos = 0;
         timedFrames = 0;
-        gpuNanos = 0;
+        java.util.Arrays.fill(gpuPassNanos, 0);
         gpuFrames = 0;
         selections = 0;
         meshesUploaded = 0;
@@ -1233,16 +1256,58 @@ public final class LodRenderer {
     /** Reads the GPU timestamps of earlier frames that are ready, without waiting. */
     private void readGpuTimers() {
         for (int slot = 0; slot < TIMER_SLOTS; slot++) {
+            int base = slot * TIMESTAMPS;
             if (!timerPending[slot]
-                    || glGetQueryObjecti(timerQueries[slot * 2 + 1], GL_QUERY_RESULT_AVAILABLE) == GL_FALSE) {
+                    || glGetQueryObjecti(timerQueries[base + TIMESTAMPS - 1], GL_QUERY_RESULT_AVAILABLE) == GL_FALSE) {
                 continue;
             }
-            long begin = glGetQueryObjectui64(timerQueries[slot * 2], GL_QUERY_RESULT);
-            long end = glGetQueryObjectui64(timerQueries[slot * 2 + 1], GL_QUERY_RESULT);
-            gpuNanos += end - begin;
+            long previous = glGetQueryObjectui64(timerQueries[base], GL_QUERY_RESULT);
+            for (int i = 1; i < TIMESTAMPS; i++) {
+                long t = glGetQueryObjectui64(timerQueries[base + i], GL_QUERY_RESULT);
+                gpuPassNanos[i - 1] += t - previous;
+                previous = t;
+            }
             gpuFrames++;
             timerPending[slot] = false;
         }
+    }
+
+    /** Binds a program variant and sets its uniforms for this frame ({@link #viewProj} set). */
+    private void use(Shader s, Vec3 cam, Minecraft mc, boolean translucent) {
+        int blockX = (int) Math.floor(cam.x);
+        int blockY = (int) Math.floor(cam.y);
+        int blockZ = (int) Math.floor(cam.z);
+        float[] fogColor = RenderSystem.getShaderFogColor();
+        GlStateManager._glUseProgram(s.program.id());
+        glUniformMatrix4fv(s.viewProj, false, viewProj.get(matrix));
+        glUniform3i(s.cameraBlock, blockX, blockY, blockZ);
+        glUniform3f(s.cameraFrac, (float) (cam.x - blockX), (float) (cam.y - blockY), (float) (cam.z - blockZ));
+        glUniform2f(s.depthRange, 8f, (float) MAX_DISTANCE * 2);
+        glUniform1i(s.renderDistance, mc.options.getEffectiveRenderDistance());
+        glUniform3i(s.gridMin, gridMinX, gridMinY, gridMinZ);
+        glUniform2i(s.gridSize, gridWidth, gridHeight);
+        glUniform1i(s.sodiumRule, sodiumRule ? 1 : 0);
+        glUniform1i(s.lightmap, LIGHTMAP_UNIT);
+        glUniform4f(s.fogColor, fogColor[0], fogColor[1], fogColor[2], 1f);
+        if (pushedFog || followVanillaFog) {
+            // The game's terrain fog, set up just before the LODs draw (moved out by
+            // the fog mixin, or kept); its shape only when kept, as the LOD fog was a sphere.
+            glUniform2f(s.fog, RenderSystem.getShaderFogStart(), RenderSystem.getShaderFogEnd());
+            glUniform1i(s.fogCylinder, followVanillaFog && RenderSystem.getShaderFogShape() == FogShape.CYLINDER ? 1 : 0);
+        } else {
+            // The fog mixin did not run or left a mod's fog alone: the LODs' own far fog.
+            glUniform2f(s.fog, FOG_START, FOG_END);
+            glUniform1i(s.fogCylinder, 0);
+        }
+        glUniform1i(s.translucent, translucent ? 1 : 0);
+        glUniform1i(s.debugLevels, RenderSettings.debugLevels() ? 1 : 0);
+        // Vanilla's Biome Blend option (0 off, else the radius in blocks), as the game's terrain.
+        glUniform1i(s.biomeBlend, mc.options.biomeBlendRadius().get());
+        glUniform1i(s.atlas, ATLAS_UNIT);
+        glUniform2f(s.atlasSize, faceTextures.width(), Math.max(1, faceTextures.height()));
+        int textureDistance = RenderSettings.textureDistance();
+        glUniform1f(s.textureEnd, atlas == 0 ? 0
+                : textureDistance == RenderSettings.ALL_DISTANCES ? Float.MAX_VALUE : textureDistance);
     }
 
     private void draw(int opaqueDraws, int translucentDraws, Vec3 cam, Matrix4f viewRotation, Matrix4f projection,
@@ -1257,49 +1322,15 @@ public final class LodRenderer {
         translucentCommands.flip();
         indirect.upload(opaqueBytes, translucentCommands);
 
-        int blockX = (int) Math.floor(cam.x);
-        int blockY = (int) Math.floor(cam.y);
-        int blockZ = (int) Math.floor(cam.z);
         viewProj.set(projection).mul(viewRotation);
-        float[] fogColor = RenderSystem.getShaderFogColor();
 
         // Timestamps rather than a time-elapsed query: the game may have one open.
         int slot = timerSlot;
         boolean timed = !timerPending[slot];
         if (timed) {
-            glQueryCounter(timerQueries[slot * 2], GL_TIMESTAMP);
+            glQueryCounter(timerQueries[slot * TIMESTAMPS], GL_TIMESTAMP);
         }
 
-        GlStateManager._glUseProgram(program.id());
-        glUniformMatrix4fv(uViewProj, false, viewProj.get(matrix));
-        glUniform3i(uCameraBlock, blockX, blockY, blockZ);
-        glUniform3f(uCameraFrac, (float) (cam.x - blockX), (float) (cam.y - blockY), (float) (cam.z - blockZ));
-        glUniform2f(uDepthRange, 8f, (float) MAX_DISTANCE * 2);
-        glUniform1i(uRenderDistance, mc.options.getEffectiveRenderDistance());
-        glUniform3i(uGridMin, gridMinX, gridMinY, gridMinZ);
-        glUniform2i(uGridSize, gridWidth, gridHeight);
-        glUniform1i(uSodiumRule, sodiumRule ? 1 : 0);
-        glUniform1i(uLightmap, LIGHTMAP_UNIT);
-        glUniform4f(uFogColor, fogColor[0], fogColor[1], fogColor[2], 1f);
-        if (pushedFog || followVanillaFog) {
-            // The game's terrain fog, set up just before the LODs draw (moved out by
-            // the fog mixin, or kept); its shape only when kept, as the LOD fog was a sphere.
-            glUniform2f(uFog, RenderSystem.getShaderFogStart(), RenderSystem.getShaderFogEnd());
-            glUniform1i(uFogCylinder, followVanillaFog && RenderSystem.getShaderFogShape() == FogShape.CYLINDER ? 1 : 0);
-        } else {
-            // The fog mixin did not run or left a mod's fog alone: the LODs' own far fog.
-            glUniform2f(uFog, FOG_START, FOG_END);
-            glUniform1i(uFogCylinder, 0);
-        }
-        glUniform1i(uTranslucent, 0);
-        glUniform1i(uDebugLevels, RenderSettings.debugLevels() ? 1 : 0);
-        // Vanilla's Biome Blend option (0 off, else the radius in blocks), as the game's terrain.
-        glUniform1i(uBiomeBlend, mc.options.biomeBlendRadius().get());
-        glUniform1i(uAtlas, ATLAS_UNIT);
-        glUniform2f(uAtlasSize, faceTextures.width(), Math.max(1, faceTextures.height()));
-        int textureDistance = RenderSettings.textureDistance();
-        glUniform1f(uTextureEnd, atlas == 0 ? 0
-                : textureDistance == RenderSettings.ALL_DISTANCES ? Float.MAX_VALUE : textureDistance);
         int previousUnit = GlStateManager._getActiveTexture();
         GlStateManager._activeTexture(GL_TEXTURE0 + ATLAS_UNIT);
         GlStateManager._bindTexture(atlas);
@@ -1323,11 +1354,36 @@ public final class LodRenderer {
         RenderSystem.disableBlend();
         RenderSystem.enableCull(); // lod.vert winds every face counter-clockwise from outside
 
-        if (opaqueDraws > 0) {
+        // Depth pre-pass: the shaded passes then run the full fragment shader
+        // (ambient occlusion, biome blending, textures) once per pixel instead
+        // of once per overlapping face; its discards would otherwise switch
+        // off the early depth test.
+        boolean prepass = RenderSettings.depthPrepass();
+        Shader shaded = prepass ? earlyZ : plain;
+        if (prepass && opaqueDraws > 0) {
+            use(depthOnly, cam, mc, false);
+            RenderSystem.colorMask(false, false, false, false);
             glMultiDrawArraysIndirect(GL_TRIANGLES, 0, opaqueDraws, 0);
+            RenderSystem.colorMask(true, true, true, true);
+        }
+        if (timed) {
+            glQueryCounter(timerQueries[slot * TIMESTAMPS + 1], GL_TIMESTAMP);
+        }
+        if (opaqueDraws > 0) {
+            use(shaded, cam, mc, false);
+            if (prepass) {
+                RenderSystem.depthFunc(GL_EQUAL);
+                RenderSystem.depthMask(false);
+            }
+            glMultiDrawArraysIndirect(GL_TRIANGLES, 0, opaqueDraws, 0);
+            RenderSystem.depthFunc(GL_LEQUAL);
+            RenderSystem.depthMask(true);
+        }
+        if (timed) {
+            glQueryCounter(timerQueries[slot * TIMESTAMPS + 2], GL_TIMESTAMP);
         }
         if (translucentDraws > 0) {
-            glUniform1i(uTranslucent, 1);
+            use(shaded, cam, mc, true);
             RenderSystem.enableBlend();
             RenderSystem.blendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
             RenderSystem.depthMask(false);
@@ -1338,7 +1394,7 @@ public final class LodRenderer {
         }
 
         if (timed) {
-            glQueryCounter(timerQueries[slot * 2 + 1], GL_TIMESTAMP);
+            glQueryCounter(timerQueries[slot * TIMESTAMPS + 3], GL_TIMESTAMP);
             timerPending[slot] = true;
             timerSlot = (slot + 1) % TIMER_SLOTS;
         }

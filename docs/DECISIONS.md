@@ -972,3 +972,35 @@ files, the dev run dirs were hand-made, and each server had a random seed.
 - Not covered: other operating systems (the scripted checks rely on
   PowerShell and Win32), the reference corpus itself (private worlds, 3.5
   GB; `docs/corpus.md` says what kinds of worlds to use).
+
+## ADR-043 — Depth pre-pass for opaque LOD faces
+
+**Date**: 2026-10-20 · **Status**: accepted
+
+Measured on the test world (Fabric dev client, RTX 3070 Laptop, 2582x1550,
+793 sections): the LOD GPU time was mostly per pixel. Sending 43 % fewer
+quads (E.12) saved 3 %, textures off 8 %, 2.4 times less geometry 30 %.
+`lod.frag` discards fragments (vanilla hand-off, cutout holes) in a pass
+that writes depth, which keeps the GPU from testing depth before the
+shader: every face behind another one paid the whole shader (ambient
+occlusion, biome blending, textures).
+
+- **Opaque faces draw twice**: a depth-only pre-pass (`lod.frag` built with
+  `DEPTH_ONLY`: only the hand-off and cutout discards, color writes off),
+  then the shaded pass (`EARLY_Z`: `layout(early_fragment_tests)`), with
+  `GL_EQUAL` and no depth writes, without the two discards: the pre-pass
+  depth already holds those holes. `lod.vert` declares `invariant
+  gl_Position` so the two programs compute the same depth.
+- **Translucent faces** use the `EARLY_Z` program too, with their discards:
+  they write no depth, so early tests change nothing but skip the water
+  behind terrain.
+- `GlProgram` builds variants from one source with `#define` lines; each
+  variant has its own uniform locations (`LodRenderer.Shader`).
+- The stat line splits the GPU time into pre-pass, opaque and translucent.
+  `/farfield debug prepass on|off` switches the pre-pass for comparisons,
+  on at every start, not saved, not in the settings screen.
+- Measured, same view and run: 3,421 us per frame without, 2,554 us with
+  (pre-pass 796, opaque 1,553, translucent 204), -25 %; captures with and
+  without identical over the LOD part (4 pixels of 4 million off by more
+  than 2 levels). Remaining costs to look at next: the pre-pass itself
+  (vertex and raster work, about 800 us) and the shaded opaque pass.

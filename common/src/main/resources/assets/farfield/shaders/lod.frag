@@ -1,5 +1,15 @@
 #version 460 core
 
+// Variants (LodRenderer): DEPTH_ONLY, the opaque depth pre-pass (only the
+// discards, no shading); EARLY_Z, the shaded passes after it: the depth test
+// runs before the shader, so hidden fragments are never shaded. The opaque
+// pass then draws with GL_EQUAL against the pre-pass depth, which already
+// holds the hand-off and cutout holes; the translucent pass writes no depth,
+// so its discards stay valid with early tests. Neither: one pass, as before.
+#ifdef EARLY_Z
+layout(early_fragment_tests) in;
+#endif
+
 in vec3 v_relative;
 in vec2 v_texCoord;
 flat in vec4 v_flat;
@@ -219,15 +229,34 @@ vec4 tile(uint index, vec2 f, vec2 gx, vec2 gy) {
 }
 
 void main() {
+#ifdef EARLY_Z
+    // Opaque faces passed the pre-pass's discards already (GL_EQUAL).
+    bool prepassed = !u_translucent;
+#else
+    bool prepassed = false;
+#endif
     // The block this face belongs to: a hair inside its voxel, so faces on a
     // section border test the section of their own voxel.
     vec3 normal = vec3(0.0);
     normal[v_direction >> 1] = (v_direction & 1u) != 0u ? 1.0 : -1.0;
     vec3 inside = v_relative + u_cameraFrac - normal * 0.01;
-    if (vanillaDraws(u_cameraBlock + ivec3(floor(inside)))) {
+    if (!prepassed && vanillaDraws(u_cameraBlock + ivec3(floor(inside)))) {
         discard;
     }
     float distance = length(v_relative);
+#ifdef DEPTH_ONLY
+    // The cutout holes of textured faces, as the shaded opaque pass below.
+    vec2 f = fract(v_texCoord);
+    vec2 gx = dFdx(v_texCoord);
+    vec2 gy = dFdy(v_texCoord);
+    if (v_tiles != 0u && distance < u_textureEnd) {
+        float fade = smoothstep(u_textureEnd * 0.75, u_textureEnd, distance);
+        if (mix(tile((v_tiles & 0xFFFFu) - 1u, f, gx, gy).a, 1.0, fade) < 0.5) {
+            discard;
+        }
+    }
+    fragColor = vec4(0.0);
+#else
     vec3 tint = vec3(0.0);
     vec3 color = v_flat.rgb;
     if (v_tintKind != NO_TINT) {
@@ -250,7 +279,7 @@ void main() {
         float fade = smoothstep(u_textureEnd * 0.75, u_textureEnd, distance);
         // Opaque pass: the holes of textured faces stay open (glass panes, iron bars),
         // as vanilla's cutout; untextured faces stay whole.
-        if (!u_translucent && mix(base.a, 1.0, fade) < 0.5) {
+        if (!u_translucent && !prepassed && mix(base.a, 1.0, fade) < 0.5) {
             discard;
         }
         color = mix(textured, color, fade);
@@ -269,4 +298,5 @@ void main() {
     float fogDistance = u_fogCylinder ? max(length(v_relative.xz), abs(v_relative.y)) : distance;
     float fog = smoothstep(u_fog.x, u_fog.y, fogDistance);
     fragColor = vec4(mix(color, u_fogColor.rgb, fog), u_translucent ? alpha : 1.0);
+#endif
 }

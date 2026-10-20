@@ -78,7 +78,20 @@ public final class FarfieldCommands {
                         .then(Commands.literal("levels")
                                 .executes(c -> debugLevels(c, !RenderSettings.debugLevels()))
                                 .then(Commands.literal("on").executes(c -> debugLevels(c, true)))
-                                .then(Commands.literal("off").executes(c -> debugLevels(c, false))))));
+                                .then(Commands.literal("off").executes(c -> debugLevels(c, false))))
+                        .then(Commands.literal("prepass")
+                                .executes(c -> debugPrepass(c, !RenderSettings.depthPrepass()))
+                                .then(Commands.literal("on").executes(c -> debugPrepass(c, true)))
+                                .then(Commands.literal("off").executes(c -> debugPrepass(c, false))))));
+    }
+
+    /** Single player: switches the LOD depth pre-pass, to compare GPU times on the stat line. Not saved. */
+    private static int debugPrepass(CommandContext<CommandSourceStack> c, boolean on) {
+        RenderSettings.setDepthPrepass(on);
+        Farfield.LOG.info("LOD depth pre-pass switched {} by command", on ? "on" : "off");
+        c.getSource().sendSuccess(() -> Component.literal("LOD depth pre-pass " + (on ? "on" : "off")
+                + " (default on, not saved; GPU times on the next stat lines; single player only)."), false);
+        return 1;
     }
 
     /** Single player: the distance up to which LOD faces show their textures (0: off). */

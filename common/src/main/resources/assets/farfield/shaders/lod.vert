@@ -32,6 +32,10 @@ const uint COLOR_STRIDE = 27u;
 const uint HEIGHT_OFFSET = 18u;
 const uint BOX_OFFSET = 19u;
 
+// The depth pre-pass and the shaded pass are separate programs: they must
+// compute the same depth to the bit for the shaded pass's GL_EQUAL test.
+invariant gl_Position;
+
 uniform mat4 u_viewProj;    // the game's projection * view rotation
 uniform ivec3 u_cameraBlock;
 uniform vec3 u_cameraFrac;

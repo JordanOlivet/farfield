@@ -229,3 +229,10 @@ choice, an ADR.
   is mostly per pixel: textures off saves 8 %, 2.4 times less geometry
   (detail 12) only 30 %. Remains: the user's pack; the per-pixel cost is
   a separate item (early depth test, overdraw)
+- [~] E.13 Per-pixel GPU cost (ADR-043): depth pre-pass for opaque faces,
+  shaded passes with early depth tests, GPU time split per pass on the
+  stat line, `/farfield debug prepass` for comparisons. Measured
+  2026-10-20 in the Fabric dev client (same view as E.12): 3,421 us per
+  frame without, 2,554 us with (-25 %), same image over the LODs, day and
+  night. Remains: NeoForge and Sodium, the user's pack, then the cost of
+  the pre-pass itself (about 800 us) and of the shaded opaque pass

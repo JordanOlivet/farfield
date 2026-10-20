@@ -38,6 +38,7 @@ public final class RenderSettings {
     private static volatile int fogDistance = RenderConfig.DEFAULTS.fogDistance();
     private static volatile int thickFogDistance = RenderConfig.DEFAULTS.thickFogDistance();
     private static volatile boolean noisePreview = RenderConfig.DEFAULTS.noisePreview();
+    private static volatile boolean depthPrepass = true;
 
     private RenderSettings() {
     }
@@ -83,6 +84,19 @@ public final class RenderSettings {
 
     public static void setDebugLevels(boolean value) {
         debugLevels = value;
+    }
+
+    /**
+     * Whether opaque LOD faces get a depth pre-pass, so the full fragment
+     * shader runs once per pixel. A diagnostic switch for comparing GPU
+     * times ({@code /farfield debug prepass}), on at every start, not saved.
+     */
+    public static boolean depthPrepass() {
+        return depthPrepass;
+    }
+
+    public static void setDepthPrepass(boolean value) {
+        depthPrepass = value;
     }
 
     /**

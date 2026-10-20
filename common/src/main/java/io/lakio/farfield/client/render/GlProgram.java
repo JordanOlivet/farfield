@@ -15,8 +15,17 @@ final class GlProgram implements AutoCloseable {
     private int id;
 
     GlProgram(String vertexResource, String fragmentResource) {
-        int vs = compile(GL_VERTEX_SHADER, read(vertexResource), vertexResource);
-        int fs = compile(GL_FRAGMENT_SHADER, read(fragmentResource), fragmentResource);
+        this(vertexResource, fragmentResource, "");
+    }
+
+    /**
+     * @param defines lines inserted after the {@code #version} line of both
+     *                shaders (e.g. {@code "#define DEPTH_ONLY\n"}), to build
+     *                variants of one source
+     */
+    GlProgram(String vertexResource, String fragmentResource, String defines) {
+        int vs = compile(GL_VERTEX_SHADER, define(read(vertexResource), defines), vertexResource);
+        int fs = compile(GL_FRAGMENT_SHADER, define(read(fragmentResource), defines), fragmentResource);
         id = glCreateProgram();
         glAttachShader(id, vs);
         glAttachShader(id, fs);
@@ -40,6 +49,14 @@ final class GlProgram implements AutoCloseable {
         } catch (IOException e) {
             throw new IllegalStateException("cannot read shader " + resource, e);
         }
+    }
+
+    private static String define(String source, String defines) {
+        if (defines.isEmpty()) {
+            return source;
+        }
+        int line = source.indexOf('\n') + 1;
+        return source.substring(0, line) + defines + source.substring(line);
     }
 
     private static int compile(int type, String source, String name) {
