@@ -31,8 +31,9 @@ choice, an ADR.
   the machine's paths, run dirs set up from `dev/` with one test world
   (`docs/test-worlds.md`), `runVanillaServer`, `copyTestJars`, project
   skills tracked. Verified: `runVanillaServer` from scratch, both dev
-  servers on a fresh world from the template, `copyTestJars`. Remains: a
-  dev client opening the template save, and a clone on the second machine
+  servers on a fresh world from the template, `copyTestJars`, `gradlew
+  build` on the second machine (2026-10-20). Remains: a dev client opening
+  the template save
 
 ## M1.B — Spike S5: region-file import (feeds S1 and S2 with real data)
 
@@ -216,3 +217,15 @@ choice, an ADR.
   (ADR-040), huge mushrooms, cactus, bamboo and villages (ADR-041),
   checked in the Fabric dev client. Remains: all of it in the user's
   pack, NeoForge, other structures, and the spike in the user's large pack
+- [~] E.12 Draw only the face directions that can face the camera: each
+  section's quads grouped by pass and direction, one indirect command per
+  run of visible groups (`FaceDirections`, unit tested against every face
+  plane in the box). Beyond its box on every axis a section sends three of
+  its six directions; the stat line gives the quads sent against those of
+  the drawn sections. Measured 2026-10-20 in the Fabric dev client
+  (vanilla rendering, RTX 3070 Laptop, 2582x1550, 793 sections, same
+  camera): 807,024 of 1,412,036 quads sent (57 %), GPU 3,450 us per frame
+  against 3,526 to 3,558 before (-3 %), render thread +80 us. The GPU time
+  is mostly per pixel: textures off saves 8 %, 2.4 times less geometry
+  (detail 12) only 30 %. Remains: the user's pack; the per-pixel cost is
+  a separate item (early depth test, overdraw)

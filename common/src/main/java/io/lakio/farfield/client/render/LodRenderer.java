@@ -10,6 +10,7 @@ import io.lakio.farfield.core.LodKey;
 import io.lakio.farfield.core.config.RenderConfig;
 import io.lakio.farfield.core.lod.LodSection;
 import io.lakio.farfield.core.mesh.BinaryGreedyMesher;
+import io.lakio.farfield.core.mesh.FaceDirections;
 import io.lakio.farfield.core.mesh.MaterialClassifier;
 import io.lakio.farfield.core.mesh.MeshBuffer;
 import io.lakio.farfield.core.mesh.Quad;
@@ -85,7 +86,10 @@ import static org.lwjgl.opengl.GL46C.*;
  *       colors over its last quarter. Two {@code glMultiDrawArraysIndirect}
  *       per frame: opaque quads, then translucent ones (water, glass, ice)
  *       blended with their texture coverage, without depth writes; each
- *       section stores its opaque quads first. Vertex pulling in
+ *       section stores its opaque quads first, each pass grouped by face
+ *       direction, and only the directions that can face the camera are
+ *       drawn ({@link FaceDirections}): beyond its box on every axis, a
+ *       section sends three of its six. Vertex pulling in
  *       {@code lod.vert}, back faces culled. GPU time is measured with
  *       timestamp queries and logged with the render-thread time.</li>
  *   <li>Sections with translucent voxels are meshed with their six
@@ -137,6 +141,12 @@ public final class LodRenderer {
     private static final byte ABSENT = 2;
     private static final int TIMER_SLOTS = 4;
     private static final int[][] STEP = {{-1, 0, 0}, {1, 0, 0}, {0, -1, 0}, {0, 1, 0}, {0, 0, -1}, {0, 0, 1}};
+    /**
+     * Quad groups of a section, in range order: opaque quads by direction,
+     * then translucent ones by direction, so a pass draws only the directions
+     * that can face the camera ({@link FaceDirections}).
+     */
+    private static final int GROUPS = 2 * Quad.DIRECTIONS;
 
     private boolean initialized;
     private boolean disabled;
@@ -294,6 +304,9 @@ public final class LodRenderer {
     private int selections;
     private int meshesUploaded;
     private int meshesEvicted;
+    /** Quads of the drawn sections, and those of the directions that can face the camera (sent to the GPU). */
+    private long quadsInView;
+    private long quadsSubmitted;
     private long nextStats;
 
     private static final class Resident {
@@ -302,6 +315,8 @@ public final class LodRenderer {
         int quadCount;
         /** The first quads of the range are opaque, the rest translucent. */
         int opaqueCount;
+        /** Start of each quad group in the range ({@link #GROUPS}), then {@link #quadCount}. */
+        int[] groups = new int[GROUPS + 1];
         /** Its opaque voxels are in the occupancy buffer (ambient occlusion). */
         boolean occluders;
         /** Last time the selection used it: drawn, or relied on to descend to its children. */
@@ -312,9 +327,12 @@ public final class LodRenderer {
         }
     }
 
-    private record MeshResult(int generation, long key, long[] quads, int opaqueCount, int[] occupancy,
+    /** {@code groups}: start of each quad group ({@link #GROUPS}), then the quad count. */
+    private record MeshResult(int generation, long key, long[] quads, int[] groups, int[] occupancy,
                               int[] biomeColumns) {
     }
+
+    private static final int[] NO_GROUPS = new int[GROUPS + 1];
 
     private LodRenderer() {
     }
@@ -496,27 +514,17 @@ public final class LodRenderer {
         for (int i = 0, n = drawList.size(); i < n; i++) {
             long key = drawList.getLong(i);
             Resident r = resident.get(key);
-            if (r == null || r.quadCount == 0 || !visible(key, cam)) {
+            if (r == null || r.quadCount == 0) {
+                continue;
+            }
+            int faces = visibleFaces(key, cam);
+            if (faces == 0) {
                 continue;
             }
             count++;
-            if (r.opaqueCount > 0) {
-                if (commands.remaining() < 4) {
-                    commands = MemoryUtil.memRealloc(commands, commands.capacity() * 2);
-                }
-                commands.put(r.opaqueCount * 6).put(1).put(0).put(r.slot);
-                opaqueDraws++;
-            }
-            int translucent = r.quadCount - r.opaqueCount;
-            if (translucent > 0) {
-                if (translucentCommands.remaining() < 4) {
-                    translucentCommands = MemoryUtil.memRealloc(translucentCommands,
-                            translucentCommands.capacity() * 2);
-                }
-                // gl_VertexID starts at "first": the shader reads the quads after the opaque ones.
-                translucentCommands.put(translucent * 6).put(1).put(r.opaqueCount * 6).put(r.slot);
-                translucentDraws++;
-            }
+            quadsInView += r.quadCount;
+            opaqueDraws += addCommands(r, false, faces);
+            translucentDraws += addCommands(r, true, faces);
         }
         if (frame % 60 == 0) {
             evictUnused(frameStart);
@@ -706,12 +714,15 @@ public final class LodRenderer {
         nextStats = System.nanoTime() + 30_000_000_000L;
         Farfield.LOG.info("LOD renderer: {} sections drawn, {} resident, {} MB of {} MB quads used, {} meshing,"
                         + " {} meshes uploaded and {} freed, {} selections since last line; per frame {} us on the"
-                        + " render thread and {} us on the GPU, over {} frames; detail {}; at most {} coarse"
-                        + " fallbacks per selection", count, resident.size(),
+                        + " render thread and {} us on the GPU, {} of {} quads sent (face directions), over {} frames;"
+                        + " detail {}; at most {} coarse fallbacks per selection", count, resident.size(),
                 arena.used() * 8 >> 20, arena.capacity() * 8 >> 20, requested.size(), meshesUploaded, meshesEvicted,
                 selections, frameNanos / 1000 / Math.max(1, timedFrames), gpuNanos / 1000 / Math.max(1, gpuFrames),
+                quadsSubmitted / Math.max(1, timedFrames), quadsInView / Math.max(1, timedFrames),
                 timedFrames, String.format("%.1f", selector.detail()), maxFallbacks);
         maxFallbacks = 0;
+        quadsInView = 0;
+        quadsSubmitted = 0;
         frameNanos = 0;
         timedFrames = 0;
         gpuNanos = 0;
@@ -761,16 +772,17 @@ public final class LodRenderer {
             MeshResult result;
             try {
                 LodSection section = PreviewLayer.isPreview(key) ? previewLayer.build(w, key) : w.read(key);
-                result = section == null ? new MeshResult(gen, key, new long[0], 0, null, null) : mesh(w, gen, key, section);
+                result = section == null ? new MeshResult(gen, key, new long[0], NO_GROUPS, null, null)
+                        : mesh(w, gen, key, section);
             } catch (IOException | RuntimeException e) {
                 Farfield.LOG.debug("LOD mesh of {} failed", LodKey.toString(key), e);
-                result = new MeshResult(gen, key, new long[0], 0, null, null);
+                result = new MeshResult(gen, key, new long[0], NO_GROUPS, null, null);
             }
             done.add(result);
         });
     }
 
-    /** Meshes a section: opaque quads first, then translucent ones. */
+    /** Meshes a section: opaque quads first, then translucent ones, each by direction. */
     private MeshResult mesh(LodWorld w, int gen, long key, LodSection section) throws IOException {
         MaterialClassifier materials = w.materials();
         // Partial and shaped blocks keep their shape on the finest level only;
@@ -794,28 +806,28 @@ public final class LodRenderer {
         boolean preview = PreviewLayer.isPreview(key);
         int dropped = preview ? PreviewLayer.maskGround(w) : -1;
         int droppedFluid = preview ? PreviewLayer.maskFluid(w) : -1;
-        int total = 0;
+        int[] groups = new int[GROUPS + 1];
         for (int d = 0; d < Quad.DIRECTIONS; d++) {
             long[] quads = out.quads(d);
             for (int i = 0, c = out.count(d); i < c; i++) {
                 int m = Quad.material(quads[i]);
-                total += m == dropped || m == droppedFluid ? 0 : 1;
+                if (m != dropped && m != droppedFluid) {
+                    groups[group(classes, m, d) + 1]++;
+                }
             }
         }
-        long[] all = new long[total];
-        int opaque = 0;
-        int back = all.length;
+        for (int g = 0; g < GROUPS; g++) {
+            groups[g + 1] += groups[g];
+        }
+        long[] all = new long[groups[GROUPS]];
+        int[] next = java.util.Arrays.copyOf(groups, GROUPS);
         for (int d = 0; d < Quad.DIRECTIONS; d++) {
             long[] quads = out.quads(d);
             for (int i = 0, c = out.count(d); i < c; i++) {
                 long q = quads[i];
-                if (Quad.material(q) == dropped || Quad.material(q) == droppedFluid) {
-                    continue;
-                }
-                if (classes.classOf(Quad.material(q)) == MaterialClassifier.TRANSLUCENT) {
-                    all[--back] = q;
-                } else {
-                    all[opaque++] = q;
+                int m = Quad.material(q);
+                if (m != dropped && m != droppedFluid) {
+                    all[next[group(classes, m, d)]++] = q;
                 }
             }
         }
@@ -830,7 +842,11 @@ public final class LodRenderer {
         for (int i = 0; i < packed.length; i++) {
             packed[i] = columns[2 * i] | columns[2 * i + 1] << 16;
         }
-        return new MeshResult(gen, key, all, opaque, occupied, packed);
+        return new MeshResult(gen, key, all, groups, occupied, packed);
+    }
+
+    private static int group(MaterialClassifier classes, int material, int direction) {
+        return classes.classOf(material) == MaterialClassifier.TRANSLUCENT ? Quad.DIRECTIONS + direction : direction;
     }
 
     private static boolean hasTranslucent(LodSection section, MaterialClassifier classes) {
@@ -944,7 +960,8 @@ public final class LodRenderer {
                 arena.release(r.start, r.quadCount);
             }
             r.quadCount = m.quads.length;
-            r.opaqueCount = m.opaqueCount;
+            r.opaqueCount = m.groups[Quad.DIRECTIONS];
+            r.groups = m.groups;
             r.occluders = m.occupancy != null;
             if (r.occluders) {
                 long needed = (long) (r.slot + 1) * OCCUPANCY_INTS * 4;
@@ -969,6 +986,7 @@ public final class LodRenderer {
                 if (start < 0) {
                     r.quadCount = 0; // out of GPU budget: drawn as empty until evictions free space
                     r.opaqueCount = 0;
+                    r.groups = NO_GROUPS;
                 } else {
                     r.start = start;
                     quads.upload(start * 8, m.quads, m.quads.length);
@@ -1145,12 +1163,61 @@ public final class LodRenderer {
         frustum.set(cullMatrix);
     }
 
-    private boolean visible(long key, Vec3 cam) {
+    /** The face directions of a section that can face the camera ({@link FaceDirections}), 0 outside the frustum. */
+    private int visibleFaces(long key, Vec3 cam) {
         int size = LodSection.SIZE << drawLevel(key);
         float x = (float) (LodKey.x(key) * (double) size - cam.x);
         float y = (float) (LodKey.y(key) * (double) size - cam.y);
         float z = (float) (LodKey.z(key) * (double) size - cam.z);
-        return frustum.testAab(x, y, z, x + size, y + size, z + size);
+        if (!frustum.testAab(x, y, z, x + size, y + size, z + size)) {
+            return 0;
+        }
+        return FaceDirections.front(x, y, z, size);
+    }
+
+    /**
+     * Writes the draw commands of one pass of a section: its groups whose
+     * direction is in {@code faces}, adjacent groups in one command.
+     *
+     * @return the number of commands written
+     */
+    private int addCommands(Resident r, boolean translucent, int faces) {
+        int first = translucent ? Quad.DIRECTIONS : 0;
+        int runStart = r.groups[first];
+        int runEnd = runStart;
+        int draws = 0;
+        for (int d = 0; d < Quad.DIRECTIONS; d++) {
+            int start = r.groups[first + d];
+            int end = r.groups[first + d + 1];
+            if ((faces & 1 << d) == 0 || start == end) {
+                continue;
+            }
+            if (start != runEnd) {
+                draws += addCommand(translucent, runStart, runEnd, r.slot);
+                runStart = start;
+            }
+            runEnd = end;
+        }
+        return draws + addCommand(translucent, runStart, runEnd, r.slot);
+    }
+
+    private int addCommand(boolean translucent, int start, int end, int slot) {
+        if (end == start) {
+            return 0;
+        }
+        IntBuffer out = translucent ? translucentCommands : commands;
+        if (out.remaining() < 4) {
+            out = MemoryUtil.memRealloc(out, out.capacity() * 2);
+            if (translucent) {
+                translucentCommands = out;
+            } else {
+                commands = out;
+            }
+        }
+        // gl_VertexID starts at "first": the shader reads the quads from the group's start.
+        out.put((end - start) * 6).put(1).put(start * 6).put(slot);
+        quadsSubmitted += end - start;
+        return 1;
     }
 
     /**
