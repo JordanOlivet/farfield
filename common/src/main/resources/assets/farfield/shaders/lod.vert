@@ -2,7 +2,9 @@
 
 // Vertex pulling of 8-byte LOD quads (io.lakio.farfield.core.mesh.Quad):
 // one draw command per section, gl_BaseInstance selects the section,
-// gl_VertexID / 6 the quad and gl_VertexID % 6 the corner.
+// gl_VertexID / 4 the quad and gl_VertexID % 4 the corner (indexed draws:
+// gl_VertexID is the shared index buffer's value plus the command's base
+// vertex, 4 vertices and 2 triangles per quad).
 
 layout(std430, binding = 0) readonly buffer Quads {
     uvec2 quads[];
@@ -62,8 +64,6 @@ flat out uint v_occluders;
 flat out uint v_cutout;     // 1: the face's texture has holes (opaque pass cuts them out)
 flat out uint v_handoff;    // 1: the section overlaps the grid where the game may draw (hand-off test)
 
-const uint CORNER_U[6] = uint[](0u, 1u, 1u, 0u, 1u, 0u);
-const uint CORNER_V[6] = uint[](0u, 0u, 1u, 0u, 1u, 1u);
 const float SHADE[6] = float[](0.6, 0.6, 0.5, 1.0, 0.8, 0.8);
 
 vec3 toLinear(vec3 c) {
@@ -72,8 +72,8 @@ vec3 toLinear(vec3 c) {
 
 void main() {
     Section s = sections[gl_BaseInstance];
-    uint corner = uint(gl_VertexID) % 6u;
-    uvec2 q = quads[s.info.x + uint(gl_VertexID) / 6u];
+    uint corner = uint(gl_VertexID) & 3u;
+    uvec2 q = quads[s.info.x + uint(gl_VertexID) / 4u];
     uint lo = q.x;
     uvec3 voxel = uvec3(lo & 31u, (lo >> 5) & 31u, (lo >> 10) & 31u);
     uint sizeU = ((lo >> 15) & 31u) + 1u;
@@ -90,8 +90,8 @@ void main() {
     // faces toward -axis swap them so every face winds counter-clockwise from
     // outside and back faces can be culled.
     bool negative = (direction & 1u) == 0u;
-    uint cu = negative ? CORNER_V[corner] : CORNER_U[corner];
-    uint cv = negative ? CORNER_U[corner] : CORNER_V[corner];
+    uint cu = negative ? corner >> 1 : corner & 1u;
+    uint cv = negative ? corner & 1u : corner >> 1;
     p[uAxis] += float(cu * sizeU);
     p[vAxis] += float(cv * sizeV);
 

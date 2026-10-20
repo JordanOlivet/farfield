@@ -83,7 +83,7 @@ import static org.lwjgl.opengl.GL46C.*;
  *       ({@link MaterialColors}, {@link FaceTextures}), tints per biome
  *       ({@link BiomeTints}). Textures show up to
  *       {@link RenderSettings#textureDistance()} and fade into the mean
- *       colors over its last quarter. Two {@code glMultiDrawArraysIndirect}
+ *       colors over its last quarter. Indexed indirect draws ({@code glMultiDrawElementsIndirect}, 4 vertices per quad)
  *       per frame: opaque quads, then translucent ones (water, glass, ice)
  *       blended with their texture coverage, without depth writes; each
  *       section stores its opaque quads first, each pass grouped by face
@@ -148,6 +148,16 @@ public final class LodRenderer {
      * that can face the camera ({@link FaceDirections}).
      */
     private static final int GROUPS = 2 * Quad.DIRECTIONS;
+    /** An indexed indirect command: count, instances, first index, base vertex, base instance (the slot). */
+    private static final int COMMAND_INTS = 5;
+    private static final int COMMAND_BYTES = COMMAND_INTS * 4;
+    /**
+     * Quads the shared index buffer describes: 4 vertices and 6 indices
+     * each, so the vertex shader runs 4 times per quad instead of 6 (the
+     * GPU reuses the shared corners). A longer run of quads takes several
+     * commands.
+     */
+    private static final int INDEXED_QUADS = 1 << 17;
     /** Command lists: opaque quads of sections that cannot discard a fragment... */
     private static final int SOLID = 0;
     /** ...opaque quads of sections that may (near the game's terrain, or faces with holes)... */
@@ -195,6 +205,8 @@ public final class LodRenderer {
     private int gridWidth = -1;
     private int gridHeight;
     private GlBuffer indirect;
+    /** The shared index buffer of {@link #INDEXED_QUADS} quads. */
+    private GlBuffer quadIndices;
     private int vao;
     private RangeAllocator arena;
     /** Texture unit of the face atlas; the game tracks units 0 to 11 and uses the low ones. */
@@ -234,13 +246,23 @@ public final class LodRenderer {
     private final Long2ByteOpenHashMap existence = new Long2ByteOpenHashMap();
     private final ConcurrentLinkedQueue<MeshResult> done = new ConcurrentLinkedQueue<>();
     private final ConcurrentLinkedQueue<Long> rewritten = new ConcurrentLinkedQueue<>();
-    private final LongConsumer listener = rewritten::add;
-    private final ExecutorService meshers = Executors.newFixedThreadPool(2, r -> {
-        Thread t = new Thread(r, "farfield-mesher");
-        t.setDaemon(true);
-        t.setPriority(Thread.MIN_PRIORITY);
-        return t;
-    });
+    /** Decoded sections for the mesher threads; the store's writes invalidate them. */
+    private final SectionCache sectionCache = new SectionCache();
+    private final LongConsumer listener = key -> {
+        sectionCache.invalidate(key);
+        rewritten.add(key);
+    };
+    /** Time the mesher threads spent per job, and in it reading sections, since the last stat line. */
+    private final java.util.concurrent.atomic.AtomicLong meshNanos = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong meshReadNanos = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicInteger meshJobs = new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.concurrent.ThreadPoolExecutor meshers =
+            (java.util.concurrent.ThreadPoolExecutor) Executors.newFixedThreadPool(2, r -> {
+                Thread t = new Thread(r, "farfield-mesher");
+                t.setDaemon(true);
+                t.setPriority(Thread.MIN_PRIORITY);
+                return t;
+            });
     private final ThreadLocal<BinaryGreedyMesher> mesher = ThreadLocal.withInitial(BinaryGreedyMesher::new);
     private final ThreadLocal<MeshBuffer> meshBuffer = ThreadLocal.withInitial(MeshBuffer::new);
     private final ThreadLocal<int[][]> borderPlanes = ThreadLocal.withInitial(() -> new int[6][LodSection.SIZE]);
@@ -498,8 +520,23 @@ public final class LodRenderer {
         neighborSlots = new GlBuffer(1024L * NEIGHBOR_INTS * 4);
         biomeColumns = new GlBuffer(1024L * BIOME_COLUMN_INTS * 4);
         drawnSections = new GlBuffer(4096L * 4);
-        indirect = new GlBuffer(1024L * 16);
+        indirect = new GlBuffer(1024L * COMMAND_BYTES);
         vao = glCreateVertexArrays();
+        int[] indices = new int[INDEXED_QUADS * 6];
+        for (int q = 0; q < INDEXED_QUADS; q++) {
+            // Corners: 0 (0, 0), 1 (1, 0), 2 (0, 1), 3 (1, 1) along the face's (U, V).
+            int v = q * 4;
+            int i = q * 6;
+            indices[i] = v;
+            indices[i + 1] = v + 1;
+            indices[i + 2] = v + 3;
+            indices[i + 3] = v;
+            indices[i + 4] = v + 3;
+            indices[i + 5] = v + 2;
+        }
+        quadIndices = new GlBuffer((long) indices.length * 4);
+        quadIndices.upload(0, indices);
+        glVertexArrayElementBuffer(vao, quadIndices.id());
         Farfield.LOG.info("LOD renderer ready on {}, OpenGL {} ({} MB of quads to start)", glGetString(GL_RENDERER),
                 glGetString(GL_VERSION), INITIAL_QUADS * 8 >> 20);
         return true;
@@ -758,6 +795,16 @@ public final class LodRenderer {
 
     private void logStats(int count) {
         nextStats = System.nanoTime() + 30_000_000_000L;
+        int jobs = meshJobs.getAndSet(0);
+        long jobNanos = meshNanos.getAndSet(0);
+        long readNanos = meshReadNanos.getAndSet(0);
+        long[] cacheCounts = sectionCache.takeCounts();
+        if (jobs > 0) {
+            Farfield.LOG.info("LOD meshing: {} jobs on {} threads, {} us per job, {} us of it reading sections, {} %"
+                            + " of {} section reads from the cache", jobs, meshers.getCorePoolSize(),
+                    jobNanos / 1000 / jobs, readNanos / 1000 / jobs,
+                    cacheCounts[1] == 0 ? 0 : cacheCounts[0] * 100 / cacheCounts[1], cacheCounts[1]);
+        }
         Farfield.LOG.info("LOD renderer: {} sections drawn, {} resident, {} MB of {} MB quads used, {} meshing,"
                         + " {} meshes uploaded and {} freed, {} selections since last line; per frame {} us on the"
                         + " render thread and {} us on the GPU (depth pre-pass {}, opaque {}, translucent {}), {} of"
@@ -800,6 +847,7 @@ public final class LodRenderer {
         stale.clear();
         provisional.clear();
         existence.clear();
+        sectionCache.clear();
         drawList.clear();
         done.clear();
         rewritten.clear();
@@ -824,16 +872,27 @@ public final class LodRenderer {
         int gen = generation.get();
         meshers.execute(() -> {
             MeshResult result;
+            long start = System.nanoTime();
             try {
-                LodSection section = PreviewLayer.isPreview(key) ? previewLayer.build(w, key) : w.read(key);
+                LodSection section = PreviewLayer.isPreview(key) ? previewLayer.build(w, key) : readSection(w, key);
                 result = section == null ? new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null)
                         : mesh(w, gen, key, section);
             } catch (IOException | RuntimeException e) {
                 Farfield.LOG.debug("LOD mesh of {} failed", LodKey.toString(key), e);
                 result = new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null);
             }
+            meshNanos.addAndGet(System.nanoTime() - start);
+            meshJobs.incrementAndGet();
             done.add(result);
         });
+    }
+
+    /** A stored section through {@link #sectionCache}, timed for the stat line; null when not stored. */
+    private LodSection readSection(LodWorld w, long key) throws IOException {
+        long start = System.nanoTime();
+        LodSection section = sectionCache.read(w, key);
+        meshReadNanos.addAndGet(System.nanoTime() - start);
+        return section;
     }
 
     /** Meshes a section: opaque quads first, then translucent ones, each by direction. */
@@ -946,7 +1005,7 @@ public final class LodRenderer {
                 continue;
             }
             long neighbor = LodKey.pack(level, LodKey.x(key) + STEP[d][0], y, LodKey.z(key) + STEP[d][2]);
-            LodSection section = w.exists(neighbor) ? w.read(neighbor) : null;
+            LodSection section = readSection(w, neighbor);
             if (section != null) {
                 light[d] = BinaryGreedyMesher.borderLight(section, d, lights[d]);
                 if (solid != null) {
@@ -1373,13 +1432,17 @@ public final class LodRenderer {
         if (end == start) {
             return;
         }
+        while (end - start > INDEXED_QUADS) {
+            addCommand(list, start, start + INDEXED_QUADS, slot);
+            start += INDEXED_QUADS;
+        }
         IntBuffer out = commands[list];
-        if (out.remaining() < 4) {
+        if (out.remaining() < COMMAND_INTS) {
             out = MemoryUtil.memRealloc(out, out.capacity() * 2);
             commands[list] = out;
         }
-        // gl_VertexID starts at "first": the shader reads the quads from the group's start.
-        out.put((end - start) * 6).put(1).put(start * 6).put(slot);
+        // gl_VertexID is the index plus the base vertex: the shader reads the quads from the group's start.
+        out.put((end - start) * 6).put(1).put(0).put(start * 4).put(slot);
         quadsSubmitted += end - start;
         draws[list]++;
     }
@@ -1455,8 +1518,8 @@ public final class LodRenderer {
         int solidDraws = draws[SOLID];
         int discardDraws = draws[DISCARD];
         int translucentDraws = draws[TRANSLUCENT];
-        long opaqueBytes = (long) (solidDraws + discardDraws) * 16;
-        long bytes = opaqueBytes + (long) translucentDraws * 16;
+        long opaqueBytes = (long) (solidDraws + discardDraws) * COMMAND_BYTES;
+        long bytes = opaqueBytes + (long) translucentDraws * COMMAND_BYTES;
         if (bytes > indirect.size()) {
             indirect.grow(Math.max(bytes, indirect.size() * 2), 0);
         }
@@ -1512,11 +1575,12 @@ public final class LodRenderer {
             RenderSystem.colorMask(false, false, false, false);
             if (solidDraws > 0) {
                 use(depthSolid, cam, mc, false);
-                glMultiDrawArraysIndirect(GL_TRIANGLES, 0, solidDraws, 0);
+                glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, 0, solidDraws, 0);
             }
             if (discardDraws > 0) {
                 use(depthOnly, cam, mc, false);
-                glMultiDrawArraysIndirect(GL_TRIANGLES, (long) solidDraws * 16, discardDraws, 0);
+                glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, (long) solidDraws * COMMAND_BYTES,
+                        discardDraws, 0);
             }
             RenderSystem.colorMask(true, true, true, true);
         }
@@ -1529,7 +1593,7 @@ public final class LodRenderer {
                 RenderSystem.depthFunc(GL_EQUAL);
                 RenderSystem.depthMask(false);
             }
-            glMultiDrawArraysIndirect(GL_TRIANGLES, 0, opaqueDraws, 0);
+            glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, 0, opaqueDraws, 0);
             RenderSystem.depthFunc(GL_LEQUAL);
             RenderSystem.depthMask(true);
         }
@@ -1541,7 +1605,7 @@ public final class LodRenderer {
             RenderSystem.enableBlend();
             RenderSystem.blendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
             RenderSystem.depthMask(false);
-            glMultiDrawArraysIndirect(GL_TRIANGLES, opaqueBytes, translucentDraws, 0);
+            glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, opaqueBytes, translucentDraws, 0);
             RenderSystem.depthMask(true);
             RenderSystem.defaultBlendFunc();
             RenderSystem.disableBlend();
