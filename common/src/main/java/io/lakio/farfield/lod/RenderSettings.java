@@ -39,6 +39,7 @@ public final class RenderSettings {
     private static volatile int thickFogDistance = RenderConfig.DEFAULTS.thickFogDistance();
     private static volatile boolean noisePreview = RenderConfig.DEFAULTS.noisePreview();
     private static volatile boolean depthPrepass = true;
+    private static volatile boolean occlusionCulling = true;
 
     private RenderSettings() {
     }
@@ -97,6 +98,19 @@ public final class RenderSettings {
 
     public static void setDepthPrepass(boolean value) {
         depthPrepass = value;
+    }
+
+    /**
+     * Whether sections hidden behind LOD terrain drawn in the same frame are
+     * skipped (GPU occlusion culling, needs the depth pre-pass). A diagnostic
+     * switch ({@code /farfield debug occlusion}), on at every start, not saved.
+     */
+    public static boolean occlusionCulling() {
+        return occlusionCulling;
+    }
+
+    public static void setOcclusionCulling(boolean value) {
+        occlusionCulling = value;
     }
 
     /**

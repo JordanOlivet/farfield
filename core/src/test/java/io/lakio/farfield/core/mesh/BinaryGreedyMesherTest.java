@@ -147,6 +147,34 @@ class BinaryGreedyMesherTest {
     }
 
     @Test
+    void boundsCoverEveryQuad() {
+        // A stone slab at y 3..4 over x 2..9, z 5..20: its quads fit in exactly that box.
+        LodSection section = new LodSection(0);
+        for (int z = 5; z <= 20; z++) {
+            for (int x = 2; x <= 9; x++) {
+                section.set(x, 3, z, 1);
+                section.set(x, 4, z, 1);
+            }
+        }
+        section.compact();
+        mesher.mesh(section, CLASSES, null, out);
+        long[] all = new long[out.total()];
+        int n = 0;
+        for (int d = 0; d < Quad.DIRECTIONS; d++) {
+            System.arraycopy(out.quads(d), 0, all, n, out.count(d));
+            n += out.count(d);
+        }
+        int b = Quad.bounds(all, n);
+        assertEquals(2, b & 31);
+        assertEquals(3, b >> 5 & 31);
+        assertEquals(5, b >> 10 & 31);
+        assertEquals(9, b >> 15 & 31);
+        assertEquals(4, b >> 20 & 31);
+        assertEquals(20, b >> 25 & 31);
+        assertEquals(0, Quad.bounds(all, 0));
+    }
+
+    @Test
     void emptyColumnsHideWaterWallsWhenUnknown() {
         // A sea on x < 16 (stone 0..9, water 10..20), nothing on x >= 16 (a chunk
         // without data), except one column at z = 3 with a stone floor (a real pit).

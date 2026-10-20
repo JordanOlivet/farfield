@@ -152,8 +152,13 @@ public final class LodRenderer {
     private static final int SOLID = 0;
     /** ...opaque quads of sections that may (near the game's terrain, or faces with holes)... */
     private static final int DISCARD = 1;
-    /** ...and translucent quads. */
+    /** ...translucent quads... */
     private static final int TRANSLUCENT = 2;
+    /**
+     * ...and opaque quads of sections the game draws entirely, which the
+     * passes skip: only occlusion culling draws them, as occluders.
+     */
+    private static final int OCCLUDER = 3;
 
     private boolean initialized;
     private boolean disabled;
@@ -165,6 +170,72 @@ public final class LodRenderer {
     private Shader earlyZ;
     /** Opaque depth pre-pass of sections that cannot discard: no discard, so early depth tests. */
     private Shader depthSolid;
+
+    // Occlusion culling (ADR-047): a depth pyramid of the pre-pass depth, and
+    // a compute pass that compacts the draw commands of visible sections.
+    /** Output regions of the culling pass ({@code lod_cull.comp}): first-phase solid, discard, ... */
+    private static final int CULL_REGIONS = 6;
+    private static final int R_FIRST_SOLID = 0;
+    private static final int R_FIRST_DISCARD = 1;
+    private static final int R_SECOND_SOLID = 2;
+    private static final int R_SECOND_DISCARD = 3;
+    private static final int R_OPAQUE = 4;
+    private static final int R_TRANSLUCENT = 5;
+    /** Texture units outside the game's tracked 0 to 11: the game's depth, the pyramid. */
+    private static final int DEPTH_UNIT = 12;
+    private static final int HIZ_UNIT = 13;
+    private static final int OCCLUDER_UNIT = 14;
+    private GlProgram hizProgram;
+    private int uHizSrc;
+    private int uHizSrcLevel;
+    private GlProgram cullProgram;
+    private int uCullPhase;
+    private int uCullFrame;
+    private int uCullSolid;
+    private int uCullDiscard;
+    private int uCullTranslucent;
+    private int uCullCapacity;
+    private int uCullViewProj;
+    private int uCullCameraBlock;
+    private int uCullCameraFrac;
+    private int uCullDepthRange;
+    private int uCullHiz;
+    private int uCullHizLevels;
+    /** Compacted commands, {@link #CULL_REGIONS} regions of {@link #cullCapacity} commands. */
+    private GlBuffer culled;
+    private long cullCapacity;
+    /**
+     * One count per region (glMultiDrawArraysIndirectCount), and a copy per
+     * timer slot, each its own buffer: reading one buffer written every frame
+     * waited for the GPU to finish every frame queued (2.5 ms per frame).
+     */
+    private GlBuffer cullCounts;
+    private final GlBuffer[] cullCountCopies = new GlBuffer[TIMER_SLOTS];
+    /** Per section slot, the last frame it was visible; two, read last frame's while writing this one's. */
+    private final GlBuffer[] visibility = new GlBuffer[2];
+    /** Frame counter of the culling pass; starts high so zeroed slots never read as last frame's. */
+    private int cullFrame = 16;
+    private int hiz;
+    /** Depth of the occluders ({@link #OCCLUDER}): sections the game draws, never shown, only hiding others. */
+    private int occluderFbo;
+    private int occluderDepth;
+    private int uHizSrc2;
+    private int uHizTwo;
+    private int hizWidth;
+    private int hizHeight;
+    private int hizLevels;
+    /** Occlusion culling cannot run (no programs, or no depth texture); logged once. */
+    private boolean occlusionUnavailable;
+    /** Per timer slot: whether that frame culled, and its input opaque and translucent commands. */
+    private final boolean[] cullTimed = new boolean[TIMER_SLOTS];
+    private final int[] cullInput = new int[TIMER_SLOTS * 2];
+    private final int[] countScratch = new int[CULL_REGIONS];
+    private long culledFrames;
+    private long cullOpaqueIn;
+    private long cullOpaqueOut;
+    private long cullFirst;
+    private long cullTranslucentIn;
+    private long cullTranslucentOut;
     private GlBuffer quads;
     private GlBuffer sectionInfo;
     private GlBuffer colorBuffer;
@@ -291,10 +362,10 @@ public final class LodRenderer {
     private final Matrix4f cullMatrix = new Matrix4f();
     private final Matrix4f viewProj = new Matrix4f();
     private final float[] matrix = new float[16];
-    /** Draw commands per list ({@link #SOLID}, {@link #DISCARD}, {@link #TRANSLUCENT}), in indirect buffer order. */
-    private final IntBuffer[] commands = {
-            MemoryUtil.memAllocInt(4 * 1024), MemoryUtil.memAllocInt(4 * 1024), MemoryUtil.memAllocInt(4 * 1024)};
-    private final int[] draws = new int[3];
+    /** Draw commands per list ({@link #SOLID} to {@link #OCCLUDER}), in indirect buffer order. */
+    private final IntBuffer[] commands = {MemoryUtil.memAllocInt(4 * 1024), MemoryUtil.memAllocInt(4 * 1024),
+            MemoryUtil.memAllocInt(4 * 1024), MemoryUtil.memAllocInt(4 * 1024)};
+    private final int[] draws = new int[4];
 
     // Statistics for the periodic log line.
     private long frame;
@@ -311,6 +382,8 @@ public final class LodRenderer {
     private long quadsSubmitted;
     /** Drawn sections in the pre-pass that may discard ({@link #DISCARD}). */
     private long discardSections;
+    /** Sections in view the game draws entirely, skipped ({@link #OCCLUDER}). */
+    private long leftToGame;
     private long nextStats;
 
     /** A variant of the LOD program and its uniform locations. */
@@ -368,6 +441,10 @@ public final class LodRenderer {
         int[] groups = new int[GROUPS + 1];
         /** Some opaque faces have holes to cut out (or were meshed before their colors were built). */
         boolean cutout;
+        /** Some opaque faces let light through in the game (leaves): no occluder. */
+        boolean seeThrough;
+        /** The voxels its quads cover ({@link Quad#bounds}), for occlusion culling. */
+        int bounds;
         /** Its opaque voxels are in the occupancy buffer (ambient occlusion). */
         boolean occluders;
         /** Last time the selection used it: drawn, or relied on to descend to its children. */
@@ -381,7 +458,8 @@ public final class LodRenderer {
     /** {@code groups}: start of each quad group ({@link #GROUPS}), then the quad count. */
     /** {@code provisional}: {@code cutout} was guessed for materials whose looks were not built yet. */
     private record MeshResult(int generation, long key, long[] quads, int[] groups, boolean cutout,
-                              boolean provisional, int[] occupancy, int[] biomeColumns) {
+                              boolean seeThrough, boolean provisional, int bounds, int[] occupancy,
+                              int[] biomeColumns) {
     }
 
     private static final int[] NO_GROUPS = new int[GROUPS + 1];
@@ -482,6 +560,40 @@ public final class LodRenderer {
             Farfield.LOG.error("LOD rendering disabled: shader setup failed", e);
             return false;
         }
+        try {
+            hizProgram = GlProgram.compute("lod_hiz.comp");
+            uHizSrc = hizProgram.uniform("u_src");
+            uHizSrcLevel = hizProgram.uniform("u_srcLevel");
+            uHizSrc2 = hizProgram.uniform("u_src2");
+            uHizTwo = hizProgram.uniform("u_two");
+            cullProgram = GlProgram.compute("lod_cull.comp");
+            uCullPhase = cullProgram.uniform("u_phase");
+            uCullFrame = cullProgram.uniform("u_frame");
+            uCullSolid = cullProgram.uniform("u_solid");
+            uCullDiscard = cullProgram.uniform("u_discard");
+            uCullTranslucent = cullProgram.uniform("u_translucent");
+            uCullCapacity = cullProgram.uniform("u_capacity");
+            uCullViewProj = cullProgram.uniform("u_viewProj");
+            uCullCameraBlock = cullProgram.uniform("u_cameraBlock");
+            uCullCameraFrac = cullProgram.uniform("u_cameraFrac");
+            uCullDepthRange = cullProgram.uniform("u_depthRange");
+            uCullHiz = cullProgram.uniform("u_hiz");
+            uCullHizLevels = cullProgram.uniform("u_hizLevels");
+            culled = new GlBuffer(CULL_REGIONS * 1024L * 16);
+            cullCapacity = 1024;
+            cullCounts = new GlBuffer(CULL_REGIONS * 4L);
+            for (int i = 0; i < TIMER_SLOTS; i++) {
+                cullCountCopies[i] = new GlBuffer(CULL_REGIONS * 4L);
+            }
+            visibility[0] = new GlBuffer(4096L * 4);
+            visibility[1] = new GlBuffer(4096L * 4);
+            visibility[0].clear();
+            visibility[1].clear();
+            Farfield.LOG.info("LOD occlusion culling ready");
+        } catch (RuntimeException e) {
+            occlusionUnavailable = true;
+            Farfield.LOG.warn("LOD occlusion culling disabled: compute shader setup failed", e);
+        }
         sodiumRule = classExists("net.caffeinemc.mods.sodium.client.SodiumClientMod")
                 || classExists("org.embeddedt.embeddium.impl.Embeddium")
                 || classExists("me.jellysquid.mods.sodium.client.SodiumClientMod");
@@ -548,6 +660,7 @@ public final class LodRenderer {
             draws[l] = 0;
         }
         int count = 0;
+        int renderDistance = mc.options.getEffectiveRenderDistance();
         for (int i = 0, n = drawList.size(); i < n; i++) {
             long key = drawList.getLong(i);
             Resident r = resident.get(key);
@@ -556,6 +669,15 @@ public final class LodRenderer {
             }
             int faces = visibleFaces(key, cam);
             if (faces == 0) {
+                continue;
+            }
+            if (gameDrawsAll(key, cam, renderDistance)) {
+                // Every fragment would give way to the game's terrain: an occluder only,
+                // on the finest level (exact blocks) and without faces the game sees through.
+                leftToGame++;
+                if (drawLevel(key) == 0 && !r.seeThrough) {
+                    addCommands(r, OCCLUDER, faces);
+                }
                 continue;
             }
             count++;
@@ -754,19 +876,31 @@ public final class LodRenderer {
         Farfield.LOG.info("LOD renderer: {} sections drawn, {} resident, {} MB of {} MB quads used, {} meshing,"
                         + " {} meshes uploaded and {} freed, {} selections since last line; per frame {} us on the"
                         + " render thread and {} us on the GPU (depth pre-pass {}, opaque {}, translucent {}), {} of"
-                        + " {} quads sent (face directions), {} sections may discard, over {} frames; detail {}; at"
-                        + " most {} coarse fallbacks per selection", count, resident.size(),
+                        + " {} quads sent (face directions), {} sections may discard, {} left to the game, {}, over {}"
+                        + " frames; detail {}; at most {} coarse fallbacks per selection", count, resident.size(),
                 arena.used() * 8 >> 20, arena.capacity() * 8 >> 20, requested.size(), meshesUploaded, meshesEvicted,
                 selections, frameNanos / 1000 / Math.max(1, timedFrames),
                 (gpuPassNanos[0] + gpuPassNanos[1] + gpuPassNanos[2]) / 1000 / Math.max(1, gpuFrames),
                 RenderSettings.depthPrepass() ? gpuPassNanos[0] / 1000 / Math.max(1, gpuFrames) + " us" : "off",
                 gpuPassNanos[1] / 1000 / Math.max(1, gpuFrames), gpuPassNanos[2] / 1000 / Math.max(1, gpuFrames),
                 quadsSubmitted / Math.max(1, timedFrames), quadsInView / Math.max(1, timedFrames),
-                discardSections / Math.max(1, timedFrames), timedFrames, String.format("%.1f", selector.detail()), maxFallbacks);
+                discardSections / Math.max(1, timedFrames), leftToGame / Math.max(1, timedFrames),
+                culledFrames == 0 ? "occlusion culling off"
+                        : String.format("occlusion culling kept %d of %d opaque (%d drawn first) and %d of %d"
+                                        + " translucent draws", cullOpaqueOut / culledFrames, cullOpaqueIn / culledFrames,
+                        cullFirst / culledFrames, cullTranslucentOut / culledFrames, cullTranslucentIn / culledFrames),
+                timedFrames, String.format("%.1f", selector.detail()), maxFallbacks);
         maxFallbacks = 0;
+        culledFrames = 0;
+        cullOpaqueIn = 0;
+        cullOpaqueOut = 0;
+        cullFirst = 0;
+        cullTranslucentIn = 0;
+        cullTranslucentOut = 0;
         quadsInView = 0;
         quadsSubmitted = 0;
         discardSections = 0;
+        leftToGame = 0;
         frameNanos = 0;
         timedFrames = 0;
         java.util.Arrays.fill(gpuPassNanos, 0);
@@ -817,11 +951,11 @@ public final class LodRenderer {
             MeshResult result;
             try {
                 LodSection section = PreviewLayer.isPreview(key) ? previewLayer.build(w, key) : w.read(key);
-                result = section == null ? new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null)
+                result = section == null ? new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, false, 0, null, null)
                         : mesh(w, gen, key, section);
             } catch (IOException | RuntimeException e) {
                 Farfield.LOG.debug("LOD mesh of {} failed", LodKey.toString(key), e);
-                result = new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null);
+                result = new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, false, 0, null, null);
             }
             done.add(result);
         });
@@ -869,6 +1003,7 @@ public final class LodRenderer {
         long[] all = new long[groups[GROUPS]];
         int[] next = java.util.Arrays.copyOf(groups, GROUPS);
         boolean cutout = false;
+        boolean seeThrough = false;
         boolean provisional = false;
         for (int d = 0; d < Quad.DIRECTIONS; d++) {
             long[] quads = out.quads(d);
@@ -880,6 +1015,7 @@ public final class LodRenderer {
                     all[next[g]++] = q;
                     if (g < Quad.DIRECTIONS) {
                         cutout |= colors.cutout(m);
+                        seeThrough |= colors.seeThrough(m);
                         provisional |= !colors.built(m);
                     }
                 }
@@ -896,7 +1032,8 @@ public final class LodRenderer {
         for (int i = 0; i < packed.length; i++) {
             packed[i] = columns[2 * i] | columns[2 * i + 1] << 16;
         }
-        return new MeshResult(gen, key, all, groups, cutout, provisional, occupied, packed);
+        return new MeshResult(gen, key, all, groups, cutout, seeThrough, provisional, Quad.bounds(all, all.length),
+                occupied, packed);
     }
 
     private static int group(MaterialClassifier classes, int material, int direction) {
@@ -1035,6 +1172,8 @@ public final class LodRenderer {
             r.opaqueCount = m.groups[Quad.DIRECTIONS];
             r.groups = m.groups;
             r.cutout = m.cutout;
+            r.seeThrough = m.seeThrough;
+            r.bounds = m.bounds;
             if (m.provisional) {
                 provisional.add(m.key);
             } else {
@@ -1112,7 +1251,7 @@ public final class LodRenderer {
         int size = LodSection.SIZE << level;
         sectionInfo.upload((long) r.slot * SECTION_BYTES, new int[]{
                 LodKey.x(key) * size, LodKey.y(key) * size, LodKey.z(key) * size, level,
-                (int) r.start, r.quadCount, r.occluders ? 1 : 0, 0});
+                (int) r.start, r.quadCount, r.occluders ? 1 : 0, r.bounds});
     }
 
     /**
@@ -1261,6 +1400,72 @@ public final class LodRenderer {
      * Whether a section overlaps the grid of sections the game may draw: only
      * there can its fragments give way to the game's terrain (lod.frag).
      */
+    /**
+     * Whether the game draws every chunk section a LOD section covers, by
+     * the rule of {@code vanillaDraws} in {@code lod.frag}: every fragment of
+     * the section would be discarded, so it is not drawn at all (ADR-047).
+     * Levels 0 and 1 only (8 and 64 chunk sections); the Sodium distance
+     * keeps a block of margin against float rounding, so a section is never
+     * skipped where the shader would keep a fragment.
+     */
+    private boolean gameDrawsAll(long key, Vec3 cam, int renderDistance) {
+        int level = drawLevel(key);
+        if (level > 1 || gridWidth <= 0) {
+            return false;
+        }
+        int chunks = 2 << level;
+        int sx0 = LodKey.x(key) * chunks;
+        int sy0 = LodKey.y(key) * chunks;
+        int sz0 = LodKey.z(key) * chunks;
+        int camX = (int) Math.floor(cam.x);
+        int camY = (int) Math.floor(cam.y);
+        int camZ = (int) Math.floor(cam.z);
+        for (int sy = sy0; sy < sy0 + chunks; sy++) {
+            for (int sz = sz0; sz < sz0 + chunks; sz++) {
+                for (int sx = sx0; sx < sx0 + chunks; sx++) {
+                    int gx = sx - gridMinX;
+                    int gy = sy - gridMinY;
+                    int gz = sz - gridMinZ;
+                    if (gx < 0 || gy < 0 || gz < 0 || gx >= gridWidth || gz >= gridWidth || gy >= gridHeight) {
+                        return false;
+                    }
+                    int bit = (gz * gridWidth + gx) * gridHeight + gy;
+                    if ((drawnBits[bit >> 5] >>> (bit & 31) & 1) == 0) {
+                        return false;
+                    }
+                    if (sodiumRule) {
+                        double d = renderDistance * 16 - 1;
+                        double nx = nearest(sx * 16 - camX, cam.x - camX);
+                        double ny = nearest(sy * 16 - camY, cam.y - camY);
+                        double nz = nearest(sz * 16 - camZ, cam.z - camZ);
+                        if (nx * nx + nz * nz >= d * d || Math.abs(ny) >= d) {
+                            return false;
+                        }
+                    } else {
+                        if (Math.abs(sy - (camY >> 4)) > renderDistance) {
+                            return false;
+                        }
+                        int cx = Math.max(0, Math.abs(sx - (camX >> 4)) - 1);
+                        int cz = Math.max(0, Math.abs(sz - (camZ >> 4)) - 1);
+                        int far = Math.max(cx, cz);
+                        int near = Math.min(cx, cz);
+                        if (near * near + far * far >= renderDistance * renderDistance) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    /** Sodium's nearest point of a section grown by one block, on one axis, relative to the camera. */
+    private static double nearest(int offset, double cameraFrac) {
+        int lo = offset - 1;
+        int hi = offset + 17;
+        return (lo > 0 ? lo : hi < 0 ? hi : 0) - cameraFrac;
+    }
+
     private boolean nearGame(long key) {
         int size = LodSection.SIZE << drawLevel(key);
         long x = LodKey.x(key) * (long) size;
@@ -1276,7 +1481,7 @@ public final class LodRenderer {
      * pass whose direction is in {@code faces}, adjacent groups in one command.
      */
     private void addCommands(Resident r, int list, int faces) {
-        int first = list == TRANSLUCENT ? Quad.DIRECTIONS : 0;
+        int first = list == TRANSLUCENT ? Quad.DIRECTIONS : 0; // OCCLUDER takes the opaque groups
         int runStart = r.groups[first];
         int runEnd = runStart;
         for (int d = 0; d < Quad.DIRECTIONS; d++) {
@@ -1305,7 +1510,9 @@ public final class LodRenderer {
         }
         // gl_VertexID starts at "first": the shader reads the quads from the group's start.
         out.put((end - start) * 6).put(1).put(start * 6).put(slot);
-        quadsSubmitted += end - start;
+        if (list != OCCLUDER) {
+            quadsSubmitted += end - start;
+        }
         draws[list]++;
     }
 
@@ -1334,6 +1541,16 @@ public final class LodRenderer {
                 previous = t;
             }
             gpuFrames++;
+            if (cullTimed[slot]) {
+                // That frame's GPU work is done: its counts are ready too.
+                glGetNamedBufferSubData(cullCountCopies[slot].id(), 0, countScratch);
+                culledFrames++;
+                cullOpaqueIn += cullInput[slot * 2];
+                cullTranslucentIn += cullInput[slot * 2 + 1];
+                cullOpaqueOut += countScratch[R_OPAQUE];
+                cullFirst += countScratch[R_FIRST_SOLID] + countScratch[R_FIRST_DISCARD];
+                cullTranslucentOut += countScratch[R_TRANSLUCENT];
+            }
             timerPending[slot] = false;
         }
     }
@@ -1381,7 +1598,7 @@ public final class LodRenderer {
         int discardDraws = draws[DISCARD];
         int translucentDraws = draws[TRANSLUCENT];
         long opaqueBytes = (long) (solidDraws + discardDraws) * 16;
-        long bytes = opaqueBytes + (long) translucentDraws * 16;
+        long bytes = opaqueBytes + (long) (translucentDraws + draws[OCCLUDER]) * 16;
         if (bytes > indirect.size()) {
             indirect.grow(Math.max(bytes, indirect.size() * 2), 0);
         }
@@ -1409,14 +1626,7 @@ public final class LodRenderer {
         GlStateManager._activeTexture(previousUnit);
 
         GlStateManager._glBindVertexArray(vao);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, quads.id());
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, sectionInfo.id());
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, colorBuffer.id());
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, biomeBuffer.id());
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, occupancy.id());
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, neighborSlots.id());
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, drawnSections.id());
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, biomeColumns.id());
+        bindLodBuffers();
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirect.id());
         RenderSystem.enableDepthTest();
         RenderSystem.depthFunc(GL_LEQUAL);
@@ -1432,6 +1642,42 @@ public final class LodRenderer {
         // for them and the others mostly land behind depth already written.
         boolean prepass = RenderSettings.depthPrepass();
         Shader shaded = prepass ? earlyZ : plain;
+        int opaqueDraws = solidDraws + discardDraws;
+        int depthTexture = prepass && RenderSettings.occlusionCulling() ? depthTexture() : 0;
+        cullTimed[slot] = false;
+        if (depthTexture != 0) {
+            drawCulled(depthTexture, solidDraws, discardDraws, translucentDraws, cam, mc, shaded, timed, slot);
+        } else {
+            drawAll(prepass, solidDraws, discardDraws, translucentDraws, opaqueBytes, cam, mc, shaded, timed, slot);
+        }
+
+        if (timed) {
+            glQueryCounter(timerQueries[slot * TIMESTAMPS + 3], GL_TIMESTAMP);
+            timerPending[slot] = true;
+            timerSlot = (slot + 1) % TIMER_SLOTS;
+        }
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+        GlStateManager._glBindVertexArray(0);
+        BufferUploader.invalidate();
+        GlStateManager._glUseProgram(0);
+        // Vanilla terrain draws next with its own depth range: start it clean.
+        RenderSystem.clear(GL_DEPTH_BUFFER_BIT, Minecraft.ON_OSX);
+    }
+
+    private void bindLodBuffers() {
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, quads.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, sectionInfo.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, colorBuffer.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, biomeBuffer.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, occupancy.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, neighborSlots.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, drawnSections.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, biomeColumns.id());
+    }
+
+    /** Every command of the CPU's lists, without occlusion culling. */
+    private void drawAll(boolean prepass, int solidDraws, int discardDraws, int translucentDraws, long opaqueBytes,
+                         Vec3 cam, Minecraft mc, Shader shaded, boolean timed, int slot) {
         int opaqueDraws = solidDraws + discardDraws;
         if (prepass && opaqueDraws > 0) {
             RenderSystem.colorMask(false, false, false, false);
@@ -1471,17 +1717,198 @@ public final class LodRenderer {
             RenderSystem.defaultBlendFunc();
             RenderSystem.disableBlend();
         }
+    }
 
-        if (timed) {
-            glQueryCounter(timerQueries[slot * TIMESTAMPS + 3], GL_TIMESTAMP);
-            timerPending[slot] = true;
-            timerSlot = (slot + 1) % TIMER_SLOTS;
+    /**
+     * The passes with occlusion culling (ADR-047): the depth pre-pass of the
+     * sections visible last frame, a depth pyramid of that depth, a test of
+     * every command against it, the pre-pass of the other visible sections,
+     * then the shaded and translucent passes of the visible ones only.
+     */
+    private void drawCulled(int depthTexture, int solidDraws, int discardDraws, int translucentDraws, Vec3 cam,
+                            Minecraft mc, Shader shaded, boolean timed, int slot) {
+        int total = solidDraws + discardDraws + translucentDraws;
+        if (total > cullCapacity) {
+            cullCapacity = Math.max(total, cullCapacity * 2);
+            culled.grow(CULL_REGIONS * cullCapacity * 16, 0);
         }
-        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
-        GlStateManager._glBindVertexArray(0);
-        BufferUploader.invalidate();
-        GlStateManager._glUseProgram(0);
-        // Vanilla terrain draws next with its own depth range: start it clean.
-        RenderSystem.clear(GL_DEPTH_BUFFER_BIT, Minecraft.ON_OSX);
+        long visibilityBytes = (long) slotCount * 4;
+        for (GlBuffer v : visibility) {
+            if (visibilityBytes > v.size()) {
+                v.grow(Math.max(visibilityBytes, v.size() * 2), v.size());
+            }
+        }
+        cullCounts.clear();
+        long region = cullCapacity * 16;
+        drawOccluders(solidDraws + discardDraws + translucentDraws, cam, mc);
+
+        runCull(0, solidDraws, discardDraws, translucentDraws, cam);
+        bindLodBuffers();
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, culled.id());
+        glBindBuffer(GL_PARAMETER_BUFFER, cullCounts.id());
+        RenderSystem.colorMask(false, false, false, false);
+        drawRegion(depthSolid, R_FIRST_SOLID, solidDraws, region, cam, mc, false);
+        drawRegion(depthOnly, R_FIRST_DISCARD, discardDraws, region, cam, mc, false);
+
+        buildHiz(depthTexture);
+        runCull(1, solidDraws, discardDraws, translucentDraws, cam);
+        glCopyNamedBufferSubData(cullCounts.id(), cullCountCopies[slot].id(), 0, 0, CULL_REGIONS * 4L);
+        cullTimed[slot] = true;
+        cullInput[slot * 2] = solidDraws + discardDraws;
+        cullInput[slot * 2 + 1] = translucentDraws;
+        bindLodBuffers();
+        drawRegion(depthSolid, R_SECOND_SOLID, solidDraws, region, cam, mc, false);
+        drawRegion(depthOnly, R_SECOND_DISCARD, discardDraws, region, cam, mc, false);
+        RenderSystem.colorMask(true, true, true, true);
+        if (timed) {
+            glQueryCounter(timerQueries[slot * TIMESTAMPS + 1], GL_TIMESTAMP);
+        }
+
+        RenderSystem.depthFunc(GL_EQUAL);
+        RenderSystem.depthMask(false);
+        drawRegion(shaded, R_OPAQUE, solidDraws + discardDraws, region, cam, mc, false);
+        RenderSystem.depthFunc(GL_LEQUAL);
+        RenderSystem.depthMask(true);
+        if (timed) {
+            glQueryCounter(timerQueries[slot * TIMESTAMPS + 2], GL_TIMESTAMP);
+        }
+        if (translucentDraws > 0) {
+            RenderSystem.enableBlend();
+            RenderSystem.blendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+            RenderSystem.depthMask(false);
+            drawRegion(shaded, R_TRANSLUCENT, translucentDraws, region, cam, mc, true);
+            RenderSystem.depthMask(true);
+            RenderSystem.defaultBlendFunc();
+            RenderSystem.disableBlend();
+        }
+        glBindBuffer(GL_PARAMETER_BUFFER, 0);
+        glBindTextureUnit(HIZ_UNIT, 0);
+        cullFrame++;
+    }
+
+    /**
+     * Draws the depth of the sections the game draws entirely into the
+     * occluder target: the game's terrain hides the far LODs, but it draws
+     * after them, so its own LOD sections stand in for it (same data on the
+     * finest level). Never shown: the pyramid only reads it.
+     */
+    private void drawOccluders(int before, Vec3 cam, Minecraft mc) {
+        glClearNamedFramebufferfv(occluderFbo, GL_DEPTH, 0, new float[]{1f});
+        int occluders = draws[OCCLUDER];
+        if (occluders == 0) {
+            return;
+        }
+        int previous = glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, occluderFbo);
+        use(depthSolid, cam, mc, false);
+        glMultiDrawArraysIndirect(GL_TRIANGLES, (long) before * 16, occluders, 0);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, previous);
+    }
+
+    /** Draws a region of the culled commands, as many as the culling pass counted. */
+    private void drawRegion(Shader shader, int r, int maxDraws, long regionBytes, Vec3 cam, Minecraft mc,
+                            boolean translucent) {
+        if (maxDraws == 0) {
+            return;
+        }
+        use(shader, cam, mc, translucent);
+        glMultiDrawArraysIndirectCount(GL_TRIANGLES, r * regionBytes, r * 4L, maxDraws, 16);
+    }
+
+    /** One phase of {@code lod_cull.comp} over the CPU's command lists. */
+    private void runCull(int phase, int solidDraws, int discardDraws, int translucentDraws, Vec3 cam) {
+        int blockX = (int) Math.floor(cam.x);
+        int blockY = (int) Math.floor(cam.y);
+        int blockZ = (int) Math.floor(cam.z);
+        GlStateManager._glUseProgram(cullProgram.id());
+        glUniform1ui(uCullPhase, phase);
+        glUniform1ui(uCullFrame, cullFrame);
+        glUniform1ui(uCullSolid, solidDraws);
+        glUniform1ui(uCullDiscard, discardDraws);
+        glUniform1ui(uCullTranslucent, translucentDraws);
+        glUniform1ui(uCullCapacity, (int) cullCapacity);
+        glUniformMatrix4fv(uCullViewProj, false, viewProj.get(matrix));
+        glUniform3i(uCullCameraBlock, blockX, blockY, blockZ);
+        glUniform3f(uCullCameraFrac, (float) (cam.x - blockX), (float) (cam.y - blockY), (float) (cam.z - blockZ));
+        glUniform2f(uCullDepthRange, 8f, (float) MAX_DISTANCE * 2);
+        glUniform1i(uCullHiz, HIZ_UNIT);
+        glUniform1i(uCullHizLevels, hizLevels);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, indirect.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, culled.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, cullCounts.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, sectionInfo.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, visibility[(cullFrame + 1) & 1].id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, visibility[cullFrame & 1].id());
+        glDispatchCompute((solidDraws + discardDraws + translucentDraws + 63) / 64, 1, 1);
+        glMemoryBarrier(GL_COMMAND_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT);
+    }
+
+    /**
+     * The depth texture of the framebuffer the LODs draw into, with the
+     * depth pyramid sized for it; 0 when occlusion culling cannot run.
+     */
+    private int depthTexture() {
+        if (occlusionUnavailable) {
+            return 0;
+        }
+        int fbo = glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING);
+        int type = fbo == 0 ? GL_NONE
+                : glGetNamedFramebufferAttachmentParameteri(fbo, GL_DEPTH_ATTACHMENT, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE);
+        if (type != GL_TEXTURE) {
+            occlusionUnavailable = true;
+            Farfield.LOG.warn("LOD occlusion culling disabled: the framebuffer's depth is not a texture");
+            return 0;
+        }
+        int texture = glGetNamedFramebufferAttachmentParameteri(fbo, GL_DEPTH_ATTACHMENT,
+                GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
+        int width = Math.max(1, glGetTextureLevelParameteri(texture, 0, GL_TEXTURE_WIDTH) / 2);
+        int height = Math.max(1, glGetTextureLevelParameteri(texture, 0, GL_TEXTURE_HEIGHT) / 2);
+        if (width != hizWidth || height != hizHeight) {
+            if (hiz != 0) {
+                glDeleteTextures(hiz);
+                glDeleteTextures(occluderDepth);
+                glDeleteFramebuffers(occluderFbo);
+            }
+            occluderDepth = glCreateTextures(GL_TEXTURE_2D);
+            glTextureStorage2D(occluderDepth, 1, GL_DEPTH_COMPONENT32F,
+                    glGetTextureLevelParameteri(texture, 0, GL_TEXTURE_WIDTH),
+                    glGetTextureLevelParameteri(texture, 0, GL_TEXTURE_HEIGHT));
+            occluderFbo = glCreateFramebuffers();
+            glNamedFramebufferTexture(occluderFbo, GL_DEPTH_ATTACHMENT, occluderDepth, 0);
+            glNamedFramebufferDrawBuffer(occluderFbo, GL_NONE);
+            glNamedFramebufferReadBuffer(occluderFbo, GL_NONE);
+            hizLevels = 32 - Integer.numberOfLeadingZeros(Math.max(width, height));
+            hiz = glCreateTextures(GL_TEXTURE_2D);
+            glTextureStorage2D(hiz, hizLevels, GL_R32F, width, height);
+            glTextureParameteri(hiz, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+            glTextureParameteri(hiz, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            hizWidth = width;
+            hizHeight = height;
+            Farfield.LOG.info("LOD depth pyramid: {}x{}, {} levels", width, height, hizLevels);
+        }
+        return texture;
+    }
+
+    /** Fills the depth pyramid from the depth drawn so far, level by level. */
+    private void buildHiz(int depthTexture) {
+        GlStateManager._glUseProgram(hizProgram.id());
+        glBindTextureUnit(DEPTH_UNIT, depthTexture);
+        glBindTextureUnit(HIZ_UNIT, hiz);
+        glBindTextureUnit(OCCLUDER_UNIT, occluderDepth);
+        glUniform1i(uHizSrc2, OCCLUDER_UNIT);
+        for (int level = 0; level < hizLevels; level++) {
+            // Level 0: the nearer of the drawn depth and the occluders' depth.
+            glUniform1i(uHizTwo, level == 0 ? 1 : 0);
+            glUniform1i(uHizSrc, level == 0 ? DEPTH_UNIT : HIZ_UNIT);
+            glUniform1i(uHizSrcLevel, level == 0 ? 0 : level - 1);
+            glBindImageTexture(0, hiz, level, false, 0, GL_WRITE_ONLY, GL_R32F);
+            int w = Math.max(1, hizWidth >> level);
+            int h = Math.max(1, hizHeight >> level);
+            glDispatchCompute((w + 7) / 8, (h + 7) / 8, 1);
+            glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+        }
+        glBindImageTexture(0, 0, 0, false, 0, GL_WRITE_ONLY, GL_R32F);
+        glBindTextureUnit(DEPTH_UNIT, 0);
+        glBindTextureUnit(OCCLUDER_UNIT, 0);
     }
 }

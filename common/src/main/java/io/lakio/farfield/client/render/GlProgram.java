@@ -7,8 +7,9 @@ import java.nio.charset.StandardCharsets;
 import static org.lwjgl.opengl.GL20C.*;
 
 /**
- * A linked vertex + fragment program built from GLSL sources on the class
- * path ({@code /assets/farfield/shaders/}). Render thread only.
+ * A linked vertex + fragment program, or a compute program, built from GLSL
+ * sources on the class path ({@code /assets/farfield/shaders/}). Render
+ * thread only.
  */
 final class GlProgram implements AutoCloseable {
 
@@ -26,17 +27,32 @@ final class GlProgram implements AutoCloseable {
     GlProgram(String vertexResource, String fragmentResource, String defines) {
         int vs = compile(GL_VERTEX_SHADER, define(read(vertexResource), defines), vertexResource);
         int fs = compile(GL_FRAGMENT_SHADER, define(read(fragmentResource), defines), fragmentResource);
+        link(vertexResource + " + " + fragmentResource, vs, fs);
+    }
+
+    private GlProgram(String computeResource) {
+        link(computeResource, compile(org.lwjgl.opengl.GL43C.GL_COMPUTE_SHADER, read(computeResource), computeResource));
+    }
+
+    /** A compute program. */
+    static GlProgram compute(String computeResource) {
+        return new GlProgram(computeResource);
+    }
+
+    private void link(String name, int... shaders) {
         id = glCreateProgram();
-        glAttachShader(id, vs);
-        glAttachShader(id, fs);
+        for (int shader : shaders) {
+            glAttachShader(id, shader);
+        }
         glLinkProgram(id);
-        glDeleteShader(vs);
-        glDeleteShader(fs);
+        for (int shader : shaders) {
+            glDeleteShader(shader);
+        }
         if (glGetProgrami(id, GL_LINK_STATUS) == 0) {
             String log = glGetProgramInfoLog(id);
             glDeleteProgram(id);
             id = 0;
-            throw new IllegalStateException("cannot link " + vertexResource + " + " + fragmentResource + ": " + log);
+            throw new IllegalStateException("cannot link " + name + ": " + log);
         }
     }
 

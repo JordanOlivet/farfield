@@ -49,6 +49,11 @@ final class GlBuffer implements AutoCloseable {
         glNamedBufferSubData(id, offset, data);
     }
 
+    /** Sets every byte to zero (new storage holds undefined data). */
+    void clear() {
+        glClearNamedBufferData(id, GL_R32UI, GL_RED_INTEGER, GL_UNSIGNED_INT, (java.nio.ByteBuffer) null);
+    }
+
     /** Reallocates to {@code newSize} bytes, keeping the first {@code keep} bytes. */
     void grow(long newSize, long keep) {
         if (newSize <= size) {

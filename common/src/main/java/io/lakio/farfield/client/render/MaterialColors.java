@@ -95,6 +95,13 @@ final class MaterialColors {
     private volatile boolean[] tinted = new boolean[0];
     /** Per id: a face has {@link #CUTOUT}; read by the mesher threads as {@link #tinted}. */
     private volatile boolean[] cutout = new boolean[0];
+    /**
+     * Per id: a face's texture has holes, filled or not (leaves are drawn
+     * with their holes filled); read by the mesher threads as {@link #tinted}.
+     */
+    private volatile boolean[] seeThrough = new boolean[0];
+    /** Set by the build of one material: one of its faces had holes before filling. */
+    private boolean builtSeeThrough;
 
     private final FaceTextures textures;
     private final Map<TextureAtlasSprite, Sprite> sprites = new IdentityHashMap<>();
@@ -136,13 +143,16 @@ final class MaterialColors {
         }
         boolean[] flags = Arrays.copyOf(tinted, size);
         boolean[] holes = Arrays.copyOf(cutout, size);
+        boolean[] see = Arrays.copyOf(seeThrough, size);
         long deadline = System.nanoTime() + BUDGET_NANOS;
         int first = count;
         int id = count;
         while (id < size) {
             int meshClass = classes.classOf(id);
             String key = registry.key(id);
+            builtSeeThrough = false;
             flags[id] = build(key, id * STRIDE, meshClass == MaterialClassifier.OPAQUE, tints, probeBiome);
+            see[id] = builtSeeThrough;
             for (int d = 0; d < 6; d++) {
                 holes[id] |= (colors[id * STRIDE + d * 3 + 1] & CUTOUT) != 0;
             }
@@ -159,6 +169,7 @@ final class MaterialColors {
         count = id;
         tinted = Arrays.copyOf(flags, id);
         cutout = Arrays.copyOf(holes, id);
+        seeThrough = Arrays.copyOf(see, id);
         return first;
     }
 
@@ -188,6 +199,7 @@ final class MaterialColors {
         textures.reset();
         tinted = new boolean[0];
         cutout = new boolean[0];
+        seeThrough = new boolean[0];
     }
 
     /** Whether a material's quads must carry their biome; true for materials not built yet. Any thread. */
@@ -199,6 +211,16 @@ final class MaterialColors {
     /** Whether a material's faces may have holes to cut out ({@link #CUTOUT}); true for materials not built yet. Any thread. */
     boolean cutout(int material) {
         boolean[] c = cutout;
+        return material >= c.length || c[material];
+    }
+
+    /**
+     * Whether a material's faces may let light through: holes in its
+     * texture, cut out or filled (leaves); true for materials not built yet.
+     * Any thread.
+     */
+    boolean seeThrough(int material) {
+        boolean[] c = seeThrough;
         return material >= c.length || c[material];
     }
 
@@ -297,6 +319,9 @@ final class MaterialColors {
         for (int d = 0; d < 6; d++) {
             if (!hasQuads[d] && withQuads > 0) {
                 continue;
+            }
+            for (int i = 0; i < PIXELS && !builtSeeThrough; i++) {
+                builtSeeThrough = coverage[d][i] < 0.5f;
             }
             if (opaque) {
                 fillHoles(d);

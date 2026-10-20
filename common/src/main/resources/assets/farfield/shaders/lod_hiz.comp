@@ -1,0 +1,37 @@
+#version 460 core
+
+// One level of the LOD depth pyramid (LodRenderer, occlusion culling): each
+// texel holds the farthest depth of the source texels it covers. The source
+// is the game's depth texture for level 0, each texel the nearer of it and
+// the occluders' depth (u_src2), else the level below. Coverage is
+// proportional and rounded outward, so odd sizes stay conservative.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(r32f, binding = 0) uniform writeonly image2D u_dst;
+uniform sampler2D u_src;
+uniform int u_srcLevel;
+uniform sampler2D u_src2;
+uniform bool u_two;
+
+void main() {
+    ivec2 dstSize = imageSize(u_dst);
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (p.x >= dstSize.x || p.y >= dstSize.y) {
+        return;
+    }
+    ivec2 srcSize = textureSize(u_src, u_srcLevel);
+    ivec2 lo = (p * srcSize) / dstSize;
+    ivec2 hi = min(((p + 1) * srcSize + dstSize - 1) / dstSize, srcSize);
+    float far = 0.0;
+    for (int y = lo.y; y < hi.y; y++) {
+        for (int x = lo.x; x < hi.x; x++) {
+            float depth = texelFetch(u_src, ivec2(x, y), u_srcLevel).r;
+            if (u_two) {
+                depth = min(depth, texelFetch(u_src2, ivec2(x, y), 0).r);
+            }
+            far = max(far, depth);
+        }
+    }
+    imageStore(u_dst, p, vec4(far));
+}

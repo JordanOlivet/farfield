@@ -134,6 +134,36 @@ public final class Quad {
         return (direction & 1) != 0;
     }
 
+    /**
+     * The voxels the quads cover, as one int: min x, y, z then max x, y, z
+     * (inclusive), 5 bits each from bit 0. Every face, lowered top or shaped
+     * box lies in the box of these voxels. 0 (voxel 0 only) when empty.
+     */
+    public static int bounds(long[] quads, int count) {
+        int minX = 31, minY = 31, minZ = 31, maxX = 0, maxY = 0, maxZ = 0;
+        int[] lo = new int[3];
+        int[] hi = new int[3];
+        for (int i = 0; i < count; i++) {
+            long q = quads[i];
+            lo[0] = hi[0] = x(q);
+            lo[1] = hi[1] = y(q);
+            lo[2] = hi[2] = z(q);
+            int axis = axis(direction(q));
+            hi[(axis + 1) % 3] += sizeU(q) - 1;
+            hi[(axis + 2) % 3] += sizeV(q) - 1;
+            minX = Math.min(minX, lo[0]);
+            minY = Math.min(minY, lo[1]);
+            minZ = Math.min(minZ, lo[2]);
+            maxX = Math.max(maxX, hi[0]);
+            maxY = Math.max(maxY, hi[1]);
+            maxZ = Math.max(maxZ, hi[2]);
+        }
+        if (count == 0) {
+            return 0;
+        }
+        return minX | minY << 5 | minZ << 10 | maxX << 15 | maxY << 20 | maxZ << 25;
+    }
+
     public static String toString(long q) {
         return "Quad[" + "-+".charAt(direction(q) & 1) + "XYZ".charAt(axis(direction(q)))
                 + " at " + x(q) + "," + y(q) + "," + z(q) + " size " + sizeU(q) + "x" + sizeV(q)

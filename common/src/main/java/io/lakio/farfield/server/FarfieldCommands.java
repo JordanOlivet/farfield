@@ -82,7 +82,20 @@ public final class FarfieldCommands {
                         .then(Commands.literal("prepass")
                                 .executes(c -> debugPrepass(c, !RenderSettings.depthPrepass()))
                                 .then(Commands.literal("on").executes(c -> debugPrepass(c, true)))
-                                .then(Commands.literal("off").executes(c -> debugPrepass(c, false))))));
+                                .then(Commands.literal("off").executes(c -> debugPrepass(c, false))))
+                        .then(Commands.literal("occlusion")
+                                .executes(c -> debugOcclusion(c, !RenderSettings.occlusionCulling()))
+                                .then(Commands.literal("on").executes(c -> debugOcclusion(c, true)))
+                                .then(Commands.literal("off").executes(c -> debugOcclusion(c, false))))));
+    }
+
+    /** Single player: switches LOD occlusion culling, to compare GPU times on the stat line. Not saved. */
+    private static int debugOcclusion(CommandContext<CommandSourceStack> c, boolean on) {
+        RenderSettings.setOcclusionCulling(on);
+        Farfield.LOG.info("LOD occlusion culling switched {} by command", on ? "on" : "off");
+        c.getSource().sendSuccess(() -> Component.literal("LOD occlusion culling " + (on ? "on" : "off")
+                + " (default on, not saved, needs the depth pre-pass; single player only)."), false);
+        return 1;
     }
 
     /** Single player: switches the LOD depth pre-pass, to compare GPU times on the stat line. Not saved. */
