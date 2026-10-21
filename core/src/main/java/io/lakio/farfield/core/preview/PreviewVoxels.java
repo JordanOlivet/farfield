@@ -268,7 +268,8 @@ public final class PreviewVoxels {
         private final int layerIndex;
         private final int[] counts;
         private final int[] materials;
-        /** Coarse levels: per voxel the snow seen on top of its crowns, -1 for none; null until a snowy crown. */
+        /** Coarse levels: per voxel the snow layers in it and their material; null until a snowy crown. */
+        private int[] snowBlocks;
         private int[] snow;
         /** Finest level: snow layers to lay once every tree is in, voxel index then material. */
         private int[] snowLayers = new int[0];
@@ -390,8 +391,8 @@ public final class PreviewVoxels {
 
         /**
          * The snow of a crown, block by block: over each block of a row that
-         * no row above covers, a snow layer on the finest level, the snow seen
-         * on top of the block's voxel on coarser ones.
+         * no row above covers, a snow layer on the finest level, counted in
+         * its voxel on coarser ones ({@link #finish}).
          */
         private void snowBlockByBlock(PreviewTile.TreeKind k, int x, int top, int z, int rows, int chunkX, int chunkZ) {
             for (int r = 0; r <= rows; r++) {
@@ -406,16 +407,17 @@ public final class PreviewVoxels {
                         if (!inRow(k, radius, dx, dz) || above >= 0 && inRow(k, above, dx, dz)) {
                             continue;
                         }
-                        int i = voxel(x + dx, level == 0 ? y + 1 : y, z + dz, chunkX, chunkZ);
+                        int i = voxel(x + dx, y + 1, z + dz, chunkX, chunkZ);
                         if (i >= 0) {
-                            snowOn(i, k.snow());
+                            snowOn(i, 1, k.snow());
                         }
                     }
                 }
             }
         }
 
-        private void snowOn(int i, int material) {
+        /** {@code blocks} snow layers of {@code material} in voxel {@code i}. */
+        private void snowOn(int i, int blocks, int material) {
             if (level == 0) {
                 if (snowCount + 2 > snowLayers.length) {
                     snowLayers = java.util.Arrays.copyOf(snowLayers, Math.max(64, snowLayers.length * 2));
@@ -426,8 +428,9 @@ public final class PreviewVoxels {
             }
             if (snow == null) {
                 snow = new int[S * S * S];
-                java.util.Arrays.fill(snow, -1);
+                snowBlocks = new int[S * S * S];
             }
+            snowBlocks[i] += blocks;
             snow[i] = material;
         }
 
@@ -471,15 +474,18 @@ public final class PreviewVoxels {
             int rows = crown(k);
             for (int r = 0; r <= rows; r++) {
                 int y = top - rows + r;
-                if (y < oy || y >= oy + size) {
+                // Snow (see snowBlockByBlock) over the blocks no row above covers, in the
+                // block above the row: none under a row as wide.
+                int radius = radii[r];
+                int above = widest[r];
+                boolean snowy = k.snow() >= 0 && above < radius && y + 1 >= oy && y + 1 < oy + size;
+                boolean leaves = y >= oy && y < oy + size;
+                if (!leaves && !snowy) {
                     continue;
                 }
                 int vy = (y - oy) >> level;
-                int radius = radii[r];
+                int snowVy = (y + 1 - oy) >> level;
                 boolean rounded = rounded(k, radius);
-                // Snow (see snowBlockByBlock) over the blocks no row above covers: none under a row as wide.
-                int above = widest[r];
-                boolean snowy = k.snow() >= 0 && above < radius;
                 int x0 = Math.max(lx - radius, 0);
                 int x1 = Math.min(lx + radius, size - 1);
                 int z0 = Math.max(lz - radius, 0);
@@ -497,8 +503,14 @@ public final class PreviewVoxels {
                                     + inside(lx - radius, lz + radius, b0, b1, a0, a1)
                                     + inside(lx + radius, lz + radius, b0, b1, a0, a1);
                         }
-                        if (snowy && blocks > (above >= 0 ? rowBlocks(k, above, lx, lz, b0, b1, a0, a1) : 0)) {
-                            snowOn((vy * S + vz) * S + vx, k.snow());
+                        if (snowy) {
+                            int open = blocks - (above >= 0 ? rowBlocks(k, above, lx, lz, b0, b1, a0, a1) : 0);
+                            if (open > 0) {
+                                snowOn((snowVy * S + vz) * S + vx, open, k.snow());
+                            }
+                        }
+                        if (!leaves) {
+                            continue;
                         }
                         if (y < top) {
                             blocks -= inside(lx, lz, b0, b1, a0, a1);
@@ -614,9 +626,11 @@ public final class PreviewVoxels {
                 return section;
             }
             int threshold = Math.max(1, s * s * s / 4);
+            // The real mip rule's view from above: snow where it tops half the voxel's columns or more.
+            int snowy = s * s / 2;
             for (int i = 0; i < counts.length; i++) {
                 if (counts[i] >= threshold) {
-                    setIfAir(i, snow != null && snow[i] >= 0 ? snow[i] : materials[i]);
+                    setIfAir(i, snow != null && snowBlocks[i] >= snowy ? snow[i] : materials[i]);
                 }
             }
             return section;

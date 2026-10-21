@@ -56,7 +56,10 @@ import java.util.Map;
  * face's U axis and rows its V axis, as {@code lod.vert} maps them, one tile
  * per block. Opaque materials with holes (leaves) get their holes filled
  * with their own color darkened, as vanilla's fast leaves; the mean color
- * then matches the texture's far look. Constant block colors (birch, spruce)
+ * then matches the texture's far look. Partial blocks (snow layers, slabs)
+ * get the rest of their faces filled with their own color: the finest
+ * level draws only their shape's part, coarser levels a full cube that
+ * must not show holes. Constant block colors (birch, spruce)
  * are baked in; fluids and models without quads use their particle sprite
  * over the whole face; a failure falls back to the map color without a
  * texture.
@@ -142,7 +145,7 @@ final class MaterialColors {
         while (id < size) {
             int meshClass = classes.classOf(id);
             String key = registry.key(id);
-            flags[id] = build(key, id * STRIDE, meshClass == MaterialClassifier.OPAQUE, tints, probeBiome);
+            flags[id] = build(key, id * STRIDE, meshClass, tints, probeBiome);
             for (int d = 0; d < 6; d++) {
                 holes[id] |= (colors[id * STRIDE + d * 3 + 1] & CUTOUT) != 0;
             }
@@ -216,7 +219,7 @@ final class MaterialColors {
     }
 
     /** Builds one state at {@code off}; returns whether a face depends on the biome. */
-    private boolean build(String key, int off, boolean opaque, BiomeTints tints, Biome probeBiome) {
+    private boolean build(String key, int off, int meshClass, BiomeTints tints, Biome probeBiome) {
         BlockState state = BlockKeys.state(key);
         if (state == null) {
             if (!key.startsWith(PreviewVoxels.MASK_GROUND_KEY)) { // the preview's masks: never drawn
@@ -226,7 +229,7 @@ final class MaterialColors {
             return false;
         }
         try {
-            return build(BlockKeys.lookOf(state), off, opaque, tints, probeBiome);
+            return build(BlockKeys.lookOf(state), off, meshClass, tints, probeBiome);
         } catch (RuntimeException | LinkageError e) {
             Farfield.LOG.warn("LOD look of {} failed, map color used instead", key, e);
             fillFlat(off, mapColor(state));
@@ -242,7 +245,7 @@ final class MaterialColors {
         }
     }
 
-    private boolean build(BlockState state, int off, boolean opaque, BiomeTints tints, Biome probeBiome) {
+    private boolean build(BlockState state, int off, int meshClass, BiomeTints tints, Biome probeBiome) {
         Minecraft mc = Minecraft.getInstance();
         BakedModel model = mc.getBlockRenderer().getBlockModel(state);
         BlockColors blockColors = mc.getBlockColors();
@@ -298,8 +301,12 @@ final class MaterialColors {
             if (!hasQuads[d] && withQuads > 0) {
                 continue;
             }
-            if (opaque) {
-                fillHoles(d);
+            if (meshClass == MaterialClassifier.OPAQUE) {
+                fillHoles(d, HOLE_SHADE);
+            } else if (meshClass == MaterialClassifier.PARTIAL) {
+                // Coarser levels draw a partial block as a full cube (snow over a crown,
+                // a slab): above its shape a side takes its own color, not a hole.
+                fillHoles(d, 1f);
             }
             dependsOnBiome |= writeFace(off, d);
             int c = off + d * 3;
@@ -329,8 +336,11 @@ final class MaterialColors {
         return dependsOnBiome;
     }
 
-    /** Fills a face's holes with its own mean color darkened (opaque materials: inner leaves). */
-    private void fillHoles(int d) {
+    /**
+     * Fills a face's holes with its own mean color times {@code shade}:
+     * darkened for opaque materials (inner leaves), as is for partial blocks.
+     */
+    private void fillHoles(int d, float shade) {
         float[] u = untinted[d];
         float[] t = tintedPart[d];
         float[] a = coverage[d];
@@ -348,8 +358,8 @@ final class MaterialColors {
             return;
         }
         for (int c = 0; c < 3; c++) {
-            meanU[c] = meanU[c] / sumA * HOLE_SHADE;
-            meanT[c] = meanT[c] / sumA * HOLE_SHADE;
+            meanU[c] = meanU[c] / sumA * shade;
+            meanT[c] = meanT[c] / sumA * shade;
         }
         for (int i = 0; i < PIXELS; i++) {
             float hole = 1 - a[i];

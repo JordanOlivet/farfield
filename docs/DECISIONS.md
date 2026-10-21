@@ -1202,3 +1202,28 @@ same gap the ice was (ADR-045).
 
 Not covered: snow on the noise preview's village roofs (already snow
 blocks for snowy villages), icebergs.
+
+## ADR-050 — Partial blocks keep whole faces on coarse levels; preview snow by vote
+
+**Date**: 2026-10-21 · **Status**: accepted (amends ADR-049)
+
+The user, in the Fabric dev client right after ADR-049, through a
+spyglass: "comme si les feuilles étaient transparentes". Far snowy preview
+forests (level 1) showed holes down to the ice and sky.
+
+- **Cause**: coarse levels draw a partial block (snow layer, slab) as a
+  full cube, but its face textures were baked from its model: a snow
+  layer's sides cover 2 of 16 rows, the rest flagged as cutout holes. The
+  cube's sides were cut away, and as an opaque voxel it hid its
+  neighbors' faces. Real coarse voxels that take a snow layer (snowy
+  trees, snow on steps) had the same holes.
+- **Fix** (`MaterialColors`): a partial block's faces get the rest of
+  their tile filled with their own mean color, not darkened (opaque
+  materials keep the 45 % fill of ADR-025's leaves). The finest level
+  draws only the shape's part, whose texels did not change.
+- **Preview snow on coarse levels by vote**: a tree voxel shows the snow
+  when the snow layers lying in it (at their own height, one block above
+  the open leaves) cover half its columns or more, as the real mip rule's
+  most frequent top of four columns; ADR-049's "any open block" turned
+  far forests into white cubes once the holes were gone. Far forests now
+  show green and white like the real ones beside them.

@@ -384,13 +384,15 @@ class PreviewTest {
         assertEquals(AIR, s.material(18, 74 - 64, 18), "no snow on a rounded corner");
         assertEquals(AIR, s.material(18, 75 - 64, 18));
         assertEquals(LEAVES, s.material(17, 75 - 64, 17), "the top row's leaves, under their snow");
-        // Level 1 (2 blocks): blocks 72..73 lie under other rows and stay leaves; 74..75 hold open tops.
+        // Level 1 (2 blocks): snow where its layers top half the voxel's columns, as the real mip rule's vote.
+        // Voxel (9, 5, 8), blocks 18..19 x 74..75 x 16..17: the ring's snow at 75 over 2 of its 4 columns.
         LodSection l1 = PreviewVoxels.build(1, 0, 1, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
-        assertEquals(LEAVES, l1.material(8, (72 - 64) / 2, 8));
-        assertEquals(SNOW, l1.material(8, (74 - 64) / 2, 8));
-        // Level 2 (4 blocks): the crown's voxel shows the snow.
+        assertEquals(LEAVES, l1.material(8, (72 - 64) / 2, 8), "under other rows");
+        assertEquals(LEAVES, l1.material(8, (74 - 64) / 2, 8), "its snow lies in the voxel above");
+        assertEquals(SNOW, l1.material(9, (74 - 64) / 2, 8));
+        // Level 2 (4 blocks): snow over 4 of the crown voxel's 16 columns, too few.
         LodSection l2 = PreviewVoxels.build(2, 0, 0, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
-        assertEquals(SNOW, l2.material(4, 18, 4));
+        assertEquals(LEAVES, l2.material(4, 18, 4));
         // The snow raises the summary by one block.
         assertTrue(t.summary().spans(0, 0, 0, 0, 76, 77, 1));
         assertFalse(forest().summary().spans(0, 0, 0, 0, 76, 77, 1));

@@ -48,6 +48,7 @@ To localize a new seam inside LODs, capture the same camera spot before and afte
 - Every visual distance is a user choice, shipped with its command (`/farfield textures`, `/farfield detail`) and an entry in the E.8 settings screen. Defaults are the best quality the measured cost allows (the user's call: no measurable cost, so the best value stays the default, and the trade-off is left to the settings screen later). Measure the cost at that default and record it in the ADR.
 
 - Vanilla-mirroring settings: when the user asks a LOD effect to follow a vanilla option (Biome Blend, render distance, fog), read the live vanilla option value and copy its semantics exactly. When the vanilla option is off, do nothing extra, so the output matches the pre-feature build.
+- Partial blocks (snow layers, slabs) are full cubes on coarse levels: their face tiles must carry no cutout, or the cube shows holes while hiding its neighbors (ADR-050; `MaterialColors` fills them with the face color). "Transparent leaves" far away: check the level colors, then the cutout of the voxel's material.
 
 Known open gaps (E.7 in the milestone plan):
 - Fences, walls and panes are invisible in LODs; stairs are full cubes.
