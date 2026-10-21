@@ -43,3 +43,5 @@ report names a spot.
 | Nearest village | `/locate structure #minecraft:village` | Noise preview villages (E.11) |
 | Temperate land | `/locate biome minecraft:plains` | Grass and leaf tints |
 | Snowy taiga, real beside preview | 3050, 150, -170 facing 20, 40 (`/locate biome minecraft:snowy_taiga`: 2900, -96) | Snow on preview trees next to real ones (ADR-049) |
+| Frozen ocean icebergs, real beside preview | 2394, 126, -162 facing 31, 18 | Icebergs and sea light of the preview (ADR-053, ADR-054) |
+| Sea ice by the snowy village | -80, 85, 160 facing 90, 30 (village at -192, 160) | Faint lines in vanilla ice at the edge, also with LODs off |

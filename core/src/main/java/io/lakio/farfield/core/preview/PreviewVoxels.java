@@ -167,7 +167,8 @@ public final class PreviewVoxels {
                         } else if (bottom + s > height - 1 - PreviewTile.FILLER_DEPTH) {
                             material = filler;
                         } else {
-                            material = tile.below();
+                            // Icebergs are ice to their foot, not stone under a few blocks of filler.
+                            material = filler == tile.iceberg() ? filler : tile.below();
                         }
                     } else if (water >= 0 && bottom < sea) {
                         blocks = Math.min(s, sea - bottom);

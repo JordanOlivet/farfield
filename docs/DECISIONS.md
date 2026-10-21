@@ -1287,3 +1287,31 @@ none, so its floors kept full sky light.
 - Checked in the Fabric dev client at the user's view (2394, 126, -162):
   the preview patch that stood out pale among the real frozen ocean is as
   dark as the real floor around it. Unit test `skyLightFadesThroughTheSea`.
+
+## ADR-054 — Frozen ocean icebergs in the noise preview
+
+**Date**: 2026-10-21 · **Status**: accepted (extends ADR-039, ADR-045)
+
+The user: the preview grows no icebergs, a sharp cut beside the real ones.
+
+- **Source**: the tall jagged icebergs of frozen oceans are not a feature
+  but vanilla's surface rule `SurfaceSystem.frozenOceanExtension`, column by
+  column from three noises (`iceberg_pillar`, `iceberg_pillar_roof`,
+  `iceberg_surface`); the preview reads the same noises from the world's
+  `RandomState` and computes the same top (without the rule's random holes,
+  less 2 where the biome melts them slightly).
+- **Tiles**: each computed height sample under the sea of a frozen ocean
+  (its biome at the sea's top) rises to its iceberg's top; cells touching a
+  raised sample take packed ice, with snow on top from sea + 22 (vanilla:
+  a few snow blocks from 18 to 27, random). The tile stores the iceberg
+  material (format 7); `PreviewVoxels` draws such cells in it down to their
+  foot instead of the tile's stone under the filler. Far tiles (8 or 16
+  blocks between samples) raise only their computed samples.
+- Not covered: the smaller round and prism icebergs of the `iceberg`
+  features (one in 16 chunks), the underwater part of icebergs (the
+  preview column is ice from its top down to the floor beside it).
+- Checked in the Fabric dev client at the user's view (2394, 126, -162,
+  facing south): the icebergs go on past the real terrain with their spires
+  and snow caps; `/farfield preview off` leaves only the real ones. Tiles
+  built in 264 ms each (4,096-block radius). Unit test
+  `icebergsAreIceToTheirFoot`.

@@ -27,6 +27,8 @@ import net.minecraft.world.level.levelgen.DensityFunction;
 import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
 import net.minecraft.world.level.levelgen.NoiseGeneratorSettings;
 import net.minecraft.world.level.levelgen.NoiseSettings;
+import net.minecraft.world.level.levelgen.Noises;
+import net.minecraft.world.level.levelgen.synth.NormalNoise;
 import net.minecraft.world.level.levelgen.RandomState;
 
 import java.io.IOException;
@@ -99,6 +101,10 @@ final class NoisePreview {
         final boolean end;
         final long seed;
         final PreviewVillages villages;
+        /** Vanilla's frozen ocean icebergs ({@code SurfaceSystem.frozenOceanExtension}). */
+        final NormalNoise icebergPillar;
+        final NormalNoise icebergPillarRoof;
+        final NormalNoise icebergSurface;
         final AtomicInteger villagesBuilt = new AtomicInteger();
         volatile LodWorld world;
         /** Tiles stored or built, with the grid of their heights. */
@@ -123,6 +129,29 @@ final class NoisePreview {
             end = key == Level.END;
             seed = level.getSeed();
             villages = new PreviewVillages(level);
+            icebergPillar = state.getOrCreateNoise(Noises.ICEBERG_PILLAR);
+            icebergPillarRoof = state.getOrCreateNoise(Noises.ICEBERG_PILLAR_ROOF);
+            icebergSurface = state.getOrCreateNoise(Noises.ICEBERG_SURFACE);
+        }
+
+        /**
+         * The first free block above the iceberg vanilla's surface rule raises
+         * from the sea at column (x, z) of a frozen ocean, or {@link #UNKNOWN}
+         * without one ({@code SurfaceSystem.frozenOceanExtension}, without its
+         * random holes).
+         */
+        int iceberg(Biome biome, int x, int z) {
+            double d1 = Math.min(Math.abs(icebergSurface.getValue(x, 0.0, z) * 8.25),
+                    icebergPillar.getValue(x * 1.28, 0.0, z * 1.28) * 15.0);
+            if (d1 <= 1.8) {
+                return UNKNOWN;
+            }
+            double roof = Math.abs(icebergPillarRoof.getValue(x * 1.17, 0.0, z * 1.17) * 1.5);
+            double rise = Math.min(d1 * d1 * 1.2, Math.ceil(roof * 40.0) + 14.0);
+            if (biome.shouldMeltFrozenOceanIcebergSlightly(new BlockPos(x, 63, z))) {
+                rise -= 2.0;
+            }
+            return rise > 2.0 ? (int) (seaLevel + rise) : UNKNOWN;
         }
 
         boolean solid(int x, int y, int z) {
@@ -262,6 +291,7 @@ final class NoisePreview {
                     previous = h;
                 }
             }
+            boolean[] icebergs = icebergs(d, tile, x0, z0, step);
             tile.fillBetweenSamples(step);
             tile.setGrid(grid);
             Materials m = new Materials(world, d);
@@ -274,6 +304,10 @@ final class NoisePreview {
                             Math.min(tile.sample(cx, cz + 1), tile.sample(cx + 1, cz + 1)));
                     Holder<Biome> biome = chunkBiomes[(cz >> 2) * PreviewTile.CHUNKS + (cx >> 2)];
                     m.surface(biome, x0 + cx * PreviewTile.GRID, h, z0 + cz * PreviewTile.GRID, h - low >= CLIFF_RISE);
+                    if (h > d.seaLevel && iceberg(icebergs, cx, cz, step)) {
+                        // Vanilla caps the highest icebergs with a few blocks of snow from sea + 18 to 27.
+                        m.set(h - 1 > d.seaLevel + ICEBERG_SNOW ? m.snow : m.packedIce, m.packedIce);
+                    }
                     tile.setCell(cx, cz, m.top, m.filler);
                     // Vanilla's freeze_top_layer: the sea's top block turns to ice where the
                     // biome there is too cold to rain (frozen oceans: a noise leaves open water).
@@ -291,6 +325,7 @@ final class NoisePreview {
             tile.setBelow(m.below);
             tile.setWater(m.water, d.seaLevel);
             tile.setIce(m.ice);
+            tile.setIceberg(m.packedIce);
             List<PreviewVillages.Village> villages = villages(d, tile, x0, z0, m);
             plantTrees(d, tile, tileX, tileZ, chunkBiomes, m, villages);
             world.preview().write(tileX, tileZ, tile);
@@ -304,6 +339,55 @@ final class NoisePreview {
         } finally {
             d.inFlight.remove(key);
         }
+    }
+
+    /** Blocks above the sea from which an iceberg's top shows snow (vanilla: 18 to 27, random). */
+    private static final int ICEBERG_SNOW = 22;
+
+    /**
+     * Raises the computed samples (every {@code step}) under the sea of a
+     * frozen ocean to the icebergs vanilla's surface rule builds there; returns
+     * which samples rose, {@code k * SAMPLES + i}.
+     */
+    private static boolean[] icebergs(Dimension d, PreviewTile tile, int x0, int z0, int step) {
+        boolean[] raised = new boolean[PreviewTile.SAMPLES * PreviewTile.SAMPLES];
+        if (d.fluid == null || !d.fluid.is(Blocks.WATER)) {
+            return raised;
+        }
+        for (int k = 0; k < PreviewTile.SAMPLES; k += step) {
+            for (int i = 0; i < PreviewTile.SAMPLES; i += step) {
+                if (tile.sample(i, k) > d.seaLevel) {
+                    continue;
+                }
+                int x = x0 + i * PreviewTile.GRID;
+                int z = z0 + k * PreviewTile.GRID;
+                Holder<Biome> biome = d.biomes.getNoiseBiome(QuartPos.fromBlock(x), QuartPos.fromBlock(d.seaLevel - 1),
+                        QuartPos.fromBlock(z), d.sampler);
+                if (!biome.is(Biomes.FROZEN_OCEAN) && !biome.is(Biomes.DEEP_FROZEN_OCEAN)) {
+                    continue;
+                }
+                int top = d.iceberg(biome.value(), x, z);
+                if (top != UNKNOWN && top > tile.sample(i, k)) {
+                    tile.setHeight(i, k, top);
+                    raised[k * PreviewTile.SAMPLES + i] = true;
+                }
+            }
+        }
+        return raised;
+    }
+
+    /** Whether cell (cx, cz) touches a raised sample of the computed grid ({@code step} samples apart). */
+    private static boolean iceberg(boolean[] raised, int cx, int cz, int step) {
+        int i0 = cx / step * step;
+        int k0 = cz / step * step;
+        for (int k = k0; k <= Math.min(k0 + step, PreviewTile.SAMPLES - 1); k += step) {
+            for (int i = i0; i <= Math.min(i0 + step, PreviewTile.SAMPLES - 1); i += step) {
+                if (raised[k * PreviewTile.SAMPLES + i]) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -479,6 +563,7 @@ final class NoisePreview {
         final int gravel;
         final int stone;
         final int snow;
+        final int packedIce;
         /** A snow layer, on tree tops. */
         final int snowLayer;
         final int mycelium;
@@ -502,6 +587,7 @@ final class NoisePreview {
             gravel = id(Blocks.GRAVEL.defaultBlockState());
             stone = id(Blocks.STONE.defaultBlockState());
             snow = id(Blocks.SNOW_BLOCK.defaultBlockState());
+            packedIce = id(Blocks.PACKED_ICE.defaultBlockState());
             snowLayer = id(Blocks.SNOW.defaultBlockState());
             mycelium = id(Blocks.MYCELIUM.defaultBlockState());
         }

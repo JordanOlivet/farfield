@@ -13,6 +13,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -234,6 +235,38 @@ class PreviewTest {
         // Without ice material nothing freezes.
         t.setIce(-1);
         assertFalse(t.frozen(0, 0));
+    }
+
+    @Test
+    void icebergsAreIceToTheirFoot() {
+        // Cell (1, 1) of the slope's sea (ground about 54) rises to 80 as an iceberg.
+        PreviewTile t = slope();
+        t.setIceberg(ICE);
+        for (int k = 1; k <= 2; k++) {
+            for (int i = 1; i <= 2; i++) {
+                t.setHeight(i, k, 80);
+            }
+        }
+        t.setCell(1, 1, ICE, ICE);
+        ByteWriter out = new ByteWriter(1024);
+        t.encode(out);
+        PreviewTile back = PreviewTile.decode(new ByteReader().reset(out.array(), 0, out.length()));
+        assertEquals(ICE, back.iceberg());
+        PreviewVoxels.Tiles tiles = (x, z) -> x == 0 && z == 0 ? back : null;
+        LodSection high = PreviewVoxels.build(0, 0, 2, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
+        LodSection low = PreviewVoxels.build(0, 0, 1, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
+        assertEquals(ICE, high.material(5, 79 - 64, 5), "the top");
+        assertEquals(AIR, high.material(5, 80 - 64, 5));
+        // Cell (1, 1), blocks 4..7, is the iceberg. Column 4 stands at 80 beside column 3 at 76: top 79, filler 76..78, then 75, ice and not the tile's stone.
+        assertEquals(ICE, high.material(4, 75 - 64, 5), "under the filler");
+        for (int y = 0; y < LodSection.SIZE; y++) {
+            for (int z = 4; z <= 7; z++) {
+                for (int x = 4; x <= 7; x++) {
+                    assertNotEquals(STONE, high.material(x, y, z), "block " + x + "," + (y + 64) + "," + z);
+                    assertNotEquals(STONE, low.material(x, y, z), "block " + x + "," + (y + 32) + "," + z);
+                }
+            }
+        }
     }
 
     @Test

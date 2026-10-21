@@ -34,9 +34,9 @@ public final class PreviewTile {
     /**
      * Format 2 adds the trees, 3 their shapes and the buildings, 4 the ice,
      * 5 the grid the heights were computed on, 6 the snow on tree tops and
-     * tiered spruces; older tiles are built again.
+     * tiered spruces, 7 the icebergs; older tiles are built again.
      */
-    private static final int FORMAT = 6;
+    private static final int FORMAT = 7;
     /** Most tree kinds a tile holds (the kind rides in 8 bits of a tree). */
     public static final int MAX_KINDS = 255;
 
@@ -50,6 +50,8 @@ public final class PreviewTile {
     private int water = -1;
     private int seaLevel;
     private int ice = -1;
+    /** Material of frozen ocean icebergs: a cell whose filler it is shows it all the way down; -1 for none. */
+    private int iceberg = -1;
     /** One bit per cell, {@code cz * CELLS + cx}: the sea's top block is ice there. */
     private final long[] frozen = new long[CELLS * CELLS / 64];
     private final java.util.List<TreeKind> kinds = new java.util.ArrayList<>();
@@ -253,6 +255,15 @@ public final class PreviewTile {
         return ice;
     }
 
+    public void setIceberg(int material) {
+        iceberg = material;
+    }
+
+    /** The material of icebergs: cells whose filler it is take it down to the bottom, not {@link #below()}. */
+    public int iceberg() {
+        return iceberg;
+    }
+
     /** Whether the sea's top block is {@link #ice()} over a cell (vanilla's freeze_top_layer). */
     public void setFrozen(int cx, int cz, boolean value) {
         int i = cz * CELLS + cx;
@@ -359,6 +370,7 @@ public final class PreviewTile {
         out.writeVarInt(water + 1);
         out.writeInt(seaLevel);
         out.writeVarInt(ice + 1);
+        out.writeVarInt(iceberg + 1);
         for (long bits : frozen) {
             out.writeLong(bits);
         }
@@ -421,6 +433,7 @@ public final class PreviewTile {
         t.water = in.readVarInt() - 1;
         t.seaLevel = in.readInt();
         t.ice = in.readVarInt() - 1;
+        t.iceberg = in.readVarInt() - 1;
         for (int i = 0; i < t.frozen.length; i++) {
             t.frozen[i] = in.readLong();
         }
