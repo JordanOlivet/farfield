@@ -42,3 +42,4 @@ report names a spot.
 | Spawn | 48, 75, 32 | Snowy start, ice border |
 | Nearest village | `/locate structure #minecraft:village` | Noise preview villages (E.11) |
 | Temperate land | `/locate biome minecraft:plains` | Grass and leaf tints |
+| Snowy taiga, real beside preview | 3050, 150, -170 facing 20, 40 (`/locate biome minecraft:snowy_taiga`: 2900, -96) | Snow on preview trees next to real ones (ADR-049) |

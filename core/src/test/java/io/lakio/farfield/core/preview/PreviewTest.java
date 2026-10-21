@@ -129,7 +129,7 @@ class PreviewTest {
 
     @Test
     void coarseTreesByAreaMatchBlockByBlock() {
-        // A dense forest of every crown shape on rolling ground, some crowns over a real chunk.
+        // A dense forest of every crown shape, with and without snow, on rolling ground, some crowns over a real chunk.
         PreviewTile t = slope();
         for (int k = 0; k < PreviewTile.SAMPLES; k++) {
             for (int i = 0; i < PreviewTile.SAMPLES; i++) {
@@ -140,7 +140,14 @@ class PreviewTest {
                 t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 7, 2, 3, PreviewTile.BLOB)),
                 t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 9, 3, 6, PreviewTile.CONE)),
                 t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 6, 3, 0, PreviewTile.FLAT)),
-                t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 12, 0, 0, PreviewTile.COLUMN))};
+                t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 12, 0, 0, PreviewTile.COLUMN)),
+                t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 7, 2, 3, PreviewTile.BLOB, SNOW)),
+                t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 8, 3, 4, PreviewTile.BLOB, SNOW)),
+                t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 9, 3, 6, PreviewTile.CONE, SNOW)),
+                t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 6, 3, 0, PreviewTile.FLAT, SNOW)),
+                t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 8, 3, 7, PreviewTile.TIERED)),
+                t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 8, 3, 7, PreviewTile.TIERED, SNOW)),
+                t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 7, 2, 5, PreviewTile.TIERED, SNOW))};
         java.util.Random random = new java.util.Random(3);
         for (int n = 0; n < 4000; n++) {
             t.addTree(random.nextInt(PreviewTile.BLOCKS), random.nextInt(PreviewTile.BLOCKS),
@@ -306,6 +313,7 @@ class PreviewTest {
 
     private static final int LOG = 6;
     private static final int LEAVES = 7;
+    private static final int SNOW = 9;
 
     /** Flat land at 70 (ground top at 69) with one oak-like tree at block (16, 16). */
     private static PreviewTile forest() {
@@ -348,6 +356,89 @@ class PreviewTest {
                 -1, -1, -1, 0);
         assertEquals(GRASS, far.material(1, 4, 1), "the ground voxel, no crown over it");
         assertEquals(AIR, far.material(1, 5, 1));
+    }
+
+    /** {@link #forest()} with snow on its oak. */
+    private static PreviewTile snowyForest() {
+        PreviewTile t = slope();
+        for (int k = 0; k < PreviewTile.SAMPLES; k++) {
+            for (int i = 0; i < PreviewTile.SAMPLES; i++) {
+                t.setHeight(i, k, 70);
+            }
+        }
+        t.addTree(16, 16, t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 5, 2, 3, PreviewTile.BLOB, SNOW)));
+        return t;
+    }
+
+    @Test
+    void snowLiesOnTheTopOfEachCrownColumn() {
+        PreviewTile t = snowyForest();
+        PreviewVoxels.Tiles tiles = (x, z) -> x == 0 && z == 0 ? t : null;
+        LodSection s = PreviewVoxels.build(0, 0, 2, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
+        // Crown rows 72 to 75: radius 2 up to 74, radius 1 on top.
+        assertEquals(SNOW, s.material(16, 76 - 64, 16), "over the top row, trunk column");
+        assertEquals(SNOW, s.material(17, 76 - 64, 15));
+        assertEquals(SNOW, s.material(18, 75 - 64, 16), "over the ring the top row leaves open");
+        assertEquals(SNOW, s.material(18, 75 - 64, 17));
+        assertEquals(LEAVES, s.material(18, 74 - 64, 16));
+        assertEquals(AIR, s.material(18, 74 - 64, 18), "no snow on a rounded corner");
+        assertEquals(AIR, s.material(18, 75 - 64, 18));
+        assertEquals(LEAVES, s.material(17, 75 - 64, 17), "the top row's leaves, under their snow");
+        // Level 1 (2 blocks): blocks 72..73 lie under other rows and stay leaves; 74..75 hold open tops.
+        LodSection l1 = PreviewVoxels.build(1, 0, 1, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
+        assertEquals(LEAVES, l1.material(8, (72 - 64) / 2, 8));
+        assertEquals(SNOW, l1.material(8, (74 - 64) / 2, 8));
+        // Level 2 (4 blocks): the crown's voxel shows the snow.
+        LodSection l2 = PreviewVoxels.build(2, 0, 0, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
+        assertEquals(SNOW, l2.material(4, 18, 4));
+        // The snow raises the summary by one block.
+        assertTrue(t.summary().spans(0, 0, 0, 0, 76, 77, 1));
+        assertFalse(forest().summary().spans(0, 0, 0, 0, 76, 77, 1));
+    }
+
+    @Test
+    void spruceTiersWidenDownwardAndTakeSnowOnEachStep() {
+        PreviewTile t = slope();
+        for (int k = 0; k < PreviewTile.SAMPLES; k++) {
+            for (int i = 0; i < PreviewTile.SAMPLES; i++) {
+                t.setHeight(i, k, 70);
+            }
+        }
+        // Trunk 70..77, crown rows 70..78: radii from the top 0, 1, 0, 1, 2, 1, 2, 3, 1 (vanilla's spruce).
+        t.addTree(16, 16, t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 8, 3, 8, PreviewTile.TIERED, SNOW)));
+        LodSection s = PreviewVoxels.build(0, 0, 2, 0, (x, z) -> x == 0 && z == 0 ? t : null, null, AIR, -64,
+                -1, -1, -1, 0);
+        int[] radii = {0, 1, 0, 1, 2, 1, 2, 3, 1};
+        for (int i = 0; i < radii.length; i++) {
+            int y = 78 - i;
+            int center = radii[i] == 0 && y < 78 ? LOG : LEAVES;
+            assertEquals(center, s.material(16 + radii[i], y - 64, 16), "row " + y + " reaches " + radii[i]);
+            assertTrue(s.material(17 + radii[i], y - 64, 16) != LEAVES, "row " + y + " ends at " + radii[i]);
+        }
+        assertEquals(AIR, s.material(19, 71 - 64, 19), "rounded corners, as vanilla's spruce");
+        assertEquals(AIR, s.material(17, 77 - 64, 17), "a plus at radius 1");
+        assertEquals(LEAVES, s.material(19, 71 - 64, 18));
+        // Snow over the top of each column: the top, then each row wider than every row above it.
+        assertEquals(SNOW, s.material(16, 79 - 64, 16));
+        assertEquals(SNOW, s.material(17, 78 - 64, 16), "radius 1 under the top");
+        assertEquals(SNOW, s.material(18, 75 - 64, 16), "the first tier's base");
+        assertEquals(SNOW, s.material(19, 72 - 64, 16), "the widest row");
+        assertEquals(AIR, s.material(18, 73 - 64, 16), "radius 2 at 72 lies under radius 2 at 74: no snow");
+    }
+
+    @Test
+    void columnsTakeNoSnowAndSnowNeverReplacesLeaves() {
+        PreviewTile t = snowyForest();
+        t.addTree(40, 40, t.kind(new PreviewTile.TreeKind(LOG, -1, 3, 0, 0, PreviewTile.COLUMN, SNOW)));
+        // A taller tree beside the oak whose leaves fill where the oak's snow would lie (18, 75, 16).
+        t.addTree(20, 16, t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 6, 2, 3, PreviewTile.BLOB)));
+        LodSection s = PreviewVoxels.build(0, 0, 2, 0, (x, z) -> x == 0 && z == 0 ? t : null, null, AIR, -64,
+                -1, -1, -1, 0);
+        LodSection column = PreviewVoxels.build(0, 1, 2, 1, (x, z) -> x == 0 && z == 0 ? t : null, null, AIR, -64,
+                -1, -1, -1, 0);
+        assertEquals(LOG, column.material(40 - 32, 72 - 64, 40 - 32));
+        assertEquals(AIR, column.material(40 - 32, 73 - 64, 40 - 32));
+        assertEquals(LEAVES, s.material(18, 75 - 64, 16));
     }
 
     @Test

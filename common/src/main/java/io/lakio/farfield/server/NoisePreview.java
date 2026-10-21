@@ -340,7 +340,8 @@ final class NoisePreview {
                             Materials m, List<PreviewVillages.Village> villages) {
         for (int cz = 0; cz < PreviewTile.CHUNKS; cz++) {
             for (int cx = 0; cx < PreviewTile.CHUNKS; cx++) {
-                PreviewTrees.BiomeTrees bt = trees.of(chunkBiomes[cz * PreviewTile.CHUNKS + cx]);
+                Holder<Biome> biome = chunkBiomes[cz * PreviewTile.CHUNKS + cx];
+                PreviewTrees.BiomeTrees bt = trees.of(biome);
                 if (bt.total() <= 0) {
                     continue;
                 }
@@ -359,13 +360,19 @@ final class NoisePreview {
                         case FUNGAL -> top == m.grass || top == m.mycelium;
                         case SAND -> top == m.sand;
                     };
-                    if (!ground || tile.height(bx, bz) <= d.seaLevel || inVillage(villages, tileX * TILE + bx,
-                            tileZ * TILE + bz)) {
+                    int surface = tile.height(bx, bz);
+                    int x = tileX * TILE + bx;
+                    int z = tileZ * TILE + bz;
+                    if (!ground || surface <= d.seaLevel || inVillage(villages, x, z)) {
                         continue;
                     }
+                    // Vanilla's freeze_top_layer: snow over the crown where the block above its
+                    // top is cold enough to snow (the chunk's biome, as the snowy ground).
+                    boolean snowy = spec.leaves() != null && spec.shape() != PreviewTile.COLUMN
+                            && biome.value().coldEnoughToSnow(new BlockPos(x, surface + spec.height() + 1, z));
                     int kind = tile.kind(new PreviewTile.TreeKind(m.id(spec.trunk()),
                             spec.leaves() == null ? -1 : m.id(spec.leaves()), spec.height(), spec.radius(),
-                            spec.crownHeight(), spec.shape()));
+                            spec.crownHeight(), spec.shape(), snowy ? m.snowLayer : -1));
                     if (kind >= 0) {
                         tile.addTree(bx, bz, kind);
                     }
@@ -472,6 +479,8 @@ final class NoisePreview {
         final int gravel;
         final int stone;
         final int snow;
+        /** A snow layer, on tree tops. */
+        final int snowLayer;
         final int mycelium;
         /** Ice over a frozen water sea; -1 for other fluids. */
         final int ice;
@@ -493,6 +502,7 @@ final class NoisePreview {
             gravel = id(Blocks.GRAVEL.defaultBlockState());
             stone = id(Blocks.STONE.defaultBlockState());
             snow = id(Blocks.SNOW_BLOCK.defaultBlockState());
+            snowLayer = id(Blocks.SNOW.defaultBlockState());
             mycelium = id(Blocks.MYCELIUM.defaultBlockState());
         }
 

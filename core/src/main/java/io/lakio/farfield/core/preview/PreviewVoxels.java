@@ -28,7 +28,10 @@ import io.lakio.farfield.core.lod.LodSection;
  * buildings (ADR-041) on their stored floor: block by block on the finest
  * level; on coarser levels a voxel takes their material when they fill a
  * quarter of it, like the real mip rule's two full children of eight.
- * Those of real chunks are left out.
+ * Those of real chunks are left out. A snowy crown (ADR-049) takes a snow
+ * layer over the top block of each of its columns on the finest level; on
+ * coarser levels a tree voxel holding such a top block shows the snow, as
+ * the real mip rule's view from above.
  */
 public final class PreviewVoxels {
 
@@ -265,6 +268,14 @@ public final class PreviewVoxels {
         private final int layerIndex;
         private final int[] counts;
         private final int[] materials;
+        /** Coarse levels: per voxel the snow seen on top of its crowns, -1 for none; null until a snowy crown. */
+        private int[] snow;
+        /** Finest level: snow layers to lay once every tree is in, voxel index then material. */
+        private int[] snowLayers = new int[0];
+        private int snowCount;
+        /** The crown being stamped ({@link #crown}): per row from the bottom, its radius and the widest row above. */
+        private int[] radii = new int[17];
+        private int[] widest = new int[17];
         private LodSection section;
 
         Stamp(LodSection section, int level, int ox, int oy, int oz, int size, Mask mask, int air, int layerAxis,
@@ -299,15 +310,13 @@ public final class PreviewVoxels {
             if (k.shape() == PreviewTile.COLUMN) {
                 return;
             }
-            int rows = k.shape() == PreviewTile.FLAT ? 0 : k.crownHeight();
+            int rows = crown(k);
             for (int r = 0; r <= rows; r++) {
                 int y = top - rows + r;
-                int radius = k.shape() == PreviewTile.CONE
-                        ? Math.round(k.radius() * (rows - r) / (float) Math.max(1, rows))
-                        : r == rows && rows > 0 ? Math.max(0, k.radius() - 1) : k.radius();
+                int radius = radii[r];
                 for (int dz = -radius; dz <= radius; dz++) {
                     for (int dx = -radius; dx <= radius; dx++) {
-                        if (k.shape() != PreviewTile.CONE && radius > 1 && Math.abs(dx) == radius && Math.abs(dz) == radius) {
+                        if (rounded(k, radius) && Math.abs(dx) == radius && Math.abs(dz) == radius) {
                             continue; // rounded corners
                         }
                         if (dx == 0 && dz == 0 && y < top) {
@@ -317,6 +326,109 @@ public final class PreviewVoxels {
                     }
                 }
             }
+            if (k.snow() >= 0) {
+                snowBlockByBlock(k, x, top, z, rows, chunkX, chunkZ);
+            }
+        }
+
+        /**
+         * Fills {@link #radii} and {@link #widest} for a crown; returns its
+         * rows minus one. The widest row above a row holds every other row
+         * above it: rows are squares around the trunk less their corners
+         * ({@link #rounded}), and a narrower square lies inside a wider one.
+         */
+        private int crown(PreviewTile.TreeKind k) {
+            int rows = k.shape() == PreviewTile.FLAT ? 0 : k.crownHeight();
+            if (radii.length <= rows) {
+                radii = new int[rows + 1];
+                widest = new int[rows + 1];
+            }
+            // Vanilla's spruce foliage from the top: tiers one row wider each, each from radius 1 again.
+            int tier = 0;
+            int tierWidest = 1;
+            int start = 0;
+            int above = -1;
+            for (int r = rows; r >= 0; r--) {
+                int radius;
+                if (k.shape() == PreviewTile.TIERED) {
+                    radius = Math.min(tier, k.radius());
+                    if (tier >= tierWidest) {
+                        tier = start;
+                        start = 1;
+                        tierWidest = Math.min(tierWidest + 1, k.radius());
+                    } else {
+                        tier++;
+                    }
+                } else if (k.shape() == PreviewTile.CONE) {
+                    radius = Math.round(k.radius() * (rows - r) / (float) Math.max(1, rows));
+                } else {
+                    radius = r == rows && rows > 0 ? Math.max(0, k.radius() - 1) : k.radius();
+                }
+                radii[r] = radius;
+                widest[r] = above;
+                above = Math.max(above, radius);
+            }
+            return rows;
+        }
+
+        /**
+         * Whether rows of {@code radius} leave out their corners: from radius
+         * 1 for cones and tiers (vanilla's spruces and pines, a plus on top),
+         * from radius 2 for blobs and caps.
+         */
+        private static boolean rounded(PreviewTile.TreeKind k, int radius) {
+            return radius > (k.shape() == PreviewTile.CONE || k.shape() == PreviewTile.TIERED ? 0 : 1);
+        }
+
+        /** Whether (dx, dz) from the trunk lies in a crown row of {@code radius}. */
+        private static boolean inRow(PreviewTile.TreeKind k, int radius, int dx, int dz) {
+            if (Math.abs(dx) > radius || Math.abs(dz) > radius) {
+                return false;
+            }
+            return !rounded(k, radius) || Math.abs(dx) != radius || Math.abs(dz) != radius;
+        }
+
+        /**
+         * The snow of a crown, block by block: over each block of a row that
+         * no row above covers, a snow layer on the finest level, the snow seen
+         * on top of the block's voxel on coarser ones.
+         */
+        private void snowBlockByBlock(PreviewTile.TreeKind k, int x, int top, int z, int rows, int chunkX, int chunkZ) {
+            for (int r = 0; r <= rows; r++) {
+                int y = top - rows + r;
+                int radius = radii[r];
+                int above = widest[r];
+                if (above >= radius) {
+                    continue; // covered by a row above
+                }
+                for (int dz = -radius; dz <= radius; dz++) {
+                    for (int dx = -radius; dx <= radius; dx++) {
+                        if (!inRow(k, radius, dx, dz) || above >= 0 && inRow(k, above, dx, dz)) {
+                            continue;
+                        }
+                        int i = voxel(x + dx, level == 0 ? y + 1 : y, z + dz, chunkX, chunkZ);
+                        if (i >= 0) {
+                            snowOn(i, k.snow());
+                        }
+                    }
+                }
+            }
+        }
+
+        private void snowOn(int i, int material) {
+            if (level == 0) {
+                if (snowCount + 2 > snowLayers.length) {
+                    snowLayers = java.util.Arrays.copyOf(snowLayers, Math.max(64, snowLayers.length * 2));
+                }
+                snowLayers[snowCount++] = i;
+                snowLayers[snowCount++] = material;
+                return;
+            }
+            if (snow == null) {
+                snow = new int[S * S * S];
+                java.util.Arrays.fill(snow, -1);
+            }
+            snow[i] = material;
         }
 
         /** Whether a crown of {@code radius} around (x, z) reaches a real chunk other than its own. */
@@ -356,17 +468,18 @@ public final class PreviewVoxels {
             if (k.shape() == PreviewTile.COLUMN) {
                 return;
             }
-            int rows = k.shape() == PreviewTile.FLAT ? 0 : k.crownHeight();
+            int rows = crown(k);
             for (int r = 0; r <= rows; r++) {
                 int y = top - rows + r;
                 if (y < oy || y >= oy + size) {
                     continue;
                 }
                 int vy = (y - oy) >> level;
-                int radius = k.shape() == PreviewTile.CONE
-                        ? Math.round(k.radius() * (rows - r) / (float) Math.max(1, rows))
-                        : r == rows && rows > 0 ? Math.max(0, k.radius() - 1) : k.radius();
-                boolean rounded = k.shape() != PreviewTile.CONE && radius > 1;
+                int radius = radii[r];
+                boolean rounded = rounded(k, radius);
+                // Snow (see snowBlockByBlock) over the blocks no row above covers: none under a row as wide.
+                int above = widest[r];
+                boolean snowy = k.snow() >= 0 && above < radius;
                 int x0 = Math.max(lx - radius, 0);
                 int x1 = Math.min(lx + radius, size - 1);
                 int z0 = Math.max(lz - radius, 0);
@@ -384,6 +497,9 @@ public final class PreviewVoxels {
                                     + inside(lx - radius, lz + radius, b0, b1, a0, a1)
                                     + inside(lx + radius, lz + radius, b0, b1, a0, a1);
                         }
+                        if (snowy && blocks > (above >= 0 ? rowBlocks(k, above, lx, lz, b0, b1, a0, a1) : 0)) {
+                            snowOn((vy * S + vz) * S + vx, k.snow());
+                        }
                         if (y < top) {
                             blocks -= inside(lx, lz, b0, b1, a0, a1);
                         }
@@ -393,6 +509,23 @@ public final class PreviewVoxels {
                     }
                 }
             }
+        }
+
+        /** Blocks of a crown row of {@code radius} around (lx, lz) inside [x0, x1] x [z0, z1]. */
+        private static int rowBlocks(PreviewTile.TreeKind k, int radius, int lx, int lz, int x0, int x1, int z0, int z1) {
+            int w = Math.min(x1, lx + radius) - Math.max(x0, lx - radius) + 1;
+            int d = Math.min(z1, lz + radius) - Math.max(z0, lz - radius) + 1;
+            if (w <= 0 || d <= 0) {
+                return 0;
+            }
+            int blocks = w * d;
+            if (rounded(k, radius)) {
+                blocks -= inside(lx - radius, lz - radius, x0, x1, z0, z1)
+                        + inside(lx + radius, lz - radius, x0, x1, z0, z1)
+                        + inside(lx - radius, lz + radius, x0, x1, z0, z1)
+                        + inside(lx + radius, lz + radius, x0, x1, z0, z1);
+            }
+            return blocks;
         }
 
         private static int inside(int x, int z, int x0, int x1, int z0, int z1) {
@@ -423,53 +556,67 @@ public final class PreviewVoxels {
         }
 
         private void put(int x, int y, int z, int material, int chunkX, int chunkZ) {
+            int i = voxel(x, y, z, chunkX, chunkZ);
+            if (i < 0) {
+                return;
+            }
+            if (level == 0) {
+                setIfAir(i, material);
+                return;
+            }
+            counts[i]++;
+            materials[i] = material;
+        }
+
+        /**
+         * The voxel index, {@code (vy * S + vz) * S + vx}, of block (x, y, z)
+         * of a tree or building of chunk (chunkX, chunkZ); -1 outside the
+         * section or its layer, or over a real chunk other than its own.
+         */
+        private int voxel(int x, int y, int z, int chunkX, int chunkZ) {
             int lx = x - ox;
             int ly = y - oy;
             int lz = z - oz;
             if (lx < 0 || ly < 0 || lz < 0 || lx >= size || ly >= size || lz >= size) {
-                return;
+                return -1;
             }
             if (mask != null && ((x >> 4) != chunkX || (z >> 4) != chunkZ) && mask.real(x >> 4, z >> 4)) {
-                return; // a crown reaching over real terrain
+                return -1; // a crown reaching over real terrain
             }
             int vx = lx >> level;
             int vy = ly >> level;
             int vz = lz >> level;
             if (layerAxis == 0 && vx != layerIndex || layerAxis == 1 && vy != layerIndex
                     || layerAxis == 2 && vz != layerIndex) {
-                return;
+                return -1;
             }
-            if (level == 0) {
-                if (section == null) {
-                    section = new LodSection(air);
-                }
-                if (section.material(vx, vy, vz) == air) {
-                    section.set(vx, vy, vz, material);
-                }
-                return;
+            return (vy * S + vz) * S + vx;
+        }
+
+        private void setIfAir(int i, int material) {
+            int vx = i % S;
+            int vz = i / S % S;
+            int vy = i / (S * S);
+            if (section == null) {
+                section = new LodSection(air);
             }
-            int i = (vy * S + vz) * S + vx;
-            counts[i]++;
-            materials[i] = material;
+            if (section.material(vx, vy, vz) == air) {
+                section.set(vx, vy, vz, material);
+            }
         }
 
         LodSection finish() {
             if (level == 0) {
+                // Snow last: a layer never takes the place of another tree's leaves.
+                for (int j = 0; j < snowCount; j += 2) {
+                    setIfAir(snowLayers[j], snowLayers[j + 1]);
+                }
                 return section;
             }
             int threshold = Math.max(1, s * s * s / 4);
             for (int i = 0; i < counts.length; i++) {
-                if (counts[i] < threshold) {
-                    continue;
-                }
-                int vx = i % S;
-                int vz = i / S % S;
-                int vy = i / (S * S);
-                if (section == null) {
-                    section = new LodSection(air);
-                }
-                if (section.material(vx, vy, vz) == air) {
-                    section.set(vx, vy, vz, materials[i]);
+                if (counts[i] >= threshold) {
+                    setIfAir(i, snow != null && snow[i] >= 0 ? snow[i] : materials[i]);
                 }
             }
             return section;

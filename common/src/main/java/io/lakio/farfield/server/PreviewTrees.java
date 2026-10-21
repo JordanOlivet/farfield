@@ -29,6 +29,10 @@ import net.minecraft.world.level.levelgen.feature.configurations.RandomBooleanFe
 import net.minecraft.world.level.levelgen.feature.configurations.RandomFeatureConfiguration;
 import net.minecraft.world.level.levelgen.feature.configurations.SimpleRandomFeatureConfiguration;
 import net.minecraft.world.level.levelgen.feature.configurations.TreeConfiguration;
+import net.minecraft.world.level.levelgen.feature.foliageplacers.FoliagePlacer;
+import net.minecraft.world.level.levelgen.feature.foliageplacers.MegaPineFoliagePlacer;
+import net.minecraft.world.level.levelgen.feature.foliageplacers.PineFoliagePlacer;
+import net.minecraft.world.level.levelgen.feature.foliageplacers.SpruceFoliagePlacer;
 import net.minecraft.world.level.levelgen.placement.PlacedFeature;
 import net.minecraft.world.level.levelgen.placement.PlacementModifier;
 
@@ -222,16 +226,24 @@ final class PreviewTrees {
                 radius += tree.foliagePlacer.foliageRadius(random, h);
                 crown += tree.foliagePlacer.foliageHeight(random, h, tree);
             }
-            String placer = tree.foliagePlacer.getClass().getSimpleName();
-            boolean cone = placer.contains("Spruce") || placer.contains("Pine");
+            // Vanilla classes by type (Fabric runs them under intermediary names), modded ones by name.
+            FoliagePlacer foliage = tree.foliagePlacer;
+            String placer = foliage.getClass().getSimpleName();
+            boolean spruce = foliage instanceof SpruceFoliagePlacer || placer.contains("Spruce");
+            boolean cone = spruce || foliage instanceof PineFoliagePlacer || foliage instanceof MegaPineFoliagePlacer
+                    || placer.contains("Pine");
             int crownHeight = clamp(Math.round(crown / (float) samples), 0, 16);
             int crownRadius = Math.round(radius / (float) samples);
             if (cone) {
                 // Mega pines start their foliage at radius 0 and widen it down the trunk.
                 crownRadius = Math.max(crownRadius, (crownHeight + 2) / 4);
             }
+            if (foliage instanceof PineFoliagePlacer) {
+                // Vanilla's pine widens one block per row from its top: its rows bound its radius.
+                crownRadius = Math.min(crownRadius, Math.max(1, crownHeight - 1));
+            }
             return new Spec(trunk, leaves, clamp(Math.round(height / (float) samples), 1, 40), clamp(crownRadius, 0, 6),
-                    crownHeight, cone ? PreviewTile.CONE : PreviewTile.BLOB, Ground.SOIL);
+                    crownHeight, spruce ? PreviewTile.TIERED : cone ? PreviewTile.CONE : PreviewTile.BLOB, Ground.SOIL);
         } catch (RuntimeException e) {
             return null;
         }

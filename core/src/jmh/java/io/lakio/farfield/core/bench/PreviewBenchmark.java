@@ -23,7 +23,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * Single-thread cost of a noise preview mesh job (ADR-039), on a synthetic
  * tile: rolling land and sea around sea level, a forest of 10 spruces per
- * chunk. Split into the parts a job runs: the whole section, the six
+ * chunk, bare or snowy (ADR-049), or no trees. Split into the parts a job runs: the whole section, the six
  * neighbor layers (meshing preview water), and the mesher. No corpus needed.
  */
 @State(Scope.Thread)
@@ -41,6 +41,7 @@ public class PreviewBenchmark {
     private static final int WATER = 4;
     private static final int LOG = 5;
     private static final int LEAVES = 6;
+    private static final int SNOW = 7;
     private static final int SEA = 63;
     private static final MaterialClassifier CLASSES = m -> m == AIR ? MaterialClassifier.AIR
             : m == WATER ? MaterialClassifier.TRANSLUCENT : MaterialClassifier.OPAQUE;
@@ -48,8 +49,8 @@ public class PreviewBenchmark {
     @Param({"0", "2", "4"})
     public int level;
 
-    @Param({"true", "false"})
-    public boolean forest;
+    @Param({"none", "bare", "snowy"})
+    public String forest;
 
     private PreviewVoxels.Tiles tiles;
     private int sy;
@@ -74,14 +75,15 @@ public class PreviewBenchmark {
         }
         t.setBelow(STONE);
         t.setWater(WATER, SEA);
-        int spruce = t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 8, 2, 6, PreviewTile.CONE));
+        int spruce = t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 8, 2, 6, PreviewTile.TIERED,
+                forest.equals("snowy") ? SNOW : -1));
         java.util.Random random = new java.util.Random(1);
         for (int chunkZ = 0; chunkZ < PreviewTile.CHUNKS; chunkZ++) {
             for (int chunkX = 0; chunkX < PreviewTile.CHUNKS; chunkX++) {
                 for (int n = 0; n < 10; n++) {
                     int bx = chunkX * 16 + random.nextInt(16);
                     int bz = chunkZ * 16 + random.nextInt(16);
-                    if (forest && t.height(bx, bz) > SEA) {
+                    if (!forest.equals("none") && t.height(bx, bz) > SEA) {
                         t.addTree(bx, bz, spruce);
                     }
                 }

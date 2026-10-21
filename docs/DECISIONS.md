@@ -1165,3 +1165,40 @@ Open: preview section meshing still costs 2.5 to 3.7 ms per job without
 any store read (whole-section builds, tree stamping); a vanilla section
 waiting for its neighbors (`hasAllNeighbors`) is compiled but not drawn
 and the LODs give way there (one transient hole seen at the vanilla edge).
+
+## ADR-049 — Snow on preview tree tops; vanilla spruce and pine crowns
+
+**Date**: 2026-10-21 · **Status**: accepted (extends ADR-040, ADR-045)
+
+The user saw no snow on the noise preview's trees in snowy biomes, the
+same gap the ice was (ADR-045).
+
+- **Which trees**: vanilla's freeze_top_layer lays a snow layer on the
+  highest block of each column, leaves included. A tree kind carries a
+  snow material (`Blocks.SNOW`, one layer; -1 for none) when the block
+  above its crown is cold enough to snow (`coldEnoughToSnow`, the chunk's
+  biome, as the snowy ground). Columns (cactus, bamboo) take none. Tile
+  format 6; older tiles are built again.
+- **Drawing** (`PreviewVoxels`): on the finest level a snow layer over
+  each crown block that no row above covers, laid after every tree so it
+  never takes the place of another tree's leaves; on coarser levels a tree
+  voxel holding such a block shows the snow, as the real mip rule's view
+  from above. Counted from areas on coarse levels like the leaves
+  (ADR-048), checked against block by block in a unit test. Snow raises
+  the tile summary by one block.
+- **Crowns as vanilla's**, found by comparing preview and real snowy
+  taiga side by side (snow made the gaps plain): spruces take tiers
+  (`TIERED`: radius 0, 1, 0, 1, 2, 1, 2, 3, ... from the top, vanilla's
+  spruce foliage); pines stay cones but no wider than their rows allow
+  (vanilla's pine widens one block per row; the sampled radius gave 4,
+  a 9-block wedding cake of snow); cone and tier rows leave out their
+  corners from radius 1, as vanilla's spruce and pine do (a plus on top).
+- **Placer types by class** (`instanceof` on the vanilla spruce, pine and
+  mega pine placers), modded placers by class name: the name test alone
+  saw intermediary names on Fabric outside the dev client, so its
+  spruces and pines drew as blobs there.
+- Cost, `PreviewBenchmark` whole section, 10 spruces per chunk: level 2
+  232 to 266 us with snow, level 4 630 to 730 us (+15 %); level 0 the same.
+
+Not covered: snow on the noise preview's village roofs (already snow
+blocks for snowy villages), icebergs.

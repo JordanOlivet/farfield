@@ -217,9 +217,10 @@ choice, an ADR.
   (ADR-040), huge mushrooms, cactus, bamboo and villages (ADR-041),
   checked in the Fabric dev client. Frozen seas (ADR-045): ice on the
   sea's top block where vanilla freezes it, checked in the Fabric dev
-  client on the test world's frozen ocean (2026-10-20). Remains: all of
-  it in the user's pack, NeoForge, other structures (icebergs), snow on
-  tree tops in snowy biomes (seen by the user 2026-10-21), the real
+  client on the test world's frozen ocean (2026-10-20). Snow on tree
+  tops and vanilla spruce and pine crowns (ADR-049), checked in the
+  Fabric dev client beside real snowy taiga (2026-10-21). Remains: all of
+  it in the user's pack, NeoForge, other structures (icebergs), the real
   terrain's edge wall seen through preview water (left for later by the
   user), and the spike in the user's large pack
 - [~] E.12 Draw only the face directions that can face the camera: each

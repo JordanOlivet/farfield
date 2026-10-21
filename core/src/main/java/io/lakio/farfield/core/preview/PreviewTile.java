@@ -33,9 +33,10 @@ public final class PreviewTile {
     public static final int FILLER_DEPTH = 3;
     /**
      * Format 2 adds the trees, 3 their shapes and the buildings, 4 the ice,
-     * 5 the grid the heights were computed on; older tiles are built again.
+     * 5 the grid the heights were computed on, 6 the snow on tree tops and
+     * tiered spruces; older tiles are built again.
      */
-    private static final int FORMAT = 5;
+    private static final int FORMAT = 6;
     /** Most tree kinds a tile holds (the kind rides in 8 bits of a tree). */
     public static final int MAX_KINDS = 255;
 
@@ -63,15 +64,24 @@ public final class PreviewTile {
     public static final int FLAT = 2;
     /** No crown: cactus, bamboo, single blocks. */
     public static final int COLUMN = 3;
+    /** Tiers widening downward, each narrow again at its top: spruces. */
+    public static final int TIERED = 4;
 
     /**
      * A tree or plant shape: its trunk and crown materials, the trunk's
      * height, and a crown of {@code crownHeight + 1} rows around the trunk's
      * top, of radius {@code radius}, shaped by {@code shape}: {@link #BLOB}
-     * (rounded rows narrowing at the top), {@link #CONE}, {@link #FLAT} or
-     * {@link #COLUMN}.
+     * (rounded rows narrowing at the top), {@link #CONE}, {@link #TIERED},
+     * {@link #FLAT} or {@link #COLUMN}. {@code snow}, -1 for none, lies on the top of each
+     * crown column (vanilla's freeze_top_layer, where the crown is cold
+     * enough to snow); columns take none.
      */
-    public record TreeKind(int trunk, int leaves, int height, int radius, int crownHeight, int shape) {
+    public record TreeKind(int trunk, int leaves, int height, int radius, int crownHeight, int shape, int snow) {
+
+        /** A kind without snow. */
+        public TreeKind(int trunk, int leaves, int height, int radius, int crownHeight, int shape) {
+            this(trunk, leaves, height, radius, crownHeight, shape, -1);
+        }
     }
 
     /**
@@ -281,7 +291,9 @@ public final class PreviewTile {
             for (int cx = 0; cx < CHUNKS; cx++) {
                 for (int t : trees(cx, cz)) {
                     TreeKind k = kinds.get(t >>> 8);
-                    int topY = height(cx * 16 + (t & 15), cz * 16 + (t >> 4 & 15)) + k.height() + 1;
+                    // The first free block above the crown, or above its snow.
+                    int topY = height(cx * 16 + (t & 15), cz * 16 + (t >> 4 & 15)) + k.height()
+                            + (k.snow() >= 0 ? 2 : 1);
                     for (int nz = Math.max(0, cz - 1); nz <= Math.min(CHUNKS - 1, cz + 1); nz++) {
                         for (int nx = Math.max(0, cx - 1); nx <= Math.min(CHUNKS - 1, cx + 1); nx++) {
                             int i = nz * CHUNKS + nx;
@@ -376,6 +388,7 @@ public final class PreviewTile {
             out.writeVarInt(k.radius());
             out.writeVarInt(k.crownHeight());
             out.writeVarInt(k.shape());
+            out.writeVarInt(k.snow() + 1);
         }
         for (int[] list : trees) {
             int n = list == null ? 0 : list.length;
@@ -431,7 +444,7 @@ public final class PreviewTile {
         int kinds = in.readVarInt();
         for (int i = 0; i < kinds; i++) {
             t.kinds.add(new TreeKind(in.readVarInt(), in.readVarInt(), in.readVarInt(), in.readVarInt(),
-                    in.readVarInt(), in.readVarInt()));
+                    in.readVarInt(), in.readVarInt(), in.readVarInt() - 1));
         }
         for (int c = 0; c < t.trees.length; c++) {
             int n = in.readVarInt();
