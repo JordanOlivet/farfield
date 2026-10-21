@@ -237,6 +237,21 @@ class PreviewTest {
     }
 
     @Test
+    void skyLightFadesThroughTheSea() {
+        // Column x 1 of the slope: ground up to about 50, water up to 62 (sea 63).
+        PreviewVoxels.Tiles tiles = (x, z) -> x == 0 && z == 0 ? slope() : null;
+        LodSection fine = PreviewVoxels.build(0, 0, 1, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
+        assertEquals(14, fine.skyLight().get(1, 62 - 32, 1), "the top water block");
+        assertEquals(7, fine.skyLight().get(1, 55 - 32, 1));
+        assertEquals(4, fine.skyLight().get(1, 52 - 32, 1));
+        assertEquals(15, fine.skyLight().get(1, 63 - 32, 1), "the air above");
+        // Level 2: a voxel takes its highest block's light, full when it holds air above the sea.
+        LodSection coarse = PreviewVoxels.build(2, 0, 0, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
+        assertEquals(15, coarse.skyLight().get(0, 15, 0), "blocks 60..63, 63 is air");
+        assertEquals(11, coarse.skyLight().get(0, 14, 0), "blocks 56..59: 59's light");
+    }
+
+    @Test
     void coarseColumnsTakeTheHighestSampleAndTheirFill() {
         PreviewTile t = slope();
         // Level 4 (16 blocks), section (0, 0, 0): voxel column 0 covers samples 0..4: highest 66.

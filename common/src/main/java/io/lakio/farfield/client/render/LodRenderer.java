@@ -19,6 +19,7 @@ import io.lakio.farfield.core.select.LodSelector;
 import io.lakio.farfield.core.util.RangeAllocator;
 import io.lakio.farfield.core.world.LodWorld;
 import io.lakio.farfield.lod.RenderSettings;
+import io.lakio.farfield.mixin.client.LevelRendererAccessor;
 import it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
@@ -28,6 +29,7 @@ import it.unimi.dsi.fastutil.objects.ObjectIterator;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
 import net.minecraft.client.resources.model.BakedModel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Registry;
@@ -626,8 +628,9 @@ public final class LodRenderer {
     /**
      * Rebuilds the grid of sections the terrain renderer has compiled, over
      * the render distance plus one chunk around the camera and the level's
-     * height. {@code LevelRenderer.isSectionCompiled} is vanilla's state, or
-     * Sodium's (it overrides the method).
+     * height. With Sodium, {@code LevelRenderer.isSectionCompiled} (Sodium
+     * overrides it); with vanilla, the sections its renderer draws this frame
+     * ({@link #vanillaDrawnSections}).
      */
     private void updateDrawnSections(Minecraft mc, ClientLevel level, Camera camera) {
         int rd = mc.options.getEffectiveRenderDistance() + 1;
@@ -646,6 +649,11 @@ public final class LodRenderer {
         }
         int bits = gridWidth * gridWidth * gridHeight;
         int ints = (bits + 31) >> 5;
+        if (!sodiumRule) {
+            vanillaDrawnSections(mc);
+            uploadDrawnSections(ints);
+            return;
+        }
         int ring = rd - RING_CHUNKS;
         net.minecraft.client.renderer.LevelRenderer renderer = mc.levelRenderer;
         for (int z = 0; z < gridWidth; z++) {
@@ -676,6 +684,36 @@ public final class LodRenderer {
                 }
             }
         }
+        uploadDrawnSections(ints);
+    }
+
+    /**
+     * Vanilla draws only the compiled sections of its visible list: its
+     * occlusion graph, rebuilt in the background after the camera moves 8
+     * blocks, cut by the frustum. Compiled was not enough: a section missing
+     * from the list for a frame or two while the camera moved showed neither
+     * the game's terrain nor the LODs (ADR-052).
+     */
+    private void vanillaDrawnSections(Minecraft mc) {
+        int[] bits = drawnBits;
+        java.util.Arrays.fill(bits, 0);
+        for (SectionRenderDispatcher.RenderSection s : ((LevelRendererAccessor) mc.levelRenderer).farfield$visibleSections()) {
+            if (s.compiled.get() == SectionRenderDispatcher.CompiledSection.UNCOMPILED) {
+                continue;
+            }
+            BlockPos origin = s.getOrigin();
+            int gx = (origin.getX() >> 4) - gridMinX;
+            int gy = (origin.getY() >> 4) - gridMinY;
+            int gz = (origin.getZ() >> 4) - gridMinZ;
+            if (gx < 0 || gy < 0 || gz < 0 || gx >= gridWidth || gz >= gridWidth || gy >= gridHeight) {
+                continue;
+            }
+            int bit = (gz * gridWidth + gx) * gridHeight + gy;
+            bits[bit >> 5] |= 1 << (bit & 31);
+        }
+    }
+
+    private void uploadDrawnSections(int ints) {
         long needed = (long) ints * 4;
         if (needed > drawnSections.size()) {
             drawnSections.grow(Math.max(needed, drawnSections.size() * 2), 0);

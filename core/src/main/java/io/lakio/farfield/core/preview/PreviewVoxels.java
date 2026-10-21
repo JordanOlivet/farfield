@@ -183,6 +183,11 @@ public final class PreviewVoxels {
                     if (level > 0) {
                         section.fill().set(i, vy, k, (blocks * 16 + s - 1) / s - 1);
                     }
+                    if (bottom >= height) {
+                        // Sky light fades by one per block of water, as vanilla's (the face of the
+                        // floor takes the light of the water in front of it): its highest block's.
+                        section.skyLight().set(i, vy, k, seaSkyLight(Math.min(bottom + s, sea) - 1, sea, bottom + s > sea));
+                    }
                 }
             }
         }
@@ -635,6 +640,15 @@ public final class PreviewVoxels {
             }
             return section;
         }
+    }
+
+    /**
+     * Sky light of block {@code y} of a sea whose first free block is {@code
+     * sea}: 14 in the top block, one less per block down. {@code withAir}: the
+     * voxel also holds air above the sea, whose full light the mip rule keeps.
+     */
+    static int seaSkyLight(int y, int sea, boolean withAir) {
+        return withAir ? 15 : Math.max(0, 15 - (sea - y));
     }
 
     /**

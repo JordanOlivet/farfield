@@ -1251,3 +1251,39 @@ layer that also held snow layers was missing.
   offline scan of 81 sections: every face of an opaque voxel next to air
   emitted), which pointed at the renderer; after the fix the same pine
   is whole, and the view of the user's screenshots shows no ring.
+
+## ADR-052 — Vanilla hand-off from its visible sections
+
+**Date**: 2026-10-21 · **Status**: accepted (amends the vanilla side of ADR-011's hand-off)
+
+The user, Fabric dev client without Sodium: the vanilla-edge flicker was
+back, a chunk gone for one or two frames while moving ("j'ai l'impression
+qu'on y retombe toujours dessus").
+
+- **Cause**: LODs gave way to every section compiled for two passes. Vanilla
+  draws only the compiled sections of `LevelRenderer.visibleSections`, its
+  occlusion graph (rebuilt in the background after the camera moves 8
+  blocks) cut by the frustum. A temporary counter in the dev client: 15 to
+  31 non-empty compiled sections in view missing from that list in almost
+  every frame of a flight, so neither side drew them for a frame or two.
+- **Fix** (vanilla only): an accessor on `visibleSections`; the
+  compiled-sections grid is rebuilt each frame from that list. Sodium keeps
+  the compiled rule of 2026-10-16 (its own lists, not read here).
+- Checked by the user: "Le flicker a disparu". Left: thin lines at the
+  vanilla edge over sea ice that appear late (2026-10-21 progress log).
+
+## ADR-053 — Sky light fades through preview seas
+
+**Date**: 2026-10-21 · **Status**: accepted (extends ADR-039)
+
+The user: LOD sea floors lit as if no water were above. The real LODs
+carry vanilla's light (a scan of the stored sections: 14 under the
+surface, one less per block, 0 from 15 blocks down); the noise preview set
+none, so its floors kept full sky light.
+
+- `PreviewVoxels` gives each water voxel the sky light of its highest
+  block, `15 - (sea - y)`, full when the voxel also holds the air above the
+  sea; the floor's top face takes the light of the water in front of it.
+- Checked in the Fabric dev client at the user's view (2394, 126, -162):
+  the preview patch that stood out pale among the real frozen ocean is as
+  dark as the real floor around it. Unit test `skyLightFadesThroughTheSea`.

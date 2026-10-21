@@ -10,6 +10,7 @@
   ],
   "client": [
     "client.FogRendererMixin",
+    "client.LevelRendererAccessor",
     "client.LevelRendererMixin",
     "client.SpriteContentsAccessor",
     "client.WindowMixin"
