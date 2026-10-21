@@ -49,6 +49,8 @@ To localize a new seam inside LODs, capture the same camera spot before and afte
 
 - Vanilla-mirroring settings: when the user asks a LOD effect to follow a vanilla option (Biome Blend, render distance, fog), read the live vanilla option value and copy its semantics exactly. When the vanilla option is off, do nothing extra, so the output matches the pre-feature build.
 - Partial blocks (snow layers, slabs) are full cubes on coarse levels: their face tiles must carry no cutout, or the cube shows holes while hiding its neighbors (ADR-050; `MaterialColors` fills them with the face color). "Transparent leaves" far away: check the level colors, then the cutout of the voxel's material.
+- Preview keys carry a level offset (`PreviewLayer.KEY_LEVEL_OFFSET`): read a level from a key that may be a preview one with `drawLevel(key)`, never `LodKey.level(key)` (ADR-051: level-0 preview sections meshed as coarse ones).
+- Holes in LODs: first scan the section data and its mesh offline (a temporary core test on `<save>/farfield/preview` or the store); complete data and mesh point at the renderer.
 
 Known open gaps (E.7 in the milestone plan):
 - Fences, walls and panes are invisible in LODs; stairs are full cubes.

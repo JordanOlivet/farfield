@@ -1227,3 +1227,27 @@ forests (level 1) showed holes down to the ice and sky.
   most frequent top of four columns; ADR-049's "any open block" turned
   far forests into white cubes once the holes were gone. Far forests now
   show green and white like the real ones beside them.
+
+## ADR-051 — Preview sections mesh by their draw level
+
+**Date**: 2026-10-21 · **Status**: accepted (completes ADR-050)
+
+After ADR-050 the user still saw, through a spyglass, preview spruces
+and pines as hollow rings with floating snow plates. Reproduced up close
+in the Fabric dev client at render distance 2 (`/tp 2960 84 -490 -142
+11.6`, a preview pine at 3018, 64, -566): every leaf in a horizontal
+layer that also held snow layers was missing.
+
+- **Cause**: `LodRenderer.mesh` chose the classifier from
+  `LodKey.level(key)`, which for a preview key carries
+  `PreviewLayer.KEY_LEVEL_OFFSET`. Level-0 preview sections were meshed
+  with the coarse classifier, where partial and shaped blocks count as
+  opaque cubes: a snow layer hid the side faces of the leaves beside it,
+  while the shader drew it 2/16 high. The preview had no partial block
+  before ADR-049, so the bug stayed hidden.
+- **Fix**: the draw level (`drawLevel(key)`) picks the classifier, as
+  everywhere else that reads a level from a key that may be a preview one.
+- Checked: the stored tiles and their level-0 meshes were complete (an
+  offline scan of 81 sections: every face of an opaque voxel next to air
+  emitted), which pointed at the renderer; after the fix the same pine
+  is whole, and the view of the user's screenshots shows no ring.

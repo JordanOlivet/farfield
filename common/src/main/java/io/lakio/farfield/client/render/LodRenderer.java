@@ -900,8 +900,10 @@ public final class LodRenderer {
     private MeshResult mesh(LodWorld w, int gen, long key, LodSection section) throws IOException {
         MaterialClassifier materials = w.materials();
         // Partial and shaped blocks keep their shape on the finest level only;
-        // coarser voxels hold more than the block and stay full.
-        MaterialClassifier classes = LodKey.level(key) == 0 ? materials : m -> {
+        // coarser voxels hold more than the block and stay full. The draw level, not
+        // the key's: a preview key carries an offset (a snow layer meshed as a cube
+        // there hid the faces beside it, while the shader drew it 2/16 high).
+        MaterialClassifier classes = drawLevel(key) == 0 ? materials : m -> {
             int c = materials.classOf(m);
             return c == MaterialClassifier.PARTIAL || c == MaterialClassifier.SHAPED ? MaterialClassifier.OPAQUE : c;
         };
