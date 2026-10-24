@@ -103,6 +103,8 @@ final class NoisePreview {
         final BiomeSource biomes;
         final Climate.Sampler sampler;
         final DensityFunction density;
+        /** {@link #density} with vanilla's per-column caches, one per preview thread (ADR-057). */
+        final ThreadLocal<DensityFunction> columnDensity;
         final NoiseSettings noise;
         final int seaLevel;
         final BlockState defaultBlock;
@@ -122,6 +124,9 @@ final class NoisePreview {
         final Set<Long> inFlight = ConcurrentHashMap.newKeySet();
         final AtomicInteger built = new AtomicInteger();
         final AtomicLong builtNanos = new AtomicLong();
+        /** Time of each {@link #STAGES} of the tiles built since the last report. */
+        final java.util.concurrent.atomic.AtomicLongArray stageNanos =
+                new java.util.concurrent.atomic.AtomicLongArray(STAGES.length);
         int left = -1;
         boolean reportedDone;
         /** Fill line: where the first player was at the last update, when they joined or jumped (0: not timed). */
@@ -139,6 +144,7 @@ final class NoisePreview {
             biomes = generator.getBiomeSource();
             sampler = state.sampler();
             density = state.router().finalDensity();
+            columnDensity = ThreadLocal.withInitial(() -> ColumnDensity.of(density));
             NoiseGeneratorSettings settings = generator.generatorSettings().value();
             noise = settings.noiseSettings();
             seaLevel = generator.getSeaLevel();
@@ -173,7 +179,7 @@ final class NoisePreview {
         }
 
         boolean solid(int x, int y, int z) {
-            return density.compute(new DensityFunction.SinglePointContext(x, y, z)) > 0;
+            return columnDensity.get().compute(new DensityFunction.SinglePointContext(x, y, z)) > 0;
         }
     }
 
@@ -326,12 +332,26 @@ final class NoisePreview {
         return t == 0 ? "-" : String.format("%.1f s", (t - d.fillStart) / 1e9);
     }
 
+    /** The steps of a tile build, timed for the report line. */
+    private static final String[] STAGES = {"heights", "cells", "biomes", "villages", "trees", "write"};
+    private static final int HEIGHTS = 0;
+    private static final int CELLS = 1;
+    private static final int BIOMES = 2;
+    private static final int VILLAGES = 3;
+    private static final int TREES = 4;
+    private static final int WRITE = 5;
+
     private void report(Dimension d) {
         int built = d.built.getAndSet(0);
         long nanos = d.builtNanos.getAndSet(0);
         if (built > 0) {
-            Farfield.LOG.info("Noise preview of {}: {} tiles built in the last minute ({} ms each, {} villages),"
-                    + " {} left within {} blocks", d.key.location(), built, nanos / 1_000_000 / built,
+            StringBuilder stages = new StringBuilder();
+            for (int i = 0; i < STAGES.length; i++) {
+                stages.append(i == 0 ? "" : ", ").append(STAGES[i]).append(' ')
+                        .append(d.stageNanos.getAndSet(i, 0) / 1_000_000 / built);
+            }
+            Farfield.LOG.info("Noise preview of {}: {} tiles built in the last minute ({} ms each: {}; {} villages),"
+                    + " {} left within {} blocks", d.key.location(), built, nanos / 1_000_000 / built, stages,
                     d.villagesBuilt.getAndSet(0), d.left, (int) RANGE);
             d.reportedDone = false;
         } else if (d.left == 0 && !d.reportedDone) {
@@ -341,7 +361,13 @@ final class NoisePreview {
         }
     }
 
-    /** Builds and stores one tile. */
+    /** Adds the time since {@code from} to a stage; returns now. */
+    private static long stage(Dimension d, int stage, long from) {
+        long now = System.nanoTime();
+        d.stageNanos.addAndGet(stage, now - from);
+        return now;
+    }
+
     /**
      * Blocks between the heights a tile computes at a distance: {@link
      * PreviewTile#GRID} up to 1,024 blocks, 8 up to 2,048, 16 beyond. The
@@ -352,6 +378,7 @@ final class NoisePreview {
         return distance <= 1024 ? PreviewTile.GRID : distance <= 2048 ? 8 : 16;
     }
 
+    /** Builds and stores one tile. */
     private void build(Dimension d, long key, int grid) {
         int tileX = PreviewStore.tileX(key);
         int tileZ = PreviewStore.tileZ(key);
@@ -378,8 +405,10 @@ final class NoisePreview {
             boolean[] icebergs = icebergs(d, tile, x0, z0, step);
             tile.fillBetweenSamples(step);
             tile.setGrid(grid);
+            long t = stage(d, HEIGHTS, start);
             Materials m = new Materials(world, d);
             Holder<Biome>[] chunkBiomes = biomes(d, tile, x0, z0, world);
+            t = stage(d, BIOMES, t);
             for (int cz = 0; cz < PreviewTile.CELLS; cz++) {
                 for (int cx = 0; cx < PreviewTile.CELLS; cx++) {
                     int h = Math.max(Math.max(tile.sample(cx, cz), tile.sample(cx + 1, cz)),
@@ -410,9 +439,13 @@ final class NoisePreview {
             tile.setWater(m.water, d.seaLevel);
             tile.setIce(m.ice);
             tile.setIceberg(m.packedIce);
+            t = stage(d, CELLS, t);
             List<PreviewVillages.Village> villages = villages(d, tile, x0, z0, m);
+            t = stage(d, VILLAGES, t);
             plantTrees(d, tile, tileX, tileZ, chunkBiomes, m, villages);
+            t = stage(d, TREES, t);
             world.preview().write(tileX, tileZ, tile);
+            stage(d, WRITE, t);
             d.done.put(key, grid);
             d.built.incrementAndGet();
             d.builtNanos.addAndGet(System.nanoTime() - start);

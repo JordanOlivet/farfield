@@ -1397,3 +1397,34 @@ sooner than what is behind.
 - Not measured: the order's effect when joining a world with stored LODs
   (the first 5 to 10 s are dominated by cold jobs of 10 to 24 ms); NeoForge;
   the user's pack.
+
+## ADR-057 — Per-column caches in the preview's density
+
+**Date**: 2026-10-24 · **Status**: accepted (amends the surface search of ADR-038)
+
+After ADR-056 a teleport waits for the preview tiles. Per-stage timers in
+the minute line (`heights`, `cells`, `biomes`, `villages`, `trees`,
+`write`) and a JFR recording around a teleport (Fabric dev client, 12000,
+160, 8000, 236 tiles over frozen sea) showed where a tile goes:
+
+- heights 499 of 569 ms per tile; 82 % of the preview threads' samples in
+  `PerlinNoise.getValue`, 77 % under the terrain splines, 45 % in the
+  shift noises, 7.6 % in the 3D `BlendedNoise`.
+- The surface search reads `finalDensity` with a `SinglePointContext` about
+  eight times per column. That context ignores vanilla's cache markers, so
+  every read recomputed continentalness, erosion, ridges, their shift
+  noises and the splines over them, all `flat_cache` or `cache_2d`: 2D
+  functions that `NoiseChunk` computes once per column.
+
+**Decision**: `ColumnDensity` maps the router's density once per preview
+thread, replacing `flat_cache` and `cache_2d` markers by a cache of the
+last column and `cache_once` ones by a cache of the last point, as
+`NoiseChunk` does (samples are 4-block aligned, the quart corners vanilla's
+flat cache reads). The 3D noise is still read at every point.
+
+- Same run, same world copy: heights 499 to 191 ms, a tile 569 to 259 ms;
+  after the teleport, tiles within 1,024 blocks 21.5 to 9.7 s, in front
+  28.0 to 14.7 s, all 35.5 to 20.7 s. The 558 tile files of both runs are
+  byte-identical.
+- Left: the biome lookups (31 % of the samples with the cache), mostly the
+  per-cell frozen-sea check over cold seas, and the 3D noise (25 %).
