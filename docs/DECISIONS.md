@@ -1554,3 +1554,29 @@ The user's pass of ADR-060 in the Fabric pack, with screenshots:
   check); the user's savanna tile decoded: acacia, oak, pumpkin kinds,
   plants dandelion, short grass, mushrooms, seagrass, medicinal leek,
   galarica nut bush, tall grass.
+
+## ADR-062 — Sections wait for their looks; more time for looks while many wait
+
+**Date**: 2026-10-25 · **Status**: accepted (replaces ADR-061's map-color placeholders)
+
+The user on ADR-061's placeholders: correct, but "le premier affichage
+avec seulement la couleur est vraiment très moche", and asked for no
+provisional color, and for more time to build looks the more are
+waiting, at join, after a teleport or anywhere, without the game falling
+under 60 fps when it is above.
+
+- No placeholder: a material without its look keeps color 0, and a
+  section whose highest material has no look yet is not drawn
+  (`Resident.maxMaterial`; looks are built in id order). Terrain appears
+  section by section with its final look; the sky shows meanwhile. The
+  faces' mean colors stay: they draw the far levels beyond the texture
+  distance, the fade into it, and faces whose atlas tile is missing.
+- Budget: 3 ms per frame, or, while more than 64 looks wait, what the
+  previous frame left before 60 fps (its interval minus the looks' own
+  time, up to a whole 60 fps frame): a game under 60 fps keeps the 3 ms
+  and loses no more than before. `LOD looks: N built in T ms` closes each
+  backlog.
+- Fabric dev client, game start then the test world: `LOD looks: 1836
+  built in 3001 ms`; captures 3, 6 and 12 s after the renderer was ready
+  show the final looks only. Not measured: the old budget on the same
+  start (no log line then), the user's pack (thousands of states).

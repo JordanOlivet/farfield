@@ -65,10 +65,10 @@ import java.util.Map;
  * over the whole face; a failure falls back to the map color without a
  * texture.
  *
- * <p>Built on the render thread under a time budget per frame; materials not
- * built yet read as tinted for the mesher threads ({@link #tinted}). Until
- * then they show their map color, untextured ({@link #placeheld}): a new
- * world's thousands of states took seconds, drawn black meanwhile.
+ * <p>Built on the render thread under a time budget per frame, which the
+ * renderer raises while many are waiting (ADR-062); materials not built
+ * yet read as tinted for the mesher threads ({@link #tinted}). Ids are
+ * built in order: a material is built once its id is below {@link #count}.
  */
 final class MaterialColors {
 
@@ -87,7 +87,6 @@ final class MaterialColors {
 
     private static final int T = FaceTextures.TILE;
     private static final int PIXELS = T * T;
-    private static final long BUDGET_NANOS = 3_000_000L;
     private static final int FALLBACK = abgr(0x808080, 0xFF);
     /** Brightness of what shows through the holes of opaque materials (inner leaves). */
     private static final float HOLE_SHADE = 0.45f;
@@ -99,10 +98,6 @@ final class MaterialColors {
 
     private int[] colors = new int[0];
     private int count;
-    /** Ids below this have their look or a placeholder (map color, no texture). */
-    private int placeheld;
-    /** End of the ids the last {@link #update} changed. */
-    private int changedEnd;
     /** Published to the mesher threads; replaced, never modified. */
     private volatile boolean[] tinted = new boolean[0];
     /** Per id: a face has {@link #CUTOUT}; read by the mesher threads as {@link #tinted}. */
@@ -135,10 +130,12 @@ final class MaterialColors {
     /**
      * Builds the looks of new ids within the frame's budget.
      *
-     * @param probeBiome the biome block colors are probed in (plains)
+     * @param probeBiome  the biome block colors are probed in (plains)
+     * @param budgetNanos time this call may take
      * @return the first id built, or -1 if none
      */
-    int update(KeyRegistry registry, MaterialClassifier classes, BiomeTints tints, Biome probeBiome) {
+    int update(KeyRegistry registry, MaterialClassifier classes, BiomeTints tints, Biome probeBiome,
+               long budgetNanos) {
         int size = registry.size();
         if (size == count) {
             return -1;
@@ -146,14 +143,9 @@ final class MaterialColors {
         if (colors.length < size * STRIDE) {
             colors = Arrays.copyOf(colors, Math.max(size, colors.length / STRIDE * 2) * STRIDE);
         }
-        int firstPlaceholder = Math.max(placeheld, count);
-        for (int id = firstPlaceholder; id < size; id++) {
-            placeholder(registry.key(id), id * STRIDE, classes.classOf(id), classes, id);
-        }
-        placeheld = Math.max(placeheld, size);
         boolean[] flags = Arrays.copyOf(tinted, size);
         boolean[] holes = Arrays.copyOf(cutout, size);
-        long deadline = System.nanoTime() + BUDGET_NANOS;
+        long deadline = System.nanoTime() + budgetNanos;
         int first = count;
         int id = count;
         while (id < size) {
@@ -176,24 +168,7 @@ final class MaterialColors {
         count = id;
         tinted = Arrays.copyOf(flags, id);
         cutout = Arrays.copyOf(holes, id);
-        changedEnd = firstPlaceholder < size ? size : count;
         return first;
-    }
-
-    /** End of the ids the last {@link #update} changed (from the id it returned): looks and placeholders. */
-    int changedEnd() {
-        return changedEnd;
-    }
-
-    /** A state's map color on every face, no texture, its height and boxes: the look until it is built. */
-    private void placeholder(String key, int off, int meshClass, MaterialClassifier classes, int id) {
-        BlockState state = BlockKeys.state(key);
-        fillFlat(off, state == null ? FALLBACK : mapColor(state));
-        colors[off + HEIGHT] = Float.floatToIntBits(height(key, meshClass));
-        int boxes = Math.min(classes.boxCount(id), BOX_COUNT);
-        for (int b = 0; b < BOX_COUNT; b++) {
-            colors[off + BOXES + b] = b < boxes ? classes.box(id, b) : 0;
-        }
     }
 
     /**
@@ -218,7 +193,6 @@ final class MaterialColors {
     /** Forgets every look (resource reload, other world): they are built again. */
     void reset() {
         count = 0;
-        placeheld = 0;
         sprites.clear();
         textures.reset();
         tinted = new boolean[0];

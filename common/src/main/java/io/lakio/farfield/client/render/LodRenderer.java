@@ -153,6 +153,11 @@ public final class LodRenderer {
     private static final double TELEPORT_DISTANCE_SQ = 256 * 256;
     /** How long after a join or a teleport the fill line waits before it is logged. */
     private static final long FILL_WINDOW_NANOS = 60_000_000_000L;
+    /** Time per frame for building material looks ({@link MaterialColors})... */
+    private static final long LOOKS_BUDGET_NANOS = 3_000_000L;
+    /** ...up to what keeps the frame at 60 fps when more than this many wait (ADR-062). */
+    private static final int LOOKS_BACKLOG = 64;
+    private static final long LOOKS_FRAME_NANOS = 1_000_000_000L / 60;
     private static final byte EXISTS = 1;
     private static final byte ABSENT = 2;
     private static final int TIMER_SLOTS = 4;
@@ -347,6 +352,12 @@ public final class LodRenderer {
     private double lastCamX;
     private double lastCamY;
     private double lastCamZ;
+    /** Start of the previous frame and the time its looks took, for the looks' budget. */
+    private long lastFrameStart;
+    private long lastLooksNanos;
+    /** Start of the current backlog of looks (0: none) and its size, for its log line. */
+    private long looksBacklogStart;
+    private int looksBacklog;
     /** Fill line: when the join or teleport happened (0: none being timed), and what it was. */
     private long fillStart;
     private String fillCause;
@@ -436,6 +447,8 @@ public final class LodRenderer {
         int[] groups = new int[GROUPS + 1];
         /** Some opaque faces have holes to cut out (or were meshed before their colors were built). */
         boolean cutout;
+        /** Highest material of its quads (-1 for none): drawn once its look is built. */
+        int maxMaterial = -1;
         /** Its opaque voxels are in the occupancy buffer (ambient occlusion). */
         boolean occluders;
         /** Last time the selection used it: drawn, or relied on to descend to its children. */
@@ -449,7 +462,8 @@ public final class LodRenderer {
     /** {@code groups}: start of each quad group ({@link #GROUPS}), then the quad count. */
     /** {@code provisional}: {@code cutout} was guessed for materials whose looks were not built yet. */
     private record MeshResult(int generation, long key, long[] quads, int[] groups, boolean cutout,
-                              boolean provisional, int[] occupancy, int[] biomeColumns) {
+                              boolean provisional, int[] occupancy, int[] biomeColumns,
+                              int maxMaterial) {
     }
 
     private static final int[] NO_GROUPS = new int[GROUPS + 1];
@@ -605,7 +619,7 @@ public final class LodRenderer {
         readGpuTimers();
         applyRewrites();
         uploadMeshes();
-        uploadColors(mc, level);
+        uploadColors(mc, level, looksBudget(frameStart));
         updateDrawnSections(mc, level, camera);
 
         Vec3 cam = camera.getPosition();
@@ -651,6 +665,9 @@ public final class LodRenderer {
             Resident r = resident.get(key);
             if (r == null || r.quadCount == 0) {
                 continue;
+            }
+            if (r.maxMaterial >= colors.count()) {
+                continue; // a material without its look yet: drawn once it has one (ADR-062)
             }
             int faces = visibleFaces(key, cam);
             if (faces == 0) {
@@ -1062,11 +1079,11 @@ public final class LodRenderer {
             long start = System.nanoTime();
             try {
                 LodSection section = PreviewLayer.isPreview(key) ? previewLayer.build(w, key) : readSection(w, key);
-                result = section == null ? new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null)
+                result = section == null ? new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null, -1)
                         : mesh(w, gen, key, section);
             } catch (IOException | RuntimeException e) {
                 Farfield.LOG.debug("LOD mesh of {} failed", LodKey.toString(key), e);
-                result = new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null);
+                result = new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null, -1);
             }
             meshNanos.addAndGet(System.nanoTime() - start);
             meshJobs.incrementAndGet();
@@ -1165,7 +1182,11 @@ public final class LodRenderer {
         for (int i = 0; i < packed.length; i++) {
             packed[i] = columns[2 * i] | columns[2 * i + 1] << 16;
         }
-        return new MeshResult(gen, key, all, groups, cutout, provisional, occupied, packed);
+        int maxMaterial = -1;
+        for (long q : all) {
+            maxMaterial = Math.max(maxMaterial, Quad.material(q));
+        }
+        return new MeshResult(gen, key, all, groups, cutout, provisional, occupied, packed, maxMaterial);
     }
 
     /** @param list a face direction, or {@link MeshBuffer#PLANTS} */
@@ -1306,6 +1327,7 @@ public final class LodRenderer {
             r.opaqueCount = m.groups[Quad.DIRECTIONS];
             r.groups = m.groups;
             r.cutout = m.cutout;
+            r.maxMaterial = m.maxMaterial;
             if (m.provisional) {
                 provisional.add(m.key);
             } else {
@@ -1465,7 +1487,24 @@ public final class LodRenderer {
      * A resource reload or another level builds everything again, and meshes
      * again what is resident (which materials depend on the biome may change).
      */
-    private void uploadColors(Minecraft mc, ClientLevel level) {
+    /**
+     * Time this frame may spend building looks: {@link #LOOKS_BUDGET_NANOS},
+     * or, while more than {@link #LOOKS_BACKLOG} wait, what the previous
+     * frame left before 60 fps (never less): the rest of the frame keeps its
+     * time, and a game already under 60 fps loses no more than before.
+     */
+    private long looksBudget(long frameStart) {
+        long interval = lastFrameStart == 0 ? 0 : frameStart - lastFrameStart;
+        lastFrameStart = frameStart;
+        int waiting = world.blockStates().size() - colors.count();
+        if (waiting <= LOOKS_BACKLOG || interval <= 0) {
+            return LOOKS_BUDGET_NANOS;
+        }
+        long rest = interval - lastLooksNanos;
+        return Math.max(LOOKS_BUDGET_NANOS, Math.min(LOOKS_FRAME_NANOS, LOOKS_FRAME_NANOS - rest));
+    }
+
+    private void uploadColors(Minecraft mc, ClientLevel level, long budget) {
         BakedModel missing = mc.getModelManager().getMissingModel();
         if (missing != missingModel || level != colorLevel) {
             if (missingModel != null) {
@@ -1485,7 +1524,19 @@ public final class LodRenderer {
                 return;
             }
         }
-        int first = colors.update(world.blockStates(), world.materials(), tints, plains);
+        int waiting = world.blockStates().size() - colors.count();
+        if (waiting > LOOKS_BACKLOG && looksBacklogStart == 0) {
+            looksBacklogStart = System.nanoTime();
+            looksBacklog = waiting;
+        }
+        long looksStart = System.nanoTime();
+        int first = colors.update(world.blockStates(), world.materials(), tints, plains, budget);
+        lastLooksNanos = System.nanoTime() - looksStart;
+        if (looksBacklogStart != 0 && colors.count() == world.blockStates().size()) {
+            Farfield.LOG.info("LOD looks: {} built in {} ms", looksBacklog,
+                    (System.nanoTime() - looksBacklogStart) / 1_000_000);
+            looksBacklogStart = 0;
+        }
         if (!provisional.isEmpty() && colors.count() == world.blockStates().size()) {
             stale.addAll(provisional);
             provisional.clear();
@@ -1493,7 +1544,7 @@ public final class LodRenderer {
         }
         if (first >= 0) {
             int stride = MaterialColors.STRIDE;
-            int end = colors.changedEnd();
+            int end = colors.count();
             long needed = (long) end * stride * 4;
             if (needed > colorBuffer.size()) {
                 colorBuffer.grow(Math.max(needed, colorBuffer.size() * 2), (long) first * stride * 4);
