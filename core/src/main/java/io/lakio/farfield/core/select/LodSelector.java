@@ -30,6 +30,9 @@ public final class LodSelector {
 
     private final int levels;
     private double detail;
+    /** Sections outside the view split at {@link #outsideDetail} at most; null: every section at {@link #detail}. */
+    private LongPredicate inView;
+    private double outsideDetail = Double.MAX_VALUE;
     private int fallbacks;
     /** Sections that descended in the previous selection, and in the current one. */
     private Set<Long> descended = new HashSet<>();
@@ -53,6 +56,16 @@ public final class LodSelector {
     /** Sets the split distance in section sizes (see the constructor). */
     public void setDetail(double detail) {
         this.detail = detail;
+    }
+
+    /**
+     * Sections {@code inView} rejects split at {@code detail} at most: a
+     * zoomed view (a spyglass) raises the detail of what it shows, not of
+     * everything around (ADR-063). Null for every section at the same detail.
+     */
+    public void setOutsideView(LongPredicate inView, double detail) {
+        this.inView = inView;
+        this.outsideDetail = detail;
     }
 
     /** Sections the last selection drew coarser than wanted, waiting for a child mesh. */
@@ -118,7 +131,8 @@ public final class LodSelector {
         }
         double dy = Math.max(0, Math.max(minY - camY, camY - (minY + size)));
         double distance = Math.sqrt(horizontal * horizontal + dy * dy);
-        if (level > 0 && distance < detail * size) {
+        double split = inView != null && outsideDetail < detail && !inView.test(key) ? outsideDetail : detail;
+        if (level > 0 && distance < split * size) {
             boolean childrenReady = true;
             int x = LodKey.x(key) * 2;
             int y = LodKey.y(key) * 2;
@@ -140,7 +154,7 @@ public final class LodSelector {
             }
         }
         if (sections.ready(key)) {
-            if (level > 0 && distance < detail * size) {
+            if (level > 0 && distance < split * size) {
                 fallbacks++;
             }
             draw.accept(key);

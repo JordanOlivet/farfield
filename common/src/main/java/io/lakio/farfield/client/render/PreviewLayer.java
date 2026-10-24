@@ -111,6 +111,11 @@ final class PreviewLayer {
         selector.setDetail(detail);
     }
 
+    /** See {@link LodSelector#setOutsideView}; {@code inView} takes plain keys (their level is the draw level). */
+    void setOutsideView(LongPredicate inView, double detail) {
+        selector.setOutsideView(inView, detail);
+    }
+
     /**
      * Selects preview sections like the real ones; {@code draw} and
      * {@code want} receive preview keys. Render thread.

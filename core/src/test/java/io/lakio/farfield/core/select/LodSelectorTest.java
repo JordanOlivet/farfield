@@ -31,6 +31,29 @@ class LodSelectorTest {
     }
 
     @Test
+    void sectionsOutsideTheViewKeepTheUsualDetail() {
+        // A zoomed view (detail 40) toward +X; behind it, the usual detail 2.
+        LodSelector selector = new LodSelector(5, 40.0);
+        selector.setOutsideView(key -> LodKey.x(key) >= 0, 2.0);
+        List<Long> draw = new ArrayList<>();
+        selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of()), draw::add, k -> { });
+        int finestAhead = 0;
+        int finestBehind = 0;
+        for (long key : draw) {
+            if (LodKey.level(key) == 0) {
+                if (LodKey.x(key) >= 0) {
+                    finestAhead++;
+                } else {
+                    finestBehind++;
+                }
+            }
+        }
+        // Ahead, level 0 reaches 40 sections of 32 blocks; behind, 2 of them.
+        assertTrue(finestAhead > 20 * finestBehind, finestAhead + " ahead, " + finestBehind + " behind");
+        assertTrue(finestBehind > 0);
+    }
+
+    @Test
     void finerNearCoarserFarAndNoOverlap() {
         LodSelector selector = new LodSelector(5, 2.0);
         List<Long> draw = new ArrayList<>();

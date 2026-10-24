@@ -1580,3 +1580,33 @@ under 60 fps when it is above.
   built in 3001 ms`; captures 3, 6 and 12 s after the renderer was ready
   show the final looks only. Not measured: the old budget on the same
   start (no log line then), the user's pack (thousands of states).
+
+## ADR-063 — Spyglass detail in view only; no section kept empty for want of room; waterlogged blocks are fluid
+
+**Date**: 2026-10-25 · **Status**: accepted (amends the selector of ADR-022, the arena's out-of-room rule, ADR-055)
+
+The user's pass of ADR-062 in the Fabric pack (looks: `8671 built in 3838
+ms`, then about 1 s on later joins), with screenshots:
+
+- **LOD sections missing for minutes** after going near and back. The
+  user had looked through a spyglass: the narrow projection raised the
+  detail from 4.6 to 62.6 section sizes, every section around split to
+  level 0 (126,760 resident, 1,023 of 1,024 MB of quads), and a mesh that
+  found no room was kept as an empty resident "until evictions free
+  space": ready to the selection, never meshed again, while eviction
+  frees only sections unused for 10 s. Two fixes:
+  - `LodSelector.setOutsideView`: sections outside the frustum split at
+    the detail of the options' field of view at most; the zoomed detail
+    serves what the zoomed view shows.
+  - Room before residence: the quads of a mesh are allocated first; on
+    failure the arena drops the sections the last selection did not use
+    and tries again; still nothing, and the result waits (an existing
+    section keeps its old mesh and turns stale) instead of an empty one.
+- **Dark squares in the water around kelp**: kelp, seagrass and other
+  waterlogged blocks are drawn as water but were a translucent non-fluid,
+  so since ADR-055 their faces against the water around showed (water
+  over water). They are a fluid now (`MaterialTable.packFluid`).
+- Checked: core tests with `sectionsOutsideTheViewKeepTheUsualDetail`;
+  Fabric dev client boot, `LOD looks: 2083 built in 1644 ms`, 1,562
+  sections drawn, no error. Not checked: the spyglass and the kelp in the
+  user's pack.

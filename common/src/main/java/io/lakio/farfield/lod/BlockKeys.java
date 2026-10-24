@@ -155,8 +155,10 @@ public final class BlockKeys {
             return MaterialTable.pack(meshClass, MipBuilder.Shapes.FULL);
         }
         if (!state.getFluidState().isEmpty()) {
-            // Waterlogged partial blocks, seagrass, kelp: the water dominates.
-            return MaterialTable.pack(MaterialClassifier.TRANSLUCENT, MipBuilder.Shapes.FULL);
+            // Waterlogged partial blocks, seagrass, kelp: the water dominates, and they are
+            // that water for the mesher too: no faces between them and the water around
+            // (dark squares around kelp once ice and water showed their faces, ADR-055).
+            return MaterialTable.packFluid();
         }
         if (!shape.isEmpty()) {
             AABB b = shape.bounds();

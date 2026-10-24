@@ -53,6 +53,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.IntPredicate;
 import java.util.function.LongConsumer;
+import java.util.function.LongPredicate;
 
 import static org.lwjgl.opengl.GL46C.*;
 
@@ -341,6 +342,8 @@ public final class LodRenderer {
     /** Most sections a selection drew coarser than wanted since the last stat line. */
     private int maxFallbacks;
     private double loggedDetail = 1e-9;
+    /** Detail of the options' field of view, unzoomed: sections outside the view split at it at most. */
+    private double outsideDetail = Double.MAX_VALUE;
     private double pendingDetail = 1e-9;
     private long selectionTime;
     private double selectedX;
@@ -848,6 +851,11 @@ public final class LodRenderer {
      * {@code voxelPixels} each while {@code D > S * focal / (32 * voxelPixels)}.
      */
     private void updateDetail(Minecraft mc, Matrix4f projection) {
+        // A spyglass narrows the projection, not the options' field of view: what lies
+        // outside the narrow view keeps the detail of the usual one (ADR-063).
+        double fov = Math.toRadians(Math.max(1, mc.options.fov().get()));
+        double usualFocal = mc.getWindow().getHeight() / 2.0 / Math.tan(fov / 2);
+        outsideDetail = Math.max(1, usualFocal / (LodSection.SIZE * RenderSettings.voxelPixels()));
         float focal = mc.getWindow().getHeight() * Math.abs(projection.m11()) / 2;
         if (!Float.isFinite(focal) || focal <= 0) {
             return; // degenerate projection (seen on the first frame): keep the last detail
@@ -885,6 +893,9 @@ public final class LodRenderer {
         selections++;
         drawList.clear();
         wanted.clear();
+        LongPredicate viewed = key -> inView(key, cam);
+        selector.setOutsideView(viewed, outsideDetail);
+        previewLayer.setOutsideView(viewed, outsideDetail);
         selector.select(cam.x, cam.y, cam.z, level.getMinBuildHeight(), level.getMaxBuildHeight(), lastSelectionDistance,
                 sections, drawSink, wantSink);
         maxFallbacks = Math.max(maxFallbacks, selector.fallbacks());
@@ -1314,6 +1325,18 @@ public final class LodRenderer {
                 selectionDirty = true; // changed while in flight: ordered again with the others
             }
             fillMeshes++;
+            // Room for the quads first: a section kept empty for want of room was taken
+            // as ready and never meshed again (holes for minutes after a spyglass).
+            long start = 0;
+            if (m.quads.length > 0) {
+                start = allocateQuads(m.quads.length);
+                if (start < 0) {
+                    if (resident.containsKey(m.key)) {
+                        stale.add(m.key); // keeps its old mesh, meshed again later
+                    }
+                    continue;
+                }
+            }
             Resident r = resident.get(m.key);
             if (r == null) {
                 r = new Resident(allocateSlot());
@@ -1350,22 +1373,54 @@ public final class LodRenderer {
             }
             meshesUploaded++;
             if (r.quadCount > 0) {
-                long start = arena.allocate(r.quadCount);
-                if (start < 0 && growArena(r.quadCount)) {
-                    start = arena.allocate(r.quadCount);
-                }
-                if (start < 0) {
-                    r.quadCount = 0; // out of GPU budget: drawn as empty until evictions free space
-                    r.opaqueCount = 0;
-                    r.groups = NO_GROUPS;
-                } else {
-                    r.start = start;
-                    quads.upload(start * 8, m.quads, m.quads.length);
-                    budget -= m.quads.length;
-                }
+                r.start = start;
+                quads.upload(start * 8, m.quads, m.quads.length);
+                budget -= m.quads.length;
             }
             writeSection(m.key, r);
             linkNeighbors(m.key, r);
+        }
+    }
+
+    /**
+     * Room for {@code count} quads: the arena, grown up to {@link #MAX_QUADS},
+     * then freed of the sections the last selection did not use; -1 when even
+     * that is not enough (the result waits and is meshed again later).
+     */
+    private long allocateQuads(int count) {
+        long start = arena.allocate(count);
+        if (start < 0 && growArena(count)) {
+            start = arena.allocate(count);
+        }
+        if (start < 0) {
+            evictNotSelected();
+            start = arena.allocate(count);
+        }
+        return start;
+    }
+
+    /** Frees every resident section the last selection did not use. */
+    private void evictNotSelected() {
+        evicted.clear();
+        ObjectIterator<Long2ObjectOpenHashMap.Entry<Resident>> it = resident.long2ObjectEntrySet().fastIterator();
+        while (it.hasNext()) {
+            Long2ObjectOpenHashMap.Entry<Resident> e = it.next();
+            Resident r = e.getValue();
+            if (r.lastUsed < selectionTime) {
+                evicted.add(e.getLongKey());
+                if (r.quadCount > 0) {
+                    arena.release(r.start, r.quadCount);
+                }
+                releaseSlot(r.slot);
+                meshesEvicted++;
+                it.remove();
+            }
+        }
+        for (int i = 0, n = evicted.size(); i < n; i++) {
+            unlinkNeighbors(evicted.getLong(i));
+        }
+        if (!evicted.isEmpty()) {
+            selectionDirty = true;
         }
     }
 
@@ -1483,11 +1538,6 @@ public final class LodRenderer {
     }
 
     /**
-     * Builds and uploads the colors of new block states and the biome tints.
-     * A resource reload or another level builds everything again, and meshes
-     * again what is resident (which materials depend on the biome may change).
-     */
-    /**
      * Time this frame may spend building looks: {@link #LOOKS_BUDGET_NANOS},
      * or, while more than {@link #LOOKS_BACKLOG} wait, what the previous
      * frame left before 60 fps (never less): the rest of the frame keeps its
@@ -1504,6 +1554,11 @@ public final class LodRenderer {
         return Math.max(LOOKS_BUDGET_NANOS, Math.min(LOOKS_FRAME_NANOS, LOOKS_FRAME_NANOS - rest));
     }
 
+    /**
+     * Builds and uploads the colors of new block states and the biome tints.
+     * A resource reload or another level builds everything again, and meshes
+     * again what is resident (which materials depend on the biome may change).
+     */
     private void uploadColors(Minecraft mc, ClientLevel level, long budget) {
         BakedModel missing = mc.getModelManager().getMissingModel();
         if (missing != missingModel || level != colorLevel) {
