@@ -15,6 +15,8 @@ Before telling the user a hole is fixed:
 3. Reproduce deterministically with the forceload script in `references/forceload-repro.md`. The minute log line must show border-chunk snapshots, and the close line must show `0 not snapshotted`.
 4. Only then ask the user to retest. Say what stays unverified (for example, the user's own flight).
 
+Stale vanilla mesh test, before blaming LOD: reload the chunks with F3+A (QWERTY). On AZERTY the same key is F3+Q, because Minecraft reads the physical key position, so F3+A does nothing there. If the edge moves or vanishes after the reload, the vanilla mesh was stale; if it stays, keep measuring.
+
 Known residue, not a regression: a chunk outside the forced area that finishes generating during the server stop is taken on its next load. One such hole after a stop test is expected; re-visit that chunk to confirm it fills.
 
 Log vocabulary: the `dropped` counter no longer exists. A `N of border chunks` count above 0 proves the border path ran, which the CLAUDE.md rule requires for any path you claim to have verified.

@@ -1,0 +1,4 @@
+2026-10-24-1.log.gz [18:22:55] [Server thread/INFO] (Farfield) Noise preview threads: 4
+2026-10-24-1.log.gz [18:24:51] [Server thread/INFO] (Farfield) Noise preview of minecraft:overworld: 167 tiles built in the last minute (1148 ms each, 36 villages), 146 left within 4096 blocks
+2026-10-18-4.log.gz [22:06:11] [Server thread/INFO] (Farfield) Noise preview of minecraft:overworld: 47 tiles built in the last minute (2375 ms each), 187 left within 4096 blocks
+Session 18/10 (2 threads): 42 to 50 tiles per minute, ~2.6 s per tile. Session 24/10 (4 threads): 182 then 76 tiles per minute, 0.5 to 0.8 s per tile.

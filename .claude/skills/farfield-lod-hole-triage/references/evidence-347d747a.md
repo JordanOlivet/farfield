@@ -1,0 +1,1 @@
+Le F3 + A ne marche pas je pense, il ne se passe rien quand je le fais. (user) — then the verified fix: F3+Q a marché, la bande a disparu. Earlier ADR text in this window: "It moves with the edge, which is why it "turns vanilla" further on (F3+A rebuilt the edge and moved it too)."

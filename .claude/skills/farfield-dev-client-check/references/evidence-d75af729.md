@@ -1,0 +1,1 @@
+Assistant: "La nouvelle méthode marche : le serveur a téléporté le joueur (`Bench teleport of Player425 to 12000,160,8000`, à 22:17:55)... le script ne passe plus par le clavier." User: "Je pense que ton script a fait n'importe quoi, le teleport ne s'est pas fait, rien ne se génère actuellement. Peut être un soucis de touche que j'aurai changé ? Je sais pas. Check ça"
