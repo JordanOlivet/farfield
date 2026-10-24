@@ -1,6 +1,7 @@
 package io.lakio.farfield.core.preview;
 
 import io.lakio.farfield.core.lod.LodSection;
+import io.lakio.farfield.core.lod.MipBuilder;
 
 /**
  * Turns preview tiles into LOD sections of any level (ADR-039), on demand.
@@ -32,6 +33,13 @@ import io.lakio.farfield.core.lod.LodSection;
  * layer over the top block of each of its columns on the finest level; on
  * coarser levels a tree voxel holding such a top block shows the snow, as
  * the real mip rule's view from above.
+ *
+ * <p>Plants without collision (ADR-060) grow on the tile's plant ground at
+ * their chunk's density: on the finest level one in the block above the
+ * ground where the block's hash falls under the chunk's cover, of a kind
+ * drawn by count; on coarser levels the top voxel takes the ground covered
+ * by the chunk's most common plant, in quarters of that cover, as the real
+ * mip rule ({@link MipBuilder.Shapes#covered}).
  */
 public final class PreviewVoxels {
 
@@ -84,6 +92,16 @@ public final class PreviewVoxels {
      */
     public static LodSection build(int level, int sx, int sy, int sz, Tiles tiles, Mask mask, int air, int minY,
                                    int maskGround, int maskFluid, int layerAxis, int layerIndex) {
+        return build(level, sx, sy, sz, tiles, mask, air, minY, maskGround, maskFluid, layerAxis, layerIndex, null);
+    }
+
+    /**
+     * Like {@link #build(int, int, int, int, Tiles, Mask, int, int, int, int, int, int)};
+     * {@code covers} gives the covered grounds of coarse levels, null to leave plants out there.
+     */
+    public static LodSection build(int level, int sx, int sy, int sz, Tiles tiles, Mask mask, int air, int minY,
+                                   int maskGround, int maskFluid, int layerAxis, int layerIndex,
+                                   MipBuilder.Shapes covers) {
         int s = 1 << level;
         int size = S * s;
         int ox = sx * size;
@@ -163,7 +181,8 @@ public final class PreviewVoxels {
                     if (bottom < height) {
                         blocks = Math.min(s, height - bottom);
                         if (height - 1 < bottom + s) {
-                            material = top;
+                            material = level > 0 && covers != null && top == tile.plantGround()
+                                    ? coveredTop(tile, bx, bz, top, covers) : top;
                         } else if (bottom + s > height - 1 - PreviewTile.FILLER_DEPTH) {
                             material = filler;
                         } else {
@@ -188,6 +207,16 @@ public final class PreviewVoxels {
                         // Sky light fades by one per block of water, as vanilla's (the face of the
                         // floor takes the light of the water in front of it): its highest block's.
                         section.skyLight().set(i, vy, k, seaSkyLight(Math.min(bottom + s, sea) - 1, sea, bottom + s > sea));
+                    }
+                }
+                if (level == 0 && top == tile.plantGround() && top >= 0 && (water < 0 || height >= sea)
+                        && height >= oy && height < oy + S && layerAxis < 0) { // plants hide no neighbor face
+                    int plant = plantAt(tile, bx, bz);
+                    if (plant >= 0) {
+                        if (section == null) {
+                            section = new LodSection(air);
+                        }
+                        section.set(i, height - oy, k, plant);
                     }
                 }
             }
@@ -216,6 +245,68 @@ public final class PreviewVoxels {
             }
         }
         return section;
+    }
+
+    /** Share of a chunk's ground its plants cover: each of {@code count} per chunk lands on a random block. */
+    static double plantCover(double perChunk) {
+        return 1 - Math.exp(-perChunk / 256);
+    }
+
+    /** The plants per chunk of the chunk holding block (bx, bz), summed. */
+    private static double plantsPerChunk(int[] entries) {
+        double total = 0;
+        for (int e : entries) {
+            total += (e >>> 8) / 16.0;
+        }
+        return total;
+    }
+
+    private static int[] plantsOf(PreviewTile tile, int bx, int bz) {
+        return tile.plants(Math.floorMod(bx, PreviewTile.BLOCKS) >> 4, Math.floorMod(bz, PreviewTile.BLOCKS) >> 4);
+    }
+
+    /** The plant material at block (bx, bz) on the finest level, -1 for none (see the class comment). */
+    static int plantAt(PreviewTile tile, int bx, int bz) {
+        int[] entries = plantsOf(tile, bx, bz);
+        if (entries.length == 0) {
+            return -1;
+        }
+        double total = plantsPerChunk(entries);
+        long h = mix(bx * 0x9E3779B97F4A7C15L ^ bz * 0xC2B2AE3D27D4EB4FL);
+        if ((h >>> 11) * 0x1.0p-53 >= plantCover(total)) {
+            return -1;
+        }
+        double r = (mix(h) >>> 11) * 0x1.0p-53 * total;
+        for (int e : entries) {
+            r -= (e >>> 8) / 16.0;
+            if (r < 0) {
+                return tile.plantMaterial(e & 0xFF);
+            }
+        }
+        return tile.plantMaterial(entries[entries.length - 1] & 0xFF);
+    }
+
+    /** The top material of a coarse voxel at block (bx, bz): its ground covered by the chunk's plants. */
+    private static int coveredTop(PreviewTile tile, int bx, int bz, int top, MipBuilder.Shapes covers) {
+        int[] entries = plantsOf(tile, bx, bz);
+        if (entries.length == 0) {
+            return top;
+        }
+        int quarters = (int) Math.round(plantCover(plantsPerChunk(entries)) * 4);
+        int best = entries[0];
+        for (int e : entries) {
+            if ((e >>> 8) > (best >>> 8)) {
+                best = e;
+            }
+        }
+        return quarters > 0 ? covers.covered(top, tile.plantMaterial(best & 0xFF), quarters) : top;
+    }
+
+    /** SplitMix64's finalizer. */
+    private static long mix(long z) {
+        z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
+        z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+        return z ^ (z >>> 31);
     }
 
     /** Stamps the trees whose blocks fall in the section (see the class comment). */

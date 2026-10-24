@@ -168,6 +168,87 @@ class MipBuilderTest {
         assertEquals(5, parent.biome(0, 0, 0));
     }
 
+    /** {@link #SHAPES} with short grass a plant; covered materials are 1000 + quarters * 100 + ground * 10 + plant. */
+    static final Shapes COVERING = new Shapes() {
+        @Override
+        public int shapeOf(int material) {
+            return SHAPES.shapeOf(material >= 1000 ? material % 100 / 10 : material);
+        }
+
+        @Override
+        public boolean isPlant(int material) {
+            return material == SHORT_GRASS;
+        }
+
+        @Override
+        public int covered(int ground, int plant, int quarters) {
+            return 1000 + quarters * 100 + ground * 10 + plant;
+        }
+
+        @Override
+        public int coverOf(int material) {
+            return material >= 1000 ? (material - 1000) / 100 : 0;
+        }
+
+        @Override
+        public int groundOf(int material) {
+            return material >= 1000 ? material % 100 / 10 : material;
+        }
+
+        @Override
+        public int plantOf(int material) {
+            return material >= 1000 ? material % 10 : -1;
+        }
+    };
+
+    /** Grass blocks up to {@code top}, short grass on the columns {@code plant} accepts (by x). */
+    private static LodSection meadow(int top, java.util.function.IntPredicate plant) {
+        LodSection child = new LodSection(AIR);
+        for (int z = 0; z < 32; z++) {
+            for (int x = 0; x < 32; x++) {
+                for (int y = 0; y <= top; y++) {
+                    child.set(x, y, z, y == top ? GRASS_BLOCK : STONE);
+                }
+                if (plant.test(x)) {
+                    child.set(x, top + 1, z, SHORT_GRASS);
+                }
+            }
+        }
+        return child;
+    }
+
+    @Test
+    void plantsOnTheGroundCoverItInQuarters() {
+        MipBuilder builder = new MipBuilder(AIR, COVERING);
+        // Ground at y 9 (the upper child of cell y 8..9), grass on every other column:
+        // two of the four columns of each parent voxel, so half covered.
+        LodSection half = builder.build(new LodSection[]{meadow(9, x -> x % 2 == 0), null, null, null, null, null,
+                null, null}, true);
+        assertEquals(COVERING.covered(GRASS_BLOCK, SHORT_GRASS, 2), half.material(3, 4, 3));
+        assertEquals(STONE, half.material(3, 3, 3));
+        // Ground at y 7, grass at y 8 in the brick above: still found.
+        LodSection full = builder.build(new LodSection[]{meadow(7, x -> true), null, null, null, null, null, null,
+                null}, true);
+        assertEquals(COVERING.covered(GRASS_BLOCK, SHORT_GRASS, 4), full.material(5, 3, 5));
+        // No plants: the ground alone.
+        LodSection bare = builder.build(new LodSection[]{meadow(9, x -> false), null, null, null, null, null,
+                null, null}, true);
+        assertEquals(GRASS_BLOCK, bare.material(3, 4, 3));
+
+        // One level up, coarse children pass their quarters on: half of x covered fully, half bare.
+        LodSection mixed = new LodSection(AIR);
+        for (int z = 0; z < 32; z++) {
+            for (int x = 0; x < 32; x++) {
+                mixed.set(x, 4, z, x % 2 == 0 ? COVERING.covered(GRASS_BLOCK, SHORT_GRASS, 4) : GRASS_BLOCK);
+                for (int y = 0; y < 4; y++) {
+                    mixed.set(x, y, z, STONE);
+                }
+            }
+        }
+        LodSection up = builder.build(new LodSection[]{mixed, null, null, null, null, null, null, null}, false);
+        assertEquals(COVERING.covered(GRASS_BLOCK, SHORT_GRASS, 2), up.material(3, 2, 3));
+    }
+
     @Test
     void matchesTheReferenceRuleOnRandomSections() {
         SplittableRandom random = new SplittableRandom(42);

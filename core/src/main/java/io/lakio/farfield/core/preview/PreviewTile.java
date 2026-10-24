@@ -10,7 +10,8 @@ import io.lakio.farfield.core.util.ByteWriter;
  * biome and its trees (ADR-040: positions, each of a {@link TreeKind});
  * the buildings of villages (ADR-041); per cell whether the sea's top
  * block freezes; for the whole tile the ground's material, the sea and its
- * ice.
+ * ice; per chunk its plants without collision, as kinds and mean counts,
+ * and the ground they grow on (ADR-060).
  *
  * <p>A far tile computes its heights every {@link #grid()} blocks only (8
  * or 16 instead of {@link #GRID}) and fills the samples between them
@@ -34,9 +35,11 @@ public final class PreviewTile {
     /**
      * Format 2 adds the trees, 3 their shapes and the buildings, 4 the ice,
      * 5 the grid the heights were computed on, 6 the snow on tree tops and
-     * tiered spruces, 7 the icebergs; older tiles are built again.
+     * tiered spruces, 7 the icebergs, 8 the plants; older tiles are built again.
      */
-    private static final int FORMAT = 7;
+    private static final int FORMAT = 8;
+    /** Most plant kinds a tile holds (the kind rides in 8 bits of a chunk's plant entry). */
+    public static final int MAX_PLANT_KINDS = 255;
     /** Most tree kinds a tile holds (the kind rides in 8 bits of a tree). */
     public static final int MAX_KINDS = 255;
 
@@ -57,6 +60,12 @@ public final class PreviewTile {
     private final java.util.List<TreeKind> kinds = new java.util.ArrayList<>();
     /** Per chunk, its trees: x | z << 4 (in the chunk) | kind << 8. */
     private final int[][] trees = new int[CHUNKS * CHUNKS][];
+    /** Materials of the plant kinds. */
+    private final java.util.List<Integer> plantKinds = new java.util.ArrayList<>();
+    /** Per chunk, its plants: kind | mean count per chunk in sixteenths << 8. */
+    private final int[][] plants = new int[CHUNKS * CHUNKS][];
+    /** The top material plants grow on; -1 for none. */
+    private int plantGround = -1;
 
     /** Crown shapes of a {@link TreeKind}. */
     public static final int BLOB = 0;
@@ -138,6 +147,48 @@ public final class PreviewTile {
     }
 
     private static final int[] NO_TREES = new int[0];
+
+    /** The index of a plant material, added when new; -1 when the tile holds {@link #MAX_PLANT_KINDS} already. */
+    public int plantKind(int material) {
+        int i = plantKinds.indexOf(material);
+        if (i >= 0) {
+            return i;
+        }
+        if (plantKinds.size() >= MAX_PLANT_KINDS) {
+            return -1;
+        }
+        plantKinds.add(material);
+        return plantKinds.size() - 1;
+    }
+
+    public int plantMaterial(int kind) {
+        return plantKinds.get(kind);
+    }
+
+    /** Sets a chunk's plants, each {@code kind | sixteenths << 8} ({@link #plantEntry}). */
+    public void setPlants(int chunkX, int chunkZ, int[] entries) {
+        plants[chunkZ * CHUNKS + chunkX] = entries.length == 0 ? null : entries.clone();
+    }
+
+    /** The plants of a chunk of the tile, each {@code kind | sixteenths << 8}; never null. */
+    public int[] plants(int chunkX, int chunkZ) {
+        int[] list = plants[chunkZ * CHUNKS + chunkX];
+        return list == null ? NO_TREES : list;
+    }
+
+    /** A chunk's plant entry: a kind and its mean count per chunk. */
+    public static int plantEntry(int kind, double perChunk) {
+        return kind | (int) Math.min(0xFFFFFF, Math.round(perChunk * 16)) << 8;
+    }
+
+    public void setPlantGround(int material) {
+        plantGround = material;
+    }
+
+    /** The top material plants grow on; -1 for none. */
+    public int plantGround() {
+        return plantGround;
+    }
 
     public int grid() {
         return grid;
@@ -420,6 +471,18 @@ public final class PreviewTile {
             out.writeVarInt(b.wall());
             out.writeVarInt(b.roof());
         }
+        out.writeVarInt(plantGround + 1);
+        out.writeVarInt(plantKinds.size());
+        for (int material : plantKinds) {
+            out.writeVarInt(material);
+        }
+        for (int[] list : plants) {
+            int n = list == null ? 0 : list.length;
+            out.writeVarInt(n);
+            for (int i = 0; i < n; i++) {
+                out.writeVarInt(list[i]);
+            }
+        }
     }
 
     public static PreviewTile decode(ByteReader in) {
@@ -473,6 +536,21 @@ public final class PreviewTile {
         for (int i = 0; i < buildings; i++) {
             t.buildings.add(new Building(in.readInt(), in.readInt(), in.readVarInt(), in.readVarInt(), in.readInt(),
                     in.readInt(), in.readVarInt(), in.readVarInt()));
+        }
+        t.plantGround = in.readVarInt() - 1;
+        int plantKinds = in.readVarInt();
+        for (int i = 0; i < plantKinds; i++) {
+            t.plantKinds.add(in.readVarInt());
+        }
+        for (int c = 0; c < t.plants.length; c++) {
+            int n = in.readVarInt();
+            if (n > 0) {
+                int[] list = new int[n];
+                for (int i = 0; i < n; i++) {
+                    list[i] = in.readVarInt();
+                }
+                t.plants[c] = list;
+            }
         }
         return t;
     }

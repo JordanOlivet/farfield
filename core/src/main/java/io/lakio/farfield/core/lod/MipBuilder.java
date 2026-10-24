@@ -19,7 +19,11 @@ import java.util.Arrays;
  * columns, the highest non-sparse voxel, or the highest sparse one if the
  * column has nothing else; the most frequent of these (ties go to one seen
  * in the upper layer). Water over sand stays water, snow over grass stays
- * snow, grass plants over a grass block show the block.
+ * snow, grass plants over a grass block show the block. Plants on top of
+ * the ground a column shows cover that column ({@link Shapes#isPlant}; on
+ * coarser children, a covered child's quarters); when some columns are
+ * covered, the parent takes the ground covered by the most frequent plant
+ * over the columns' mean, in quarters ({@link Shapes#covered}, ADR-060).
  *
  * <p><b>Fill</b> is how high the content stands in the parent voxel: per
  * child column, the upper child's height above a full lower half, or the
@@ -57,9 +61,40 @@ public final class MipBuilder {
             int shape = shapeOf(material);
             return shape >= COVER ? 16 : 0;
         }
+
+        /** Whether a sparse material is a plant that covers the ground under it (grass, flowers). */
+        default boolean isPlant(int material) {
+            return false;
+        }
+
+        /**
+         * The material of {@code ground} seen from above with {@code plant}
+         * over {@code quarters} fourths of it (1..4); {@code ground} itself
+         * when the side supplying shapes has no such materials.
+         */
+        default int covered(int ground, int plant, int quarters) {
+            return ground;
+        }
+
+        /** For a material {@link #covered} returned: its quarters; 0 for any other. */
+        default int coverOf(int material) {
+            return 0;
+        }
+
+        /** For a covered material: its ground; the material itself for any other. */
+        default int groundOf(int material) {
+            return material;
+        }
+
+        /** For a covered material: its plant; -1 for any other. */
+        default int plantOf(int material) {
+            return -1;
+        }
     }
 
     private static final int[] WEIGHT = {0, 1, 2, 4};
+    /** Cover of a column whose ground has a plant on it, in quarters. */
+    private static final int FULL_COVER = 4;
     private static final int SOLID_WEIGHT = 8;
     private static final int OCTANT = LodSection.SIZE / 2;
 
@@ -68,6 +103,7 @@ public final class MipBuilder {
 
     private int[] shapeOfIndex = new int[16];
     private int[] heightOfIndex = new int[16];
+    private boolean[] plantOfIndex = new boolean[16];
     private boolean childrenFinest;
     private final byte[] octantFill = new byte[OCTANT * OCTANT * OCTANT];
     private final int[] heights = new int[LodSection.BRICK_VOLUME];
@@ -78,6 +114,9 @@ public final class MipBuilder {
     private final byte[] nibbles = new byte[NibbleBricks.BRICK_BYTES];
     private final int[] candidates = new int[4];
     private final boolean[] candidateUpper = new boolean[4];
+    /** Per column of a cell: quarters covered by plants (0..4), and the plant. */
+    private final int[] coverQuarters = new int[4];
+    private final int[] coverPlant = new int[4];
     private final int[] biomeVotes = new int[8];
 
     public MipBuilder(int airMaterial, Shapes shapes) {
@@ -120,11 +159,13 @@ public final class MipBuilder {
         if (shapeOfIndex.length < paletteSize) {
             shapeOfIndex = new int[Integer.highestOneBit(paletteSize - 1) << 1];
             heightOfIndex = new int[shapeOfIndex.length];
+            plantOfIndex = new boolean[shapeOfIndex.length];
         }
         for (int i = 0; i < paletteSize; i++) {
             int material = child.paletteEntry(i);
             shapeOfIndex[i] = shapes.shapeOf(material);
             heightOfIndex[i] = shapes.heightOf(material);
+            plantOfIndex[i] = shapeOfIndex[i] == Shapes.SPARSE && shapes.isPlant(material);
         }
         for (int by = 0; by < LodSection.BRICKS_PER_AXIS; by++) {
             for (int bz = 0; bz < LodSection.BRICKS_PER_AXIS; bz++) {
@@ -166,15 +207,18 @@ public final class MipBuilder {
         for (int py = 0; py < 4; py++) {
             for (int pz = 0; pz < 4; pz++) {
                 for (int px = 0; px < 4; px++) {
-                    int material = pick(child, px * 2, py * 2, pz * 2);
+                    int material = pick(child, bx, by, bz, px * 2, py * 2, pz * 2);
                     octantMaterials[((by * 4 + py) * OCTANT + bz * 4 + pz) * OCTANT + bx * 4 + px] = material;
                 }
             }
         }
     }
 
-    /** The parent material of the 2x2x2 cell at (x, y, z) of the unpacked brick in {@link #indices}. */
-    private int pick(LodSection child, int x, int y, int z) {
+    /**
+     * The parent material of the 2x2x2 cell at (x, y, z) of the unpacked
+     * brick (bx, by, bz) in {@link #indices}.
+     */
+    private int pick(LodSection child, int bx, int by, int bz, int x, int y, int z) {
         int weight = 0;
         for (int i = 0; i < 8; i++) {
             weight += WEIGHT[shapeOfIndex[indices[voxel(x + (i & 1), y + (i >> 2), z + ((i >> 1) & 1))]]];
@@ -218,7 +262,24 @@ public final class MipBuilder {
             if (rank > bestRank) {
                 bestRank = rank;
             }
-            candidates[c] = rank == 0 ? -1 : (rank << 20) | chosen;
+            int material = rank == 0 ? -1 : child.paletteEntry(chosen);
+            coverQuarters[c] = 0;
+            coverPlant[c] = -1;
+            if (rank == 2) {
+                int quarters = shapes.coverOf(material);
+                if (quarters > 0) {
+                    coverQuarters[c] = quarters;
+                    coverPlant[c] = shapes.plantOf(material);
+                    material = shapes.groundOf(material);
+                } else if (childrenFinest) {
+                    int above = isUpper ? above(child, bx, by, bz, cx, y + 2, cz) : upper;
+                    if (above >= 0 && plantOfIndex[above]) {
+                        coverQuarters[c] = FULL_COVER;
+                        coverPlant[c] = child.paletteEntry(above);
+                    }
+                }
+            }
+            candidates[c] = rank == 0 ? -1 : (rank << 20) | material;
             candidateUpper[c] = isUpper;
         }
         int best = -1;
@@ -245,7 +306,42 @@ public final class MipBuilder {
             }
         }
         // Weight >= 8 needs at least one non-empty voxel, so some column has a candidate.
-        return child.paletteEntry(best);
+        if (bestRank < 2) {
+            return best;
+        }
+        // Plants: the mean cover of the columns showing ground, the most frequent plant.
+        int sum = 0;
+        int grounds = 0;
+        int plant = -1;
+        int plantCount = 0;
+        for (int c = 0; c < 4; c++) {
+            if (candidates[c] < 0 || candidates[c] >>> 20 != 2) {
+                continue;
+            }
+            grounds++;
+            sum += coverQuarters[c];
+            if (coverPlant[c] >= 0 && coverPlant[c] != plant) {
+                int count = 0;
+                for (int d = c; d < 4; d++) {
+                    count += coverPlant[d] == coverPlant[c] ? 1 : 0;
+                }
+                if (count > plantCount) {
+                    plantCount = count;
+                    plant = coverPlant[c];
+                }
+            }
+        }
+        int quarters = (sum * 2 + grounds) / (grounds * 2); // the mean, rounded
+        return quarters > 0 && plant >= 0 ? shapes.covered(best, plant, quarters) : best;
+    }
+
+    /** Palette index of the child voxel at brick-local (x, y, z) of brick (bx, by, bz); -1 above the section. */
+    private int above(LodSection child, int bx, int by, int bz, int x, int y, int z) {
+        if (y < 8) {
+            return indices[voxel(x, y, z)];
+        }
+        int ay = by * 8 + y;
+        return ay < LodSection.SIZE ? child.paletteIndex(bx * 8 + x, ay, bz * 8 + z) : -1;
     }
 
     /**

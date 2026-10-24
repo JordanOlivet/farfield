@@ -1,6 +1,7 @@
 package io.lakio.farfield.core.preview;
 
 import io.lakio.farfield.core.lod.LodSection;
+import io.lakio.farfield.core.lod.MipBuilder;
 import io.lakio.farfield.core.util.ByteReader;
 import io.lakio.farfield.core.util.ByteWriter;
 import org.junit.jupiter.api.Test;
@@ -267,6 +268,62 @@ class PreviewTest {
                 }
             }
         }
+    }
+
+    @Test
+    void plantsGrowOnTheirGroundAtTheChunksDensity() {
+        int shortGrass = 9;
+        PreviewTile flat = new PreviewTile();
+        for (int k = 0; k < PreviewTile.SAMPLES; k++) {
+            for (int i = 0; i < PreviewTile.SAMPLES; i++) {
+                flat.setHeight(i, k, 70);
+            }
+        }
+        for (int cz = 0; cz < PreviewTile.CELLS; cz++) {
+            for (int cx = 0; cx < PreviewTile.CELLS; cx++) {
+                flat.setCell(cx, cz, GRASS, DIRT);
+            }
+        }
+        flat.setBelow(STONE);
+        flat.setWater(WATER, 63);
+        flat.setPlantGround(GRASS);
+        // 256 per chunk: 1 - 1/e of the ground covered.
+        int kind = flat.plantKind(shortGrass);
+        for (int c = 0; c < PreviewTile.CHUNKS * PreviewTile.CHUNKS; c++) {
+            flat.setPlants(c % PreviewTile.CHUNKS, c / PreviewTile.CHUNKS,
+                    new int[]{PreviewTile.plantEntry(kind, 256)});
+        }
+        PreviewVoxels.Tiles tiles = (x, z) -> x == 0 && z == 0 ? flat : null;
+        // Ground up to y 69: plants at 70, in section 2 (y 64..95), voxel y 6.
+        LodSection fine = PreviewVoxels.build(0, 0, 2, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
+        int plants = 0;
+        for (int z = 0; z < 32; z++) {
+            for (int x = 0; x < 32; x++) {
+                int m = fine.material(x, 6, z);
+                assertTrue(m == AIR || m == shortGrass);
+                plants += m == shortGrass ? 1 : 0;
+                assertEquals(GRASS, fine.material(x, 5, z));
+            }
+        }
+        assertTrue(plants > 1024 * 0.55 && plants < 1024 * 0.71, "about 63 % covered: " + plants);
+        // The same block gets the same plant whatever the section build.
+        assertEquals(fine.material(3, 6, 4), PreviewVoxels.build(0, 0, 2, 0, tiles, null, AIR, -64, -1, -1, -1, 0)
+                .material(3, 6, 4));
+        // Level 2: the top voxel (blocks 68..71) is grass covered by short grass, 3 quarters of 0.63 * 4.
+        MipBuilder.Shapes covers = new MipBuilder.Shapes() {
+            @Override
+            public int shapeOf(int material) {
+                return FULL;
+            }
+
+            @Override
+            public int covered(int ground, int plant, int quarters) {
+                return 1000 + quarters * 100 + ground * 10 + plant;
+            }
+        };
+        LodSection coarse = PreviewVoxels.build(2, 0, 0, 0, tiles, null, AIR, -64, -1, -1, -1, 0, covers);
+        assertEquals(1000 + 300 + GRASS * 10 + shortGrass, coarse.material(0, 17, 0));
+        assertEquals(DIRT, coarse.material(0, 16, 0));
     }
 
     @Test

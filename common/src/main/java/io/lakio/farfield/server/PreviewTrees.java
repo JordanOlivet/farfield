@@ -48,8 +48,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * reached through random selectors and patches, with their trunk and leaves
  * blocks, average trunk height and crown size; huge mushrooms (stem and
  * cap); bamboo, block columns (cactus) and single blocks (pumpkins) as
- * columns, unless their block has no collision (grass, flowers, sugar cane:
- * out of the LODs anyway). How many grow per chunk on average comes from
+ * columns. Single blocks without a collision that LODs draw as plants
+ * (grass, flowers, ferns: {@code BlockKeys}, ADR-059) are kept apart with
+ * their count per chunk (ADR-060). How many grow per chunk on average comes from
  * the placement modifiers (count, rarity, noise counts; read through their
  * codecs, so modded biomes using the vanilla modifiers work too). Not where
  * they grow: the preview places them at random, at that density, on the
@@ -74,10 +75,16 @@ final class PreviewTrees {
 
     /** Patches try many spots around one; this share of the tries takes. */
     private static final double PATCH_SUCCESS = 0.15;
+    /**
+     * The share for plants: grass and flowers only need a free block on
+     * grass, which most tries of a patch on a meadow find.
+     */
+    private static final double PLANT_PATCH_SUCCESS = 0.8;
 
-    /** The trees of a biome: each spec with its average count per chunk. */
-    record BiomeTrees(List<Spec> specs, double[] perChunk, double total) {
-        static final BiomeTrees NONE = new BiomeTrees(List.of(), new double[0], 0);
+    /** The trees of a biome: each spec with its average count per chunk; then its plants, the same way. */
+    record BiomeTrees(List<Spec> specs, double[] perChunk, double total, List<BlockState> plants,
+                      double[] plantsPerChunk) {
+        static final BiomeTrees NONE = new BiomeTrees(List.of(), new double[0], 0, List.of(), new double[0]);
 
         /** A spec drawn by weight, {@code r} in [0, 1). */
         Spec pick(double r) {
@@ -106,17 +113,18 @@ final class PreviewTrees {
             return BiomeTrees.NONE;
         }
         Map<Spec, Double> counts = new LinkedHashMap<>();
+        Map<BlockState, Double> plantCounts = new LinkedHashMap<>();
         for (Holder<PlacedFeature> placed : steps.get(vegetal)) {
             try {
                 double n = expectedCount(placed.value().placement());
                 if (n > 0) {
-                    collect(placed.value().feature().value(), n, counts, 0);
+                    collect(placed.value().feature().value(), n, counts, plantCounts, 0, 1);
                 }
             } catch (RuntimeException e) {
                 // A feature the preview cannot read: left out.
             }
         }
-        if (counts.isEmpty()) {
+        if (counts.isEmpty() && plantCounts.isEmpty()) {
             return BiomeTrees.NONE;
         }
         List<Spec> specs = new ArrayList<>(counts.keySet());
@@ -126,15 +134,28 @@ final class PreviewTrees {
             perChunk[i] = counts.get(specs.get(i));
             total += perChunk[i];
         }
-        BiomeTrees trees = new BiomeTrees(specs, perChunk, total);
-        Farfield.LOG.info("Noise preview: {} grows {} trees and plants per chunk of {} kinds ({})",
-                biome.unwrapKey().map(k -> k.location().toString()).orElse("?"), String.format(java.util.Locale.ROOT, "%.2f", total),
-                specs.size(), specs.get(0).trunk().getBlock().getName().getString());
+        List<BlockState> plants = new ArrayList<>(plantCounts.keySet());
+        double[] plantsPerChunk = new double[plants.size()];
+        double plantTotal = 0;
+        for (int i = 0; i < plants.size(); i++) {
+            plantsPerChunk[i] = plantCounts.get(plants.get(i));
+            plantTotal += plantsPerChunk[i];
+        }
+        BiomeTrees trees = new BiomeTrees(specs, perChunk, total, plants, plantsPerChunk);
+        Farfield.LOG.info("Noise preview: {} grows {} trees per chunk of {} kinds, {} plants of {} kinds",
+                biome.unwrapKey().map(k -> k.location().toString()).orElse("?"),
+                String.format(java.util.Locale.ROOT, "%.2f", total), specs.size(),
+                String.format(java.util.Locale.ROOT, "%.1f", plantTotal), plants.size());
         return trees;
     }
 
-    /** Adds the trees a configured feature places, {@code weight} times on average per chunk. */
-    private static void collect(ConfiguredFeature<?, ?> feature, double weight, Map<Spec, Double> out, int depth) {
+    /**
+     * Adds the trees a configured feature places, {@code weight} times on
+     * average per chunk, and its plants into {@code plants}, their weight
+     * times {@code plantScale} (patches count tries of plants as more successful).
+     */
+    private static void collect(ConfiguredFeature<?, ?> feature, double weight, Map<Spec, Double> out,
+                                Map<BlockState, Double> plants, int depth, double plantScale) {
         if (depth > MAX_DEPTH || weight <= 0) {
             return;
         }
@@ -154,26 +175,43 @@ final class PreviewTrees {
             BlockState block = column.layers().get(column.layers().size() - 1).state().getState(random, BlockPos.ZERO);
             add(column(block, height), weight, out);
         } else if (config instanceof SimpleBlockConfiguration block) {
-            add(column(block.toPlace().getState(RandomSource.create(42), BlockPos.ZERO), 1), weight, out);
+            BlockState state = block.toPlace().getState(RandomSource.create(42), BlockPos.ZERO);
+            if (isPlant(state)) {
+                plants.merge(state, weight * plantScale, Double::sum);
+            } else {
+                add(column(state, 1), weight, out);
+            }
         } else if (config instanceof RandomPatchConfiguration patch) {
-            collect(patch.feature().value().feature().value(), weight * patch.tries() * PATCH_SUCCESS, out, depth + 1);
+            collect(patch.feature().value().feature().value(), weight * patch.tries() * PATCH_SUCCESS, out, plants,
+                    depth + 1, plantScale * PLANT_PATCH_SUCCESS / PATCH_SUCCESS);
         } else if (config instanceof RandomFeatureConfiguration random) {
             // The first entry whose chance passes, else the default.
             double left = 1;
             for (WeightedPlacedFeature w : random.features) {
                 double p = left * w.chance;
-                collect(w.feature.value().feature().value(), weight * p, out, depth + 1);
+                collect(w.feature.value().feature().value(), weight * p, out, plants, depth + 1, plantScale);
                 left -= p;
             }
-            collect(random.defaultFeature.value().feature().value(), weight * left, out, depth + 1);
+            collect(random.defaultFeature.value().feature().value(), weight * left, out, plants, depth + 1, plantScale);
         } else if (config instanceof SimpleRandomFeatureConfiguration random) {
             int n = random.features.size();
             for (Holder<PlacedFeature> f : random.features) {
-                collect(f.value().feature().value(), weight / n, out, depth + 1);
+                collect(f.value().feature().value(), weight / n, out, plants, depth + 1, plantScale);
             }
         } else if (config instanceof RandomBooleanFeatureConfiguration random) {
-            collect(random.featureTrue.value().feature().value(), weight / 2, out, depth + 1);
-            collect(random.featureFalse.value().feature().value(), weight / 2, out, depth + 1);
+            collect(random.featureTrue.value().feature().value(), weight / 2, out, plants, depth + 1, plantScale);
+            collect(random.featureFalse.value().feature().value(), weight / 2, out, plants, depth + 1, plantScale);
+        }
+    }
+
+    /** Whether LODs draw a block as a plant: no collision, a bush or sugar cane (as {@code BlockKeys}). */
+    private static boolean isPlant(BlockState state) {
+        try {
+            return state.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO).isEmpty()
+                    && (state.getBlock() instanceof net.minecraft.world.level.block.BushBlock
+                    || state.getBlock() instanceof net.minecraft.world.level.block.SugarCaneBlock);
+        } catch (RuntimeException e) {
+            return false;
         }
     }
 

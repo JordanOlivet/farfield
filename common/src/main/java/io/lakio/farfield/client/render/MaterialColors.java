@@ -4,6 +4,7 @@ import com.mojang.blaze3d.platform.NativeImage;
 import io.lakio.farfield.Farfield;
 import io.lakio.farfield.core.anvil.KeyRegistry;
 import io.lakio.farfield.core.mesh.MaterialClassifier;
+import io.lakio.farfield.core.world.CoveredKey;
 import io.lakio.farfield.core.mesh.ShapeBoxes;
 import io.lakio.farfield.core.preview.PreviewVoxels;
 import io.lakio.farfield.lod.BlockKeys;
@@ -88,6 +89,8 @@ final class MaterialColors {
     private static final int FALLBACK = abgr(0x808080, 0xFF);
     /** Brightness of what shows through the holes of opaque materials (inner leaves). */
     private static final float HOLE_SHADE = 0.45f;
+    /** Share of a ground's top that plants cover seen from above, at four quarters. */
+    private static final float PLANT_COVER = 0.45f;
     /** Quad direction order: -X, +X, -Y, +Y, -Z, +Z. */
     private static final Direction[] DIRECTIONS = {
             Direction.WEST, Direction.EAST, Direction.DOWN, Direction.UP, Direction.NORTH, Direction.SOUTH};
@@ -228,8 +231,11 @@ final class MaterialColors {
             fillFlat(off, FALLBACK);
             return false;
         }
+        CoveredKey cover = CoveredKey.parse(key);
+        BlockState plant = cover == null ? null : BlockKeys.state(cover.plant());
         try {
-            return build(BlockKeys.lookOf(state), off, meshClass, tints, probeBiome);
+            return build(BlockKeys.lookOf(state), off, meshClass, tints, probeBiome, plant,
+                    cover == null ? 0 : cover.quarters());
         } catch (RuntimeException | LinkageError e) {
             Farfield.LOG.warn("LOD look of {} failed, map color used instead", key, e);
             fillFlat(off, mapColor(state));
@@ -245,7 +251,13 @@ final class MaterialColors {
         }
     }
 
-    private boolean build(BlockState state, int off, int meshClass, BiomeTints tints, Biome probeBiome) {
+    /**
+     * @param plant    for a ground covered by plants ({@code CoveredKey}), the plant
+     *                 speckled over its top; null for any other material
+     * @param quarters how much of the top the plants cover, 1..4
+     */
+    private boolean build(BlockState state, int off, int meshClass, BiomeTints tints, Biome probeBiome,
+                          BlockState plant, int quarters) {
         Minecraft mc = Minecraft.getInstance();
         BakedModel model = mc.getBlockRenderer().getBlockModel(state);
         BlockColors blockColors = mc.getBlockColors();
@@ -294,6 +306,9 @@ final class MaterialColors {
             }
         }
 
+        if (plant != null && hasQuads[3]) {
+            speckle(3, plant, quarters, blockColors, tints, probeBiome);
+        }
         boolean dependsOnBiome = false;
         float[] meanU = new float[3];
         float[] meanT = new float[3];
@@ -366,6 +381,67 @@ final class MaterialColors {
             System.arraycopy(colors, off, colors, off + d * 3, 3);
         }
         return dependsOnBiome;
+    }
+
+    /**
+     * Speckles a face with texels of a plant's sprite (ADR-060): seen from
+     * above, plants cover up to {@link #PLANT_COVER} of the ground under
+     * them, scaled by {@code quarters}; the pixels are fixed per position, so
+     * every covered material of a ground gets the same pattern, denser with
+     * more quarters. Tinted plants go to the face's tinted part when the
+     * face has one (grass on grass: one biome color), else they are baked in.
+     */
+    private void speckle(int face, BlockState plant, int quarters, BlockColors blockColors, BiomeTints tints,
+                         Biome probeBiome) {
+        BakedModel model = Minecraft.getInstance().getBlockRenderer().getBlockModel(BlockKeys.lookOf(plant));
+        random.setSeed(42);
+        List<BakedQuad> quads = model.getQuads(plant, null, random);
+        TextureAtlasSprite sprite = quads.isEmpty() ? model.getParticleIcon() : quads.get(0).getSprite();
+        boolean isTinted = !quads.isEmpty() && quads.get(0).isTinted();
+        int faceKind = kinds[face];
+        if (isTinted) {
+            probeTint(blockColors, plant, quads.get(0).getTintIndex(), tints, probeBiome);
+        }
+        boolean biome = isTinted && tintKind >= 0 && faceKind >= 0;
+        Sprite s = sprites.computeIfAbsent(sprite, MaterialColors::load);
+        if (s.width == 0) {
+            return;
+        }
+        float fraction = PLANT_COVER * Math.min(4, quarters) / 4;
+        float[] u = untinted[face];
+        float[] t = tintedPart[face];
+        float[] a = coverage[face];
+        for (int p = 0; p < PIXELS; p++) {
+            int h = p * 0x9E3779B1;
+            if (((h >>> 8) & 0xFFFF) >= fraction * 0x10000) {
+                continue;
+            }
+            // An opaque texel of the sprite, picked from the pixel's hash.
+            for (int tries = 0; tries < 6; tries++) {
+                int hash = (p + tries * 977) * 0x85EBCA6B ^ 0x5BD1E995;
+                int sx = (hash >>> 4) % s.width;
+                int sy = (hash >>> 16) % s.height;
+                int i = sy * s.width + sx;
+                if (s.alpha[i] < 0.5f) {
+                    continue;
+                }
+                for (int c = 0; c < 3; c++) {
+                    float value = s.rgb[i * 3 + c];
+                    if (biome) {
+                        t[p * 3 + c] = value;
+                        u[p * 3 + c] = 0;
+                    } else {
+                        u[p * 3 + c] = isTinted ? value * tintConstant[c] : value;
+                        t[p * 3 + c] = 0;
+                    }
+                }
+                a[p] = 1;
+                break;
+            }
+        }
+        if (faceKind < 0 && biome) {
+            kinds[face] = tintKind;
+        }
     }
 
     /**

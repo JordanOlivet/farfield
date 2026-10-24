@@ -444,6 +444,7 @@ final class NoisePreview {
             tile.setIce(m.ice);
             tile.setIceberg(m.packedIce);
             t = stage(d, CELLS, t);
+            tile.setPlantGround(m.grass);
             List<PreviewVillages.Village> villages = villages(d, tile, x0, z0, m);
             t = stage(d, VILLAGES, t);
             plantTrees(d, tile, tileX, tileZ, chunkBiomes, m, villages);
@@ -562,6 +563,17 @@ final class NoisePreview {
             for (int cx = 0; cx < PreviewTile.CHUNKS; cx++) {
                 Holder<Biome> biome = chunkBiomes[cz * PreviewTile.CHUNKS + cx];
                 PreviewTrees.BiomeTrees bt = trees.of(biome);
+                if (!bt.plants().isEmpty()) {
+                    int[] entries = new int[bt.plants().size()];
+                    int n = 0;
+                    for (int i = 0; i < entries.length; i++) {
+                        int kind = tile.plantKind(m.id(bt.plants().get(i)));
+                        if (kind >= 0) {
+                            entries[n++] = PreviewTile.plantEntry(kind, bt.plantsPerChunk()[i]);
+                        }
+                    }
+                    tile.setPlants(cx, cz, java.util.Arrays.copyOf(entries, n));
+                }
                 if (bt.total() <= 0) {
                     continue;
                 }

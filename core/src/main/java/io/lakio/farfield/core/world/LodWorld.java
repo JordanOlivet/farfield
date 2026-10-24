@@ -70,9 +70,9 @@ public final class LodWorld implements AutoCloseable {
     /**
      * Version of the mip rules the stored coarse levels were built with; a
      * world built with older rules rebuilds them all once, from level 0
-     * (version 2: per-voxel fill).
+     * (version 2: per-voxel fill; 3: ground covered by plants, ADR-060).
      */
-    private static final String MIPS_VERSION = "2";
+    private static final String MIPS_VERSION = "3";
     private final Path mipsVersionFile;
     private volatile int mipsToUpgrade;
     private final List<LongConsumer> listeners = new CopyOnWriteArrayList<>();

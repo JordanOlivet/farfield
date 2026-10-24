@@ -6,6 +6,7 @@ import io.lakio.farfield.core.mesh.MaterialClassifier;
 import io.lakio.farfield.core.mesh.ShapeBoxes;
 
 import java.util.Arrays;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Per-material properties the engine needs, indexed by block-state id of a
@@ -47,6 +48,8 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
     private static final int UNRESOLVED = -1;
     /** Packed flag of fluids, above the height bits. */
     private static final int FLUID = 1 << 13;
+    /** Quarters of a {@link CoveredKey} material (0 for others), above the fluid flag. */
+    private static final int COVER_SHIFT = 14;
     private static final int[] WHOLE_VOXEL = {ShapeBoxes.pack(0, 0, 0, 16, 16, 16)};
 
     private final KeyRegistry keys;
@@ -54,6 +57,11 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
     private volatile int[] packed = new int[0];
     /** Boxes per material, set before {@link #packed} publishes the material; null when not shaped. */
     private volatile int[][] boxes = new int[0][];
+    /** Ground and plant per covered material, set before {@link #packed} publishes it. */
+    private volatile int[] coverGround = new int[0];
+    private volatile int[] coverPlant = new int[0];
+    /** Covered materials by ground << 32 | plant << 3 | quarters. */
+    private final ConcurrentHashMap<Long, Integer> covered = new ConcurrentHashMap<>();
 
     public MaterialTable(KeyRegistry keys, Resolver resolver) {
         this.keys = keys;
@@ -83,6 +91,41 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
     @Override
     public boolean isFluid(int material) {
         return (properties(material) & FLUID) != 0;
+    }
+
+    @Override
+    public boolean isPlant(int material) {
+        return classOf(material) == PLANT;
+    }
+
+    @Override
+    public int covered(int ground, int plant, int quarters) {
+        int q = Math.max(1, Math.min(CoveredKey.MAX_QUARTERS, quarters));
+        return covered.computeIfAbsent((long) ground << 32 | (long) plant << 3 | q,
+                k -> keys.id(new CoveredKey(q, keys.key(plant), keys.key(ground)).key()));
+    }
+
+    @Override
+    public int coverOf(int material) {
+        return properties(material) >> COVER_SHIFT & 7;
+    }
+
+    @Override
+    public int groundOf(int material) {
+        if (coverOf(material) == 0) {
+            return material;
+        }
+        int[] g = coverGround;
+        return material < g.length ? g[material] : material;
+    }
+
+    @Override
+    public int plantOf(int material) {
+        if (coverOf(material) == 0) {
+            return -1;
+        }
+        int[] p = coverPlant;
+        return material < p.length ? p[material] : -1;
     }
 
     @Override
@@ -142,6 +185,17 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
                 value = resolver.resolve(key);
             } catch (RuntimeException e) {
                 value = pack(OPAQUE, FULL);
+            }
+            CoveredKey cover = CoveredKey.parse(key);
+            if (cover != null) {
+                // Resolved like its ground; the shapes' side gets its parts.
+                int[] g = coverGround.length > material ? coverGround : Arrays.copyOf(coverGround, p.length);
+                int[] q = coverPlant.length > material ? coverPlant : Arrays.copyOf(coverPlant, p.length);
+                g[material] = keys.id(cover.ground());
+                q[material] = keys.id(cover.plant());
+                coverGround = g;
+                coverPlant = q;
+                value = value & ~(7 << COVER_SHIFT) | Math.min(CoveredKey.MAX_QUARTERS, cover.quarters()) << COVER_SHIFT;
             }
             if ((value & 15) == SHAPED) {
                 int[][] b = boxes;

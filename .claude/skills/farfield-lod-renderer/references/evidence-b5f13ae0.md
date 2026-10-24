@@ -1,0 +1,1 @@
+Le `MipBuilder` repère les plantes posées sur le sol, et le voxel parent prend un matériau « sol couvert par telle plante, sur N quarts ». Sa face du dessus est mouchetée avec la texture de la plante. Les niveaux grossiers se reconstruisent une fois à l'ouverture du monde, sans import.

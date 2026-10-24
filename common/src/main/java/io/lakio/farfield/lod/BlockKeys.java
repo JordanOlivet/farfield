@@ -4,6 +4,7 @@ import io.lakio.farfield.core.lod.MipBuilder;
 import io.lakio.farfield.core.mesh.MaterialClassifier;
 import io.lakio.farfield.core.mesh.ShapeBoxes;
 import io.lakio.farfield.core.preview.PreviewVoxels;
+import io.lakio.farfield.core.world.CoveredKey;
 import io.lakio.farfield.core.world.MaterialTable;
 import net.minecraft.commands.arguments.blocks.BlockStateParser;
 import net.minecraft.core.BlockPos;
@@ -92,6 +93,10 @@ public final class BlockKeys {
 
     /** The block state of a key, or null if it no longer exists (removed mod). */
     public static BlockState state(String key) {
+        CoveredKey cover = CoveredKey.parse(key);
+        if (cover != null) {
+            return state(cover.ground()); // a ground with plants on it is its ground (ADR-060)
+        }
         BlockState state = STATES_BY_KEY.get(key);
         if (state != null) {
             return state;

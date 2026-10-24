@@ -346,7 +346,7 @@ final class PreviewLayer {
             }
         };
         return PreviewVoxels.build(drawLevel(key), LodKey.x(key), LodKey.y(key), LodKey.z(key), tiles, maskOf(w),
-                w.air(), minY, maskGround(w), maskFluid(w), layerAxis, layerIndex);
+                w.air(), minY, maskGround(w), maskFluid(w), layerAxis, layerIndex, w.materials());
     }
 
     /** The material ids of real columns, whose quads {@code LodRenderer} drops. */

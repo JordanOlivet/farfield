@@ -1492,3 +1492,38 @@ user chose crossed quads on the finest level and a ground tint farther
   own passes 3,688 us (a section with one plant moved to the cutout
   pre-pass, and the thin quads were drawn twice); with their own pass
   2,468 us (+213 us, 48,000 plant quads in view).
+
+## ADR-060 — Grounds covered by plants on coarse levels; plants in the preview
+
+**Date**: 2026-10-25 · **Status**: accepted (extends ADR-059; amends ADR-020's material rule and ADR-040)
+
+The second and third parts of the user's choice (ADR-059): beyond the
+finest level the plants' crosses stop, so the ground there takes their
+color; and the noise preview, whose plains the user found empty first,
+gets its plants.
+
+- **Covered materials**: `CoveredKey` (`farfield:covered|<quarters>|<plant>|<ground>`)
+  names a ground seen from above with a plant over 1 to 4 quarters of it.
+  It is its ground everywhere (`BlockKeys.state` returns the ground: class,
+  shape, height, boxes); `MaterialColors` speckles its top face with texels
+  of the plant's sprite, on 45 % of the pixels at four quarters, tinted
+  plants in the face's tinted part (grass on grass: one biome color). The
+  far, untextured levels see the mean of that face.
+- **Mips** (`MIPS_VERSION` 3, coarse levels rebuilt once at world open):
+  a column whose ground has a plant on it counts four quarters on level 1;
+  coarser columns pass their covered child's quarters on. The parent of a
+  ground takes the mean over the columns showing ground, rounded, and the
+  most frequent plant (`MipBuilder.Shapes.covered`, interned by
+  `MaterialTable` and persisted with the other keys).
+- **Preview** (tile format 8): `PreviewTrees` keeps the single blocks
+  without collision drawn as plants, with their mean count per chunk
+  (patch tries of plants succeed 80 %, against 15 % for trees); a tile
+  stores per chunk the kinds and counts, and the ground plants grow on
+  (grass). On level 0 a plant stands on that ground where the block's hash
+  falls under the chunk's cover `1 - exp(-count / 256)`, its kind drawn by
+  count; coarser levels give the top voxel the ground covered by the most
+  common plant over that cover in quarters. Plains: 216 plants per chunk
+  of 5 kinds, 57 % covered.
+- Fabric dev client, the plains of ADR-059 looked at nearly level: tufts
+  and flowers over the real terrain and the preview beyond it to the
+  distance; 8,858 coarse sections rebuilt at open; GPU 2,326 us.
