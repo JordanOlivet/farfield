@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import com.mojang.serialization.JsonOps;
 import io.lakio.farfield.Farfield;
 import io.lakio.farfield.core.preview.PreviewTile;
+import io.lakio.farfield.lod.BlockKeys;
 import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.levelgen.feature.BambooFeature;
@@ -204,15 +205,14 @@ final class PreviewTrees {
         }
     }
 
-    /** Whether LODs draw a block as a plant: no collision, a bush or sugar cane (as {@code BlockKeys}). */
+    /**
+     * Whether LODs draw a block as a plant, by the renderer's own rule: a
+     * waterlogged seagrass is water there and a bush with a full outline a
+     * cube, so neither may stand in the preview as a plant (seen: seagrass and
+     * a modded nut bush as blue-green cubes all over a savanna).
+     */
     private static boolean isPlant(BlockState state) {
-        try {
-            return state.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO).isEmpty()
-                    && (state.getBlock() instanceof net.minecraft.world.level.block.BushBlock
-                    || state.getBlock() instanceof net.minecraft.world.level.block.SugarCaneBlock);
-        } catch (RuntimeException e) {
-            return false;
-        }
+        return BlockKeys.isPlant(state);
     }
 
     /** Adds a spec, unless it is missing or its trunk has no collision (not drawn in LODs). */

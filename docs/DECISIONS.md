@@ -1527,3 +1527,30 @@ gets its plants.
 - Fabric dev client, the plains of ADR-059 looked at nearly level: tufts
   and flowers over the real terrain and the preview beyond it to the
   distance; 8,858 coarse sections rebuilt at open; GPU 2,326 us.
+
+## ADR-061 — Map colors until a look is built; the preview's plants by the renderer's rule
+
+**Date**: 2026-10-25 · **Status**: accepted (amends ADR-010's budgeted build and ADR-060)
+
+The user's pass of ADR-060 in the Fabric pack, with screenshots:
+
+- **Black at the first load after the game starts**: leaves and part of the
+  terrain drawn black until everything had loaded, not after leaving and
+  joining again. `MaterialColors` builds looks under 3 ms per frame and a
+  material not built yet had color 0: black, for seconds over the pack's
+  thousands of states. Every new id now gets a placeholder at once, its map
+  color on every face without texture, with its height and boxes; the
+  budgeted build replaces it. The renderer uploads up to the placeholders
+  when new ones came (`changedEnd`). Plants without tiles stay hidden
+  (`lod.frag`), as before.
+- **Blue-green cubes all over a savanna's preview**, absent from the real
+  terrain: the preview kept `minecraft:seagrass` and
+  `cobblemon:galarica_nut_bush` as plants (no collision, a bush), while the
+  renderer draws the first as water (waterlogged) and the second as a cube
+  (full outline). The preview now asks `BlockKeys.isPlant`, the renderer's
+  own rule; tile format 9 builds the old tiles again.
+- Checked: Fabric dev client captures 3, 6 and 12 s after the renderer is
+  ready, colored, no crash (vanilla states only: the pack is the real
+  check); the user's savanna tile decoded: acacia, oak, pumpkin kinds,
+  plants dandelion, short grass, mushrooms, seagrass, medicinal leek,
+  galarica nut bush, tall grass.

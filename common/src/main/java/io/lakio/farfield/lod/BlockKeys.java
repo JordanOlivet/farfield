@@ -123,6 +123,15 @@ public final class BlockKeys {
         return resolve(state);
     }
 
+    /** Whether LODs draw a state as a plant's crossed quads ({@link MaterialClassifier#PLANT}). */
+    public static boolean isPlant(BlockState state) {
+        try {
+            return (resolve(state) & 15) == MaterialClassifier.PLANT;
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     static int resolve(BlockState state) {
         if (state.isAir()) {
             return MaterialTable.pack(MaterialClassifier.AIR, MipBuilder.Shapes.EMPTY);

@@ -1493,12 +1493,13 @@ public final class LodRenderer {
         }
         if (first >= 0) {
             int stride = MaterialColors.STRIDE;
-            long needed = (long) colors.count() * stride * 4;
+            int end = colors.changedEnd();
+            long needed = (long) end * stride * 4;
             if (needed > colorBuffer.size()) {
                 colorBuffer.grow(Math.max(needed, colorBuffer.size() * 2), (long) first * stride * 4);
             }
             colorBuffer.upload((long) first * stride * 4,
-                    java.util.Arrays.copyOfRange(colors.colors(), first * stride, colors.count() * stride));
+                    java.util.Arrays.copyOfRange(colors.colors(), first * stride, end * stride));
         }
         atlas = faceTextures.upload();
         if (tints.update(world.biomes(), biomes, plains)) {
