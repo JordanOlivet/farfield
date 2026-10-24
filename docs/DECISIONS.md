@@ -1315,3 +1315,41 @@ The user: the preview grows no icebergs, a sharp cut beside the real ones.
   and snow caps; `/farfield preview off` leaves only the real ones. Tiles
   built in 264 ms each (4,096-block radius). Unit test
   `icebergsAreIceToTheirFoot`.
+
+## ADR-055 — Translucent layers as vanilla, sorted far to near
+
+**Date**: 2026-10-24 · **Status**: accepted (amends the translucent rule of ADR-008's mesher)
+
+The user (Fabric without Sodium): a band one block wide, lighter than the
+ice around it, stays along one side of a chunk that just turned vanilla,
+and goes away further on. With `/farfield debug levels` the band is not
+red: vanilla geometry, with the LOD terrain showing through it.
+
+- **Cause**: vanilla draws two translucent layers over a frozen sea seen
+  from above, the ice's top and the water's top under it (8/9 high), and
+  more toward the ice's bottom from below. The LOD mesher culled every face
+  between two translucent voxels, so LOD ice was one layer, lighter than
+  vanilla's. At the vanilla edge, a ray entering the last vanilla column's
+  ice crosses into the LOD chunk before it reaches the water: it misses
+  vanilla's water top and finds no LOD one, hence the lighter band on the
+  far side of the edge. It moves with the edge, which is why it "turns
+  vanilla" further on (F3+A rebuilt the edge and moved it too).
+- **Mesher**: a translucent voxel hides only translucent neighbors of its
+  own kind, fluid or not (`MaterialClassifier.isFluid`, set for
+  `LiquidBlock` and the preview's fluid mask): water against water and ice
+  against ice stay culled, ice against water shows both faces. Neighbor
+  sections' solid layers still hide both kinds. Two different non-fluid
+  materials (ice against glass) still show no face. The extra planes are
+  built only in sections holding both kinds.
+- **Draw order**: with two layers, the translucent sections are drawn far
+  to near by their center's distance, as vanilla's. In selection order, a
+  ray through one section's ice could reach a neighbor's water drawn
+  later, blended over the ice: dark one-block lines along section borders.
+- Checked in the Fabric dev client at -193.6, 120, -13.5 facing south
+  (pitch 37), before and after: the brightness step across the vanilla
+  edge falls from about 15 levels (with a band 13 above vanilla) to about
+  7 with no band, and no line along section borders; with Sodium, no band
+  and no mixin error. Unit test `iceOverWaterShowsTheIceBottomAndTheWaterTop`,
+  the brute-force check covers both kinds.
+- Not done: the LOD ice stays slightly lighter than vanilla's (about 5
+  levels on that view); quads inside one section are not sorted.

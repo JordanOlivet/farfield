@@ -16,7 +16,9 @@ import java.util.function.IntPredicate;
  *       translucent voxels.</li>
  *   <li>Face culling 32 voxels at a time: a face is visible where a voxel's
  *       neighbor along the axis is not opaque (translucent voxels also hide
- *       translucent neighbors). Neighbor sections contribute their border
+ *       translucent neighbors of their kind, fluid or not: ice over water
+ *       shows the ice's bottom and the water's top, as vanilla). Neighbor
+ *       sections contribute their border
  *       layer as one bit per column: opaque voxels for every face, and
  *       optionally solid (opaque or translucent) voxels for translucent
  *       faces only, so water bodies spanning sections show no inner walls
@@ -59,7 +61,10 @@ public final class BinaryGreedyMesher {
     private int[] translucent = new int[64];
     private int[] partial = new int[64];
     private int[] shaped = new int[64];
+    private int[] fluid = new int[64];
     private boolean anyShaped;
+    /** The section holds both fluid and other translucent voxels: their faces between them show. */
+    private boolean mixedTranslucent;
 
     /** Opaque, translucent and partial X rows, index {@code y * 32 + z}, bit x. */
     private final int[] rowsOpaque = new int[PLANE];
@@ -67,10 +72,13 @@ public final class BinaryGreedyMesher {
     private final int[] rowsPartial = new int[PLANE];
     /** Shaped X rows, same layout; they take no part in the greedy passes. */
     private final int[] rowsShaped = new int[PLANE];
+    /** The fluid voxels among the translucent rows, same layout; only for {@link #mixedTranslucent}. */
+    private final int[] rowsFluid = new int[PLANE];
     /** Columns of the current axis, index {@code u * 32 + v}, bit = depth. */
     private final int[] colOpaque = new int[PLANE];
     private final int[] colTranslucent = new int[PLANE];
     private final int[] colPartial = new int[PLANE];
+    private final int[] colFluid = new int[PLANE];
     /** Opaque or partial X rows before {@link #splitPartialFill} moves voxels. */
     private final int[] solidRows = new int[PLANE];
     /** Visible faces of the current direction, same layout as the columns. */
@@ -201,8 +209,11 @@ public final class BinaryGreedyMesher {
             translucent = new int[opaque.length];
             partial = new int[opaque.length];
             shaped = new int[opaque.length];
+            fluid = new int[opaque.length];
         }
         boolean anyVisible = false;
+        boolean anyFluid = false;
+        boolean anyOtherTranslucent = false;
         anyShaped = false;
         for (int i = 0; i < n; i++) {
             int c = classifier.classOf(section.paletteEntry(i));
@@ -210,9 +221,13 @@ public final class BinaryGreedyMesher {
             translucent[i] = c == MaterialClassifier.TRANSLUCENT ? 1 : 0;
             partial[i] = c == MaterialClassifier.PARTIAL ? 1 : 0;
             shaped[i] = c == MaterialClassifier.SHAPED ? 1 : 0;
+            fluid[i] = c == MaterialClassifier.TRANSLUCENT && classifier.isFluid(section.paletteEntry(i)) ? 1 : 0;
             anyVisible |= c != MaterialClassifier.AIR;
             anyShaped |= c == MaterialClassifier.SHAPED;
+            anyFluid |= fluid[i] != 0;
+            anyOtherTranslucent |= c == MaterialClassifier.TRANSLUCENT && fluid[i] == 0;
         }
+        mixedTranslucent = anyFluid && anyOtherTranslucent;
         if (!anyVisible) {
             return false;
         }
@@ -249,6 +264,9 @@ public final class BinaryGreedyMesher {
         Arrays.fill(rowsTranslucent, 0);
         Arrays.fill(rowsPartial, 0);
         Arrays.fill(rowsShaped, 0);
+        if (mixedTranslucent) {
+            Arrays.fill(rowsFluid, 0);
+        }
         int bits = section.bits();
         int perLong = 64 / bits;
         long mask = (1L << bits) - 1;
@@ -266,10 +284,14 @@ public final class BinaryGreedyMesher {
                             continue;
                         }
                         int byteMask = 0xFF << xShift;
+                        boolean fluidBrick = fluid[i] != 0 && mixedTranslucent;
                         for (int ly = 0; ly < 8; ly++) {
                             int row = (by * 8 + ly) * S + bz * 8;
                             for (int lz = 0; lz < 8; lz++) {
                                 target[row + lz] |= byteMask;
+                                if (fluidBrick) {
+                                    rowsFluid[row + lz] |= byteMask;
+                                }
                             }
                         }
                         continue;
@@ -285,6 +307,7 @@ public final class BinaryGreedyMesher {
                             int tr = 0;
                             int pa = 0;
                             int sh = 0;
+                            int fl = 0;
                             for (int lx = 0; lx < 8; lx++) {
                                 if (left == 0) {
                                     current = data[++word];
@@ -297,11 +320,15 @@ public final class BinaryGreedyMesher {
                                 tr |= translucent[i] << lx;
                                 pa |= partial[i] << lx;
                                 sh |= shaped[i] << lx;
+                                fl |= fluid[i] << lx;
                             }
                             rowsOpaque[row + lz] |= op << xShift;
                             rowsTranslucent[row + lz] |= tr << xShift;
                             rowsPartial[row + lz] |= pa << xShift;
                             rowsShaped[row + lz] |= sh << xShift;
+                            if (mixedTranslucent) {
+                                rowsFluid[row + lz] |= fl << xShift;
+                            }
                         }
                     }
                 }
@@ -414,18 +441,27 @@ public final class BinaryGreedyMesher {
                 System.arraycopy(rowsOpaque, 0, colOpaque, 0, PLANE);
                 System.arraycopy(rowsTranslucent, 0, colTranslucent, 0, PLANE);
                 System.arraycopy(rowsPartial, 0, colPartial, 0, PLANE);
+                if (mixedTranslucent) {
+                    System.arraycopy(rowsFluid, 0, colFluid, 0, PLANE);
+                }
             }
             case 1 -> {
                 // Y columns at (u = z, v = x): for each z, transpose the (y, x) matrix.
                 transposeGather(rowsOpaque, colOpaque, true);
                 transposeGather(rowsTranslucent, colTranslucent, true);
                 transposeGather(rowsPartial, colPartial, true);
+                if (mixedTranslucent) {
+                    transposeGather(rowsFluid, colFluid, true);
+                }
             }
             default -> {
                 // Z columns at (u = x, v = y): for each y, transpose the (z, x) matrix.
                 transposeGather(rowsOpaque, colOpaque, false);
                 transposeGather(rowsTranslucent, colTranslucent, false);
                 transposeGather(rowsPartial, colPartial, false);
+                if (mixedTranslucent) {
+                    transposeGather(rowsFluid, colFluid, false);
+                }
             }
         }
     }
@@ -490,9 +526,24 @@ public final class BinaryGreedyMesher {
                 // and only full opaque voxels hide their faces.
                 long p = (pa & 0xFFFFFFFFL) << 1;
                 long hidesOpaque = yAxis && positive ? c | p : c;
-                long visible = positive
-                        ? (c & ~(hidesOpaque >>> 1)) | (t & ~(solid >>> 1)) | (p & ~(c >>> 1))
-                        : (c & ~(c << 1)) | (t & ~(solid << 1)) | (p & ~(c << 1));
+                long visible;
+                if (mixedTranslucent) {
+                    // Translucent voxels hide only their own kind inside the section;
+                    // neighbor sections' solid bits (0 and 33) hide both kinds.
+                    long f = (colFluid[i] & 0xFFFFFFFFL) << 1;
+                    long other = t & ~f & 0x1FFFFFFFEL;
+                    long hidesFluid = solid & ~other;
+                    long hidesOther = solid & ~f;
+                    visible = positive
+                            ? (c & ~(hidesOpaque >>> 1)) | (f & ~(hidesFluid >>> 1)) | (other & ~(hidesOther >>> 1))
+                                    | (p & ~(c >>> 1))
+                            : (c & ~(c << 1)) | (f & ~(hidesFluid << 1)) | (other & ~(hidesOther << 1))
+                                    | (p & ~(c << 1));
+                } else {
+                    visible = positive
+                            ? (c & ~(hidesOpaque >>> 1)) | (t & ~(solid >>> 1)) | (p & ~(c >>> 1))
+                            : (c & ~(c << 1)) | (t & ~(solid << 1)) | (p & ~(c << 1));
+                }
                 int f = (int) (visible >>> 1);
                 faces[i] = f;
                 any |= f;

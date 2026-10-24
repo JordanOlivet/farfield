@@ -107,7 +107,7 @@ public final class BlockKeys {
     public static int resolve(String key) {
         if (key.equals(PreviewVoxels.MASK_FLUID_KEY)) {
             // The preview's real-fluid mask: hides preview water faces, not land ones.
-            return MaterialTable.pack(MaterialClassifier.TRANSLUCENT, MipBuilder.Shapes.FULL);
+            return MaterialTable.packFluid();
         }
         BlockState state = state(key);
         if (state == null) {
@@ -122,7 +122,7 @@ public final class BlockKeys {
         }
         Block block = state.getBlock();
         if (block instanceof LiquidBlock) {
-            return MaterialTable.pack(MaterialClassifier.TRANSLUCENT, MipBuilder.Shapes.FULL);
+            return MaterialTable.packFluid();
         }
         if (block instanceof LeavesBlock) {
             return MaterialTable.pack(MaterialClassifier.OPAQUE, MipBuilder.Shapes.FULL);

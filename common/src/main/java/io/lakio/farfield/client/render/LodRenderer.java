@@ -278,6 +278,8 @@ public final class LodRenderer {
 
     // Cached selection and per-frame scratch, reused to keep steady frames allocation-free.
     private final LongArrayList drawList = new LongArrayList();
+    /** Sections with translucent quads this frame: distance bits << 32 | draw list index << 6 | faces. */
+    private final LongArrayList translucentOrder = new LongArrayList();
     private final LongConsumer drawSink = drawList::add;
     private final LongConsumer wantSink = this::request;
     private final LodSelector.Sections sections = new LodSelector.Sections() {
@@ -591,6 +593,7 @@ public final class LodRenderer {
         }
         int count = 0;
         int renderDistance = mc.options.getEffectiveRenderDistance();
+        translucentOrder.clear();
         for (int i = 0, n = drawList.size(); i < n; i++) {
             long key = drawList.getLong(i);
             Resident r = resident.get(key);
@@ -610,7 +613,17 @@ public final class LodRenderer {
             boolean discards = r.cutout || nearGame(key);
             discardSections += discards ? 1 : 0;
             addCommands(r, discards ? DISCARD : SOLID, faces);
-            addCommands(r, TRANSLUCENT, faces);
+            if (r.quadCount > r.opaqueCount) {
+                translucentOrder.add((long) Float.floatToIntBits(centerDistanceSq(key, cam)) << 32 | (long) i << 6 | faces);
+            }
+        }
+        // Translucent sections far to near, as vanilla: a ray through one section's ice
+        // can reach a neighbor's water surface, which must be blended first (ADR-055).
+        // Positive floats sort as their bits.
+        java.util.Arrays.sort(translucentOrder.elements(), 0, translucentOrder.size());
+        for (int i = translucentOrder.size() - 1; i >= 0; i--) {
+            long e = translucentOrder.getLong(i);
+            addCommands(resident.get(drawList.getLong((int) e >>> 6)), TRANSLUCENT, (int) e & 63);
         }
         if (frame % 60 == 0) {
             evictUnused(frameStart);
@@ -941,9 +954,17 @@ public final class LodRenderer {
         // coarser voxels hold more than the block and stay full. The draw level, not
         // the key's: a preview key carries an offset (a snow layer meshed as a cube
         // there hid the faces beside it, while the shader drew it 2/16 high).
-        MaterialClassifier classes = drawLevel(key) == 0 ? materials : m -> {
-            int c = materials.classOf(m);
-            return c == MaterialClassifier.PARTIAL || c == MaterialClassifier.SHAPED ? MaterialClassifier.OPAQUE : c;
+        MaterialClassifier classes = drawLevel(key) == 0 ? materials : new MaterialClassifier() {
+            @Override
+            public int classOf(int m) {
+                int c = materials.classOf(m);
+                return c == MaterialClassifier.PARTIAL || c == MaterialClassifier.SHAPED ? MaterialClassifier.OPAQUE : c;
+            }
+
+            @Override
+            public boolean isFluid(int m) {
+                return materials.isFluid(m);
+            }
         };
         boolean translucent = hasTranslucent(section, classes);
         int[][] solid = translucent ? new int[6][] : null;
@@ -1355,6 +1376,15 @@ public final class LodRenderer {
     }
 
     /** The face directions of a section that can face the camera ({@link FaceDirections}), 0 outside the frustum. */
+    /** Squared distance from the camera to a section's center, in blocks. */
+    private float centerDistanceSq(long key, Vec3 cam) {
+        int size = LodSection.SIZE << drawLevel(key);
+        float x = (float) (LodKey.x(key) * (double) size + size * 0.5 - cam.x);
+        float y = (float) (LodKey.y(key) * (double) size + size * 0.5 - cam.y);
+        float z = (float) (LodKey.z(key) * (double) size + size * 0.5 - cam.z);
+        return x * x + y * y + z * z;
+    }
+
     private int visibleFaces(long key, Vec3 cam) {
         int size = LodSection.SIZE << drawLevel(key);
         float x = (float) (LodKey.x(key) * (double) size - cam.x);

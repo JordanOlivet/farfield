@@ -16,10 +16,18 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 class BinaryGreedyMesherTest {
 
-    // Materials: 0 air, 1..9 opaque, 10..12 translucent, 20..22 partial.
-    private static final MaterialClassifier CLASSES = m -> m == 0 ? MaterialClassifier.AIR
-            : m < 10 ? MaterialClassifier.OPAQUE : m < 20 ? MaterialClassifier.TRANSLUCENT
-            : MaterialClassifier.PARTIAL;
+    // Materials: 0 air, 1..9 opaque, 10..19 translucent (10 and 11 fluids), 20..22 partial.
+    private static final MaterialClassifier CLASSES = new MaterialClassifier() {
+        @Override
+        public int classOf(int m) {
+            return m == 0 ? AIR : m < 10 ? OPAQUE : m < 20 ? TRANSLUCENT : PARTIAL;
+        }
+
+        @Override
+        public boolean isFluid(int m) {
+            return m == 10 || m == 11;
+        }
+    };
 
     private static final int[][] STEP = {{-1, 0, 0}, {1, 0, 0}, {0, -1, 0}, {0, 1, 0}, {0, 0, -1}, {0, 0, 1}};
 
@@ -511,6 +519,39 @@ class BinaryGreedyMesherTest {
     }
 
     @Test
+    void iceOverWaterShowsTheIceBottomAndTheWaterTop() {
+        // Stone up to y 9, water (10) up to 18, ice (12) at 19: as vanilla, three
+        // translucent layers over the floor (ice top, ice bottom, water top).
+        LodSection section = new LodSection(0);
+        for (int y = 0; y < 32; y++) {
+            for (int z = 0; z < 32; z++) {
+                for (int x = 0; x < 32; x++) {
+                    section.set(x, y, z, y < 10 ? 1 : y < 19 ? 10 : y == 19 ? 12 : 0);
+                }
+            }
+        }
+        int[][] walls = new int[6][];
+        for (int d = 0; d < 6; d++) {
+            walls[d] = new int[32];
+            Arrays.fill(walls[d], -1);
+        }
+        mesher.mesh(section, CLASSES, walls, out);
+        assertEquals(4, out.total());
+        assertEquals(3, out.count(Quad.POS_Y));
+        assertEquals(1, out.count(Quad.NEG_Y));
+        long bottom = out.quads(Quad.NEG_Y)[0];
+        assertEquals(12, Quad.material(bottom));
+        assertEquals(19, Quad.y(bottom));
+        for (int i = 0; i < 3; i++) {
+            long q = out.quads(Quad.POS_Y)[i];
+            int m = Quad.material(q);
+            assertEquals(m == 1 ? 9 : m == 10 ? 18 : 19, Quad.y(q));
+            assertEquals(32 * 32, Quad.sizeU(q) * Quad.sizeV(q));
+        }
+        verify(section, walls);
+    }
+
+    @Test
     void matchesBruteForceOnRandomSections() {
         SplittableRandom random = new SplittableRandom(9);
         for (int round = 0; round < 60; round++) {
@@ -668,7 +709,11 @@ class BinaryGreedyMesherTest {
                             case MaterialClassifier.OPAQUE -> nc != MaterialClassifier.OPAQUE
                                     && !(d == Quad.POS_Y && nc == MaterialClassifier.PARTIAL);
                             case MaterialClassifier.PARTIAL -> nc != MaterialClassifier.OPAQUE;
-                            default -> nc == MaterialClassifier.AIR || nc == MaterialClassifier.PARTIAL;
+                            // Translucent voxels inside the section hide only their own kind.
+                            default -> nc == MaterialClassifier.AIR || nc == MaterialClassifier.PARTIAL
+                                    || nc == MaterialClassifier.TRANSLUCENT && nx >= 0 && ny >= 0 && nz >= 0
+                                    && nx < 32 && ny < 32 && nz < 32
+                                    && CLASSES.isFluid(m) != CLASSES.isFluid(section.material(nx, ny, nz));
                         };
                         Integer got = covered.get(faceKey(x, y, z, d));
                         if (visible) {

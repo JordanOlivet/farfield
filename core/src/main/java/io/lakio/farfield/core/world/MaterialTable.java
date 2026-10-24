@@ -45,6 +45,8 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
     };
 
     private static final int UNRESOLVED = -1;
+    /** Packed flag of fluids, above the height bits. */
+    private static final int FLUID = 1 << 13;
     private static final int[] WHOLE_VOXEL = {ShapeBoxes.pack(0, 0, 0, 16, 16, 16)};
 
     private final KeyRegistry keys;
@@ -68,9 +70,19 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
         return meshClass | shape << 4 | height << 8;
     }
 
+    /** {@link #pack(int, int)} of a {@link MaterialClassifier#TRANSLUCENT} fluid. */
+    public static int packFluid() {
+        return pack(TRANSLUCENT, FULL) | FLUID;
+    }
+
     @Override
     public int classOf(int material) {
         return properties(material) & 15;
+    }
+
+    @Override
+    public boolean isFluid(int material) {
+        return (properties(material) & FLUID) != 0;
     }
 
     @Override

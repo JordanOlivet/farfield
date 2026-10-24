@@ -14,8 +14,11 @@ public interface MaterialClassifier {
     int OPAQUE = 1;
     /**
      * Drawn, but does not hide opaque neighbors. Faces between two
-     * translucent voxels are culled whatever their materials (water against
-     * glass shows no face: acceptable for LODs).
+     * translucent voxels are culled when both are fluids or both are not
+     * ({@link #isFluid}), as vanilla culls water against water and ice against
+     * ice, but draws both faces between ice and water (ADR-055). Two different
+     * non-fluid materials (ice against glass) still show no face: acceptable
+     * for LODs.
      */
     int TRANSLUCENT = 2;
     /**
@@ -34,6 +37,11 @@ public interface MaterialClassifier {
     int SHAPED = 4;
 
     int classOf(int material);
+
+    /** Whether a {@link #TRANSLUCENT} material is a fluid (water, lava); see {@link #TRANSLUCENT}. */
+    default boolean isFluid(int material) {
+        return false;
+    }
 
     /** Number of boxes of a {@link #SHAPED} material (1..{@link ShapeBoxes#MAX}), 0 for the others. */
     default int boxCount(int material) {
