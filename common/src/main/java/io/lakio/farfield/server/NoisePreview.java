@@ -3,6 +3,7 @@ package io.lakio.farfield.server;
 import io.lakio.farfield.Farfield;
 import io.lakio.farfield.core.preview.PreviewStore;
 import io.lakio.farfield.core.preview.PreviewTile;
+import io.lakio.farfield.core.select.WantOrder;
 import io.lakio.farfield.core.world.LodWorld;
 import io.lakio.farfield.lod.BlockKeys;
 import io.lakio.farfield.lod.LodLevel;
@@ -30,6 +31,7 @@ import net.minecraft.world.level.levelgen.NoiseSettings;
 import net.minecraft.world.level.levelgen.Noises;
 import net.minecraft.world.level.levelgen.synth.NormalNoise;
 import net.minecraft.world.level.levelgen.RandomState;
+import net.minecraft.world.phys.Vec3;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -49,8 +51,8 @@ import java.util.function.IntBinaryOperator;
 /**
  * Noise preview of terrain not generated yet (ADR-038, ADR-039), built by
  * the integrated server: every {@link #UPDATE_TICKS} ticks, the tiles
- * (512 x 512 blocks) within {@link #RANGE} blocks of a player, nearest
- * first, on two low-priority threads. A tile holds the surface every 4
+ * (512 x 512 blocks) within {@link #RANGE} blocks of a player, nearest and
+ * in front first, on low-priority threads (the preview threads setting). A tile holds the surface every 4
  * blocks from the noise router's final density (each search starts from
  * the neighbor sample's height, then bisects to the block), the biome per
  * chunk and the surface blocks per 4-block cell, guessed from the biome and
@@ -62,7 +64,15 @@ import java.util.function.IntBinaryOperator;
  */
 final class NoisePreview {
 
-    private static final int UPDATE_TICKS = 40;
+    /** Every half second: at 2 s, the threads sat idle once the tiles in flight were done. */
+    private static final int UPDATE_TICKS = 10;
+    /** A player this far (squared blocks) from their place at the last update jumped: the fill line starts. */
+    private static final double JUMP_SQ = 512 * 512;
+    /** Tiles this near the player count as near for the fill line. */
+    private static final double NEAR = 1024;
+    /** Tiles within 60 degrees of the view direction count as in front for the fill line. */
+    private static final double FRONT_COS = 0.5;
+    private static final long FILL_GIVE_UP_NANOS = 300_000_000_000L;
     private static final int REPORT_TICKS = 1200;
     private static final int MAX_IN_FLIGHT = 8;
     /** The LOD range: the renderer draws nothing farther. */
@@ -114,6 +124,14 @@ final class NoisePreview {
         final AtomicLong builtNanos = new AtomicLong();
         int left = -1;
         boolean reportedDone;
+        /** Fill line: where the first player was at the last update, when they joined or jumped (0: not timed). */
+        double lastX = Double.NaN;
+        double lastZ;
+        long fillStart;
+        String fillCause;
+        int fillTiles;
+        long nearDone;
+        long frontDone;
 
         Dimension(ServerLevel level, NoiseBasedChunkGenerator generator) {
             key = level.dimension();
@@ -196,12 +214,18 @@ final class NoisePreview {
         return Optional.of(new Dimension(level, generator));
     }
 
-    /** Submits the nearest missing tiles, up to {@link #MAX_IN_FLIGHT} (or two per thread) at a time. */
+    /**
+     * Submits the missing tiles nearest a player, those behind counted
+     * farther ({@link WantOrder#score}, ADR-056), up to {@link #MAX_IN_FLIGHT}
+     * (or two per thread) at a time.
+     */
     private void schedule(Dimension d, List<ServerPlayer> players) {
         PreviewStore store = d.world.preview();
         List<long[]> candidates = new ArrayList<>();
         Set<Long> seen = new HashSet<>();
         for (ServerPlayer p : players) {
+            Vec3 look = p.getLookAngle();
+            double lookLength = Math.sqrt(look.x * look.x + look.z * look.z);
             int x0 = Math.floorDiv((int) Math.floor(p.getX() - RANGE), TILE);
             int x1 = Math.floorDiv((int) Math.floor(p.getX() + RANGE), TILE);
             int z0 = Math.floorDiv((int) Math.floor(p.getZ() - RANGE), TILE);
@@ -224,11 +248,19 @@ final class NoisePreview {
                     if (built != null && built <= grid) {
                         continue;
                     }
-                    candidates.add(new long[]{tile, (long) distance, grid});
+                    double cx = (x + 0.5) * TILE - p.getX();
+                    double cz = (z + 0.5) * TILE - p.getZ();
+                    double centerDistance = Math.sqrt(cx * cx + cz * cz);
+                    // Looking straight up or down, or standing in the tile: no side is behind.
+                    double facing = lookLength < 1e-3 || centerDistance < 1 ? 1
+                            : (look.x * cx + look.z * cz) / (lookLength * centerDistance);
+                    candidates.add(new long[]{tile, (long) WantOrder.score(distance, facing), grid,
+                            distance <= NEAR ? 1 : 0, facing >= FRONT_COS ? 1 : 0});
                 }
             }
         }
         d.left = candidates.size();
+        trackFill(d, players.get(0), candidates);
         candidates.sort((a, b) -> Long.compare(a[1], b[1]));
         for (long[] c : candidates) {
             if (d.inFlight.size() >= Math.max(MAX_IN_FLIGHT, 2 * pool.getCorePoolSize())) {
@@ -240,6 +272,58 @@ final class NoisePreview {
                 pool.execute(() -> build(d, tile, grid));
             }
         }
+    }
+
+    /**
+     * Times how long the tiles near a player who joined or jumped take, then
+     * those in front of the player, then all of them; logs once all are built (or
+     * after {@link #FILL_GIVE_UP_NANOS}). The view direction is the one of
+     * each update: turning moves what counts as in front.
+     */
+    private static void trackFill(Dimension d, ServerPlayer p, List<long[]> candidates) {
+        long now = System.nanoTime();
+        double jx = p.getX() - d.lastX;
+        double jz = p.getZ() - d.lastZ;
+        boolean joined = Double.isNaN(d.lastX);
+        d.lastX = p.getX();
+        d.lastZ = p.getZ();
+        if (joined || jx * jx + jz * jz > JUMP_SQ) {
+            if (d.fillStart != 0) {
+                logFill(d, now, "cut by another jump");
+            }
+            d.fillStart = now;
+            d.fillCause = joined ? "joining" : "a jump";
+            d.fillTiles = candidates.size();
+            d.nearDone = 0;
+            d.frontDone = 0;
+        }
+        if (d.fillStart == 0) {
+            return;
+        }
+        boolean near = false;
+        boolean front = false;
+        for (long[] c : candidates) {
+            near |= c[3] != 0;
+            front |= c[4] != 0;
+        }
+        d.nearDone = near || d.nearDone != 0 ? d.nearDone : now;
+        d.frontDone = front || d.frontDone != 0 ? d.frontDone : now;
+        if (candidates.isEmpty()) {
+            logFill(d, now, "all built");
+        } else if (now - d.fillStart > FILL_GIVE_UP_NANOS) {
+            logFill(d, now, candidates.size() + " still missing");
+        }
+    }
+
+    private static void logFill(Dimension d, long now, String end) {
+        Farfield.LOG.info("Noise preview fill after {}: {} tiles to build; within {} blocks done at {}, in front at {},"
+                        + " {} at {} s", d.fillCause, d.fillTiles, (int) NEAR, seconds(d, d.nearDone),
+                seconds(d, d.frontDone), end, String.format("%.1f", (now - d.fillStart) / 1e9));
+        d.fillStart = 0;
+    }
+
+    private static String seconds(Dimension d, long t) {
+        return t == 0 ? "-" : String.format("%.1f s", (t - d.fillStart) / 1e9);
     }
 
     private void report(Dimension d) {

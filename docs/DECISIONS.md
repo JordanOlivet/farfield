@@ -1353,3 +1353,47 @@ red: vanilla geometry, with the LOD terrain showing through it.
   the brute-force check covers both kinds.
 - Not done: the LOD ice stays slightly lighter than vanilla's (about 5
   levels on that view); quads inside one section are not sorted.
+
+## ADR-056 — LOD meshes and preview tiles nearest and in front first
+
+**Date**: 2026-10-24 · **Status**: accepted (amends the request order of the LOD renderer and of ADR-038's preview)
+
+The user felt LOD building and the noise preview had become slower. The
+logs said otherwise: in the user's pack, the preview built the 4,096-block
+range in about 2 min on 2026-10-24 against about 5 min on 2026-10-18, and
+the mesher sat mostly idle (`0 meshing`). The user's reading: the work is
+spread evenly around the player, so what is in view and near arrives no
+sooner than what is behind.
+
+- **Client**: `LodSelector` walks the grid from one corner and the
+  renderer took the first 64 sections it wanted, often far and behind
+  the camera. The wanted sections (and the stale ones) are now ordered by
+  `WantOrder.score`: distance to the nearest point of the section, counted
+  up to 4 times farther behind the camera (out of the frustum on the
+  client), then requested in that order. The selection also runs again
+  when the view turns by about 25 degrees.
+- **Server**: the preview tiles are ordered by the same score, with the
+  cosine between the player's horizontal view and the tile's direction,
+  and scheduled every 10 ticks instead of 40: with 8 tiles in flight and
+  tiles of about 0.5 s on 4 threads, the threads sat idle between updates.
+- **Fill lines**: `LOD view fill after <joining|a teleport>` (sections
+  missing in view at 0 to 60 s) and `Noise preview fill after <joining|a
+  jump>` (tiles within 1,024 blocks, in front within 60 degrees, all).
+- Measured in the Fabric dev client, the test world restored from one copy
+  before each run, the player teleported by the server to 12000, 160, 8000
+  (never generated, 236 preview tiles, render distance 4, facing south):
+
+  | Run | Tiles within 1,024 | In front | All |
+  |---|---|---|---|
+  | Before (nearest only, every 2 s) | 16.0 s | 68.0 s | 68.0 s |
+  | After, 64 in flight | 20.0 s | 26.5 s | 34.0 s |
+
+  The tiles in front are done 2.5 times sooner and all of them in half the
+  time; the near tiles behind come 4 s later, as intended. The client's
+  sections missing in view after the teleport stay at 0 to 2 in every run:
+  the preview is what the view waits for, not the mesher.
+- **Mesh jobs in flight**: 32, 64, 96 and 128 gave the same times (26.5,
+  26.5, 25.5 and 26.5 s in front; 34 to 33 s for all). It stays at 64.
+- Not measured: the order's effect when joining a world with stored LODs
+  (the first 5 to 10 s are dominated by cold jobs of 10 to 24 ms); NeoForge;
+  the user's pack.

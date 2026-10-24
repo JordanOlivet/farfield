@@ -42,14 +42,26 @@ public class PreviewBenchmark {
     private static final int LOG = 5;
     private static final int LEAVES = 6;
     private static final int SNOW = 7;
+    private static final int ICE = 8;
     private static final int SEA = 63;
-    private static final MaterialClassifier CLASSES = m -> m == AIR ? MaterialClassifier.AIR
-            : m == WATER ? MaterialClassifier.TRANSLUCENT : MaterialClassifier.OPAQUE;
+    private static final MaterialClassifier CLASSES = new MaterialClassifier() {
+        @Override
+        public int classOf(int m) {
+            return m == AIR ? MaterialClassifier.AIR
+                    : m == WATER || m == ICE ? MaterialClassifier.TRANSLUCENT : MaterialClassifier.OPAQUE;
+        }
+
+        @Override
+        public boolean isFluid(int m) {
+            return m == WATER;
+        }
+    };
 
     @Param({"0", "2", "4"})
     public int level;
 
-    @Param({"none", "bare", "snowy"})
+    /** {@code frozen}: no trees, the sea under ice (two translucent layers, ADR-055). */
+    @Param({"none", "bare", "snowy", "frozen"})
     public String forest;
 
     private PreviewVoxels.Tiles tiles;
@@ -71,8 +83,10 @@ public class PreviewBenchmark {
         for (int cz = 0; cz < PreviewTile.CELLS; cz++) {
             for (int cx = 0; cx < PreviewTile.CELLS; cx++) {
                 t.setCell(cx, cz, GRASS, DIRT);
+                t.setFrozen(cx, cz, forest.equals("frozen"));
             }
         }
+        t.setIce(ICE);
         t.setBelow(STONE);
         t.setWater(WATER, SEA);
         int spruce = t.kind(new PreviewTile.TreeKind(LOG, LEAVES, 8, 2, 6, PreviewTile.TIERED,
@@ -83,7 +97,7 @@ public class PreviewBenchmark {
                 for (int n = 0; n < 10; n++) {
                     int bx = chunkX * 16 + random.nextInt(16);
                     int bz = chunkZ * 16 + random.nextInt(16);
-                    if (!forest.equals("none") && t.height(bx, bz) > SEA) {
+                    if ((forest.equals("bare") || forest.equals("snowy")) && t.height(bx, bz) > SEA) {
                         t.addTree(bx, bz, spruce);
                     }
                 }

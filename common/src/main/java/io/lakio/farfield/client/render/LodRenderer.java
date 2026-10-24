@@ -16,6 +16,7 @@ import io.lakio.farfield.core.mesh.MeshBuffer;
 import io.lakio.farfield.core.mesh.Quad;
 import io.lakio.farfield.core.mesh.SurfaceBiomes;
 import io.lakio.farfield.core.select.LodSelector;
+import io.lakio.farfield.core.select.WantOrder;
 import io.lakio.farfield.core.util.RangeAllocator;
 import io.lakio.farfield.core.world.LodWorld;
 import io.lakio.farfield.lod.RenderSettings;
@@ -114,11 +115,18 @@ import static org.lwjgl.opengl.GL46C.*;
  */
 public final class LodRenderer {
 
+    /**
+     * Seconds after a join or a teleport at which the fill line samples the
+     * sections missing in view. Before {@link #INSTANCE}: an instance field
+     * sizes its array from it.
+     */
+    private static final int[] FILL_CHECKS = {0, 1, 2, 5, 10, 20, 30, 45, 60};
     private static final LodRenderer INSTANCE = new LodRenderer();
 
     private static final double MAX_DISTANCE = 4096;
     private static final float FOG_START = (float) MAX_DISTANCE * 0.6f;
     private static final float FOG_END = (float) MAX_DISTANCE;
+    /** Mesh jobs in flight: 32 to 128 filled the view as fast (ADR-056). */
     private static final int MAX_IN_FLIGHT = 64;
     private static final long UPLOAD_BUDGET_QUADS = 1 << 20;
     private static final long INITIAL_QUADS = 8L << 20;
@@ -137,8 +145,14 @@ public final class LodRenderer {
     private static final long EVICT_AFTER_NANOS = 10_000_000_000L;
     /** The selection runs again when the camera moved this far (squared blocks)... */
     private static final double RESELECT_DISTANCE_SQ = 8 * 8;
-    /** ...or after this long anyway. */
+    /** ...or after this long anyway... */
     private static final long RESELECT_NANOS = 1_000_000_000L;
+    /** ...or when the view turned by more than about 25 degrees: the wanted meshes go in view order. */
+    private static final double RESELECT_TURN_COS = 0.9;
+    /** A camera jump this far between two frames (squared blocks) counts as a teleport for the fill line. */
+    private static final double TELEPORT_DISTANCE_SQ = 256 * 256;
+    /** How long after a join or a teleport the fill line waits before it is logged. */
+    private static final long FILL_WINDOW_NANOS = 60_000_000_000L;
     private static final byte EXISTS = 1;
     private static final byte ABSENT = 2;
     private static final int TIMER_SLOTS = 4;
@@ -281,7 +295,13 @@ public final class LodRenderer {
     /** Sections with translucent quads this frame: distance bits << 32 | draw list index << 6 | faces. */
     private final LongArrayList translucentOrder = new LongArrayList();
     private final LongConsumer drawSink = drawList::add;
-    private final LongConsumer wantSink = this::request;
+    /** Sections whose mesh the last selection needs, in traversal order. */
+    private final LongArrayList wanted = new LongArrayList();
+    private final LongConsumer wantSink = wanted::add;
+    /** The wanted and stale sections of the last selection, nearest and in view first (ADR-056). */
+    private final WantOrder wantOrder = new WantOrder();
+    /** The next entry of {@link #wantOrder} to request. */
+    private int wantCursor;
     private final LodSelector.Sections sections = new LodSelector.Sections() {
         @Override
         public boolean exists(long key) {
@@ -313,6 +333,18 @@ public final class LodRenderer {
     private double selectedX;
     private double selectedY;
     private double selectedZ;
+    private float selectedLookX;
+    private float selectedLookY;
+    private float selectedLookZ;
+    private double lastCamX;
+    private double lastCamY;
+    private double lastCamZ;
+    /** Fill line: when the join or teleport happened (0: none being timed), and what it was. */
+    private long fillStart;
+    private String fillCause;
+    /** Wanted sections in view at the first selection past each of {@link #FILL_CHECKS}, -1 before it. */
+    private final int[] fillTimeline = new int[FILL_CHECKS.length];
+    private int fillMeshes;
     private final FrustumIntersection frustum = new FrustumIntersection();
     private final Matrix4f cullMatrix = new Matrix4f();
     private final Matrix4f viewProj = new Matrix4f();
@@ -541,8 +573,8 @@ public final class LodRenderer {
         quadIndices = new GlBuffer((long) indices.length * 4);
         quadIndices.upload(0, indices);
         glVertexArrayElementBuffer(vao, quadIndices.id());
-        Farfield.LOG.info("LOD renderer ready on {}, OpenGL {} ({} MB of quads to start)", glGetString(GL_RENDERER),
-                glGetString(GL_VERSION), INITIAL_QUADS * 8 >> 20);
+        Farfield.LOG.info("LOD renderer ready on {}, OpenGL {} ({} MB of quads to start, {} meshes in flight at most)",
+                glGetString(GL_RENDERER), glGetString(GL_VERSION), INITIAL_QUADS * 8 >> 20, MAX_IN_FLIGHT);
         return true;
     }
 
@@ -569,9 +601,20 @@ public final class LodRenderer {
         updateDrawnSections(mc, level, camera);
 
         Vec3 cam = camera.getPosition();
+        double jx = cam.x - lastCamX;
+        double jy = cam.y - lastCamY;
+        double jz = cam.z - lastCamZ;
+        if (jx * jx + jy * jy + jz * jz > TELEPORT_DISTANCE_SQ) {
+            startFill(frameStart, "a teleport");
+        }
+        lastCamX = cam.x;
+        lastCamY = cam.y;
+        lastCamZ = cam.z;
         double dx = cam.x - selectedX;
         double dy = cam.y - selectedY;
         double dz = cam.z - selectedZ;
+        org.joml.Vector3f look = camera.getLookVector();
+        boolean turned = look.x * selectedLookX + look.y * selectedLookY + look.z * selectedLookZ < RESELECT_TURN_COS;
         updateDetail(mc, projection);
         double distance = selectionDistance();
         if (distance != lastSelectionDistance) {
@@ -581,12 +624,13 @@ public final class LodRenderer {
         if (RenderSettings.noisePreview() != selectedPreview) {
             selectionDirty = true;
         }
-        if (selectionDirty || dx * dx + dy * dy + dz * dz > RESELECT_DISTANCE_SQ
-                || frameStart - selectionTime > RESELECT_NANOS) {
-            select(level, cam, frameStart);
-        }
-
         updateFrustum(viewRotation, projection);
+        if (selectionDirty || turned || dx * dx + dy * dy + dz * dz > RESELECT_DISTANCE_SQ
+                || frameStart - selectionTime > RESELECT_NANOS) {
+            select(level, cam, look, frameStart);
+        }
+        requestWanted();
+        logFill(frameStart, false);
         for (int l = 0; l < commands.length; l++) {
             commands[l].clear();
             draws[l] = 0;
@@ -801,14 +845,18 @@ public final class LodRenderer {
         }
     }
 
-    private void select(ClientLevel level, Vec3 cam, long now) {
+    private void select(ClientLevel level, Vec3 cam, org.joml.Vector3f look, long now) {
         selectionTime = now;
         selectedX = cam.x;
         selectedY = cam.y;
         selectedZ = cam.z;
+        selectedLookX = look.x;
+        selectedLookY = look.y;
+        selectedLookZ = look.z;
         selectionDirty = false;
         selections++;
         drawList.clear();
+        wanted.clear();
         selector.select(cam.x, cam.y, cam.z, level.getMinBuildHeight(), level.getMaxBuildHeight(), lastSelectionDistance,
                 sections, drawSink, wantSink);
         maxFallbacks = Math.max(maxFallbacks, selector.fallbacks());
@@ -823,6 +871,77 @@ public final class LodRenderer {
                 r.lastUsed = now;
             }
         }
+        // The traversal walks the grid from one corner: ask for what is near and in view first,
+        // or the meshes in flight go to far sections behind the camera (ADR-056).
+        wantOrder.clear();
+        int inView = 0;
+        for (int i = 0, n = wanted.size(); i < n; i++) {
+            long key = wanted.getLong(i);
+            boolean visible = inView(key, cam);
+            inView += visible ? 1 : 0;
+            wantOrder.add(key, WantOrder.score(nearestDistance(key, cam), visible ? 1 : -1));
+        }
+        LongIterator it = stale.iterator();
+        while (it.hasNext()) {
+            long key = it.nextLong();
+            if (!resident.containsKey(key)) {
+                it.remove();
+            } else {
+                wantOrder.add(key, WantOrder.score(nearestDistance(key, cam), inView(key, cam) ? 1 : -1));
+            }
+        }
+        wantOrder.sort();
+        wantCursor = 0;
+        if (fillStart != 0) {
+            for (int i = 0; i < FILL_CHECKS.length; i++) {
+                if (fillTimeline[i] < 0 && now - fillStart >= FILL_CHECKS[i] * 1_000_000_000L) {
+                    fillTimeline[i] = inView;
+                }
+            }
+        }
+    }
+
+    /** Requests the meshes of {@link #wantOrder} in its order, while there is room in flight. */
+    private void requestWanted() {
+        while (wantCursor < wantOrder.size() && requested.size() < MAX_IN_FLIGHT) {
+            long key = wantOrder.key(wantCursor++);
+            if (requested.contains(key)) {
+                continue; // a stale section in flight stays stale: its data changed after the job read it
+            }
+            if (stale.remove(key) || !resident.containsKey(key)) {
+                request(key);
+            }
+        }
+    }
+
+    /** Starts timing how long the view takes to fill in, for the fill line ({@link #logFill}). */
+    private void startFill(long now, String cause) {
+        if (fillStart != 0) {
+            logFill(now, true);
+        }
+        fillStart = now;
+        fillCause = cause;
+        java.util.Arrays.fill(fillTimeline, -1);
+        fillMeshes = 0;
+    }
+
+    /**
+     * Logs, once {@link #FILL_WINDOW_NANOS} passed since a join or a teleport
+     * (or at the next one, {@code cut}), the sections missing in view at each
+     * of {@link #FILL_CHECKS}: preview tiles built later add sections, so the
+     * count can rise again.
+     */
+    private void logFill(long now, boolean cut) {
+        if (fillStart == 0 || !cut && now - fillStart < FILL_WINDOW_NANOS) {
+            return;
+        }
+        StringBuilder timeline = new StringBuilder();
+        for (int i = 0; i < FILL_CHECKS.length && fillTimeline[i] >= 0; i++) {
+            timeline.append(i == 0 ? "" : ", ").append(FILL_CHECKS[i]).append(" s ").append(fillTimeline[i]);
+        }
+        Farfield.LOG.info("LOD view fill after {}: sections missing in view at {}; {} meshes uploaded in {} s",
+                fillCause, timeline, fillMeshes, (Math.min(now, fillStart + FILL_WINDOW_NANOS) - fillStart) / 1_000_000_000L);
+        fillStart = 0;
     }
 
     /** The level a section is drawn at (preview keys carry an offset). */
@@ -901,6 +1020,10 @@ public final class LodRenderer {
         existence.clear();
         sectionCache.clear();
         drawList.clear();
+        wanted.clear();
+        wantOrder.clear();
+        wantCursor = 0;
+        lastCamX = Double.NaN; // the first frame of a world is a join, not a teleport
         done.clear();
         rewritten.clear();
         colors.reset();
@@ -913,6 +1036,7 @@ public final class LodRenderer {
         if (world != null) {
             world.addListener(listener);
             Farfield.LOG.info("LOD renderer attached to a LOD store");
+            startFill(System.nanoTime(), "joining");
         }
     }
 
@@ -1096,6 +1220,7 @@ public final class LodRenderer {
      * built waits for that job, which may have read the old data.
      */
     private void applyRewrites() {
+        int staleBefore = stale.size();
         Long key;
         while ((key = rewritten.poll()) != null) {
             if (existence.put(key.longValue(), EXISTS) != EXISTS) {
@@ -1132,15 +1257,8 @@ public final class LodRenderer {
             }
             changedTiles.clear();
         }
-        LongIterator it = stale.iterator();
-        while (it.hasNext() && requested.size() < MAX_IN_FLIGHT) {
-            long k = it.nextLong();
-            if (!resident.containsKey(k)) {
-                it.remove();
-            } else if (!requested.contains(k)) {
-                it.remove();
-                request(k);
-            }
+        if (stale.size() != staleBefore) {
+            selectionDirty = true; // the selection orders stale sections with the wanted ones
         }
     }
 
@@ -1152,6 +1270,10 @@ public final class LodRenderer {
             if (m.generation != generation.get()) {
                 continue;
             }
+            if (stale.contains(m.key)) {
+                selectionDirty = true; // changed while in flight: ordered again with the others
+            }
+            fillMeshes++;
             Resident r = resident.get(m.key);
             if (r == null) {
                 r = new Resident(allocateSlot());
@@ -1329,6 +1451,7 @@ public final class LodRenderer {
         if (missing != missingModel || level != colorLevel) {
             if (missingModel != null) {
                 stale.addAll(resident.keySet());
+                selectionDirty = true;
             }
             missingModel = missing;
             colorLevel = level;
@@ -1347,6 +1470,7 @@ public final class LodRenderer {
         if (!provisional.isEmpty() && colors.count() == world.blockStates().size()) {
             stale.addAll(provisional);
             provisional.clear();
+            selectionDirty = true;
         }
         if (first >= 0) {
             int stride = MaterialColors.STRIDE;
@@ -1375,7 +1499,6 @@ public final class LodRenderer {
         frustum.set(cullMatrix);
     }
 
-    /** The face directions of a section that can face the camera ({@link FaceDirections}), 0 outside the frustum. */
     /** Squared distance from the camera to a section's center, in blocks. */
     private float centerDistanceSq(long key, Vec3 cam) {
         int size = LodSection.SIZE << drawLevel(key);
@@ -1385,6 +1508,28 @@ public final class LodRenderer {
         return x * x + y * y + z * z;
     }
 
+    /** Distance from the camera to the nearest point of a section, in blocks. */
+    private static double nearestDistance(long key, Vec3 cam) {
+        int size = LodSection.SIZE << drawLevel(key);
+        double x = LodKey.x(key) * (double) size;
+        double y = LodKey.y(key) * (double) size;
+        double z = LodKey.z(key) * (double) size;
+        double dx = Math.max(0, Math.max(x - cam.x, cam.x - (x + size)));
+        double dy = Math.max(0, Math.max(y - cam.y, cam.y - (y + size)));
+        double dz = Math.max(0, Math.max(z - cam.z, cam.z - (z + size)));
+        return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
+    /** Whether a section overlaps the frustum of the last frame. */
+    private boolean inView(long key, Vec3 cam) {
+        int size = LodSection.SIZE << drawLevel(key);
+        float x = (float) (LodKey.x(key) * (double) size - cam.x);
+        float y = (float) (LodKey.y(key) * (double) size - cam.y);
+        float z = (float) (LodKey.z(key) * (double) size - cam.z);
+        return frustum.testAab(x, y, z, x + size, y + size, z + size);
+    }
+
+    /** The face directions of a section that can face the camera ({@link FaceDirections}), 0 outside the frustum. */
     private int visibleFaces(long key, Vec3 cam) {
         int size = LodSection.SIZE << drawLevel(key);
         float x = (float) (LodKey.x(key) * (double) size - cam.x);
