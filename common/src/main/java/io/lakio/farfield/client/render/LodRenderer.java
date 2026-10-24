@@ -161,9 +161,12 @@ public final class LodRenderer {
     /**
      * Quad groups of a section, in range order: opaque quads by direction,
      * then translucent ones by direction, so a pass draws only the directions
-     * that can face the camera ({@link FaceDirections}).
+     * that can face the camera ({@link FaceDirections}); then the plants'
+     * diagonals ({@link #PLANT_GROUP}), drawn whatever the direction.
      */
-    private static final int GROUPS = 2 * Quad.DIRECTIONS;
+    private static final int GROUPS = 2 * Quad.DIRECTIONS + 1;
+    /** The group of the plants' diagonals: opaque with holes, turned toward the camera by the shader. */
+    private static final int PLANT_GROUP = 2 * Quad.DIRECTIONS;
     /** An indexed indirect command: count, instances, first index, base vertex, base instance (the slot). */
     private static final int COMMAND_INTS = 5;
     private static final int COMMAND_BYTES = COMMAND_INTS * 4;
@@ -178,8 +181,13 @@ public final class LodRenderer {
     private static final int SOLID = 0;
     /** ...opaque quads of sections that may (near the game's terrain, or faces with holes)... */
     private static final int DISCARD = 1;
-    /** ...and translucent quads. */
+    /** ...translucent quads... */
     private static final int TRANSLUCENT = 2;
+    /**
+     * ...and the plants' diagonals, drawn once after the opaque pass, outside
+     * the depth pre-pass, with their holes cut out (ADR-059).
+     */
+    private static final int PLANTS = 3;
 
     private boolean initialized;
     private boolean disabled;
@@ -349,10 +357,10 @@ public final class LodRenderer {
     private final Matrix4f cullMatrix = new Matrix4f();
     private final Matrix4f viewProj = new Matrix4f();
     private final float[] matrix = new float[16];
-    /** Draw commands per list ({@link #SOLID}, {@link #DISCARD}, {@link #TRANSLUCENT}), in indirect buffer order. */
-    private final IntBuffer[] commands = {
-            MemoryUtil.memAllocInt(4 * 1024), MemoryUtil.memAllocInt(4 * 1024), MemoryUtil.memAllocInt(4 * 1024)};
-    private final int[] draws = new int[3];
+    /** Draw commands per list ({@link #SOLID}, {@link #DISCARD}, {@link #TRANSLUCENT}, {@link #PLANTS}), in indirect buffer order. */
+    private final IntBuffer[] commands = {MemoryUtil.memAllocInt(4 * 1024), MemoryUtil.memAllocInt(4 * 1024),
+            MemoryUtil.memAllocInt(4 * 1024), MemoryUtil.memAllocInt(1024)};
+    private final int[] draws = new int[4];
 
     // Statistics for the periodic log line.
     private long frame;
@@ -422,7 +430,7 @@ public final class LodRenderer {
         final int slot;
         long start;
         int quadCount;
-        /** The first quads of the range are opaque, the rest translucent. */
+        /** The first quads of the range are opaque, then translucent ones, then plants. */
         int opaqueCount;
         /** Start of each quad group in the range ({@link #GROUPS}), then {@link #quadCount}. */
         int[] groups = new int[GROUPS + 1];
@@ -657,7 +665,10 @@ public final class LodRenderer {
             boolean discards = r.cutout || nearGame(key);
             discardSections += discards ? 1 : 0;
             addCommands(r, discards ? DISCARD : SOLID, faces);
-            if (r.quadCount > r.opaqueCount) {
+            // Plants' diagonals face every way and always cut their holes: their own pass,
+            // so a section with grass keeps its faces in the solid one (ADR-059).
+            addCommand(PLANTS, r.groups[PLANT_GROUP], r.groups[PLANT_GROUP + 1], r.slot);
+            if (r.groups[PLANT_GROUP] > r.opaqueCount) {
                 translucentOrder.add((long) Float.floatToIntBits(centerDistanceSq(key, cam)) << 32 | (long) i << 6 | faces);
             }
         }
@@ -1082,7 +1093,8 @@ public final class LodRenderer {
             @Override
             public int classOf(int m) {
                 int c = materials.classOf(m);
-                return c == MaterialClassifier.PARTIAL || c == MaterialClassifier.SHAPED ? MaterialClassifier.OPAQUE : c;
+                return c == MaterialClassifier.PARTIAL || c == MaterialClassifier.SHAPED ? MaterialClassifier.OPAQUE
+                        : c == MaterialClassifier.PLANT ? MaterialClassifier.AIR : c;
             }
 
             @Override
@@ -1108,7 +1120,7 @@ public final class LodRenderer {
         int dropped = preview ? PreviewLayer.maskGround(w) : -1;
         int droppedFluid = preview ? PreviewLayer.maskFluid(w) : -1;
         int[] groups = new int[GROUPS + 1];
-        for (int d = 0; d < Quad.DIRECTIONS; d++) {
+        for (int d = 0; d <= MeshBuffer.PLANTS; d++) {
             long[] quads = out.quads(d);
             for (int i = 0, c = out.count(d); i < c; i++) {
                 int m = Quad.material(quads[i]);
@@ -1124,7 +1136,7 @@ public final class LodRenderer {
         int[] next = java.util.Arrays.copyOf(groups, GROUPS);
         boolean cutout = false;
         boolean provisional = false;
-        for (int d = 0; d < Quad.DIRECTIONS; d++) {
+        for (int d = 0; d <= MeshBuffer.PLANTS; d++) {
             long[] quads = out.quads(d);
             for (int i = 0, c = out.count(d); i < c; i++) {
                 long q = quads[i];
@@ -1132,7 +1144,10 @@ public final class LodRenderer {
                 if (m != dropped && m != droppedFluid) {
                     int g = group(classes, m, d);
                     all[next[g]++] = q;
-                    if (g < Quad.DIRECTIONS) {
+                    if (g == PLANT_GROUP) {
+                        // Plants go to the cutout pass on their own; the section's faces keep theirs.
+                        provisional |= !colors.built(m);
+                    } else if (g < Quad.DIRECTIONS) {
                         cutout |= colors.cutout(m);
                         provisional |= !colors.built(m);
                     }
@@ -1153,8 +1168,12 @@ public final class LodRenderer {
         return new MeshResult(gen, key, all, groups, cutout, provisional, occupied, packed);
     }
 
-    private static int group(MaterialClassifier classes, int material, int direction) {
-        return classes.classOf(material) == MaterialClassifier.TRANSLUCENT ? Quad.DIRECTIONS + direction : direction;
+    /** @param list a face direction, or {@link MeshBuffer#PLANTS} */
+    private static int group(MaterialClassifier classes, int material, int list) {
+        if (list == MeshBuffer.PLANTS) {
+            return PLANT_GROUP;
+        }
+        return classes.classOf(material) == MaterialClassifier.TRANSLUCENT ? Quad.DIRECTIONS + list : list;
     }
 
     private static boolean hasTranslucent(LodSection section, MaterialClassifier classes) {
@@ -1239,7 +1258,7 @@ public final class LodRenderer {
                 }
                 long neighbor = LodKey.pack(LodKey.level(k), LodKey.x(k) + STEP[d][0], y, LodKey.z(k) + STEP[d][2]);
                 Resident r = resident.get(neighbor);
-                if (r != null && r.quadCount > r.opaqueCount) {
+                if (r != null && r.groups[PLANT_GROUP] > r.opaqueCount) {
                     stale.add(neighbor);
                 }
             }
@@ -1734,8 +1753,10 @@ public final class LodRenderer {
         int solidDraws = draws[SOLID];
         int discardDraws = draws[DISCARD];
         int translucentDraws = draws[TRANSLUCENT];
+        int plantDraws = draws[PLANTS];
         long opaqueBytes = (long) (solidDraws + discardDraws) * COMMAND_BYTES;
-        long bytes = opaqueBytes + (long) translucentDraws * COMMAND_BYTES;
+        long plantOffset = opaqueBytes + (long) translucentDraws * COMMAND_BYTES;
+        long bytes = plantOffset + (long) plantDraws * COMMAND_BYTES;
         if (bytes > indirect.size()) {
             indirect.grow(Math.max(bytes, indirect.size() * 2), 0);
         }
@@ -1812,6 +1833,12 @@ public final class LodRenderer {
             glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, 0, opaqueDraws, 0);
             RenderSystem.depthFunc(GL_LEQUAL);
             RenderSystem.depthMask(true);
+        }
+        if (plantDraws > 0) {
+            // Plants: once, depth-tested against the opaque faces and writing their own,
+            // holes cut out; the pre-pass would draw their thin quads twice.
+            use(plain, cam, mc, false);
+            glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, plantOffset, plantDraws, 0);
         }
         if (timed) {
             glQueryCounter(timerQueries[slot * TIMESTAMPS + 2], GL_TIMESTAMP);

@@ -21,7 +21,10 @@ package io.lakio.farfield.core.mesh;
  *               the box index of a {@link MaterialClassifier#SHAPED} voxel
  * </pre>
  *
- * <p>Directions: 0 -X, 1 +X, 2 -Y, 3 +Y, 4 -Z, 5 +Z. A face lies on the side
+ * <p>Directions: 0 -X, 1 +X, 2 -Y, 3 +Y, 4 -Z, 5 +Z; 6 and 7 are the two
+ * vertical diagonals of a {@link MaterialClassifier#PLANT} voxel, unit
+ * quads from (0, 0) to (1, 1) and from (1, 0) to (0, 1) in (X, Z), which the
+ * shader turns toward the camera. A face lies on the side
  * of its voxels facing its direction. The plane axes are cyclic: X faces
  * span (U, V) = (Y, Z), Y faces (Z, X), Z faces (X, Y). The quad covers the
  * voxels from its origin to origin + (sizeU - 1) along U and
@@ -36,6 +39,10 @@ public final class Quad {
     public static final int NEG_Z = 4;
     public static final int POS_Z = 5;
     public static final int DIRECTIONS = 6;
+    /** A plant's diagonal from its voxel's (x, z) corner to (x + 1, z + 1). */
+    public static final int DIAGONAL_A = 6;
+    /** A plant's diagonal from (x + 1, z) to (x, z + 1). */
+    public static final int DIAGONAL_B = 7;
 
     /** Largest material id; ids are a world's seen block states (6,460 in a 398-mod pack). */
     public static final int MAX_MATERIAL = (1 << 16) - 1;
@@ -135,7 +142,9 @@ public final class Quad {
     }
 
     public static String toString(long q) {
-        return "Quad[" + "-+".charAt(direction(q) & 1) + "XYZ".charAt(axis(direction(q)))
+        String direction = direction(q) >= DIRECTIONS ? (direction(q) == DIAGONAL_A ? "/" : "\\")
+                : "" + "-+".charAt(direction(q) & 1) + "XYZ".charAt(axis(direction(q)));
+        return "Quad[" + direction
                 + " at " + x(q) + "," + y(q) + "," + z(q) + " size " + sizeU(q) + "x" + sizeV(q)
                 + " material " + material(q) + (biome(q) >= 0 ? " biome " + biome(q) : "")
                 + " light " + skyLight(q) + "/" + blockLight(q) + "]";

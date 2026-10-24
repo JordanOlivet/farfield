@@ -12,8 +12,10 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.BushBlock;
 import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.LiquidBlock;
+import net.minecraft.world.level.block.SugarCaneBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Property;
 import net.minecraft.world.phys.AABB;
@@ -156,8 +158,12 @@ public final class BlockKeys {
             }
             if (hasCollision(state)) {
                 // Fences, walls, panes, doors: their boxes on the finest level. Without
-                // a collision (plants, torches, rails) a block stays out of the LODs.
+                // a collision, plants are crossed quads there (ADR-059); torches and
+                // rails stay out of the LODs.
                 return MaterialTable.pack(MaterialClassifier.SHAPED, MipBuilder.Shapes.SPARSE, 0);
+            }
+            if (block instanceof BushBlock || block instanceof SugarCaneBlock) {
+                return MaterialTable.pack(MaterialClassifier.PLANT, MipBuilder.Shapes.SPARSE);
             }
         }
         return MaterialTable.pack(MaterialClassifier.AIR, MipBuilder.Shapes.SPARSE);

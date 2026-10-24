@@ -250,7 +250,11 @@ void main() {
     // The block this face belongs to: a hair inside its voxel, so faces on a
     // section border test the section of their own voxel.
     vec3 normal = vec3(0.0);
-    normal[v_direction >> 1] = (v_direction & 1u) != 0u ? 1.0 : -1.0;
+    // Plants' diagonals (directions 6 and 7) lie inside their voxel: no offset.
+    bool plant = v_direction >= 6u;
+    if (!plant) {
+        normal[v_direction >> 1] = (v_direction & 1u) != 0u ? 1.0 : -1.0;
+    }
     vec3 inside = v_relative + u_cameraFrac - normal * 0.01;
 #ifndef SOLID
     if (!prepassed && v_handoff != 0u && vanillaDraws(u_cameraBlock + ivec3(floor(inside)))) {
@@ -266,10 +270,13 @@ void main() {
     vec2 gx = dFdx(v_texCoord);
     vec2 gy = dFdy(v_texCoord);
     if (v_cutout != 0u && v_tiles != 0u && distance < u_textureEnd) {
-        float fade = smoothstep(u_textureEnd * 0.75, u_textureEnd, distance);
+        float fade = plant ? 0.0 : smoothstep(u_textureEnd * 0.75, u_textureEnd, distance);
         if (mix(tile((v_tiles & 0xFFFFu) - 1u, f, gx, gy).a, 1.0, fade) < 0.5) {
             discard;
         }
+    }
+    if (plant && (v_tiles == 0u || distance >= u_textureEnd)) {
+        discard; // a plant without its texture would be a solid rectangle
     }
 #endif
     fragColor = vec4(0.0);
@@ -293,7 +300,8 @@ void main() {
         if ((v_tiles >> 16) != 0u) {
             textured += tile((v_tiles >> 16) - 1u, f, gx, gy).rgb * tint;
         }
-        float fade = smoothstep(u_textureEnd * 0.75, u_textureEnd, distance);
+        // Plants keep their holes up to the end of the textures, where they stop.
+        float fade = plant ? 0.0 : smoothstep(u_textureEnd * 0.75, u_textureEnd, distance);
         // Opaque pass: the holes of textured faces stay open (glass panes, iron bars),
         // as vanilla's cutout; untextured faces stay whole.
         if (!u_translucent && !prepassed && v_cutout != 0u && mix(base.a, 1.0, fade) < 0.5) {
@@ -301,6 +309,9 @@ void main() {
         }
         color = mix(textured, color, fade);
         alpha = mix(base.a, alpha, fade);
+    }
+    if (plant && (v_tiles == 0u || distance >= u_textureEnd)) {
+        discard;
     }
     // As vanilla's terrain: texture times shade times lightmap, in sRGB.
     float ao = (v_occluders != 0u && !u_translucent) ? ambientOcclusion() : 1.0;

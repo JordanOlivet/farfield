@@ -552,6 +552,49 @@ class BinaryGreedyMesherTest {
     }
 
     @Test
+    void plantsGiveTwoDiagonalsAndHideNothing() {
+        // Stone up to y 9, grass plants (40) on the floor at (3, 10, 5) and (4, 10, 5).
+        int grass = 40;
+        MaterialClassifier classes = new MaterialClassifier() {
+            @Override
+            public int classOf(int material) {
+                return material == grass ? PLANT : CLASSES.classOf(material);
+            }
+        };
+        LodSection section = new LodSection(0);
+        for (int y = 0; y < 10; y++) {
+            for (int z = 0; z < 32; z++) {
+                for (int x = 0; x < 32; x++) {
+                    section.set(x, y, z, 1);
+                }
+            }
+        }
+        section.set(3, 10, 5, grass);
+        section.set(4, 10, 5, grass);
+        section.skyLight().set(3, 10, 5, 13);
+        mesher.mesh(section, classes, null, out);
+        // The floor's top stays whole under the plants (split only by the plant's light).
+        int floor = 0;
+        for (int i = 0; i < out.count(Quad.POS_Y); i++) {
+            floor += Quad.sizeU(out.quads(Quad.POS_Y)[i]) * Quad.sizeV(out.quads(Quad.POS_Y)[i]);
+        }
+        assertEquals(32 * 32, floor);
+        assertEquals(4, out.count(MeshBuffer.PLANTS));
+        long[] plants = out.quads(MeshBuffer.PLANTS);
+        Map<Integer, Integer> perDiagonal = new HashMap<>();
+        for (int i = 0; i < 4; i++) {
+            long q = plants[i];
+            assertEquals(grass, Quad.material(q));
+            assertEquals(10, Quad.y(q));
+            assertEquals(5, Quad.z(q));
+            assertEquals(1, Quad.sizeU(q) * Quad.sizeV(q));
+            assertEquals(Quad.x(q) == 3 ? 13 : 15, Quad.skyLight(q));
+            perDiagonal.merge(Quad.direction(q), 1, Integer::sum);
+        }
+        assertEquals(Map.of(Quad.DIAGONAL_A, 2, Quad.DIAGONAL_B, 2), perDiagonal);
+    }
+
+    @Test
     void matchesBruteForceOnRandomSections() {
         SplittableRandom random = new SplittableRandom(9);
         for (int round = 0; round < 60; round++) {

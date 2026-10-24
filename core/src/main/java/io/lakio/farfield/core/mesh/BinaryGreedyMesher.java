@@ -50,6 +50,11 @@ import java.util.function.IntPredicate;
  * bits, lit like the voxel in front when the face reaches the voxel's side
  * and like the shaped voxel itself otherwise.
  *
+ * <p>{@link MaterialClassifier#PLANT} voxels hide nothing and are hidden by
+ * nothing: each gives its two diagonals ({@link Quad#DIAGONAL_A},
+ * {@link Quad#DIAGONAL_B}) in the {@link MeshBuffer#PLANTS} list, lit like
+ * the plant's own voxel.
+ *
  * <p>Not thread-safe: one instance per worker; all buffers are reused.
  */
 public final class BinaryGreedyMesher {
@@ -62,7 +67,9 @@ public final class BinaryGreedyMesher {
     private int[] partial = new int[64];
     private int[] shaped = new int[64];
     private int[] fluid = new int[64];
+    private int[] plant = new int[64];
     private boolean anyShaped;
+    private boolean anyPlant;
     /** The section holds both fluid and other translucent voxels: their faces between them show. */
     private boolean mixedTranslucent;
 
@@ -74,6 +81,8 @@ public final class BinaryGreedyMesher {
     private final int[] rowsShaped = new int[PLANE];
     /** The fluid voxels among the translucent rows, same layout; only for {@link #mixedTranslucent}. */
     private final int[] rowsFluid = new int[PLANE];
+    /** Plant X rows, same layout; they take no part in the greedy passes. */
+    private final int[] rowsPlant = new int[PLANE];
     /** Columns of the current axis, index {@code u * 32 + v}, bit = depth. */
     private final int[] colOpaque = new int[PLANE];
     private final int[] colTranslucent = new int[PLANE];
@@ -185,6 +194,9 @@ public final class BinaryGreedyMesher {
         if (anyShaped) {
             meshShaped(section, classifier, neighborOpaque, out);
         }
+        if (anyPlant) {
+            meshPlants(section, out);
+        }
     }
 
     /**
@@ -210,11 +222,13 @@ public final class BinaryGreedyMesher {
             partial = new int[opaque.length];
             shaped = new int[opaque.length];
             fluid = new int[opaque.length];
+            plant = new int[opaque.length];
         }
         boolean anyVisible = false;
         boolean anyFluid = false;
         boolean anyOtherTranslucent = false;
         anyShaped = false;
+        anyPlant = false;
         for (int i = 0; i < n; i++) {
             int c = classifier.classOf(section.paletteEntry(i));
             opaque[i] = c == MaterialClassifier.OPAQUE ? 1 : 0;
@@ -222,8 +236,10 @@ public final class BinaryGreedyMesher {
             partial[i] = c == MaterialClassifier.PARTIAL ? 1 : 0;
             shaped[i] = c == MaterialClassifier.SHAPED ? 1 : 0;
             fluid[i] = c == MaterialClassifier.TRANSLUCENT && classifier.isFluid(section.paletteEntry(i)) ? 1 : 0;
+            plant[i] = c == MaterialClassifier.PLANT ? 1 : 0;
             anyVisible |= c != MaterialClassifier.AIR;
             anyShaped |= c == MaterialClassifier.SHAPED;
+            anyPlant |= c == MaterialClassifier.PLANT;
             anyFluid |= fluid[i] != 0;
             anyOtherTranslucent |= c == MaterialClassifier.TRANSLUCENT && fluid[i] == 0;
         }
@@ -237,7 +253,7 @@ public final class BinaryGreedyMesher {
                 return true;
             }
             int i = section.uniformIndex(b);
-            if (opaque[i] != 0 || translucent[i] != 0 || partial[i] != 0 || shaped[i] != 0) {
+            if (opaque[i] != 0 || translucent[i] != 0 || partial[i] != 0 || shaped[i] != 0 || plant[i] != 0) {
                 return true;
             }
         }
@@ -267,6 +283,9 @@ public final class BinaryGreedyMesher {
         if (mixedTranslucent) {
             Arrays.fill(rowsFluid, 0);
         }
+        if (anyPlant) {
+            Arrays.fill(rowsPlant, 0);
+        }
         int bits = section.bits();
         int perLong = 64 / bits;
         long mask = (1L << bits) - 1;
@@ -279,7 +298,8 @@ public final class BinaryGreedyMesher {
                     if (data == null) {
                         int i = section.uniformIndex(b);
                         int[] target = opaque[i] != 0 ? rowsOpaque : translucent[i] != 0 ? rowsTranslucent
-                                : partial[i] != 0 ? rowsPartial : shaped[i] != 0 ? rowsShaped : null;
+                                : partial[i] != 0 ? rowsPartial : shaped[i] != 0 ? rowsShaped
+                                : plant[i] != 0 ? rowsPlant : null;
                         if (target == null) {
                             continue;
                         }
@@ -308,6 +328,7 @@ public final class BinaryGreedyMesher {
                             int pa = 0;
                             int sh = 0;
                             int fl = 0;
+                            int pl = 0;
                             for (int lx = 0; lx < 8; lx++) {
                                 if (left == 0) {
                                     current = data[++word];
@@ -321,6 +342,7 @@ public final class BinaryGreedyMesher {
                                 pa |= partial[i] << lx;
                                 sh |= shaped[i] << lx;
                                 fl |= fluid[i] << lx;
+                                pl |= plant[i] << lx;
                             }
                             rowsOpaque[row + lz] |= op << xShift;
                             rowsTranslucent[row + lz] |= tr << xShift;
@@ -328,6 +350,9 @@ public final class BinaryGreedyMesher {
                             rowsShaped[row + lz] |= sh << xShift;
                             if (mixedTranslucent) {
                                 rowsFluid[row + lz] |= fl << xShift;
+                            }
+                            if (anyPlant) {
+                                rowsPlant[row + lz] |= pl << xShift;
                             }
                         }
                     }
@@ -717,6 +742,30 @@ public final class BinaryGreedyMesher {
                         facesEmitted++;
                     }
                 }
+            }
+        }
+    }
+
+    /** The two diagonals of each plant voxel (see the class comment). */
+    private void meshPlants(LodSection section, MeshBuffer out) {
+        for (int row = 0; row < PLANE; row++) {
+            int bits = rowsPlant[row];
+            int y = row / S;
+            int z = row % S;
+            while (bits != 0) {
+                int x = Integer.numberOfTrailingZeros(bits);
+                bits &= bits - 1;
+                int index = section.paletteIndex(x, y, z);
+                int material = section.paletteEntry(index);
+                int biome = !tintedIndex[index] ? -1 : splitBiomes ? section.biome(x >> 2, y >> 2, z >> 2)
+                        : sectionBiome;
+                int sky = section.skyLight().get(x, y, z);
+                int block = section.blockLight().get(x, y, z);
+                out.add(MeshBuffer.PLANTS, Quad.pack(x, y, z, 1, 1, Quad.DIAGONAL_A, material, biome, sky, block,
+                        Quad.FULL_FILL));
+                out.add(MeshBuffer.PLANTS, Quad.pack(x, y, z, 1, 1, Quad.DIAGONAL_B, material, biome, sky, block,
+                        Quad.FULL_FILL));
+                facesEmitted += 2;
             }
         }
     }

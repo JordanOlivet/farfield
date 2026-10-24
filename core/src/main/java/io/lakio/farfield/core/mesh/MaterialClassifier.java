@@ -2,7 +2,7 @@ package io.lakio.farfield.core.mesh;
 
 /**
  * How the mesher treats a material: empty, an opaque cube, a translucent
- * cube (water, glass, ice), a partial block or a set of boxes. The Minecraft
+ * cube (water, glass, ice), a partial block, a set of boxes or a plant. The Minecraft
  * side derives it from the block state; the engine only sees the class.
  */
 @FunctionalInterface
@@ -35,6 +35,14 @@ public interface MaterialClassifier {
      * boxes that reach their side. Renderers treat it as opaque on coarser levels.
      */
     int SHAPED = 4;
+    /**
+     * A plant without collision (grass, flowers, ferns, saplings, crops):
+     * drawn on the finest level as two crossed quads with its texture, as
+     * vanilla's cross model ({@link Quad#DIAGONAL_A}, {@link Quad#DIAGONAL_B}).
+     * It hides no face and no voxel hides it. Renderers treat it as air on
+     * coarser levels (ADR-059).
+     */
+    int PLANT = 5;
 
     int classOf(int material);
 

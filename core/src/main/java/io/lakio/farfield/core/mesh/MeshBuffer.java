@@ -4,15 +4,20 @@ import java.util.Arrays;
 
 /**
  * Packed quads of one section, grouped by face direction so a renderer can
- * skip the groups facing away from the camera. Reusable.
+ * skip the groups facing away from the camera, and the plants' diagonals in
+ * a list of their own ({@link #PLANTS}). Reusable.
  */
 public final class MeshBuffer {
 
-    private final long[][] quads = new long[Quad.DIRECTIONS][];
-    private final int[] counts = new int[Quad.DIRECTIONS];
+    /** The list of the {@link MaterialClassifier#PLANT} quads, after the six directions. */
+    public static final int PLANTS = Quad.DIRECTIONS;
+    private static final int LISTS = PLANTS + 1;
+
+    private final long[][] quads = new long[LISTS][];
+    private final int[] counts = new int[LISTS];
 
     public MeshBuffer() {
-        for (int d = 0; d < Quad.DIRECTIONS; d++) {
+        for (int d = 0; d < LISTS; d++) {
             quads[d] = new long[256];
         }
     }
@@ -21,24 +26,26 @@ public final class MeshBuffer {
         Arrays.fill(counts, 0);
     }
 
-    void add(int direction, long quad) {
-        int n = counts[direction];
-        long[] q = quads[direction];
+    /** @param list a face direction, or {@link #PLANTS} */
+    void add(int list, long quad) {
+        int n = counts[list];
+        long[] q = quads[list];
         if (n == q.length) {
             q = Arrays.copyOf(q, n * 2);
-            quads[direction] = q;
+            quads[list] = q;
         }
         q[n] = quad;
-        counts[direction] = n + 1;
+        counts[list] = n + 1;
     }
 
-    public int count(int direction) {
-        return counts[direction];
+    /** @param list a face direction, or {@link #PLANTS} */
+    public int count(int list) {
+        return counts[list];
     }
 
-    /** Quads of a direction; only the first {@link #count} entries are valid. Do not modify. */
-    public long[] quads(int direction) {
-        return quads[direction];
+    /** Quads of a direction or of {@link #PLANTS}; only the first {@link #count} entries are valid. Do not modify. */
+    public long[] quads(int list) {
+        return quads[list];
     }
 
     public int total() {

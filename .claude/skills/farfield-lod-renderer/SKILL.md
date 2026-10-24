@@ -53,5 +53,7 @@ To localize a new seam inside LODs, capture the same camera spot before and afte
 - Preview keys carry a level offset (`PreviewLayer.KEY_LEVEL_OFFSET`): read a level from a key that may be a preview one with `drawLevel(key)`, never `LodKey.level(key)` (ADR-051: level-0 preview sections meshed as coarse ones).
 - Holes in LODs: first scan the section data and its mesh offline (a temporary core test on `<save>/farfield/preview` or the store); complete data and mesh point at the renderer.
 
+- Plants (grass, flowers; ADR-059): class `MaterialClassifier.PLANT`. The mesher emits two diagonal quads per plant, kept in their own group (`PLANT_GROUP`, after the translucent groups) and drawn in the cutout pass whatever the camera's side, since the shader turns them toward the camera. `MaterialColors.buildPlant` puts the model's first quad sprite on face 0 (height along U, width along V, biome tint kept) and copies it to the other faces. On coarse levels plants count as air, so they add no fill or occlusion.
+
 Known open gaps (E.7 in the milestone plan):
 - Fences, walls and panes are invisible in LODs; stairs are full cubes.

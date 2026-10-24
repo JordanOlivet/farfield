@@ -64,7 +64,10 @@ flat out uint v_occluders;
 flat out uint v_cutout;     // 1: the face's texture has holes (opaque pass cuts them out)
 flat out uint v_handoff;    // 1: the section overlaps the grid where the game may draw (hand-off test)
 
-const float SHADE[6] = float[](0.6, 0.6, 0.5, 1.0, 0.8, 0.8);
+// Directions 6 and 7: a plant's diagonals (vanilla's cross model, unshaded).
+const float SHADE[8] = float[](0.6, 0.6, 0.5, 1.0, 0.8, 0.8, 1.0, 1.0);
+// Inset of a plant's diagonals in its voxel, as vanilla's cross model (0.8 to 15.2 sixteenths).
+const float CROSS_INSET = 0.05;
 
 vec3 toLinear(vec3 c) {
     return pow(c, vec3(2.2));
@@ -81,7 +84,8 @@ void main() {
     uint direction = (lo >> 25) & 7u;
     uint material = (lo >> 28) | ((q.y & 0xFFFu) << 4);
 
-    uint axis = direction >> 1;
+    bool plant = direction >= 6u;
+    uint axis = plant ? 0u : direction >> 1;
     uint uAxis = (axis + 1u) % 3u;
     uint vAxis = (axis + 2u) % 3u;
     vec3 p = vec3(voxel);
@@ -106,10 +110,30 @@ void main() {
     // they are instead of at the top of the coarse voxel.
     // Ambient occlusion reads the voxel grid at the face's unlowered position.
     v_voxel = p;
-    bool top = direction == 3u
+    bool top = !plant && (direction == 3u
             || (axis == 0u && cu == 1u)
-            || (axis == 2u && cv == 1u);
-    if (box != 0u) {
+            || (axis == 2u && cv == 1u));
+    vec2 crossTex = vec2(0.0);
+    if (plant) {
+        // A vertical quad along one diagonal of the voxel (finest level only),
+        // wound toward the camera so back-face culling keeps it from both sides.
+        vec2 from = direction == 6u ? vec2(CROSS_INSET) : vec2(1.0 - CROSS_INSET, CROSS_INSET);
+        vec2 to = direction == 6u ? vec2(1.0 - CROSS_INSET) : vec2(CROSS_INSET, 1.0 - CROSS_INSET);
+        vec2 center = vec2(voxel.xz) + (from + to) * 0.5;
+        vec2 toCamera = vec2(u_cameraBlock.xz - s.originLevel.xz) + u_cameraFrac.xz - center;
+        // Counter-clockwise from the side of (-dz, dx) with U along the diagonal and V up.
+        vec2 d = to - from;
+        float t = float(corner & 1u);
+        if (dot(vec2(-d.y, d.x), toCamera) < 0.0) {
+            t = 1.0 - t;
+        }
+        float h = float(corner >> 1);
+        vec2 xz = mix(from, to, t);
+        p = vec3(voxel) + vec3(xz.x, h, xz.y);
+        v_voxel = p;
+        // The plant's sprite lies on face 0 (MaterialColors): columns up, rows along the diagonal.
+        crossTex = vec2(h, t);
+    } else if (box != 0u) {
         vec3 lo = vec3(uvec3(box, box >> 5, box >> 10) & 31u) / 16.0;
         vec3 hi = vec3(uvec3(box >> 15, box >> 20, box >> 25) & 31u) / 16.0;
         p = vec3(voxel);
@@ -150,9 +174,9 @@ void main() {
 
     // Section-local block coordinates: the section origin is a multiple of
     // its size, so their fractions are the world's.
-    v_texCoord = vec2(p[uAxis], p[vAxis]) * scale;
+    v_texCoord = plant ? crossTex : vec2(p[uAxis], p[vAxis]) * scale;
 
-    uint face = material * COLOR_STRIDE + direction * 3u;
+    uint face = material * COLOR_STRIDE + (plant ? 0u : direction) * 3u;
     uint tinted = colors[face + 1u];
     v_tiles = colors[face + 2u];
     v_cutout = tinted >> 31;
@@ -175,6 +199,6 @@ void main() {
     v_lightmap = ivec2(int((q.y >> 25) & 15u), int((q.y >> 21) & 15u));
     v_level = s.originLevel.w;
     v_slot = uint(gl_BaseInstance);
-    v_occluders = s.info.z;
+    v_occluders = plant ? 0u : s.info.z; // vanilla's cross model has no ambient occlusion
 #endif
 }

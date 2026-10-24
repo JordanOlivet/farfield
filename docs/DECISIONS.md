@@ -1456,3 +1456,39 @@ a sample and the cell it starts share their quart.
   last result and keeps it on an exact distance tie (`i > k`), so the
   order of lookups breaks ties; changing that order moved two ties. The
   same holds in vanilla's own generation.
+
+## ADR-059 — Plants as crossed quads on the finest level
+
+**Date**: 2026-10-25 · **Status**: accepted (amends ADR-041's "plants without a collision stay out")
+
+The user: plains in the far view look "affreusement vides", next to
+vanilla's grass. Every LOD left blocks without a collision out (grass,
+flowers, ferns, saplings, crops), real terrain and preview alike. The
+user chose crossed quads on the finest level and a ground tint farther
+(this ADR is the first part; the tint and the preview's plants follow).
+
+- **Class**: `MaterialClassifier.PLANT` for blocks without a collision
+  that are a `BushBlock` (grass, flowers, ferns, saplings, crops, tall
+  plants, mushrooms, berry bushes) or sugar cane. Mips keep them sparse
+  (unchanged), coarse levels mesh them as air. Level-0 sections already
+  store them: no import needed.
+- **Mesh**: each plant voxel gives two unit quads, directions 6 and 7 of
+  `Quad` (the voxel's two diagonals), in `MeshBuffer.PLANTS`; a plant
+  hides nothing and nothing hides it. Lit like its own voxel, biome as
+  any tinted material.
+- **Shader**: `lod.vert` stands each diagonal inset as vanilla's cross
+  (0.05 to 0.95) and winds it toward the camera, so back-face culling
+  keeps one quad per diagonal; no shade, no ambient occlusion.
+  `lod.frag` cuts the texture's holes and drops plants beyond the texture
+  distance (they would be solid rectangles).
+- **Look**: `MaterialColors` lays the sprite of the model's first quad
+  whole on face 0 (height along the columns, width along the rows), its
+  biome tint kept: grass takes the biome's color.
+- **Draw**: plants have their own group and their own draw list, drawn
+  once after the opaque pass (depth test and write, holes cut), outside
+  the depth pre-pass. Measured in the Fabric dev client over plains
+  (-1264, 107, 882 facing east, the plains 110 blocks ahead, render
+  distance 4): GPU 2,255 us without plants; with plants in the sections'
+  own passes 3,688 us (a section with one plant moved to the cutout
+  pre-pass, and the thin quads were drawn twice); with their own pass
+  2,468 us (+213 us, 48,000 plant quads in view).

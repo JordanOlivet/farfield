@@ -256,6 +256,9 @@ final class MaterialColors {
             kinds[d] = -1;
             hasQuads[d] = false;
         }
+        if (meshClass == MaterialClassifier.PLANT) {
+            return buildPlant(state, model, blockColors, off, tints, probeBiome);
+        }
         int lastTintIndex = Integer.MIN_VALUE;
         for (int d = 0; d < 6; d++) {
             random.setSeed(42);
@@ -332,6 +335,35 @@ final class MaterialColors {
             boolean anyTint = faceKind >= 0 && (meanT[0] > 0 || meanT[1] > 0 || meanT[2] > 0);
             colors[c + 1] = anyTint ? abgrLinear(meanT, scale, faceKind) : 0;
             colors[c + 2] = 0;
+        }
+        return dependsOnBiome;
+    }
+
+    /**
+     * A plant's look (ADR-059): the sprite of its model's first quad, whole,
+     * on face 0, where {@code lod.vert} reads both diagonals of the cross:
+     * the sprite's height along the face's columns (U, up) and its width
+     * along the rows (V, along the diagonal). Its holes stay (cutout); the
+     * other faces copy it. Models without quads use their particle sprite.
+     */
+    private boolean buildPlant(BlockState state, BakedModel model, BlockColors blockColors, int off,
+                               BiomeTints tints, Biome probeBiome) {
+        random.setSeed(42);
+        List<BakedQuad> quads = model.getQuads(state, null, random);
+        TextureAtlasSprite sprite = quads.isEmpty() ? model.getParticleIcon() : quads.get(0).getSprite();
+        boolean isTinted = !quads.isEmpty() && quads.get(0).isTinted();
+        if (isTinted) {
+            probeTint(blockColors, state, quads.get(0).getTintIndex(), tints, probeBiome);
+        } else {
+            tintKind = -1;
+        }
+        hasQuads[0] = true;
+        // Column a (up) reads the sprite from its bottom row (v1) to its top (v0), row b along u.
+        layer(0, sprite, isTinted, 0, 1, 0, 1, sprite.getU0(), sprite.getV1(),
+                0, sprite.getV0() - sprite.getV1(), sprite.getU1() - sprite.getU0(), 0);
+        boolean dependsOnBiome = writeFace(off, 0);
+        for (int d = 1; d < 6; d++) {
+            System.arraycopy(colors, off, colors, off + d * 3, 3);
         }
         return dependsOnBiome;
     }
