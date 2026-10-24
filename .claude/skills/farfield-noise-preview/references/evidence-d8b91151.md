@@ -1,0 +1,3 @@
+/// ADR-057 — Per-column caches in the preview's density
+**Decision**: `ColumnDensity` maps the router's density once per preview thread, replacing `flat_cache` and `cache_2d` markers by a cache of the last column and `cache_once` ones by a cache of the last point, as `NoiseChunk` does ... The 3D noise is still read at every point.
+- Same run, same world copy: heights 499 to 191 ms, a tile 569 to 259 ms ... The 558 tile files of both runs are byte-identical.

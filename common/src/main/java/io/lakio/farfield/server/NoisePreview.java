@@ -105,6 +105,8 @@ final class NoisePreview {
         final DensityFunction density;
         /** {@link #density} with vanilla's per-column caches, one per preview thread (ADR-057). */
         final ThreadLocal<DensityFunction> columnDensity;
+        /** {@link #sampler} with the same caches, shared by its six functions (ADR-057). */
+        final ThreadLocal<Climate.Sampler> columnSampler;
         final NoiseSettings noise;
         final int seaLevel;
         final BlockState defaultBlock;
@@ -145,6 +147,7 @@ final class NoisePreview {
             sampler = state.sampler();
             density = state.router().finalDensity();
             columnDensity = ThreadLocal.withInitial(() -> ColumnDensity.of(density));
+            columnSampler = ThreadLocal.withInitial(() -> ColumnDensity.of(sampler));
             NoiseGeneratorSettings settings = generator.generatorSettings().value();
             noise = settings.noiseSettings();
             seaLevel = generator.getSeaLevel();
@@ -402,7 +405,9 @@ final class NoisePreview {
                     previous = h;
                 }
             }
-            boolean[] icebergs = icebergs(d, tile, x0, z0, step);
+            // Biomes at the sea's top by quart, shared by the icebergs (samples) and the frozen cells.
+            Holder<Biome>[] seaBiomes = new Holder[PreviewTile.SAMPLES * PreviewTile.SAMPLES];
+            boolean[] icebergs = icebergs(d, tile, x0, z0, step, seaBiomes);
             tile.fillBetweenSamples(step);
             tile.setGrid(grid);
             long t = stage(d, HEIGHTS, start);
@@ -429,8 +434,7 @@ final class NoisePreview {
                     if (m.ice >= 0 && low < d.seaLevel) {
                         int x = x0 + cx * PreviewTile.GRID + PreviewTile.GRID / 2;
                         int z = z0 + cz * PreviewTile.GRID + PreviewTile.GRID / 2;
-                        Holder<Biome> surface = d.biomes.getNoiseBiome(QuartPos.fromBlock(x),
-                                QuartPos.fromBlock(d.seaLevel - 1), QuartPos.fromBlock(z), d.sampler);
+                        Holder<Biome> surface = seaBiome(d, seaBiomes, x0, z0, cx, cz);
                         tile.setFrozen(cx, cz, !surface.value().warmEnoughToRain(new BlockPos(x, d.seaLevel - 1, z)));
                     }
                 }
@@ -466,7 +470,8 @@ final class NoisePreview {
      * frozen ocean to the icebergs vanilla's surface rule builds there; returns
      * which samples rose, {@code k * SAMPLES + i}.
      */
-    private static boolean[] icebergs(Dimension d, PreviewTile tile, int x0, int z0, int step) {
+    private static boolean[] icebergs(Dimension d, PreviewTile tile, int x0, int z0, int step,
+                                      Holder<Biome>[] seaBiomes) {
         boolean[] raised = new boolean[PreviewTile.SAMPLES * PreviewTile.SAMPLES];
         if (d.fluid == null || !d.fluid.is(Blocks.WATER)) {
             return raised;
@@ -478,8 +483,7 @@ final class NoisePreview {
                 }
                 int x = x0 + i * PreviewTile.GRID;
                 int z = z0 + k * PreviewTile.GRID;
-                Holder<Biome> biome = d.biomes.getNoiseBiome(QuartPos.fromBlock(x), QuartPos.fromBlock(d.seaLevel - 1),
-                        QuartPos.fromBlock(z), d.sampler);
+                Holder<Biome> biome = seaBiome(d, seaBiomes, x0, z0, i, k);
                 if (!biome.is(Biomes.FROZEN_OCEAN) && !biome.is(Biomes.DEEP_FROZEN_OCEAN)) {
                     continue;
                 }
@@ -491,6 +495,21 @@ final class NoisePreview {
             }
         }
         return raised;
+    }
+
+    /**
+     * The biome at the sea's top in quart (i, k) of a tile, computed once:
+     * a sample and the cell it starts share their quart ({@link PreviewTile#GRID} is 4).
+     */
+    private static Holder<Biome> seaBiome(Dimension d, Holder<Biome>[] seaBiomes, int x0, int z0, int i, int k) {
+        int index = k * PreviewTile.SAMPLES + i;
+        Holder<Biome> biome = seaBiomes[index];
+        if (biome == null) {
+            biome = d.biomes.getNoiseBiome(QuartPos.fromBlock(x0 + i * PreviewTile.GRID),
+                    QuartPos.fromBlock(d.seaLevel - 1), QuartPos.fromBlock(z0 + k * PreviewTile.GRID), d.columnSampler.get());
+            seaBiomes[index] = biome;
+        }
+        return biome;
     }
 
     /** Whether cell (cx, cz) touches a raised sample of the computed grid ({@code step} samples apart). */
@@ -517,7 +536,7 @@ final class NoisePreview {
                 ? tile.height(x - x0, z - z0) : surface(d, x, z, UNKNOWN);
         List<PreviewVillages.Village> villages = d.villages.within(x0 - reach, z0 - reach, x0 + TILE + reach,
                 z0 + TILE + reach, (x, z) -> d.biomes.getNoiseBiome(QuartPos.fromBlock(x),
-                        QuartPos.fromBlock(surface.applyAsInt(x, z)), QuartPos.fromBlock(z), d.sampler));
+                        QuartPos.fromBlock(surface.applyAsInt(x, z)), QuartPos.fromBlock(z), d.columnSampler.get()));
         for (PreviewVillages.Village v : villages) {
             if (v.x() >= x0 && v.z() >= z0 && v.x() < x0 + TILE && v.z() < z0 + TILE) {
                 d.villagesBuilt.incrementAndGet();
@@ -603,7 +622,7 @@ final class NoisePreview {
                 int z = z0 + cz * 16 + 8;
                 int y = tile.sample(cx * 4 + 2, cz * 4 + 2);
                 Holder<Biome> biome = d.biomes.getNoiseBiome(QuartPos.fromBlock(x), QuartPos.fromBlock(y),
-                        QuartPos.fromBlock(z), d.sampler);
+                        QuartPos.fromBlock(z), d.columnSampler.get());
                 out[cz * PreviewTile.CHUNKS + cx] = biome;
                 tile.setBiome(cx, cz, world.biomes().id(BlockKeys.key(biome)));
             }

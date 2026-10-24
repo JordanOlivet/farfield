@@ -1428,3 +1428,31 @@ flat cache reads). The 3D noise is still read at every point.
   byte-identical.
 - Left: the biome lookups (31 % of the samples with the cache), mostly the
   per-cell frozen-sea check over cold seas, and the 3D noise (25 %).
+
+## ADR-058 — Shared climate caches and one sea biome per quart in the preview
+
+**Date**: 2026-10-24 · **Status**: accepted (extends ADR-057)
+
+With ADR-057 the biome lookups were 31 % of the preview threads' samples,
+most of them two lookups of the same quart: the iceberg check per sample
+and the frozen-sea check per cell both ask the biome at the sea's top, and
+a sample and the cell it starts share their quart.
+
+- A tile keeps the sea-level biome of each quart it looked up; the iceberg
+  and frozen checks share it.
+- The climate sampler's six functions are mapped once per preview thread
+  by `ColumnDensity`, with one cache per distinct marked function (equal
+  records share it, as in `NoiseChunk.wrap`): the shift noises under
+  temperature, humidity, continentalness, erosion and weirdness, and the
+  splines under depth, are computed once per lookup instead of once per
+  function. `finalDensity` gets the same sharing.
+- Same run as ADR-057's: a tile 259 to 202 ms (heights 191 to 140, which
+  hold the iceberg lookups; cells 53 to 45); after the teleport, tiles
+  within 1,024 blocks 9.7 to 7.8 s, in front 14.7 to 12.8 s, all 20.7 to
+  18.8 s.
+- Not byte-identical this time: 2 of 558 tiles differ by one frozen-sea
+  cell each, all else equal (heights, materials, biomes, trees, decoded
+  and compared). Vanilla's `Climate.RTree.search` starts from the thread's
+  last result and keeps it on an exact distance tie (`i > k`), so the
+  order of lookups breaks ties; changing that order moved two ties. The
+  same holds in vanilla's own generation.
