@@ -1,0 +1,3 @@
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-25T11:06:19.284Z","sessionId":"a60569cc-c278-4783-ac2e-170bf34f99d9","content":"ne lan,ce pas le client snas me demander, j'utilise le pc"}
+{"type":"attachment","attachment":{"type":"queued_command","prompt":"ne lan,ce pas le client snas me demander, j'utilise le pc","humanTurn":true}}
+Assistant: Compris : je ne lance aucun client sans te demander. Je code les deux changements, puis je te demanderai avant de tester.

@@ -8,7 +8,8 @@ import static org.lwjgl.opengl.GL20C.*;
 
 /**
  * A linked vertex + fragment program built from GLSL sources on the class
- * path ({@code /assets/farfield/shaders/}). Render thread only.
+ * path ({@code /assets/farfield/shaders/}); a line {@code #include "name"}
+ * is replaced by that source. Render thread only.
  */
 final class GlProgram implements AutoCloseable {
 
@@ -45,7 +46,17 @@ final class GlProgram implements AutoCloseable {
             if (in == null) {
                 throw new IllegalStateException("missing shader " + resource);
             }
-            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            String source = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            StringBuilder out = new StringBuilder(source.length());
+            for (String line : source.split("\n", -1)) {
+                String t = line.trim();
+                if (t.startsWith("#include \"") && t.endsWith("\"")) {
+                    out.append(read(t.substring("#include \"".length(), t.length() - 1))).append('\n');
+                } else {
+                    out.append(line).append('\n');
+                }
+            }
+            return out.toString();
         } catch (IOException e) {
             throw new IllegalStateException("cannot read shader " + resource, e);
         }

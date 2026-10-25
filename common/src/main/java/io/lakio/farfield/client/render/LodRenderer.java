@@ -210,6 +210,12 @@ public final class LodRenderer {
     private Shader earlyZ;
     /** Opaque depth pre-pass of sections that cannot discard: no discard, so early depth tests. */
     private Shader depthSolid;
+    /**
+     * The plants' pass: holes cut before any shading, the tint once per vertex.
+     * Its own program, so the other passes keep a shader without that code
+     * (in theirs it cost the opaque pass 126 us).
+     */
+    private Shader plants;
     private GlBuffer quads;
     private GlBuffer sectionInfo;
     private GlBuffer colorBuffer;
@@ -570,6 +576,7 @@ public final class LodRenderer {
             depthOnly = new Shader("#define DEPTH_ONLY\n");
             earlyZ = new Shader("#define EARLY_Z\n");
             depthSolid = new Shader("#define DEPTH_ONLY\n#define SOLID\n");
+            plants = new Shader("#define PLANTS\n");
         } catch (RuntimeException e) {
             disabled = true;
             Farfield.LOG.error("LOD rendering disabled: shader setup failed", e);
@@ -1980,7 +1987,7 @@ public final class LodRenderer {
         if (plantDraws > 0) {
             // Plants: once, depth-tested against the opaque faces and writing their own,
             // holes cut out; the pre-pass would draw their thin quads twice.
-            use(plain, cam, mc, false);
+            use(plants, cam, mc, false);
             glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, plantOffset, plantDraws, 0);
         }
         if (timed) {

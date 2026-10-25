@@ -22,6 +22,10 @@ The renderer needs an OpenGL 4.6 context on both loaders, and only Fabric can fa
 
 Verify in game with the `sections drawn` stat line and the procedure in `farfield-dev-client-check`.
 
+- Shader edits have no offline check here: GLSL compiles only when the client links the program. No validator exists on this machine (`glslangValidator`, `glslc`, a VulkanSDK folder and the Gradle cache for shaderc/glslang were all absent), so `gradlew build` passing proves nothing about the shaders. Say so in the report, and ask before the launch that compiles them.
+- Shared GLSL: `GlProgram.read` expands a line that is exactly `#include "name"` (trimmed) into the file `shaders/name` before compiling. Put a declaration used by both `lod.vert` and `lod.frag` in such an include (e.g. `biome_tint.glsl`), and keep each include line alone on its line.
+- Per-plant tint: a plant is one block wide, so `lod.vert` blends its tint once per vertex (`v_plantTint`) and `lod.frag` uses it for plants; other faces still blend per fragment.
+
 ## Matching vanilla at the edge
 
 Compare a shade or a seam with numbers, not by eye: sample the same surface on both sides of the edge from a full-resolution capture, and split vanilla from LOD pixels with `/farfield debug levels` (tinted pixels are LOD).
@@ -56,6 +60,7 @@ To localize a new seam inside LODs, capture the same camera spot before and afte
 - Holes in LODs: first scan the section data and its mesh offline (a temporary core test on `<save>/farfield/preview` or the store); complete data and mesh point at the renderer.
 
 - Plants (grass, flowers; ADR-059): class `MaterialClassifier.PLANT`. The mesher emits two diagonal quads per plant, kept in their own group (`PLANT_GROUP`, after the translucent groups) and drawn in the cutout pass whatever the camera's side, since the shader turns them toward the camera. `MaterialColors.buildPlant` puts the model's first quad sprite on face 0 (height along U, width along V, biome tint kept) and copies it to the other faces. On coarse levels plants count as air, so they add no fill or occlusion, but the ground under them is not left bare: `MipBuilder` gives a voxel whose top is ground under plants a covered material (`MipBuilder.Shapes.covered`: ground, plant, and the quarters of the cover), its top face speckled with that plant's sprite. A change to that rule bumps `MIPS_VERSION`, so worlds rebuild their coarse levels at open. In `lod.frag`, plants take no normal and no ambient occlusion, their holes are always cut, and they vanish beyond the texture distance instead of becoming solid rectangles.
+- Plant-only shader code goes in the `PLANTS` program variant (`lod.vert`/`lod.frag` under `#ifdef PLANTS`, drawn only for the plants' list), never in the shared shaders: plant tint per vertex in the shared vertex shader cost the opaque pass 126 us while saving the plants 35 us. Shared GLSL lives in an `#include "name"` file (`biome_tint.glsl`) that `GlProgram` inlines.
 - Kelp and seagrass (ADR-065): a translucent fluid with `MaterialClassifier.hasPlant`. Keep every water rule on them (culling, neighbor planes, mips, preview masks) and add only the plant: faces take `fluidOf` (the water's material), the finest level adds the diagonals with the plant's own material. A coarse classifier must pass `fluidOf` through, or kelp voxels stored in coarse levels draw their faces with the kelp's look. The plants' pass draws before the translucent one, so the water blends over the kelp.
 
 Known open gaps (E.7 in the milestone plan):

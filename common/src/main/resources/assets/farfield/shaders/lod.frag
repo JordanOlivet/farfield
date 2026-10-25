@@ -10,6 +10,7 @@
 // pass then draws with GL_EQUAL against the pre-pass depth, which already
 // holds the hand-off and cutout holes; the translucent pass writes no depth,
 // so its discards stay valid with early tests. Neither: one pass, as before.
+// PLANTS: the plants' pass, nothing else (one pass, no pre-pass).
 #if defined(EARLY_Z) || defined(SOLID)
 layout(early_fragment_tests) in;
 #endif
@@ -19,6 +20,9 @@ in vec2 v_texCoord;
 flat in vec4 v_flat;
 flat in vec3 v_tinted;
 flat in uint v_tintKind;
+#ifdef PLANTS
+flat in vec3 v_plantTint;  // the plant's blended tint, linear (lod.vert)
+#endif
 flat in uint v_biome;
 flat in uint v_tiles;
 flat in float v_light;
@@ -56,22 +60,13 @@ uniform sampler2D u_atlas;     // FaceTextures: 16x16 sRGB tiles, 128 per row, 5
 uniform vec2 u_atlasSize;      // in pixels
 uniform float u_textureEnd;    // textures fade into the mean color up to this distance; 0: off
 uniform sampler2D u_lightmap;  // vanilla's lightmap: x block light, y sky light (day, gamma, effects)
-uniform int u_biomeBlend;      // vanilla's Biome Blend option: 0 off, else the radius in blocks
 
-// Per biome slot (biome id + 1, 0 for unknown) and tint kind: ABGR8 sRGB (BiomeTints).
-layout(std430, binding = 3) readonly buffer BiomeTints {
-    uint tints[];
-};
-const uint TINT_KINDS = 8u;
 const uint NO_TINT = 0xFFFFFFFFu;
 
-// Surface biome per 4x4-voxel column and section slot (SurfaceBiomes): 64
-// 16-bit entries, index cellZ * 8 + cellX, biome slot + 1 or 0 when unknown.
-layout(std430, binding = 7) readonly buffer BiomeColumns {
-    uint biomeColumns[];
-};
 
 out vec4 fragColor;
+
+#include "biome_tint.glsl"
 
 const uint TILES_PER_ROW = 128u;
 const float TILE = 16.0;
@@ -79,11 +74,6 @@ const float TILE = 16.0;
 const vec3 LEVEL_COLORS[5] = vec3[](vec3(1.0, 0.15, 0.1), vec3(1.0, 0.55, 0.0), vec3(1.0, 0.95, 0.1),
                                     vec3(0.2, 0.85, 0.2), vec3(0.2, 0.45, 1.0));
 
-// Slots of each section's 26 same-level neighbors: 27 per slot,
-// (dx + 1) * 9 + (dy + 1) * 3 + (dz + 1), slot + 1 or 0 when not resident.
-layout(std430, binding = 6) readonly buffer NeighborSlots {
-    uint neighborSlots[];
-};
 
 bool occluder(ivec3 v) {
     uint slot = v_slot;
@@ -99,58 +89,6 @@ bool occluder(ivec3 v) {
     return ((occupancy[slot * 1024u + uint(v.y * 32 + v.z)] >> uint(v.x)) & 1u) != 0u;
 }
 
-// Surface biome slot + 1 of a column, in cells from the section's corner
-// (-8..15: this section or a same-level neighbor), 0 when unknown.
-uint columnBiome(ivec2 cell) {
-    uint slot = v_slot;
-    ivec2 o = cell >> 3; // -1, 0 or 1 per axis
-    if (o != ivec2(0)) {
-        uint n = neighborSlots[v_slot * 27u + uint((o.x + 1) * 9 + 3 + (o.y + 1))];
-        if (n == 0u) {
-            return 0u;
-        }
-        slot = n - 1u;
-        cell -= o * 8;
-    }
-    uint i = uint(cell.y * 8 + cell.x);
-    return (biomeColumns[slot * 32u + (i >> 1)] >> ((i & 1u) * 16u)) & 0xFFFFu;
-}
-
-vec3 biomeTint(uint slot) {
-    return unpackUnorm4x8(tints[slot * TINT_KINDS + v_tintKind]).rgb;
-}
-
-// The biome tint at a section-local voxel position, sRGB: as vanilla's
-// biome blending, the mean tint over a square of 2r + 1 blocks around it
-// (r = u_biomeBlend), here with each block taking its column's surface biome
-// and the window sliding continuously instead of block by block. Unknown
-// columns, and the fragment's own column, take the quad's biome.
-vec3 blendedTint(vec2 p) {
-    if (u_biomeBlend <= 0) {
-        return biomeTint(v_biome);
-    }
-    float h = (float(u_biomeBlend) + 0.5) / float(1 << v_level); // half window, in voxels
-    vec2 lo = p - h;
-    vec2 hi = p + h;
-    ivec2 c0 = ivec2(floor(lo / 4.0));
-    ivec2 c1 = ivec2(floor(hi / 4.0));
-    ivec2 own = ivec2(floor(p / 4.0));
-    vec3 sum = vec3(0.0);
-    float total = 0.0;
-    for (int cz = c0.y; cz <= c1.y; cz++) {
-        float wz = min(hi.y, float(cz * 4 + 4)) - max(lo.y, float(cz * 4));
-        for (int cx = c0.x; cx <= c1.x; cx++) {
-            float w = wz * (min(hi.x, float(cx * 4 + 4)) - max(lo.x, float(cx * 4)));
-            if (w <= 0.0) {
-                continue;
-            }
-            uint b = ivec2(cx, cz) == own ? 0u : columnBiome(ivec2(cx, cz));
-            sum += biomeTint(b == 0u ? v_biome : b - 1u) * w;
-            total += w;
-        }
-    }
-    return total > 0.0 ? sum / total : biomeTint(v_biome);
-}
 
 // Vanilla's smooth-lighting ambient occlusion: per corner of the voxel face,
 // (front + side1 + side2 + corner) / 4 with 0.2 for an opaque voxel and 1.0
@@ -251,7 +189,11 @@ void main() {
     // section border test the section of their own voxel.
     vec3 normal = vec3(0.0);
     // Plants' diagonals (directions 6 and 7) lie inside their voxel: no offset.
+#ifdef PLANTS
+    const bool plant = true;
+#else
     bool plant = v_direction >= 6u;
+#endif
     if (!plant) {
         normal[v_direction >> 1] = (v_direction & 1u) != 0u ? 1.0 : -1.0;
     }
@@ -262,6 +204,15 @@ void main() {
     }
 #endif
     float distance = length(v_relative);
+#ifdef PLANTS
+    // Holes first, before the tint and the light: most of a plant's sprite is empty.
+    vec2 pf = fract(v_texCoord);
+    vec2 pgx = dFdx(v_texCoord);
+    vec2 pgy = dFdy(v_texCoord);
+    if (v_tiles == 0u || distance >= u_textureEnd || tile((v_tiles & 0xFFFFu) - 1u, pf, pgx, pgy).a < 0.5) {
+        discard;
+    }
+#endif
 #ifdef DEPTH_ONLY
 #ifndef SOLID
     // The cutout holes of textured faces, as the shaded opaque pass below;
@@ -285,8 +236,12 @@ void main() {
     vec3 color = v_flat.rgb;
     if (v_tintKind != NO_TINT) {
         // The column this face belongs to: a hair inside its voxel, as above.
+#ifdef PLANTS
+        tint = v_plantTint; // one block wide: the same over the whole quad (lod.vert)
+#else
         vec3 voxel = v_voxel - normal * 0.01;
-        tint = toLinear(blendedTint(voxel.xz));
+        tint = toLinear(blendedTint(voxel.xz, v_slot, v_biome, v_tintKind, v_level));
+#endif
         color += v_tinted * tint;
     }
     float alpha = v_flat.a;

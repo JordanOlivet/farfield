@@ -52,6 +52,9 @@ out vec2 v_texCoord;      // block units along the face's U and V axes: one tile
 flat out vec4 v_flat;     // mean untinted face color, linear, before light; alpha: coverage
 flat out vec3 v_tinted;   // mean biome-tinted face color before its tint, linear (0 when none)
 flat out uint v_tintKind; // tint kind (BiomeTints), NO_TINT when the face has no tinted part
+#ifdef PLANTS
+flat out vec3 v_plantTint; // the plant's blended tint at its column, linear
+#endif
 flat out uint v_biome;    // biome slot of the quad (biome id + 1, 0 for unknown)
 flat out uint v_tiles;    // atlas tiles of the face (see Colors)
 flat out float v_light;   // face shade (vanilla's per-direction shade)
@@ -72,6 +75,10 @@ const float CROSS_INSET = 0.05;
 vec3 toLinear(vec3 c) {
     return pow(c, vec3(2.2));
 }
+
+#ifdef PLANTS
+#include "biome_tint.glsl"
+#endif
 
 void main() {
     Section s = sections[gl_BaseInstance];
@@ -194,6 +201,12 @@ void main() {
     v_tinted = hasTint ? toLinear(unpackUnorm4x8(tinted).rgb) : vec3(0.0);
     v_tintKind = hasTint ? (tinted >> 24) & 0x7Fu : 0xFFFFFFFFu;
     v_biome = (q.y >> 12) & 0x1FFu;
+#ifdef PLANTS
+    // A plant is one block wide: its tint, blended at its column, holds over the
+    // whole quad, so it is chosen once here (plants cover many pixels each frame).
+    v_plantTint = hasTint ? toLinear(blendedTint(vec2(voxel.xz) + 0.5, uint(gl_BaseInstance), v_biome,
+            v_tintKind, s.originLevel.w)) : vec3(0.0);
+#endif
     v_flat = vec4(color, untinted.a);
     v_light = SHADE[direction];
     v_lightmap = ivec2(int((q.y >> 25) & 15u), int((q.y >> 21) & 15u));
