@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Farfield">
+  <!-- Farfield logo (direction E, 2026-10-25): three ridges at dusk, each built
+       from blocks that double with distance (16, 32, 64 px), as LOD levels do.
+       Full-bleed square: the platforms round the corners themselves.
+       farfield.png in the jars is rendered from this file at 512 px. -->
+  <defs>
+    <pattern id="far" width="64" height="64" patternUnits="userSpaceOnUse">
+      <rect width="64" height="64" fill="#5E79A0"/>
+      <rect x="2" y="2" width="60" height="60" fill="#3C5478"/>
+    </pattern>
+    <pattern id="mid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <rect width="32" height="32" fill="#4B7E69"/>
+      <rect x="1.5" y="1.5" width="29" height="29" fill="#2F5A4C"/>
+    </pattern>
+    <pattern id="near" width="16" height="16" patternUnits="userSpaceOnUse">
+      <rect width="16" height="16" fill="#335C48"/>
+      <rect x="1" y="1" width="14" height="14" fill="#1A3A2C"/>
+    </pattern>
+  </defs>
+  <rect width="512" height="512" fill="#1E2A44"/>
+  <rect x="344" y="48" width="80" height="80" fill="#F3E3B5"/>
+  <path d="M0 512 V256 H64 V192 H128 V128 H192 V192 H256 V256 H320 V192 H384 V256 H448 V320 H512 V512 Z" fill="url(#far)"/>
+  <path d="M0 512 V320 H64 V288 H128 V256 H160 V288 H192 V320 H224 V352 H256 V320 H288 V288 H352 V320 H384 V352 H448 V320 H512 V512 Z" fill="url(#mid)"/>
+  <path d="M0 512 V400 H32 V384 H64 V368 H80 V384 H96 V400 H112 V416 H144 V400 H160 V384 H192 V400 H208 V416 H224 V432 H256 V416 H272 V400 H304 V384 H320 V368 H352 V384 H368 V400 H384 V416 H416 V400 H448 V384 H464 V400 H480 V416 H496 V432 H512 V512 Z" fill="url(#near)"/>
+</svg>

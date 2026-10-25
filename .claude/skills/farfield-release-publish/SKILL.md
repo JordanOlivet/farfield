@@ -13,7 +13,7 @@ A release is a pushed tag `v<version>[-alpha.N]`. `.github/workflows/release.yml
 3. Lint the workflows before tagging (actionlint on `.github/workflows/*.yml`).
 4. Tag and push: `git tag vX.Y.Z-alpha.N && git push origin vX.Y.Z-alpha.N`.
 5. Watch the run: `gh run list --limit 3` for RUN_ID, then `gh run watch RUN_ID --exit-status --interval 15`.
-6. Verify, in this order: five jobs green (Prepare release, Build mod, GitHub Release, Publish NeoForge, Publish Fabric); each Publish job logs `Successfully published the assets to CurseForge, Modrinth`; `gh release view TAG` lists both jars and is marked pre-release for alpha.
+6. Verify, in this order: five jobs green (Prepare release, Build mod, GitHub Release, Publish NeoForge, Publish Fabric), e.g. `gh run view RUN_ID --json jobs --jq '.jobs[] | "\(.name): \(.conclusion)"'`; each Publish job logs `Successfully published the assets to CurseForge, Modrinth` (`gh run view RUN_ID --log | grep -a "Successfully published"`); the log line `version-type: release|alpha|beta` matches the tag; `gh release view TAG --json name,isPrerelease,assets` lists both jars, and `isPrerelease` is true only for alpha and beta.
 7. The Modrinth public API returns 404 for an unlisted, unapproved project. Modrinth and CurseForge pages stay unverified: ask the user to check loaders, game version, dependencies. Say so in the report.
 8. Log the release in the day's `docs/progress` file (session wrap-up skill).
 

@@ -1,0 +1,1 @@
+"publish / Publish NeoForge ... version-type: release" "✅ Successfully published assets to CurseForge in 1438 ms" "🎉 Successfully published the assets to CurseForge, Modrinth" "Farfield 0.1.0 prerelease=false https://github.com/JordanOlivet/farfield/releases/tag/v0.1.0" "farfield-fabric-1.21.1-0.1.0.jar" "farfield-neoforge-1.21.1-0.1.0.jar"
