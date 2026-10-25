@@ -1204,8 +1204,11 @@ public final class LodRenderer {
         int[][] solid = translucent ? new int[6][] : null;
         byte[][] light = new byte[6][];
         if (PreviewLayer.isPreview(key)) {
-            // Preview terrain is in full sky light; its neighbors are built from the tiles.
-            solid = translucent ? previewLayer.solidNeighbors(w, key, classes, borderPlanes.get()) : null;
+            // Its neighbors are built from the tiles: their solid layers for water faces, and
+            // their light for every face on a border (else a sea floor face there took full
+            // light, white bands through the preview's sea).
+            int[][] planes = previewLayer.solidNeighbors(w, key, classes, borderPlanes.get(), light);
+            solid = translucent ? planes : null;
         } else {
             readNeighbors(w, key, classes, solid, light);
         }

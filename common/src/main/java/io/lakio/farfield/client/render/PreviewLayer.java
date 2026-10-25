@@ -406,7 +406,8 @@ final class PreviewLayer {
      * one layer each, for translucent faces (water spanning sections shows
      * no inner walls). Mesher threads.
      */
-    int[][] solidNeighbors(LodWorld w, long key, MaterialClassifier classes, int[][] planes) throws IOException {
+    int[][] solidNeighbors(LodWorld w, long key, MaterialClassifier classes, int[][] planes, byte[][] light)
+            throws IOException {
         int[][] solid = new int[6][];
         for (int d = 0; d < 6; d++) {
             int y = LodKey.y(key) + STEP[d][1];
@@ -418,6 +419,7 @@ final class PreviewLayer {
             LodSection layer = build(w, neighbor, d >> 1, (d & 1) != 0 ? 0 : LodSection.SIZE - 1);
             if (layer != null) {
                 solid[d] = BinaryGreedyMesher.borderPlane(layer, d, classes, true, planes[d]);
+                light[d] = BinaryGreedyMesher.borderLight(layer, d, null);
             }
         }
         return solid;

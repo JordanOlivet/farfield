@@ -5,6 +5,7 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import io.lakio.farfield.core.world.RemoteWorldNames;
+import io.lakio.farfield.lod.RenderCommands;
 import net.minecraft.client.Minecraft;
 import net.minecraft.network.chat.Component;
 
@@ -15,9 +16,10 @@ import java.util.function.BiConsumer;
  * {@code /farfieldclient world} shows the identity of the current remote
  * world, {@code /farfieldclient world name <name>} names it (its LODs move
  * along when the name is new), {@code /farfieldclient world reset} goes back
- * to the automatic identity. A root of its own, so it never clashes with a
- * server's {@code /farfield}. Each loader registers it with its client
- * command source type.
+ * to the automatic identity; the drawing settings of {@link RenderCommands}
+ * ({@code /farfieldclient debug levels}, ...) work on any server. A root of
+ * its own, so it never clashes with a server's {@code /farfield}. Each
+ * loader registers it with its client command source type.
  */
 public final class FarfieldClientCommands {
 
@@ -28,7 +30,7 @@ public final class FarfieldClientCommands {
      * @param reply sends a line to the player through the loader's source
      */
     public static <S> void register(CommandDispatcher<S> dispatcher, BiConsumer<S, Component> reply) {
-        dispatcher.register(LiteralArgumentBuilder.<S>literal("farfieldclient")
+        LiteralArgumentBuilder<S> root = LiteralArgumentBuilder.<S>literal("farfieldclient")
                 .then(LiteralArgumentBuilder.<S>literal("world")
                         .executes(c -> {
                             reply.accept(c.getSource(), Component.literal(LodClient.describe(Minecraft.getInstance())));
@@ -47,6 +49,10 @@ public final class FarfieldClientCommands {
                                                     : LodClient.rename(Minecraft.getInstance(), name);
                                             reply.accept(c.getSource(), Component.literal(line));
                                             return name == null ? 0 : 1;
-                                        })))));
+                                        }))));
+        dispatcher.register(RenderCommands.addTo(root, "farfieldclient", (source, change) -> {
+            reply.accept(source, Component.literal(change.get()));
+            return 1;
+        }));
     }
 }

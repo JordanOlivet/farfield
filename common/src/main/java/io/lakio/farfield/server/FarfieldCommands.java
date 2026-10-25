@@ -2,10 +2,9 @@ package io.lakio.farfield.server;
 
 import com.mojang.brigadier.CommandDispatcher;
 import io.lakio.farfield.Farfield;
-import io.lakio.farfield.core.config.RenderConfig;
-import io.lakio.farfield.lod.RenderSettings;
-import com.mojang.brigadier.arguments.FloatArgumentType;
+import io.lakio.farfield.lod.RenderCommands;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
@@ -14,12 +13,14 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 
 import java.util.Locale;
+import java.util.function.Supplier;
 
 /**
  * {@code /farfield import [threads]}, {@code /farfield import stop},
  * {@code /farfield import status}: build the LODs of the current dimension
- * from its region files. {@code /farfield render on|off}: switch LOD drawing
- * in single player. {@code /farfield spike generation [side]}: measures the
+ * from its region files. The drawing settings ({@link RenderCommands}) act
+ * in single player only; players elsewhere use {@code /farfieldclient}.
+ * {@code /farfield spike generation [side]}: measures the
  * cost of showing terrain not generated yet ({@link GenerationSpike}; test
  * worlds only). Operators, or the owner of a single-player world (cheats off
  * included).
@@ -30,7 +31,7 @@ public final class FarfieldCommands {
     }
 
     public static void register(CommandDispatcher<CommandSourceStack> dispatcher) {
-        dispatcher.register(Commands.literal("farfield")
+        LiteralArgumentBuilder<CommandSourceStack> root = Commands.literal("farfield")
                 .requires(FarfieldCommands::allowed)
                 .then(Commands.literal("import")
                         .executes(c -> start(c, Math.max(1, Runtime.getRuntime().availableProcessors() / 2)))
@@ -38,168 +39,27 @@ public final class FarfieldCommands {
                                 .executes(c -> start(c, IntegerArgumentType.getInteger(c, "threads"))))
                         .then(Commands.literal("stop").executes(FarfieldCommands::stop))
                         .then(Commands.literal("status").executes(FarfieldCommands::status)))
-                .then(Commands.literal("render")
-                        .then(Commands.literal("on").executes(c -> render(c, true)))
-                        .then(Commands.literal("off").executes(c -> render(c, false))))
-                .then(Commands.literal("detail")
-                        .executes(FarfieldCommands::showDetail)
-                        .then(Commands.argument("pixels", FloatArgumentType.floatArg(
-                                        RenderSettings.MIN_VOXEL_PIXELS, RenderSettings.MAX_VOXEL_PIXELS))
-                                .executes(c -> detail(c, FloatArgumentType.getFloat(c, "pixels")))))
-                .then(Commands.literal("textures")
-                        .executes(FarfieldCommands::showTextures)
-                        .then(Commands.literal("all").executes(c -> textures(c, RenderSettings.ALL_DISTANCES)))
-                        .then(Commands.argument("blocks", IntegerArgumentType.integer(0,
-                                        RenderSettings.MAX_TEXTURE_DISTANCE))
-                                .executes(c -> textures(c, IntegerArgumentType.getInteger(c, "blocks")))))
-                .then(Commands.literal("fog")
-                        .executes(FarfieldCommands::showFog)
-                        .then(Commands.literal("off").executes(c -> fog(c, false, RenderConfig.FOG_OFF)))
-                        .then(Commands.argument("blocks", IntegerArgumentType.integer(RenderConfig.MIN_FOG_DISTANCE,
-                                        RenderConfig.MAX_FOG_DISTANCE))
-                                .executes(c -> fog(c, false, IntegerArgumentType.getInteger(c, "blocks"))))
-                        .then(Commands.literal("thick")
-                                .executes(FarfieldCommands::showFog)
-                                .then(Commands.literal("vanilla").executes(c -> fog(c, true, RenderConfig.FOG_VANILLA)))
-                                .then(Commands.literal("off").executes(c -> fog(c, true, RenderConfig.FOG_OFF)))
-                                .then(Commands.argument("blocks", IntegerArgumentType.integer(
-                                                RenderConfig.MIN_FOG_DISTANCE, RenderConfig.MAX_FOG_DISTANCE))
-                                        .executes(c -> fog(c, true, IntegerArgumentType.getInteger(c, "blocks"))))))
-                .then(Commands.literal("preview")
-                        .executes(c -> preview(c, !RenderSettings.noisePreview()))
-                        .then(Commands.literal("on").executes(c -> preview(c, true)))
-                        .then(Commands.literal("off").executes(c -> preview(c, false))))
                 .then(Commands.literal("spike")
                         .then(Commands.literal("generation")
                                 .executes(c -> generationSpike(c, 16))
                                 .then(Commands.argument("side", IntegerArgumentType.integer(1, 64))
-                                        .executes(c -> generationSpike(c, IntegerArgumentType.getInteger(c, "side"))))))
-                .then(Commands.literal("debug")
-                        .then(Commands.literal("levels")
-                                .executes(c -> debugLevels(c, !RenderSettings.debugLevels()))
-                                .then(Commands.literal("on").executes(c -> debugLevels(c, true)))
-                                .then(Commands.literal("off").executes(c -> debugLevels(c, false))))
-                        .then(Commands.literal("prepass")
-                                .executes(c -> debugPrepass(c, !RenderSettings.depthPrepass()))
-                                .then(Commands.literal("on").executes(c -> debugPrepass(c, true)))
-                                .then(Commands.literal("off").executes(c -> debugPrepass(c, false))))
-                        .then(Commands.literal("plants")
-                                .executes(c -> debugPlants(c, !RenderSettings.drawPlants()))
-                                .then(Commands.literal("on").executes(c -> debugPlants(c, true)))
-                                .then(Commands.literal("off").executes(c -> debugPlants(c, false))))));
+                                        .executes(c -> generationSpike(c, IntegerArgumentType.getInteger(c, "side"))))));
+        dispatcher.register(RenderCommands.addTo(root, "farfield", FarfieldCommands::clientSetting));
     }
 
-    /** Single player: switches the plants' crossed quads, to compare GPU times on the stat line. Not saved. */
-    private static int debugPlants(CommandContext<CommandSourceStack> c, boolean on) {
-        RenderSettings.setDrawPlants(on);
-        Farfield.LOG.info("LOD plants switched {} by command", on ? "on" : "off");
-        c.getSource().sendSuccess(() -> Component.literal("LOD plants " + (on ? "on" : "off")
-                + " (default on, not saved; GPU times on the next stat lines; single player only)."), false);
-        return 1;
-    }
-
-    /** Single player: switches the LOD depth pre-pass, to compare GPU times on the stat line. Not saved. */
-    private static int debugPrepass(CommandContext<CommandSourceStack> c, boolean on) {
-        RenderSettings.setDepthPrepass(on);
-        Farfield.LOG.info("LOD depth pre-pass switched {} by command", on ? "on" : "off");
-        c.getSource().sendSuccess(() -> Component.literal("LOD depth pre-pass " + (on ? "on" : "off")
-                + " (default on, not saved; GPU times on the next stat lines; single player only)."), false);
-        return 1;
-    }
-
-    /** Single player: the distance up to which LOD faces show their textures (0: off). */
-    private static int textures(CommandContext<CommandSourceStack> c, int blocks) {
-        RenderSettings.setTextureDistance(blocks);
-        RenderSettings.save();
-        Farfield.LOG.info("LOD texture distance set to {} by command",
-                RenderSettings.textureDistance() == RenderSettings.ALL_DISTANCES ? "all LODs"
-                        : RenderSettings.textureDistance() + " blocks");
-        return showTextures(c);
-    }
-
-    private static int showTextures(CommandContext<CommandSourceStack> c) {
-        int blocks = RenderSettings.textureDistance();
-        String what = blocks == 0 ? "LOD textures off"
-                : blocks == RenderSettings.ALL_DISTANCES ? "LOD textures on every LOD"
-                : "LOD textures up to " + blocks + " blocks, fading over the last quarter";
-        c.getSource().sendSuccess(() -> Component.literal(what
-                + " (default all; /farfield textures all|<blocks>, 0 turns them off; single player only)."), false);
-        return 1;
-    }
-
-    /** Single player: where the fog becomes opaque, in normal or thick-fog dimensions (ADR-034). */
-    private static int fog(CommandContext<CommandSourceStack> c, boolean thick, int blocks) {
-        if (thick) {
-            RenderSettings.setThickFogDistance(blocks);
-        } else {
-            RenderSettings.setFogDistance(blocks);
+    /**
+     * The drawing settings act on the client of this process: in single
+     * player, for its owner. Elsewhere they belong to each player's client.
+     */
+    private static int clientSetting(CommandSourceStack source, Supplier<String> change) {
+        if (!(source.getEntity() instanceof ServerPlayer player)
+                || !source.getServer().isSingleplayerOwner(player.getGameProfile())) {
+            source.sendFailure(Component.literal("LOD drawing settings belong to each player's game: use "
+                    + "/farfieldclient instead of /farfield (same arguments)."));
+            return 0;
         }
-        RenderSettings.save();
-        Farfield.LOG.info("LOD {}fog distance set to {} by command", thick ? "thick " : "",
-                fogText(thick ? RenderSettings.thickFogDistance() : RenderSettings.fogDistance()));
-        return showFog(c);
-    }
-
-    private static int showFog(CommandContext<CommandSourceStack> c) {
-        String line = "LOD fog: " + fogText(RenderSettings.fogDistance()) + " (thick fog: "
-                + fogText(RenderSettings.thickFogDistance()) + "); /farfield fog [thick] off|<"
-                + RenderConfig.MIN_FOG_DISTANCE + ".." + RenderConfig.MAX_FOG_DISTANCE
-                + ">, /farfield fog thick vanilla; single player only.";
-        c.getSource().sendSuccess(() -> Component.literal(line), false);
-        return 1;
-    }
-
-    private static String fogText(int blocks) {
-        return blocks == RenderConfig.FOG_OFF ? "off" : blocks == RenderConfig.FOG_VANILLA ? "vanilla"
-                : blocks + " blocks";
-    }
-
-    /** Single player: shows terrain not generated yet from the world's noise (ADR-038). */
-    private static int preview(CommandContext<CommandSourceStack> c, boolean on) {
-        RenderSettings.setNoisePreview(on);
-        RenderSettings.save();
-        Farfield.LOG.info("LOD noise preview switched {} by command", on ? "on" : "off");
-        c.getSource().sendSuccess(() -> Component.literal(on
-                ? "Noise preview on: terrain not generated yet shows coarsely (single player only)."
-                : "Noise preview off."), false);
-        return 1;
-    }
-
-    /** Single player: tints LOD faces by level, to see where each level hands over. */
-    private static int debugLevels(CommandContext<CommandSourceStack> c, boolean on) {
-        RenderSettings.setDebugLevels(on);
-        RenderSettings.save();
-        Farfield.LOG.info("LOD level colors switched {} by command", on ? "on" : "off");
-        c.getSource().sendSuccess(() -> Component.literal(on
-                ? "LOD level colors on: red 1 block, orange 2, yellow 4, green 8, blue 16 (single player only)."
-                : "LOD level colors off."), false);
-        return 1;
-    }
-
-    /** Single player: switches LOD drawing on the client of the same process, to compare frame rates. */
-    private static int render(CommandContext<CommandSourceStack> c, boolean on) {
-        RenderSettings.set(on);
-        RenderSettings.save();
-        Farfield.LOG.info("LOD rendering switched {} by command", on ? "on" : "off");
-        c.getSource().sendSuccess(() -> Component.literal("LOD rendering " + (on ? "on" : "off")
-                + " (single player only: it acts on this game's own client)."), false);
-        return 1;
-    }
-
-    /** Single player: the largest on-screen size of an LOD voxel before the finer level takes over. */
-    private static int detail(CommandContext<CommandSourceStack> c, float pixels) {
-        RenderSettings.setVoxelPixels(pixels);
-        RenderSettings.save();
-        Farfield.LOG.info("LOD detail set to {} px per voxel by command", RenderSettings.voxelPixels());
-        c.getSource().sendSuccess(() -> Component.literal("LOD detail: " + RenderSettings.voxelPixels()
-                + " px per voxel (lower is finer; default " + RenderSettings.DEFAULT_VOXEL_PIXELS
-                + "; single player only)."), false);
-        return 1;
-    }
-
-    private static int showDetail(CommandContext<CommandSourceStack> c) {
-        c.getSource().sendSuccess(() -> Component.literal("LOD detail: " + RenderSettings.voxelPixels()
-                + " px per voxel (lower is finer; default " + RenderSettings.DEFAULT_VOXEL_PIXELS + ")."), false);
+        String line = change.get();
+        source.sendSuccess(() -> Component.literal(line), false);
         return 1;
     }
 
