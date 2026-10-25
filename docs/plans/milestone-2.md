@@ -9,7 +9,7 @@ Legend: `[ ]` todo · `[~]` in progress (the text says what remains) ·
 
 ## M2.A — Release
 
-- [~] A.1 A real logo, in place of the word "farfield" in black on white:
+- [x] A.1 A real logo, in place of the word "farfield" in black on white:
   the icon of the jar (`farfield.png` of both loaders' metadata) and of the
   Modrinth and CurseForge pages. The user chose direction E of five (dusk
   ridges built from blocks of 16, 32 and 64 px, light joints): "Oui je
@@ -17,9 +17,9 @@ Legend: `[ ]` todo · `[~]` in progress (the text says what remains) ·
   `docs/brand/render_logo.py` to `common/src/main/resources/farfield.png`
   (512 px), referenced by `fabric.mod.json` (`icon`) and
   `neoforge.mods.toml` (`logoFile`); both jars hold it. Modrinth: icon,
-  banner and description from `docs/listing/` (2026-10-25). Remains: the
-  icon in the in-game mod lists (Mod Menu, NeoForge), and CurseForge (the
-  user pastes the description and uploads the images)
+  banner and description from `docs/listing/` (2026-10-25); CurseForge
+  pasted by the user. The user: "Tout est bon". Not checked: the icon in
+  the in-game mod lists (Mod Menu, NeoForge)
 - [x] A.2 Release 0.1.0 (tag `v0.1.0`, release type, not alpha): an alpha
   is hidden from CurseForge search; Modrinth lists the project once it is
   approved. Checked before it: the user's Fabric pack (Cobblemon) and
