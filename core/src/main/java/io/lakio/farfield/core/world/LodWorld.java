@@ -263,9 +263,12 @@ public final class LodWorld implements AutoCloseable {
 
     /**
      * Writes a chunk (block ids and biome ids of this world's key tables)
-     * into its level-0 sections. Sections without blocks are ignored.
+     * into its level-0 sections. Sections without blocks are ignored;
+     * sections without sky light take it from above first, as the game
+     * reads them ({@link ChunkData#inheritSkyLight}).
      */
     public void ingest(ChunkData chunk) throws IOException {
+        chunk.inheritSkyLight();
         int cx = chunk.chunkX();
         int cz = chunk.chunkZ();
         int lx = cx >> 1;

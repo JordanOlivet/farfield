@@ -126,6 +126,40 @@ public final class ChunkData {
         return sections[i];
     }
 
+    /**
+     * Gives sky light to the sections stored without it, as the game reads
+     * them: the bottom layer of the nearest section above that has sky
+     * light, in every layer, column by column. The game keeps no sky light
+     * for sections it lights that way (a water pocket closed in stone is
+     * one, dark); left without, they read full light. Sections with no lit
+     * section above (the sky, or a dimension without sky light) stay
+     * without.
+     */
+    public void inheritSkyLight() {
+        for (int i = 0; i < sectionCount; i++) {
+            SectionData s = sections[i];
+            if (s.hasSkyLight()) {
+                continue;
+            }
+            SectionData above = null;
+            for (int j = 0; j < sectionCount; j++) {
+                SectionData a = sections[j];
+                if (a.hasSkyLight() && a.y() > s.y() && (above == null || a.y() < above.y())) {
+                    above = a;
+                }
+            }
+            if (above == null) {
+                continue;
+            }
+            // Bottom layer: block indices 0..255, nibbles in bytes 0..127.
+            byte[] light = s.skyLight;
+            for (int layer = 0; layer < 16; layer++) {
+                System.arraycopy(above.skyLight, 0, light, layer * 128, 128);
+            }
+            s.hasSkyLight = true;
+        }
+    }
+
     @Override
     public String toString() {
         return "Chunk[" + chunkX + ", " + chunkZ + ", v" + dataVersion + ", " + status
