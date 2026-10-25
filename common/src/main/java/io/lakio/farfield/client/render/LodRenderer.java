@@ -152,8 +152,12 @@ public final class LodRenderer {
     private static final double RESELECT_TURN_COS = 0.9;
     /** A camera jump this far between two frames (squared blocks) counts as a teleport for the fill line. */
     private static final double TELEPORT_DISTANCE_SQ = 256 * 256;
-    /** How long after a join or a teleport the fill line waits before it is logged. */
+    /** How long after a join or a teleport the fill line waits at most before it is logged... */
     private static final long FILL_WINDOW_NANOS = 60_000_000_000L;
+    /** ...and how long nothing may be missing in view, with no mesh in flight, to log it sooner. */
+    private static final long FILL_SETTLED_NANOS = 5_000_000_000L;
+    /** Time between two stat lines. */
+    private static final long STATS_INTERVAL_NANOS = 10_000_000_000L;
     /** Time per frame for building material looks ({@link MaterialColors})... */
     private static final long LOOKS_BUDGET_NANOS = 3_000_000L;
     /** ...up to what keeps the frame at 60 fps when more than this many wait (ADR-062). */
@@ -367,6 +371,8 @@ public final class LodRenderer {
     /** Wanted sections in view at the first selection past each of {@link #FILL_CHECKS}, -1 before it. */
     private final int[] fillTimeline = new int[FILL_CHECKS.length];
     private int fillMeshes;
+    /** Since when nothing is missing in view and no mesh is in flight (0: something is). */
+    private long fillSettledSince;
     private final FrustumIntersection frustum = new FrustumIntersection();
     private final Matrix4f cullMatrix = new Matrix4f();
     private final Matrix4f viewProj = new Matrix4f();
@@ -937,6 +943,11 @@ public final class LodRenderer {
                     fillTimeline[i] = inView;
                 }
             }
+            if (inView > 0 || !requested.isEmpty()) {
+                fillSettledSince = 0;
+            } else if (fillSettledSince == 0) {
+                fillSettledSince = now;
+            }
         }
     }
 
@@ -962,24 +973,31 @@ public final class LodRenderer {
         fillCause = cause;
         java.util.Arrays.fill(fillTimeline, -1);
         fillMeshes = 0;
+        fillSettledSince = 0;
     }
 
     /**
-     * Logs, once {@link #FILL_WINDOW_NANOS} passed since a join or a teleport
-     * (or at the next one, {@code cut}), the sections missing in view at each
-     * of {@link #FILL_CHECKS}: preview tiles built later add sections, so the
-     * count can rise again.
+     * Logs the sections missing in view at each of {@link #FILL_CHECKS} since
+     * a join or a teleport, once the view stayed complete for
+     * {@link #FILL_SETTLED_NANOS}, else after {@link #FILL_WINDOW_NANOS} (or at
+     * the next join or teleport, {@code cut}). Preview tiles built later add
+     * sections, so the count can rise again; the noise preview logs its own fill.
      */
     private void logFill(long now, boolean cut) {
-        if (fillStart == 0 || !cut && now - fillStart < FILL_WINDOW_NANOS) {
+        boolean settled = fillSettledSince != 0 && now - fillSettledSince >= FILL_SETTLED_NANOS;
+        if (fillStart == 0 || !cut && !settled && now - fillStart < FILL_WINDOW_NANOS) {
             return;
         }
         StringBuilder timeline = new StringBuilder();
         for (int i = 0; i < FILL_CHECKS.length && fillTimeline[i] >= 0; i++) {
             timeline.append(i == 0 ? "" : ", ").append(FILL_CHECKS[i]).append(" s ").append(fillTimeline[i]);
         }
-        Farfield.LOG.info("LOD view fill after {}: sections missing in view at {}; {} meshes uploaded in {} s",
-                fillCause, timeline, fillMeshes, (Math.min(now, fillStart + FILL_WINDOW_NANOS) - fillStart) / 1_000_000_000L);
+        // Settled: nothing missing in view and no mesh in flight, out of view included.
+        String settledAt = fillSettledSince == 0 ? "not settled"
+                : String.format(java.util.Locale.ROOT, "settled at %.1f s", (fillSettledSince - fillStart) / 1e9);
+        Farfield.LOG.info("LOD view fill after {}: sections missing in view at {}; view {}; {} meshes uploaded in {} s",
+                fillCause, timeline, settledAt, fillMeshes,
+                (Math.min(now, fillStart + FILL_WINDOW_NANOS) - fillStart) / 1_000_000_000L);
         fillStart = 0;
     }
 
@@ -1004,7 +1022,7 @@ public final class LodRenderer {
     }
 
     private void logStats(int count) {
-        nextStats = System.nanoTime() + 30_000_000_000L;
+        nextStats = System.nanoTime() + STATS_INTERVAL_NANOS;
         int jobs = meshJobs.getAndSet(0);
         long jobNanos = meshNanos.getAndSet(0);
         long readNanos = meshReadNanos.getAndSet(0);
