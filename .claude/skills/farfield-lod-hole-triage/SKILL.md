@@ -21,6 +21,8 @@ Known residue, not a regression: a chunk outside the forced area that finishes g
 
 Log vocabulary: the `dropped` counter no longer exists. A `N of border chunks` count above 0 proves the border path ran, which the CLAUDE.md rule requires for any path you claim to have verified.
 
+Holes that appear only after a zoom (spyglass) or during a long walk, with `storeHoles` at 0: read the `LOD renderer` stat line before anything else. A `quads used` figure at its budget (1,023 of 1,024 MB) plus a detail far above the default (62.6 against 4.6 section sizes) means the selector and the arena are starved, not the data. Fix in `farfield-lod-renderer` (zoomed view, quad room before residence), then prove it with the stat line and a user retest.
+
 Old worlds keep their holes. Re-import with `/farfield import` or re-visit the area, then repeat step 2.
 
 A hole near the camera that is not a store hole (`storeHoles` reports 0) is a render cull, not missing data. Check the vertical reach first: vanilla's Sodium draws sections only within the render distance on both axes, so LOD fragments discarded on the horizontal distance alone leave a hole under a high player (seen at y=245 over a lake). Compare with `/farfield render off` at the same spot: if the frame is only sky with LODs off, the LOD path is what fills the gap; fix the discard in `farfield-lod-renderer`.

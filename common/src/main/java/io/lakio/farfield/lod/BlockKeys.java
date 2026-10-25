@@ -150,15 +150,16 @@ public final class BlockKeys {
         } catch (RuntimeException e) {
             return MaterialTable.pack(MaterialClassifier.OPAQUE, MipBuilder.Shapes.FULL);
         }
-        if (Block.isShapeFullBlock(shape)) {
-            int meshClass = state.canOcclude() ? MaterialClassifier.OPAQUE : MaterialClassifier.TRANSLUCENT;
-            return MaterialTable.pack(meshClass, MipBuilder.Shapes.FULL);
-        }
-        if (!state.getFluidState().isEmpty()) {
+        if (!state.getFluidState().isEmpty() && !(Block.isShapeFullBlock(shape) && state.canOcclude())) {
             // Waterlogged partial blocks, seagrass, kelp: the water dominates, and they are
             // that water for the mesher too: no faces between them and the water around
             // (dark squares around kelp once ice and water showed their faces, ADR-055).
+            // Before the full-block test: the kelp's body has a full outline (ADR-063).
             return MaterialTable.packFluid();
+        }
+        if (Block.isShapeFullBlock(shape)) {
+            int meshClass = state.canOcclude() ? MaterialClassifier.OPAQUE : MaterialClassifier.TRANSLUCENT;
+            return MaterialTable.pack(meshClass, MipBuilder.Shapes.FULL);
         }
         if (!shape.isEmpty()) {
             AABB b = shape.bounds();
@@ -253,7 +254,9 @@ public final class BlockKeys {
             return state;
         }
         try {
-            if (Block.isShapeFullBlock(state.getShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO))) {
+            // Only an opaque full block shows itself through its water; the kelp's body
+            // (full outline, not opaque) looks like the water it is classed as.
+            if (Block.isShapeFullBlock(state.getShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO)) && state.canOcclude()) {
                 return state;
             }
         } catch (RuntimeException e) {

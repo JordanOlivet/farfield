@@ -1610,3 +1610,27 @@ ms`, then about 1 s on later joins), with screenshots:
   Fabric dev client boot, `LOD looks: 2083 built in 1644 ms`, 1,562
   sections drawn, no error. Not checked: the spyglass and the kelp in the
   user's pack.
+
+## ADR-064 — The kelp's body is water
+
+**Date**: 2026-10-25 · **Status**: accepted (amends ADR-063's waterlogged rule)
+
+ADR-063 made waterlogged blocks a fluid, but the user's dark squares
+around kelp stayed. `/farfield render off` at the spot (a spyglass view)
+showed only sky: LOD geometry. A dev client bench over a cold ocean,
+logging the class `BlockKeys` gave each kelp and seagrass state, found
+`minecraft:kelp_plant` (the kelp's body) a translucent non-fluid: its
+outline is a full block, so the full-block test took it before the
+waterlogged one, and its look was the kelp texture on a cube. Each kelp
+column was a translucent textured cube with faces against the water
+around (ADR-055), dark through the sea.
+
+- A block with water in it is a fluid unless it is an opaque full block,
+  tested before the full-block rule; `lookOf` gives it the water's look.
+- `MaterialTable.covered` refuses translucent grounds, and
+  `MaterialColors` leaves covered translucent grounds plain: the same log
+  showed mips covering seagrass with plants (`farfield:covered|1|
+  minecraft:short_grass|minecraft:seagrass`).
+- Checked: the bench before (dark kelp columns through the water) and
+  after (clean water, `kelp_plant` a fluid). Kelp is now invisible in
+  LODs, as seagrass: drawing it as crossed quads under water is left open.

@@ -100,6 +100,9 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
 
     @Override
     public int covered(int ground, int plant, int quarters) {
+        if (classOf(ground) == TRANSLUCENT) {
+            return ground; // plants on a fluid or glass: nothing to speckle (seen over seagrass)
+        }
         int q = Math.max(1, Math.min(CoveredKey.MAX_QUARTERS, quarters));
         return covered.computeIfAbsent((long) ground << 32 | (long) plant << 3 | q,
                 k -> keys.id(new CoveredKey(q, keys.key(plant), keys.key(ground)).key()));

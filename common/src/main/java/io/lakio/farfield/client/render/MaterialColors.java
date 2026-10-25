@@ -309,7 +309,8 @@ final class MaterialColors {
             }
         }
 
-        if (plant != null && hasQuads[3]) {
+        // Covered fluids, stored before MaterialTable refused them, stay plain.
+        if (plant != null && hasQuads[3] && meshClass != MaterialClassifier.TRANSLUCENT) {
             speckle(3, plant, quarters, blockColors, tints, probeBiome);
         }
         boolean dependsOnBiome = false;
