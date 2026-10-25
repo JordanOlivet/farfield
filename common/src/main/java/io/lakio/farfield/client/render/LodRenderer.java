@@ -23,11 +23,14 @@ import io.lakio.farfield.core.world.LodWorld;
 import io.lakio.farfield.lod.RenderSettings;
 import io.lakio.farfield.mixin.client.LevelRendererAccessor;
 import it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.objects.ObjectArrayList;
 import it.unimi.dsi.fastutil.objects.ObjectIterator;
+import it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -37,6 +40,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.util.Mth;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.Biomes;
 import net.minecraft.world.phys.Vec3;
@@ -812,7 +816,52 @@ public final class LodRenderer {
     private void vanillaDrawnSections(Minecraft mc) {
         int[] bits = drawnBits;
         java.util.Arrays.fill(bits, 0);
-        for (SectionRenderDispatcher.RenderSection s : ((LevelRendererAccessor) mc.levelRenderer).farfield$visibleSections()) {
+        ObjectArrayList<SectionRenderDispatcher.RenderSection> visible =
+                ((LevelRendererAccessor) mc.levelRenderer).farfield$visibleSections();
+        // Vanilla builds a new chunk's sections one by one: a sea floor drawn before the
+        // section of its water showed kelp and sand with no water over them for a frame
+        // (the LOD water under it is drawn first, then covered). Below a section still to
+        // build, a column's sections wait, the LODs drawing them (ADR-069). Vanilla
+        // rebuilds its list only at a frustum update: the sections held back last frame
+        // go back in first, and wait again only if their column still is not built.
+        if (!heldSections.isEmpty()) {
+            listed.clear();
+            listed.addAll(visible);
+            for (SectionRenderDispatcher.RenderSection s : heldSections) {
+                if (listed.add(s)) {
+                    visible.add(s);
+                }
+            }
+            heldSections.clear();
+        }
+        waitingColumns.clear();
+        for (SectionRenderDispatcher.RenderSection s : visible) {
+            if (s.compiled.get() == SectionRenderDispatcher.CompiledSection.UNCOMPILED) {
+                BlockPos origin = s.getOrigin();
+                long column = ChunkPos.asLong(origin.getX() >> 4, origin.getZ() >> 4);
+                int y = origin.getY() >> 4;
+                if (!waitingColumns.containsKey(column) || waitingColumns.get(column) < y) {
+                    waitingColumns.put(column, y);
+                }
+            }
+        }
+        if (!waitingColumns.isEmpty()) {
+            int kept = 0;
+            for (int i = 0, n = visible.size(); i < n; i++) {
+                SectionRenderDispatcher.RenderSection s = visible.get(i);
+                BlockPos origin = s.getOrigin();
+                long column = ChunkPos.asLong(origin.getX() >> 4, origin.getZ() >> 4);
+                if (s.compiled.get() != SectionRenderDispatcher.CompiledSection.UNCOMPILED
+                        && waitingColumns.containsKey(column) && (origin.getY() >> 4) < waitingColumns.get(column)) {
+                    heldBack++;
+                    heldSections.add(s);
+                    continue;
+                }
+                visible.set(kept++, s);
+            }
+            visible.size(kept);
+        }
+        for (SectionRenderDispatcher.RenderSection s : visible) {
             if (s.compiled.get() == SectionRenderDispatcher.CompiledSection.UNCOMPILED) {
                 continue;
             }
@@ -827,6 +876,14 @@ public final class LodRenderer {
             bits[bit >> 5] |= 1 << (bit & 31);
         }
     }
+
+    /** Per column (chunk), the highest visible section vanilla has not built yet (ADR-069). */
+    private final Long2IntOpenHashMap waitingColumns = new Long2IntOpenHashMap();
+    /** Vanilla sections kept out of its draw list since the last stat line, for their column. */
+    private long heldBack;
+    /** The sections kept out of vanilla's list this frame, put back in at the next one. */
+    private final ObjectArrayList<SectionRenderDispatcher.RenderSection> heldSections = new ObjectArrayList<>();
+    private final ReferenceOpenHashSet<SectionRenderDispatcher.RenderSection> listed = new ReferenceOpenHashSet<>();
 
     private void uploadDrawnSections(int ints) {
         long needed = (long) ints * 4;
@@ -1079,7 +1136,8 @@ public final class LodRenderer {
                             + " render thread and {} us on the GPU (depth pre-pass {}, opaque {}, plants {}, translucent {}),"
                             + " {} of {} quads sent (face directions), {} of them plants, {} sections may discard, {} left"
                             + " to the game, over {}"
-                            + " frames; detail {}; at most {} coarse fallbacks per selection", count, resident.size(),
+                            + " frames; detail {}; at most {} coarse fallbacks per selection; {} vanilla sections held"
+                            + " back for their column", count, resident.size(),
                     arena.used() * 8 >> 20, arena.capacity() * 8 >> 20, requested.size(), meshesUploaded, meshesEvicted,
                     selections, frameNanos / 1000 / Math.max(1, timedFrames),
                     (gpuPassNanos[0] + gpuPassNanos[1] + gpuPassNanos[2] + gpuPassNanos[3]) / 1000 / Math.max(1, gpuFrames),
@@ -1090,8 +1148,9 @@ public final class LodRenderer {
                     quadsSubmitted / Math.max(1, timedFrames), quadsInView / Math.max(1, timedFrames),
                     plantQuadsSubmitted / Math.max(1, timedFrames),
                     discardSections / Math.max(1, timedFrames), leftToGame / Math.max(1, timedFrames), timedFrames,
-                    String.format("%.1f", selector.detail()), maxFallbacks);
+                    String.format("%.1f", selector.detail()), maxFallbacks, heldBack);
         }
+        heldBack = 0;
         maxFallbacks = 0;
         quadsInView = 0;
         quadsSubmitted = 0;

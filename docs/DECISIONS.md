@@ -1797,3 +1797,31 @@ concepts are reused, not its code (ADR-001).
 3. The preview built on a dedicated server and streamed.
 4. The user's NeoForge pack on a server: fill time and bandwidth from the
    log lines.
+
+## ADR-069 — Vanilla columns drawn whole at the hand-off
+
+**Date**: 2026-10-25 · **Status**: proposed (amends ADR-052; vanilla renderer only)
+
+The user, Fabric dev client without Sodium, walking along the vanilla
+edge over a shallow sea: "de petites portions de terrain/eau disparaître
+puis réapparaître très vite". Not seen with Sodium. The frames of their
+video show, for one frame, vanilla kelp, seagrass and sea floor with no
+water over them.
+
+- **Cause**: vanilla builds a new chunk's sections one at a time and draws
+  each once built. A sea floor section (kelp, sand) can be drawn a frame
+  before the section above it that holds the water's surface. The LODs
+  give way per section (ADR-052), so the LOD water of that upper section
+  is drawn, but the LODs draw before the game's terrain and clear the
+  depth after: the vanilla floor covers that water.
+- **Decision**: before vanilla draws, the hand-off removes from its
+  visible list every built section below a section of the same column
+  that the list holds but vanilla has not built yet. The LODs keep drawing
+  that column until it is built; the unbuilt sections stay in the list so
+  vanilla still builds them. Vanilla rebuilds the list only at a frustum
+  update (a turn of the camera, a graph update), so the sections held back
+  go back into it at the next frame and wait again only while their column
+  is not built. The stat line counts the sections held back.
+- Sodium keeps its own lists; the user did not see the effect there.
+- To check: the user's walk along the edge with the stat line's count
+  above 0, and no column of LODs left in place of built vanilla terrain.
