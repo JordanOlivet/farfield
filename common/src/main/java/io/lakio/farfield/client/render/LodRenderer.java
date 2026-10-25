@@ -22,7 +22,9 @@ import io.lakio.farfield.core.util.RangeAllocator;
 import io.lakio.farfield.core.world.LodWorld;
 import io.lakio.farfield.lod.RenderSettings;
 import io.lakio.farfield.mixin.client.LevelRendererAccessor;
+import io.lakio.farfield.mixin.client.ViewAreaAccessor;
 import it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2IntMap;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
@@ -34,15 +36,19 @@ import it.unimi.dsi.fastutil.objects.ReferenceOpenHashSet;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
+import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.client.resources.model.BakedModel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.Biomes;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.joml.FrustumIntersection;
 import org.joml.Matrix4f;
@@ -818,49 +824,7 @@ public final class LodRenderer {
         java.util.Arrays.fill(bits, 0);
         ObjectArrayList<SectionRenderDispatcher.RenderSection> visible =
                 ((LevelRendererAccessor) mc.levelRenderer).farfield$visibleSections();
-        // Vanilla builds a new chunk's sections one by one: a sea floor drawn before the
-        // section of its water showed kelp and sand with no water over them for a frame
-        // (the LOD water under it is drawn first, then covered). Below a section still to
-        // build, a column's sections wait, the LODs drawing them (ADR-069). Vanilla
-        // rebuilds its list only at a frustum update: the sections held back last frame
-        // go back in first, and wait again only if their column still is not built.
-        if (!heldSections.isEmpty()) {
-            listed.clear();
-            listed.addAll(visible);
-            for (SectionRenderDispatcher.RenderSection s : heldSections) {
-                if (listed.add(s)) {
-                    visible.add(s);
-                }
-            }
-            heldSections.clear();
-        }
-        waitingColumns.clear();
-        for (SectionRenderDispatcher.RenderSection s : visible) {
-            if (s.compiled.get() == SectionRenderDispatcher.CompiledSection.UNCOMPILED) {
-                BlockPos origin = s.getOrigin();
-                long column = ChunkPos.asLong(origin.getX() >> 4, origin.getZ() >> 4);
-                int y = origin.getY() >> 4;
-                if (!waitingColumns.containsKey(column) || waitingColumns.get(column) < y) {
-                    waitingColumns.put(column, y);
-                }
-            }
-        }
-        if (!waitingColumns.isEmpty()) {
-            int kept = 0;
-            for (int i = 0, n = visible.size(); i < n; i++) {
-                SectionRenderDispatcher.RenderSection s = visible.get(i);
-                BlockPos origin = s.getOrigin();
-                long column = ChunkPos.asLong(origin.getX() >> 4, origin.getZ() >> 4);
-                if (s.compiled.get() != SectionRenderDispatcher.CompiledSection.UNCOMPILED
-                        && waitingColumns.containsKey(column) && (origin.getY() >> 4) < waitingColumns.get(column)) {
-                    heldBack++;
-                    heldSections.add(s);
-                    continue;
-                }
-                visible.set(kept++, s);
-            }
-            visible.size(kept);
-        }
+        holdBackColumns(mc, visible);
         for (SectionRenderDispatcher.RenderSection s : visible) {
             if (s.compiled.get() == SectionRenderDispatcher.CompiledSection.UNCOMPILED) {
                 continue;
@@ -877,8 +841,103 @@ public final class LodRenderer {
         }
     }
 
-    /** Per column (chunk), the highest visible section vanilla has not built yet (ADR-069). */
-    private final Long2IntOpenHashMap waitingColumns = new Long2IntOpenHashMap();
+    /**
+     * Vanilla shows a chunk's sections as it builds and lists them, one by one:
+     * a sea floor drawn before the section of its water showed sand and kelp
+     * with no water and no LODs over them for a frame (the LODs draw first, so
+     * the floor covers their water). Going down each column from the camera's
+     * height, once a section with blocks in view is not drawn by vanilla, the
+     * sections it would draw below wait, the LODs drawing the column (ADR-069).
+     * Vanilla rebuilds its list only at a frustum update: the sections held back
+     * go back in at the next frame and wait again only while the column is not
+     * whole.
+     */
+    private void holdBackColumns(Minecraft mc, ObjectArrayList<SectionRenderDispatcher.RenderSection> visible) {
+        LevelRendererAccessor renderer = (LevelRendererAccessor) mc.levelRenderer;
+        ClientLevel level = mc.level;
+        Frustum culling = renderer.farfield$cullingFrustum();
+        if (level == null || culling == null) {
+            return;
+        }
+        if (!heldSections.isEmpty()) {
+            listed.clear();
+            listed.addAll(visible);
+            for (SectionRenderDispatcher.RenderSection s : heldSections) {
+                if (listed.add(s)) {
+                    visible.add(s);
+                }
+            }
+            heldSections.clear();
+        }
+        listed.clear();
+        drawnColumns.clear();
+        for (SectionRenderDispatcher.RenderSection s : visible) {
+            if (s.compiled.get() != SectionRenderDispatcher.CompiledSection.UNCOMPILED) {
+                listed.add(s);
+                BlockPos origin = s.getOrigin();
+                long column = ChunkPos.asLong(origin.getX() >> 4, origin.getZ() >> 4);
+                int y = origin.getY() >> 4;
+                if (!drawnColumns.containsKey(column) || drawnColumns.get(column) > y) {
+                    drawnColumns.put(column, y);
+                }
+            }
+        }
+        Frustum frustum = LevelRenderer.offsetFrustum(culling);
+        ViewAreaAccessor area = (ViewAreaAccessor) renderer.farfield$viewArea();
+        int top = Math.min(Mth.floor(mc.gameRenderer.getMainCamera().getPosition().y) >> 4, level.getMaxSection() - 1);
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        for (Long2IntMap.Entry e : drawnColumns.long2IntEntrySet()) {
+            int cx = ChunkPos.getX(e.getLongKey());
+            int cz = ChunkPos.getZ(e.getLongKey());
+            boolean blocked = false;
+            for (int y = top; y >= e.getIntValue(); y--) {
+                pos.set(cx << 4, y << 4, cz << 4);
+                SectionRenderDispatcher.RenderSection r = area.farfield$renderSectionAt(pos);
+                if (r != null && !r.getOrigin().equals(pos)) {
+                    r = null; // the grid wraps around: that slot holds another place
+                }
+                if (r != null && listed.contains(r)) {
+                    if (blocked) {
+                        heldSections.add(r);
+                    }
+                } else if (!blocked && hasBlocks(level, r, cx, y, cz)
+                        && frustum.isVisible(new AABB(cx << 4, y << 4, cz << 4, (cx << 4) + 16, (y << 4) + 16,
+                        (cz << 4) + 16))) {
+                    blocked = true;
+                }
+            }
+        }
+        if (heldSections.isEmpty()) {
+            return;
+        }
+        heldBack += heldSections.size();
+        listed.clear();
+        listed.addAll(heldSections);
+        int kept = 0;
+        for (int i = 0, n = visible.size(); i < n; i++) {
+            SectionRenderDispatcher.RenderSection s = visible.get(i);
+            if (!listed.contains(s)) {
+                visible.set(kept++, s);
+            }
+        }
+        visible.size(kept);
+    }
+
+    /** Whether vanilla would draw something in a section: built and not empty, else blocks in its chunk. */
+    private static boolean hasBlocks(ClientLevel level, SectionRenderDispatcher.RenderSection r, int cx, int y, int cz) {
+        if (r != null && r.compiled.get() != SectionRenderDispatcher.CompiledSection.UNCOMPILED) {
+            return !r.compiled.get().hasNoRenderableLayers();
+        }
+        LevelChunk chunk = level.getChunkSource().getChunk(cx, cz, false);
+        if (chunk == null) {
+            return false;
+        }
+        int index = chunk.getSectionIndexFromSectionY(y);
+        return index >= 0 && index < chunk.getSections().length && !chunk.getSection(index).hasOnlyAir();
+    }
+
+    /** Per column (chunk), the lowest section vanilla draws this frame (ADR-069). */
+    private final Long2IntOpenHashMap drawnColumns = new Long2IntOpenHashMap();
     /** Vanilla sections kept out of its draw list since the last stat line, for their column. */
     private long heldBack;
     /** The sections kept out of vanilla's list this frame, put back in at the next one. */

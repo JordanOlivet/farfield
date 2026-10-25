@@ -1808,20 +1808,24 @@ puis réapparaître très vite". Not seen with Sodium. The frames of their
 video show, for one frame, vanilla kelp, seagrass and sea floor with no
 water over them.
 
-- **Cause**: vanilla builds a new chunk's sections one at a time and draws
-  each once built. A sea floor section (kelp, sand) can be drawn a frame
-  before the section above it that holds the water's surface. The LODs
-  give way per section (ADR-052), so the LOD water of that upper section
-  is drawn, but the LODs draw before the game's terrain and clear the
-  depth after: the vanilla floor covers that water.
-- **Decision**: before vanilla draws, the hand-off removes from its
-  visible list every built section below a section of the same column
-  that the list holds but vanilla has not built yet. The LODs keep drawing
-  that column until it is built; the unbuilt sections stay in the list so
-  vanilla still builds them. Vanilla rebuilds the list only at a frustum
-  update (a turn of the camera, a graph update), so the sections held back
-  go back into it at the next frame and wait again only while their column
-  is not built. The stat line counts the sections held back.
+- **Cause**: vanilla builds and lists a new chunk's sections one at a time
+  and draws each once listed. A sea floor section (kelp, sand) can be drawn
+  a frame before the section above it that holds the water's surface. The
+  LODs give way per section (ADR-052), so the LOD water of that upper
+  section is drawn, but the LODs draw before the game's terrain and clear
+  the depth after: the vanilla floor covers that water. A second video with
+  level colors showed it plainly: a chunk switching from LOD to vanilla
+  showed its dry floor for one frame (frames 111, 372, 494 and 517 of
+  `flicker2.mp4`).
+- **Decision**: before vanilla draws, the hand-off goes down each column it
+  draws from the camera's height. Once a section with blocks, in view, is
+  not drawn by vanilla (not built, or not in its list yet), the sections
+  below it leave vanilla's list for that frame and the LODs draw them. The
+  first version held back only sections below one listed but not built,
+  and missed the water section not listed yet. Vanilla rebuilds the list
+  only at a frustum update (a turn of the camera, a graph update), so the
+  sections held back go back into it at the next frame and wait again only
+  while their column is not whole. The stat line counts them.
 - Sodium keeps its own lists; the user did not see the effect there.
 - To check: the user's walk along the edge with the stat line's count
   above 0, and no column of LODs left in place of built vanilla terrain.
