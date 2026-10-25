@@ -343,6 +343,35 @@ class PreviewTest {
     }
 
     @Test
+    void partlyFilledGroundUnderTheSeaTakesTheWatersLight() {
+        // A ground voxel filled only partly shows a neighbor's side above its fill: that face
+        // takes the voxel's light, which must be the water's, not full light (light bands).
+        PreviewVoxels.Tiles tiles = (x, z) -> x == 0 && z == 0 ? slope() : null;
+        int found = 0;
+        for (int sy = -1; sy <= 0; sy++) {
+            LodSection coarse = PreviewVoxels.build(2, 0, sy, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
+            if (coarse == null) {
+                continue;
+            }
+            for (int x = 0; x < LodSection.SIZE; x++) {
+                for (int z = 0; z < LodSection.SIZE; z++) {
+                    for (int vy = 0; vy < LodSection.SIZE; vy++) {
+                        int bottom = sy * 128 + vy * 4;
+                        int m = coarse.material(x, vy, z);
+                        if (bottom + 4 > 63 || m == AIR || m == WATER || coarse.fill().get(x, vy, z) == 15) {
+                            continue;
+                        }
+                        found++;
+                        assertEquals(15 - (63 - (bottom + 3)), coarse.skyLight().get(x, vy, z),
+                                "blocks " + bottom + ".." + (bottom + 3));
+                    }
+                }
+            }
+        }
+        assertTrue(found > 0, "no partly filled ground under the sea in the slope");
+    }
+
+    @Test
     void coarseColumnsTakeTheHighestSampleAndTheirFill() {
         PreviewTile t = slope();
         // Level 4 (16 blocks), section (0, 0, 0): voxel column 0 covers samples 0..4: highest 66.

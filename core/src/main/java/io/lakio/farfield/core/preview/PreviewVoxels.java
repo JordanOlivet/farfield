@@ -203,9 +203,11 @@ public final class PreviewVoxels {
                     if (level > 0) {
                         section.fill().set(i, vy, k, (blocks * 16 + s - 1) / s - 1);
                     }
-                    if (bottom >= height) {
+                    if (bottom >= height || water >= 0 && blocks < s) {
                         // Sky light fades by one per block of water, as vanilla's (the face of the
                         // floor takes the light of the water in front of it): its highest block's.
+                        // A ground voxel filled only partly lights the faces seen above its fill
+                        // (a neighbor's side): the water's light too, not full light.
                         section.skyLight().set(i, vy, k, seaSkyLight(Math.min(bottom + s, sea) - 1, sea, bottom + s > sea));
                     }
                 }

@@ -312,6 +312,44 @@ class BinaryGreedyMesherTest {
     }
 
     @Test
+    void waterShowsNoFaceAgainstPartlyFilledGround() {
+        // A coarse sea floor: ground filled to 6/16 under water at x < 16, water down to the
+        // stone at x >= 16. Above its fill the ground's voxel holds water: the water draws no
+        // layer against it (it showed as light, then dark, flecks on the preview's sea floor).
+        LodSection section = new LodSection(0);
+        for (int z = 0; z < 32; z++) {
+            for (int x = 0; x < 32; x++) {
+                section.set(x, 0, z, 1);
+                if (x < 16) {
+                    section.set(x, 1, z, 2);
+                    section.fill().set(x, 1, z, 5);
+                } else {
+                    section.set(x, 1, z, 10);
+                }
+                for (int y = 2; y < 5; y++) {
+                    section.set(x, y, z, 10);
+                }
+            }
+        }
+        section.compact();
+        mesher.mesh(section, CLASSES, null, out);
+        for (int d = 0; d < Quad.DIRECTIONS; d++) {
+            for (int i = 0; i < out.count(d); i++) {
+                long q = out.quads(d)[i];
+                boolean towardGround = d == Quad.NEG_X && Quad.x(q) == 16 || d == Quad.NEG_Y && Quad.y(q) == 2;
+                if (Quad.material(q) == 10 && towardGround) {
+                    fail("water face toward the partly filled ground: " + d + " at " + Quad.x(q) + "," + Quad.y(q));
+                }
+            }
+        }
+        boolean groundTop = false;
+        for (int i = 0; i < out.count(Quad.POS_Y); i++) {
+            groundTop |= Quad.material(out.quads(Quad.POS_Y)[i]) == 2;
+        }
+        assertTrue(groundTop, "the ground keeps its lowered top");
+    }
+
+    @Test
     void lowFillVoxelsMeshAsPartialWithTheirFill() {
         // A coarse floor (fill full) under a coarse snow cover filled to 3/16:
         // the cover hides the floor's top, the cover's top carries its fill
@@ -838,8 +876,10 @@ class BinaryGreedyMesherTest {
                             case MaterialClassifier.OPAQUE -> nc != MaterialClassifier.OPAQUE
                                     && !(d == Quad.POS_Y && nc == MaterialClassifier.PARTIAL);
                             case MaterialClassifier.PARTIAL -> nc != MaterialClassifier.OPAQUE;
-                            // Translucent voxels inside the section hide only their own kind.
-                            default -> nc == MaterialClassifier.AIR || nc == MaterialClassifier.PARTIAL
+                            // Translucent voxels inside the section hide only their own kind;
+                            // partial voxels hide fluid faces.
+                            default -> nc == MaterialClassifier.AIR
+                                    || nc == MaterialClassifier.PARTIAL && !CLASSES.isFluid(m)
                                     || nc == MaterialClassifier.TRANSLUCENT && nx >= 0 && ny >= 0 && nz >= 0
                                     && nx < 32 && ny < 32 && nz < 32
                                     && CLASSES.isFluid(m) != CLASSES.isFluid(section.material(nx, ny, nz));

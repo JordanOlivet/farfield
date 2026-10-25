@@ -17,7 +17,10 @@ import java.util.function.IntPredicate;
  *   <li>Face culling 32 voxels at a time: a face is visible where a voxel's
  *       neighbor along the axis is not opaque (translucent voxels also hide
  *       translucent neighbors of their kind, fluid or not: ice over water
- *       shows the ice's bottom and the water's top, as vanilla). Neighbor
+ *       shows the ice's bottom and the water's top, as vanilla; a fluid
+ *       face against a partial voxel is hidden too, as on a section border,
+ *       since above its fill a coarse voxel under water holds that fluid:
+ *       the face would be a water layer inside the water). Neighbor
  *       sections contribute their border
  *       layer as one bit per column: opaque voxels for every face, and
  *       optionally solid (opaque or translucent) voxels for translucent
@@ -76,6 +79,8 @@ public final class BinaryGreedyMesher {
     private boolean anyPlant;
     /** The section holds both fluid and other translucent voxels: their faces between them show. */
     private boolean mixedTranslucent;
+    /** Every translucent voxel of the section is a fluid: partial voxels hide their faces. */
+    private boolean onlyFluid;
 
     /** Opaque, translucent and partial X rows, index {@code y * 32 + z}, bit x. */
     private final int[] rowsOpaque = new int[PLANE];
@@ -253,6 +258,7 @@ public final class BinaryGreedyMesher {
             anyOtherTranslucent |= c == MaterialClassifier.TRANSLUCENT && fluid[i] == 0;
         }
         mixedTranslucent = anyFluid && anyOtherTranslucent;
+        onlyFluid = anyFluid && !anyOtherTranslucent;
         if (!anyVisible) {
             return false;
         }
@@ -570,7 +576,7 @@ public final class BinaryGreedyMesher {
                     // neighbor sections' solid bits (0 and 33) hide both kinds.
                     long f = (colFluid[i] & 0xFFFFFFFFL) << 1;
                     long other = t & ~f & 0x1FFFFFFFEL;
-                    long hidesFluid = solid & ~other;
+                    long hidesFluid = (solid | p) & ~other;
                     long hidesOther = solid & ~f;
                     visible = positive
                             ? (c & ~(hidesOpaque >>> 1)) | (f & ~(hidesFluid >>> 1)) | (other & ~(hidesOther >>> 1))
@@ -578,9 +584,10 @@ public final class BinaryGreedyMesher {
                             : (c & ~(c << 1)) | (f & ~(hidesFluid << 1)) | (other & ~(hidesOther << 1))
                                     | (p & ~(c << 1));
                 } else {
+                    long hidesTranslucent = onlyFluid ? solid | p : solid;
                     visible = positive
-                            ? (c & ~(hidesOpaque >>> 1)) | (t & ~(solid >>> 1)) | (p & ~(c >>> 1))
-                            : (c & ~(c << 1)) | (t & ~(solid << 1)) | (p & ~(c << 1));
+                            ? (c & ~(hidesOpaque >>> 1)) | (t & ~(hidesTranslucent >>> 1)) | (p & ~(c >>> 1))
+                            : (c & ~(c << 1)) | (t & ~(hidesTranslucent << 1)) | (p & ~(c << 1));
                 }
                 int f = (int) (visible >>> 1);
                 faces[i] = f;
