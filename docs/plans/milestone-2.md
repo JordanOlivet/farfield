@@ -86,9 +86,15 @@ Items:
   near a tile once it is built (`TILE_CHANGED`); protocol version 2.
   Fabric dev server and client, empty mirror: the server built every
   tile within 4,096 blocks in 33 s, the client held all 232 within 10 s,
-  view settled at 15.5 s, the horizon drawn from y 220. Remains: the
-  user's NeoForge pack on the server; faint grid lines seen on frozen
-  sea in the capture, not compared with single player yet
+  view settled at 15.5 s, the horizon drawn from y 220. The user's
+  NeoForge pack on the home server (deployed by SSH with the user's yes):
+  236 tiles built in about 90 s and sent in 10 s, 4,988 sections held,
+  view settled at 12.0 s; the user: "de mon côté ça a l'air de bien
+  marcher". Remains: the client handled the welcome 50 s after joining
+  (still loading the pack); 142 "Attempted to load class
+  net/minecraft/client" traces in 15 min on the server when the surface
+  filter resolves some modded blocks; faint grid lines on frozen sea in
+  a dev capture, not compared with single player
 - [ ] B.4 The user's NeoForge pack on a server: fill times and bandwidth
   from the log lines.
 
