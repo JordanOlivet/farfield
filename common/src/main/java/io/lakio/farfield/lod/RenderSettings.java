@@ -42,6 +42,9 @@ public final class RenderSettings {
     private static volatile boolean drawPlants = true;
     private static volatile int meshThreads = RenderConfig.DEFAULTS.meshThreads();
     private static volatile int previewThreads = RenderConfig.DEFAULTS.previewThreads();
+    private static volatile boolean performanceLogs = RenderConfig.DEFAULTS.performanceLogs();
+    /** Dedicated servers and dev runs, which have no client settings: {@code -Dfarfield.perfLogs=true}. */
+    private static final boolean PERFORMANCE_LOGS_PROPERTY = Boolean.getBoolean("farfield.perfLogs");
 
     private RenderSettings() {
     }
@@ -194,6 +197,19 @@ public final class RenderSettings {
         noisePreview = value;
     }
 
+    /**
+     * Whether the performance lines go to the log (stat lines, fill and build
+     * times): the client setting, or the {@code farfield.perfLogs} system
+     * property. Lifecycle lines (stores opened and closed, settings) always do.
+     */
+    public static boolean performanceLogs() {
+        return performanceLogs || PERFORMANCE_LOGS_PROPERTY;
+    }
+
+    public static void setPerformanceLogs(boolean value) {
+        performanceLogs = value;
+    }
+
     /** Physical client only: reads the saved settings, or keeps the defaults. */
     public static void load() {
         if (!Services.PLATFORM.isClient()) {
@@ -211,6 +227,7 @@ public final class RenderSettings {
             noisePreview = config.noisePreview();
             meshThreads = config.meshThreads();
             previewThreads = config.previewThreads();
+            performanceLogs = config.performanceLogs();
             Farfield.LOG.info(Files.exists(file) ? "LOD settings loaded from {}: {}" : "No {} yet, LOD settings at their defaults: {}",
                     file.getFileName(), config);
         } catch (IOException | RuntimeException e) {
@@ -225,7 +242,7 @@ public final class RenderSettings {
         }
         Path file = file();
         RenderConfig config = new RenderConfig(enabled, voxelPixels, textureDistance, debugLevels, fogDistance,
-                thickFogDistance, noisePreview, meshThreads, previewThreads);
+                thickFogDistance, noisePreview, meshThreads, previewThreads, performanceLogs);
         try {
             config.write(file);
             Farfield.LOG.info("LOD settings saved to {}: {}", file.getFileName(), config);

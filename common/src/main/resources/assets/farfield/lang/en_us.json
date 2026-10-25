@@ -26,6 +26,8 @@
   "farfield.options.threads.auto": "Auto (%s)",
   "farfield.options.level_colors": "Level Colors",
   "farfield.options.level_colors.tooltip": "Tint distant terrain by level of detail: red 1 block, orange 2, yellow 4, green 8, blue 16 blocks per voxel.",
+  "farfield.options.performance_logs": "Performance Logs",
+  "farfield.options.performance_logs.tooltip": "Write draw, build and fill times to the game log every few seconds, for bug reports and tests. Off in normal play.",
   "key.categories.farfield": "Farfield",
   "key.farfield.settings": "Open Settings"
 }

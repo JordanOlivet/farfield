@@ -1,5 +1,6 @@
 package io.lakio.farfield.server;
 
+import io.lakio.farfield.lod.RenderSettings;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -143,10 +144,12 @@ final class PreviewTrees {
             plantTotal += plantsPerChunk[i];
         }
         BiomeTrees trees = new BiomeTrees(specs, perChunk, total, plants, plantsPerChunk);
-        Farfield.LOG.info("Noise preview: {} grows {} trees per chunk of {} kinds, {} plants of {} kinds",
-                biome.unwrapKey().map(k -> k.location().toString()).orElse("?"),
-                String.format(java.util.Locale.ROOT, "%.2f", total), specs.size(),
-                String.format(java.util.Locale.ROOT, "%.1f", plantTotal), plants.size());
+        if (RenderSettings.performanceLogs()) {
+            Farfield.LOG.info("Noise preview: {} grows {} trees per chunk of {} kinds, {} plants of {} kinds",
+                    biome.unwrapKey().map(k -> k.location().toString()).orElse("?"),
+                    String.format(java.util.Locale.ROOT, "%.2f", total), specs.size(),
+                    String.format(java.util.Locale.ROOT, "%.1f", plantTotal), plants.size());
+        }
         return trees;
     }
 

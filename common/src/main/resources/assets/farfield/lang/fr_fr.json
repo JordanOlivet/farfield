@@ -26,6 +26,8 @@
   "farfield.options.threads.auto": "Auto (%s)",
   "farfield.options.level_colors": "Couleurs des niveaux",
   "farfield.options.level_colors.tooltip": "Teinte le terrain lointain selon son niveau de détail : rouge 1 bloc, orange 2, jaune 4, vert 8, bleu 16 blocs par voxel.",
+  "farfield.options.performance_logs": "Logs de performance",
+  "farfield.options.performance_logs.tooltip": "Écrit les temps de rendu, de construction et de remplissage dans le log du jeu toutes les quelques secondes, pour les rapports de bug et les tests. Désactivé en jeu normal.",
   "key.categories.farfield": "Farfield",
   "key.farfield.settings": "Ouvrir les paramètres"
 }

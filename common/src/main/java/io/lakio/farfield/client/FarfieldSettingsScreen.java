@@ -71,6 +71,9 @@ public final class FarfieldSettingsScreen extends OptionsSubScreen {
         list.addBig(OptionInstance.createBoolean("farfield.options.level_colors",
                 OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.level_colors.tooltip")),
                 RenderSettings.debugLevels(), RenderSettings::setDebugLevels));
+        list.addBig(OptionInstance.createBoolean("farfield.options.performance_logs",
+                OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.performance_logs.tooltip")),
+                RenderSettings.performanceLogs(), RenderSettings::setPerformanceLogs));
     }
 
     @Override

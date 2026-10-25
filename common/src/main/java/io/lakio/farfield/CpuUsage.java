@@ -1,5 +1,6 @@
 package io.lakio.farfield;
 
+import io.lakio.farfield.lod.RenderSettings;
 import java.lang.management.ManagementFactory;
 import java.lang.management.ThreadMXBean;
 import java.util.HashMap;
@@ -87,8 +88,10 @@ final class CpuUsage {
             String share = processDelta > 0
                     ? String.format(Locale.ROOT, "%.1f %% of the process CPU", 100.0 * total / processDelta)
                     : "process CPU unknown";
-            Farfield.LOG.info(String.format(Locale.ROOT, "LOD CPU usage over %d s: %.1f s (%.2f cores, %s)%s",
-                    seconds, total / 1e9, total / 1e9 / seconds, share, kinds));
+            if (RenderSettings.performanceLogs()) {
+                Farfield.LOG.info(String.format(Locale.ROOT, "LOD CPU usage over %d s: %.1f s (%.2f cores, %s)%s",
+                        seconds, total / 1e9, total / 1e9 / seconds, share, kinds));
+            }
         } catch (Throwable t) {
             Farfield.LOG.debug("CPU usage sample failed", t);
         }

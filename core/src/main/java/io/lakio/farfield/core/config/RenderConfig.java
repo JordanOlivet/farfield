@@ -15,14 +15,15 @@ import java.util.Properties;
  * LOD drawing on or off, level of detail in pixels per voxel (ADR-027),
  * texture distance (ADR-026), level colors, the fog distances of normal
  * dimensions and of dimensions with thick fog such as the Nether (ADR-034),
- * the noise preview of terrain not generated yet (ADR-038), and the
- * threads that mesh LOD sections and build the preview, or {@link #AUTO}.
+ * the noise preview of terrain not generated yet (ADR-038), the
+ * threads that mesh LOD sections and build the preview, or {@link #AUTO},
+ * and the performance log lines (off by default: no log flood in play).
  * Missing or invalid keys take their default, out-of-range values are
  * clamped, so a hand-edited file never stops the game.
  */
 public record RenderConfig(boolean enabled, float voxelPixels, int textureDistance, boolean levelColors,
                            int fogDistance, int thickFogDistance, boolean noisePreview, int meshThreads,
-                           int previewThreads) {
+                           int previewThreads, boolean performanceLogs) {
 
     /** Default target size of an LOD voxel on screen, in pixels, where a level hands over to the next. */
     public static final float DEFAULT_VOXEL_PIXELS = 6f;
@@ -50,7 +51,7 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
     public static final int MAX_THREADS = 8;
 
     public static final RenderConfig DEFAULTS = new RenderConfig(true, DEFAULT_VOXEL_PIXELS, DEFAULT_TEXTURE_DISTANCE,
-            false, DEFAULT_FOG_DISTANCE, DEFAULT_THICK_FOG_DISTANCE, true, AUTO, AUTO);
+            false, DEFAULT_FOG_DISTANCE, DEFAULT_THICK_FOG_DISTANCE, true, AUTO, AUTO, false);
 
     static final String ENABLED = "lod_rendering";
     static final String VOXEL_PIXELS = "detail_pixels_per_voxel";
@@ -61,6 +62,7 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
     static final String NOISE_PREVIEW = "noise_preview";
     static final String MESH_THREADS = "mesh_threads";
     static final String PREVIEW_THREADS = "preview_threads";
+    static final String PERFORMANCE_LOGS = "performance_logs";
     /** Before ADR-034: true meant thick fog pushed back to the LOD horizon. Read only. */
     static final String EXTEND_DIMENSION_FOG = "extend_dimension_fog";
     private static final String ALL = "all";
@@ -75,6 +77,14 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
         thickFogDistance = clampThickFogDistance(thickFogDistance);
         meshThreads = clampThreads(meshThreads);
         previewThreads = clampThreads(previewThreads);
+    }
+
+    /** The settings with the performance logs off. */
+    public RenderConfig(boolean enabled, float voxelPixels, int textureDistance, boolean levelColors,
+                        int fogDistance, int thickFogDistance, boolean noisePreview, int meshThreads,
+                        int previewThreads) {
+        this(enabled, voxelPixels, textureDistance, levelColors, fogDistance, thickFogDistance, noisePreview,
+                meshThreads, previewThreads, false);
     }
 
     /** The settings with automatic thread counts. */
@@ -144,7 +154,8 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
                 parseFogDistance(p, THICK_FOG_DISTANCE, thickFallback),
                 bool(p, NOISE_PREVIEW, DEFAULTS.noisePreview),
                 parseThreads(p, MESH_THREADS),
-                parseThreads(p, PREVIEW_THREADS));
+                parseThreads(p, PREVIEW_THREADS),
+                bool(p, PERFORMANCE_LOGS, DEFAULTS.performanceLogs));
     }
 
     /** Writes the file through a temporary file, so a crash mid-write keeps the previous one. */
@@ -178,6 +189,9 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
             out.write(MESH_THREADS + "=" + threadsText(meshThreads) + "\n");
             out.write("# Threads that build the noise preview, the same way. Default auto.\n");
             out.write(PREVIEW_THREADS + "=" + threadsText(previewThreads) + "\n");
+            out.write("# Performance lines in the game log (draw and build times, fill times), for\n");
+            out.write("# reports and tests. Default false.\n");
+            out.write(PERFORMANCE_LOGS + "=" + performanceLogs + "\n");
         }
         Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
     }

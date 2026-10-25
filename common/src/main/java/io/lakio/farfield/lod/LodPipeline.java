@@ -371,10 +371,12 @@ public final class LodPipeline {
         if (snapshots == lod.loggedSnapshots) {
             return;
         }
-        Farfield.LOG.info("LOD pipeline ({}) {}: {} snapshots in the last minute; in total {} at unload, {} of border"
-                        + " chunks, {} without complete light; {} waiting, {} chunks loaded", name, lod.name(),
-                snapshots - lod.loggedSnapshots, lod.snapshotsAtUnload.get(), lod.snapshotsOfBorderChunks.get(),
-                lod.snapshotsWithoutLight.get(), lod.due.size(), lod.loaded.size());
+        if (RenderSettings.performanceLogs()) {
+            Farfield.LOG.info("LOD pipeline ({}) {}: {} snapshots in the last minute; in total {} at unload, {} of border"
+                            + " chunks, {} without complete light; {} waiting, {} chunks loaded", name, lod.name(),
+                    snapshots - lod.loggedSnapshots, lod.snapshotsAtUnload.get(), lod.snapshotsOfBorderChunks.get(),
+                    lod.snapshotsWithoutLight.get(), lod.due.size(), lod.loaded.size());
+        }
         lod.loggedSnapshots = snapshots;
     }
 

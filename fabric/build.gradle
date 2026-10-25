@@ -39,6 +39,10 @@ loom {
         defaultRefmapName.set("${mod_id}.refmap.json")
     }
     runs {
+        configureEach {
+            // Dev runs log the performance lines (off by default in play).
+            property('farfield.perfLogs', 'true')
+        }
         client {
             client()
             setConfigName('Fabric Client')

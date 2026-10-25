@@ -325,9 +325,11 @@ final class NoisePreview {
     }
 
     private static void logFill(Dimension d, long now, String end) {
-        Farfield.LOG.info("Noise preview fill after {}: {} tiles to build; within {} blocks done at {}, in front at {},"
-                        + " {} at {} s", d.fillCause, d.fillTiles, (int) NEAR, seconds(d, d.nearDone),
-                seconds(d, d.frontDone), end, String.format("%.1f", (now - d.fillStart) / 1e9));
+        if (RenderSettings.performanceLogs()) {
+            Farfield.LOG.info("Noise preview fill after {}: {} tiles to build; within {} blocks done at {}, in front at {},"
+                            + " {} at {} s", d.fillCause, d.fillTiles, (int) NEAR, seconds(d, d.nearDone),
+                    seconds(d, d.frontDone), end, String.format("%.1f", (now - d.fillStart) / 1e9));
+        }
         d.fillStart = 0;
     }
 
@@ -353,13 +355,17 @@ final class NoisePreview {
                 stages.append(i == 0 ? "" : ", ").append(STAGES[i]).append(' ')
                         .append(d.stageNanos.getAndSet(i, 0) / 1_000_000 / built);
             }
-            Farfield.LOG.info("Noise preview of {}: {} tiles built in the last minute ({} ms each: {}; {} villages),"
-                    + " {} left within {} blocks", d.key.location(), built, nanos / 1_000_000 / built, stages,
-                    d.villagesBuilt.getAndSet(0), d.left, (int) RANGE);
+            if (RenderSettings.performanceLogs()) {
+                Farfield.LOG.info("Noise preview of {}: {} tiles built in the last minute ({} ms each: {}; {} villages),"
+                        + " {} left within {} blocks", d.key.location(), built, nanos / 1_000_000 / built, stages,
+                        d.villagesBuilt.getAndSet(0), d.left, (int) RANGE);
+            }
             d.reportedDone = false;
         } else if (d.left == 0 && !d.reportedDone) {
-            Farfield.LOG.info("Noise preview of {}: every tile within {} blocks is built",
-                    d.key.location(), (int) RANGE);
+            if (RenderSettings.performanceLogs()) {
+                Farfield.LOG.info("Noise preview of {}: every tile within {} blocks is built",
+                        d.key.location(), (int) RANGE);
+            }
             d.reportedDone = true;
         }
     }

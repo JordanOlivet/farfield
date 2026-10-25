@@ -892,9 +892,11 @@ public final class LodRenderer {
             selectionDirty = true;
             if (Math.abs(detail - loggedDetail) > loggedDetail * 0.1) {
                 loggedDetail = detail;
-                Farfield.LOG.info("LOD detail: {} px per voxel, focal {} px (window height {}, projection m11 {}),"
-                                + " sections split within {} section sizes", RenderSettings.voxelPixels(), focal,
-                        mc.getWindow().getHeight(), projection.m11(), String.format("%.1f", detail));
+                if (RenderSettings.performanceLogs()) {
+                    Farfield.LOG.info("LOD detail: {} px per voxel, focal {} px (window height {}, projection m11 {}),"
+                                    + " sections split within {} section sizes", RenderSettings.voxelPixels(), focal,
+                            mc.getWindow().getHeight(), projection.m11(), String.format("%.1f", detail));
+                }
             }
         }
     }
@@ -1007,9 +1009,11 @@ public final class LodRenderer {
         // Settled: nothing missing in view and no mesh in flight, out of view included.
         String settledAt = fillSettledSince == 0 ? "not settled"
                 : String.format(java.util.Locale.ROOT, "settled at %.1f s", (fillSettledSince - fillStart) / 1e9);
-        Farfield.LOG.info("LOD view fill after {}: sections missing in view at {}; view {}; {} meshes uploaded in {} s",
-                fillCause, timeline, settledAt, fillMeshes,
-                (Math.min(now, fillStart + FILL_WINDOW_NANOS) - fillStart) / 1_000_000_000L);
+        if (RenderSettings.performanceLogs()) {
+            Farfield.LOG.info("LOD view fill after {}: sections missing in view at {}; view {}; {} meshes uploaded in {} s",
+                    fillCause, timeline, settledAt, fillMeshes,
+                    (Math.min(now, fillStart + FILL_WINDOW_NANOS) - fillStart) / 1_000_000_000L);
+        }
         fillStart = 0;
     }
 
@@ -1040,28 +1044,32 @@ public final class LodRenderer {
         long readNanos = meshReadNanos.getAndSet(0);
         long[] cacheCounts = sectionCache.takeCounts();
         if (jobs > 0) {
-            Farfield.LOG.info("LOD meshing: {} jobs on {} threads, {} us per job, {} us of it reading sections, {} %"
-                            + " of {} section reads from the cache", jobs, meshers.getCorePoolSize(),
-                    jobNanos / 1000 / jobs, readNanos / 1000 / jobs,
-                    cacheCounts[1] == 0 ? 0 : cacheCounts[0] * 100 / cacheCounts[1], cacheCounts[1]);
+            if (RenderSettings.performanceLogs()) {
+                Farfield.LOG.info("LOD meshing: {} jobs on {} threads, {} us per job, {} us of it reading sections, {} %"
+                                + " of {} section reads from the cache", jobs, meshers.getCorePoolSize(),
+                        jobNanos / 1000 / jobs, readNanos / 1000 / jobs,
+                        cacheCounts[1] == 0 ? 0 : cacheCounts[0] * 100 / cacheCounts[1], cacheCounts[1]);
+            }
         }
-        Farfield.LOG.info("LOD renderer: {} sections drawn, {} resident, {} MB of {} MB quads used, {} meshing,"
-                        + " {} meshes uploaded and {} freed, {} selections since last line; per frame {} us on the"
-                        + " render thread and {} us on the GPU (depth pre-pass {}, opaque {}, plants {}, translucent {}),"
-                        + " {} of {} quads sent (face directions), {} of them plants, {} sections may discard, {} left"
-                        + " to the game, over {}"
-                        + " frames; detail {}; at most {} coarse fallbacks per selection", count, resident.size(),
-                arena.used() * 8 >> 20, arena.capacity() * 8 >> 20, requested.size(), meshesUploaded, meshesEvicted,
-                selections, frameNanos / 1000 / Math.max(1, timedFrames),
-                (gpuPassNanos[0] + gpuPassNanos[1] + gpuPassNanos[2] + gpuPassNanos[3]) / 1000 / Math.max(1, gpuFrames),
-                RenderSettings.depthPrepass() ? gpuPassNanos[0] / 1000 / Math.max(1, gpuFrames) + " us" : "off",
-                gpuPassNanos[1] / 1000 / Math.max(1, gpuFrames),
-                RenderSettings.drawPlants() ? gpuPassNanos[2] / 1000 / Math.max(1, gpuFrames) : "off",
-                gpuPassNanos[3] / 1000 / Math.max(1, gpuFrames),
-                quadsSubmitted / Math.max(1, timedFrames), quadsInView / Math.max(1, timedFrames),
-                plantQuadsSubmitted / Math.max(1, timedFrames),
-                discardSections / Math.max(1, timedFrames), leftToGame / Math.max(1, timedFrames), timedFrames,
-                String.format("%.1f", selector.detail()), maxFallbacks);
+        if (RenderSettings.performanceLogs()) {
+            Farfield.LOG.info("LOD renderer: {} sections drawn, {} resident, {} MB of {} MB quads used, {} meshing,"
+                            + " {} meshes uploaded and {} freed, {} selections since last line; per frame {} us on the"
+                            + " render thread and {} us on the GPU (depth pre-pass {}, opaque {}, plants {}, translucent {}),"
+                            + " {} of {} quads sent (face directions), {} of them plants, {} sections may discard, {} left"
+                            + " to the game, over {}"
+                            + " frames; detail {}; at most {} coarse fallbacks per selection", count, resident.size(),
+                    arena.used() * 8 >> 20, arena.capacity() * 8 >> 20, requested.size(), meshesUploaded, meshesEvicted,
+                    selections, frameNanos / 1000 / Math.max(1, timedFrames),
+                    (gpuPassNanos[0] + gpuPassNanos[1] + gpuPassNanos[2] + gpuPassNanos[3]) / 1000 / Math.max(1, gpuFrames),
+                    RenderSettings.depthPrepass() ? gpuPassNanos[0] / 1000 / Math.max(1, gpuFrames) + " us" : "off",
+                    gpuPassNanos[1] / 1000 / Math.max(1, gpuFrames),
+                    RenderSettings.drawPlants() ? gpuPassNanos[2] / 1000 / Math.max(1, gpuFrames) : "off",
+                    gpuPassNanos[3] / 1000 / Math.max(1, gpuFrames),
+                    quadsSubmitted / Math.max(1, timedFrames), quadsInView / Math.max(1, timedFrames),
+                    plantQuadsSubmitted / Math.max(1, timedFrames),
+                    discardSections / Math.max(1, timedFrames), leftToGame / Math.max(1, timedFrames), timedFrames,
+                    String.format("%.1f", selector.detail()), maxFallbacks);
+        }
         maxFallbacks = 0;
         quadsInView = 0;
         quadsSubmitted = 0;
@@ -1628,8 +1636,10 @@ public final class LodRenderer {
         int first = colors.update(world.blockStates(), world.materials(), tints, plains, budget);
         lastLooksNanos = System.nanoTime() - looksStart;
         if (looksBacklogStart != 0 && colors.count() == world.blockStates().size()) {
-            Farfield.LOG.info("LOD looks: {} built in {} ms", looksBacklog,
-                    (System.nanoTime() - looksBacklogStart) / 1_000_000);
+            if (RenderSettings.performanceLogs()) {
+                Farfield.LOG.info("LOD looks: {} built in {} ms", looksBacklog,
+                        (System.nanoTime() - looksBacklogStart) / 1_000_000);
+            }
             looksBacklogStart = 0;
         }
         if (!provisional.isEmpty() && colors.count() == world.blockStates().size()) {

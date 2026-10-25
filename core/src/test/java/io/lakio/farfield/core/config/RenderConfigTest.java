@@ -30,7 +30,8 @@ class RenderConfigTest {
                 new RenderConfig(true, 12f, 768, false, 512, RenderConfig.FOG_OFF),
                 new RenderConfig(true, 6f, 0, false, 4096, RenderConfig.FOG_VANILLA),
                 new RenderConfig(true, 6f, 0, false, 4096, RenderConfig.FOG_VANILLA, false),
-                new RenderConfig(true, 6f, 0, false, 4096, RenderConfig.FOG_VANILLA, true, 3, RenderConfig.AUTO)}) {
+                new RenderConfig(true, 6f, 0, false, 4096, RenderConfig.FOG_VANILLA, true, 3, RenderConfig.AUTO),
+                new RenderConfig(true, 6f, 0, false, 4096, RenderConfig.FOG_VANILLA, true, 3, RenderConfig.AUTO, true)}) {
             config.write(file);
             assertEquals(config, RenderConfig.read(file));
         }
