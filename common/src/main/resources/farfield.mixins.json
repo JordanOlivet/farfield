@@ -13,7 +13,6 @@
     "client.LevelRendererAccessor",
     "client.LevelRendererMixin",
     "client.SpriteContentsAccessor",
-    "client.ViewAreaAccessor",
     "client.WindowMixin"
   ],
   "injectors": {
