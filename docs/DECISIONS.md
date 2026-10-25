@@ -1800,7 +1800,7 @@ concepts are reused, not its code (ADR-001).
 
 ## ADR-069 — Vanilla columns drawn whole at the hand-off
 
-**Date**: 2026-10-25 · **Status**: proposed (amends ADR-052; vanilla renderer only)
+**Date**: 2026-10-25 · **Status**: rejected (both versions reverted the same day)
 
 The user, Fabric dev client without Sodium, walking along the vanilla
 edge over a shallow sea: "de petites portions de terrain/eau disparaître
@@ -1827,5 +1827,14 @@ water over them.
   sections held back go back into it at the next frame and wait again only
   while their column is not whole. The stat line counts them.
 - Sodium keeps its own lists; the user did not see the effect there.
+- **Rejected**: neither version removed the effect in the user's walk ("ça
+  le fait toujours", twice), while the second held back thousands of
+  sections every 10 s even with the camera still, so the LODs drew columns
+  in place of built vanilla terrain. Both were reverted. The effect is not
+  a regression: the flicker-free runs earlier that day were in the user's
+  Sodium pack. Known limit of the vanilla renderer (no Sodium) since
+  ADR-052. The likely real fix is to draw the LOD translucent pass after
+  vanilla's opaque terrain (vanilla's floor then cannot cover the LOD
+  water), which needs a depth range shared with vanilla: not started.
 - To check: the user's walk along the edge with the stat line's count
   above 0, and no column of LODs left in place of built vanilla terrain.
