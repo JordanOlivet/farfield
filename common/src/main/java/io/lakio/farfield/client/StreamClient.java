@@ -197,6 +197,7 @@ public final class StreamClient {
 
     private void openMirror() throws IOException {
         mirror = LodWorld.open(dir, BlockKeys.RESOLVER);
+        freezeKeys();
         Path epochFile = dir.resolve(EPOCH_FILE);
         cachedEpoch = 0;
         serverBlockStates = 0;
@@ -225,6 +226,12 @@ public final class StreamClient {
                 localTiles.clear();
             }
         }
+    }
+
+    /** The mirror's tables are the server's, id for id: nothing here adds a key to them. */
+    private void freezeKeys() {
+        mirror.blockStates().freeze();
+        mirror.biomes().freeze();
     }
 
     private void readVersions(String name, Long2LongOpenHashMap into) throws IOException {
@@ -264,6 +271,7 @@ public final class StreamClient {
             }
         }
         mirror = LodWorld.open(dir, BlockKeys.RESOLVER);
+        freezeKeys();
         local.clear();
         localTiles.clear();
         cachedEpoch = epoch;
@@ -521,7 +529,7 @@ public final class StreamClient {
         }
         KeyRegistry registry = keys.kind() == StreamProtocol.BLOCK_STATES ? mirror.blockStates() : mirror.biomes();
         for (int i = 0; i < keys.keys().length; i++) {
-            int id = registry.id(keys.keys()[i]);
+            int id = registry.idForced(keys.keys()[i]);
             if (id != keys.from() + i) {
                 // The mirror's tables disagree with the server's: start it again, at most twice.
                 mismatches++;
