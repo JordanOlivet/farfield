@@ -1,0 +1,1 @@
+farfield-lod-hole-triage [project]: Use when LOD terrain shows holes, missing chunks, or a stepped line or seam at the vanilla render edge.

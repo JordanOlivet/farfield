@@ -1,0 +1,2 @@
+[19:09:17] [Server thread/INFO] (Minecraft) The nearest minecraft:warm_ocean is at [208, 75, 2784] (2756 blocks away)
+[19:09:46] [Server thread/INFO] (Minecraft) Teleported Dev to 208.500000, 110.000000, 2784.500000

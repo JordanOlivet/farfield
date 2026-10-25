@@ -1,0 +1,1 @@
+rm -f fabric/runs/server/farfield-test/session.lock; S=/c/Users/Lakio/AppData/Local/Temp/claude/C--Users-Lakio-source-repos-farfield/a60569cc-c278-4783-ac2e-170bf34f99d9/scratchpad; NOIMPORT=1 HIGH=1 LOCATE=minecraft:warm_ocean TPY=110 PITCH=20 bash $S/streamtest.sh s12 > $S/streamtest12.txt 2>&1

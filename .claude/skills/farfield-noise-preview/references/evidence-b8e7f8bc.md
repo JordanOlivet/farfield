@@ -1,0 +1,1 @@
+Level 0 places a plant ... coarse levels use the covered ground (see `farfield-lod-renderer`).

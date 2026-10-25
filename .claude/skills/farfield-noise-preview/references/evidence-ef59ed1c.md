@@ -1,0 +1,1 @@
+Real chunks (ADR-039): ... See `farfield-lod-renderer` for the renderer side.

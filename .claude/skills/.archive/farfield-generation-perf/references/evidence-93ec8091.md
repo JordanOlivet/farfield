@@ -1,0 +1,1 @@
+farfield-generation-perf [project]: Use when Farfield lags or LOD/preview generation is slow.

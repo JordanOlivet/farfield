@@ -1,0 +1,1 @@
+PRECMD=$'weather clear\ngamerule spectatorsGenerateChunks false' POSTCMD="gamerule spectatorsGenerateChunks true" LOCATE=minecraft:deep_lukewarm_ocean LOCATE_AT="-7000 0 7000" TPY=150 PITCH=30 bash $S/streamtest.sh s21 > $S/streamtest21.txt 2>&1; sed -i 's/^noise_preview=true/noise_preview=false/' fabric/runs/client/config/farfield-client.properties

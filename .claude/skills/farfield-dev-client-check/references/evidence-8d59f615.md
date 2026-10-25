@@ -1,0 +1,2 @@
+farfield-user-pack-test [project]: Hand a jar to the user only after the dev check passed (`farfield-dev-client-check`) and the jar is committed. The user's pack is the real check; the dev client is not.
+farfield-dev-client-check [project]: Rendering context and lighting rules: see `farfield-lod-renderer`. Server-to-client streaming: see `farfield-lod-streaming`.

@@ -1,0 +1,1 @@
+farfield-user-pack-test [project]: Use when handing a Farfield jar to the user for a pack test.

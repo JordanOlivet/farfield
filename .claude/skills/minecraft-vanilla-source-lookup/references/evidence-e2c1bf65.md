@@ -1,0 +1,1 @@
+The episode's progress-log text: "The game keeps no sky light for such sections and reads them from the bottom layer of the nearest lit section above (`SkyLightSectionStorage.getLightValue`), stone here, so 0; Farfield took a section without sky light as "no data" and kept the default, full light."
