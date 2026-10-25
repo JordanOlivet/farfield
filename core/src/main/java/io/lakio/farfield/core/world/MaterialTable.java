@@ -35,6 +35,15 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
         default int[] boxes(String key) {
             return null;
         }
+
+        /**
+         * The key of the fluid a key {@link #resolve} packs with
+         * {@link #packSubmerged()} stands in (water for kelp); null drops the
+         * plant and keeps the fluid. Called once per such key, from any thread.
+         */
+        default String fluid(String key) {
+            return null;
+        }
     }
 
     /** Fallback for engines without a game: air keys are empty, all else full opaque cubes. */
@@ -50,6 +59,8 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
     private static final int FLUID = 1 << 13;
     /** Quarters of a {@link CoveredKey} material (0 for others), above the fluid flag. */
     private static final int COVER_SHIFT = 14;
+    /** Packed flag of fluids holding a plant ({@link #hasPlant}), above the cover's quarters. */
+    private static final int SUBMERGED = 1 << 17;
     private static final int[] WHOLE_VOXEL = {ShapeBoxes.pack(0, 0, 0, 16, 16, 16)};
 
     private final KeyRegistry keys;
@@ -60,6 +71,8 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
     /** Ground and plant per covered material, set before {@link #packed} publishes it. */
     private volatile int[] coverGround = new int[0];
     private volatile int[] coverPlant = new int[0];
+    /** Fluid per material that {@link #hasPlant}, set before {@link #packed} publishes it. */
+    private volatile int[] submergedFluid = new int[0];
     /** Covered materials by ground << 32 | plant << 3 | quarters. */
     private final ConcurrentHashMap<Long, Integer> covered = new ConcurrentHashMap<>();
 
@@ -88,9 +101,28 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
         return properties(material) & 15;
     }
 
+    /** {@link #packFluid()} of a fluid holding a plant: see {@link #hasPlant}, {@link Resolver#fluid}. */
+    public static int packSubmerged() {
+        return packFluid() | SUBMERGED;
+    }
+
     @Override
     public boolean isFluid(int material) {
         return (properties(material) & FLUID) != 0;
+    }
+
+    @Override
+    public boolean hasPlant(int material) {
+        return (properties(material) & SUBMERGED) != 0;
+    }
+
+    @Override
+    public int fluidOf(int material) {
+        if (!hasPlant(material)) {
+            return material;
+        }
+        int[] f = submergedFluid;
+        return material < f.length ? f[material] : material;
     }
 
     @Override
@@ -199,6 +231,21 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
                 coverGround = g;
                 coverPlant = q;
                 value = value & ~(7 << COVER_SHIFT) | Math.min(CoveredKey.MAX_QUARTERS, cover.quarters()) << COVER_SHIFT;
+            }
+            if ((value & SUBMERGED) != 0) {
+                String fluid;
+                try {
+                    fluid = resolver.fluid(key);
+                } catch (RuntimeException e) {
+                    fluid = null;
+                }
+                if (fluid == null) {
+                    value &= ~SUBMERGED;
+                } else {
+                    int[] f = submergedFluid.length > material ? submergedFluid : Arrays.copyOf(submergedFluid, p.length);
+                    f[material] = keys.id(fluid);
+                    submergedFluid = f;
+                }
             }
             if ((value & 15) == SHAPED) {
                 int[][] b = boxes;

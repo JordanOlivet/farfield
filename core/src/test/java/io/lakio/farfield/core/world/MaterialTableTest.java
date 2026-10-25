@@ -7,6 +7,8 @@ import io.lakio.farfield.core.mesh.ShapeBoxes;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MaterialTableTest {
 
@@ -45,6 +47,33 @@ class MaterialTableTest {
         assertEquals(ShapeBoxes.pack(0, 0, 0, 16, 16, 16), table.box(fence, 0));
         assertEquals(ShapeBoxes.MAX, table.boxCount(many));
         assertEquals(0, table.boxCount(stone));
+    }
+
+    @Test
+    void submergedPlantsShowTheirFluidsFaces() {
+        KeyRegistry keys = new KeyRegistry();
+        int kelp = keys.id("minecraft:kelp_plant");
+        int lost = keys.id("test:lost_fluid");
+        MaterialTable table = new MaterialTable(keys, new MaterialTable.Resolver() {
+            @Override
+            public int resolve(String key) {
+                return MaterialTable.packSubmerged();
+            }
+
+            @Override
+            public String fluid(String key) {
+                return key.equals("minecraft:kelp_plant") ? "minecraft:water[level=0]" : null;
+            }
+        });
+
+        assertEquals(MaterialClassifier.TRANSLUCENT, table.classOf(kelp));
+        assertTrue(table.isFluid(kelp));
+        assertTrue(table.hasPlant(kelp));
+        assertEquals(keys.id("minecraft:water[level=0]"), table.fluidOf(kelp));
+        assertFalse(table.isPlant(kelp)); // water on coarse levels, not a plant covering the ground
+        // Without a fluid key: plain water, its own faces.
+        assertFalse(table.hasPlant(lost));
+        assertEquals(lost, table.fluidOf(lost));
     }
 
     @Test

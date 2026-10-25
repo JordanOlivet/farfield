@@ -595,6 +595,92 @@ class BinaryGreedyMesherTest {
     }
 
     @Test
+    void submergedPlantsAreTheirWaterWithCrossedQuads() {
+        // Water (10) up to y 9 over a stone floor at y 0; kelp (12) in it at (3, 1..9, 5).
+        int kelp = 12;
+        int water = 10;
+        MaterialClassifier classes = new MaterialClassifier() {
+            @Override
+            public int classOf(int material) {
+                return CLASSES.classOf(material);
+            }
+
+            @Override
+            public boolean isFluid(int material) {
+                return material == kelp || CLASSES.isFluid(material);
+            }
+
+            @Override
+            public boolean hasPlant(int material) {
+                return material == kelp;
+            }
+
+            @Override
+            public int fluidOf(int material) {
+                return material == kelp ? water : material;
+            }
+        };
+        LodSection section = new LodSection(0);
+        for (int y = 0; y < 10; y++) {
+            for (int z = 0; z < 32; z++) {
+                for (int x = 0; x < 32; x++) {
+                    section.set(x, y, z, y == 0 ? 1 : water);
+                }
+            }
+        }
+        for (int y = 1; y < 10; y++) {
+            section.set(3, y, 5, kelp);
+        }
+        mesher.mesh(section, classes, null, out);
+        // No face between the kelp and its water; the surface stays one water quad.
+        for (int d = 0; d < Quad.DIRECTIONS; d++) {
+            for (int i = 0; i < out.count(d); i++) {
+                long q = out.quads(d)[i];
+                assertTrue(Quad.material(q) != kelp, "kelp face in direction " + d);
+                if (d == Quad.POS_Y && Quad.material(q) == water) {
+                    assertEquals(32 * 32, Quad.sizeU(q) * Quad.sizeV(q));
+                }
+            }
+        }
+        assertEquals(1, countMaterial(Quad.POS_Y, water));
+        assertEquals(9 * 2, out.count(MeshBuffer.PLANTS));
+        for (int i = 0; i < out.count(MeshBuffer.PLANTS); i++) {
+            assertEquals(kelp, Quad.material(out.quads(MeshBuffer.PLANTS)[i]));
+        }
+    }
+
+    @Test
+    void submergedPlantsFillingABrickKeepTheirQuads() {
+        int kelp = 12;
+        MaterialClassifier classes = new MaterialClassifier() {
+            @Override
+            public int classOf(int material) {
+                return CLASSES.classOf(material);
+            }
+
+            @Override
+            public boolean isFluid(int material) {
+                return material == kelp;
+            }
+
+            @Override
+            public boolean hasPlant(int material) {
+                return material == kelp;
+            }
+
+            @Override
+            public int fluidOf(int material) {
+                return material == kelp ? 10 : material;
+            }
+        };
+        LodSection section = new LodSection(0);
+        section.fillBrick(LodSection.brickIndex(0, 0, 0), kelp); // a uniform brick, no voxel data
+        mesher.mesh(section, classes, null, out);
+        assertEquals(8 * 8 * 8 * 2, out.count(MeshBuffer.PLANTS));
+        assertEquals(10, Quad.material(out.quads(Quad.POS_Y)[0]));
+    }
+
+    @Test
     void matchesBruteForceOnRandomSections() {
         SplittableRandom random = new SplittableRandom(9);
         for (int round = 0; round < 60; round++) {

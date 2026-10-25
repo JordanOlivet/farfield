@@ -1129,6 +1129,11 @@ public final class LodRenderer {
             public boolean isFluid(int m) {
                 return materials.isFluid(m);
             }
+
+            @Override
+            public int fluidOf(int m) {
+                return materials.fluidOf(m); // kelp is its water there, without its quads
+            }
         };
         boolean translucent = hasTranslucent(section, classes);
         int[][] solid = translucent ? new int[6][] : null;

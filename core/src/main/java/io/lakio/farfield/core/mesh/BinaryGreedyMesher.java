@@ -53,7 +53,9 @@ import java.util.function.IntPredicate;
  * <p>{@link MaterialClassifier#PLANT} voxels hide nothing and are hidden by
  * nothing: each gives its two diagonals ({@link Quad#DIAGONAL_A},
  * {@link Quad#DIAGONAL_B}) in the {@link MeshBuffer#PLANTS} list, lit like
- * the plant's own voxel.
+ * the plant's own voxel. A translucent fluid that
+ * {@link MaterialClassifier#hasPlant} (kelp) gives the faces of its fluid
+ * and the diagonals of its plant.
  *
  * <p>Not thread-safe: one instance per worker; all buffers are reused.
  */
@@ -68,6 +70,8 @@ public final class BinaryGreedyMesher {
     private int[] shaped = new int[64];
     private int[] fluid = new int[64];
     private int[] plant = new int[64];
+    /** Material of the faces per palette index: {@link MaterialClassifier#fluidOf} for translucent ones. */
+    private int[] faceMaterial = new int[64];
     private boolean anyShaped;
     private boolean anyPlant;
     /** The section holds both fluid and other translucent voxels: their faces between them show. */
@@ -223,6 +227,7 @@ public final class BinaryGreedyMesher {
             shaped = new int[opaque.length];
             fluid = new int[opaque.length];
             plant = new int[opaque.length];
+            faceMaterial = new int[opaque.length];
         }
         boolean anyVisible = false;
         boolean anyFluid = false;
@@ -230,16 +235,20 @@ public final class BinaryGreedyMesher {
         anyShaped = false;
         anyPlant = false;
         for (int i = 0; i < n; i++) {
-            int c = classifier.classOf(section.paletteEntry(i));
+            int m = section.paletteEntry(i);
+            int c = classifier.classOf(m);
             opaque[i] = c == MaterialClassifier.OPAQUE ? 1 : 0;
             translucent[i] = c == MaterialClassifier.TRANSLUCENT ? 1 : 0;
             partial[i] = c == MaterialClassifier.PARTIAL ? 1 : 0;
             shaped[i] = c == MaterialClassifier.SHAPED ? 1 : 0;
             fluid[i] = c == MaterialClassifier.TRANSLUCENT && classifier.isFluid(section.paletteEntry(i)) ? 1 : 0;
-            plant[i] = c == MaterialClassifier.PLANT ? 1 : 0;
+            // Kelp and seagrass: the water's faces, and their own crossed quads (ADR-065).
+            boolean submerged = c == MaterialClassifier.TRANSLUCENT && classifier.hasPlant(m);
+            plant[i] = c == MaterialClassifier.PLANT || submerged ? 1 : 0;
+            faceMaterial[i] = c == MaterialClassifier.TRANSLUCENT ? classifier.fluidOf(m) : m;
             anyVisible |= c != MaterialClassifier.AIR;
             anyShaped |= c == MaterialClassifier.SHAPED;
-            anyPlant |= c == MaterialClassifier.PLANT;
+            anyPlant |= plant[i] != 0;
             anyFluid |= fluid[i] != 0;
             anyOtherTranslucent |= c == MaterialClassifier.TRANSLUCENT && fluid[i] == 0;
         }
@@ -267,7 +276,7 @@ public final class BinaryGreedyMesher {
         }
         anyTinted = false;
         for (int i = 0; i < n; i++) {
-            boolean t = tinted != null && tinted.test(section.paletteEntry(i));
+            boolean t = tinted != null && tinted.test(faceMaterial[i]);
             tintedIndex[i] = t;
             anyTinted |= t;
         }
@@ -305,12 +314,16 @@ public final class BinaryGreedyMesher {
                         }
                         int byteMask = 0xFF << xShift;
                         boolean fluidBrick = fluid[i] != 0 && mixedTranslucent;
+                        boolean submergedBrick = plant[i] != 0 && target != rowsPlant;
                         for (int ly = 0; ly < 8; ly++) {
                             int row = (by * 8 + ly) * S + bz * 8;
                             for (int lz = 0; lz < 8; lz++) {
                                 target[row + lz] |= byteMask;
                                 if (fluidBrick) {
                                     rowsFluid[row + lz] |= byteMask;
+                                }
+                                if (submergedBrick) {
+                                    rowsPlant[row + lz] |= byteMask;
                                 }
                             }
                         }
@@ -615,7 +628,7 @@ public final class BinaryGreedyMesher {
             for (int slot = 0; slot < slotCount; slot++) {
                 int index = slotIndex[slot];
                 int biome = !tintedIndex[index] ? -1 : splitBiomes ? slotBiome[slot] : sectionBiome;
-                greedy(slotRows, slot * S, direction, axis, depth, section.paletteEntry(index), biome,
+                greedy(slotRows, slot * S, direction, axis, depth, faceMaterial[index], biome,
                         slotLight[slot], out);
             }
         }
@@ -661,12 +674,14 @@ public final class BinaryGreedyMesher {
                 int fillEighths = full ? Quad.FULL_FILL : (section.fill().get(x, y, z) + 2) >> 1;
                 int light = light(section, x, y, z, index, axis, depthStep) | fillEighths << 8;
                 int slot;
+                // By face material: water over kelp merges with the water around it.
+                int material = faceMaterial[index];
                 if (index == lastIndex && slotBiome[lastSlot] == biome && slotLight[lastSlot] == light) {
                     slot = lastSlot;
                 } else {
                     slot = -1;
                     for (int s = 0; s < slotCount; s++) {
-                        if (slotIndex[s] == index && slotBiome[s] == biome && slotLight[s] == light) {
+                        if (faceMaterial[slotIndex[s]] == material && slotBiome[s] == biome && slotLight[s] == light) {
                             slot = s;
                             break;
                         }

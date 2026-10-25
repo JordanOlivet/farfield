@@ -1,0 +1,1 @@
+- The plants' pass draws before the translucent one, so the water blends over the kelp.

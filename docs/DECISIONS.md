@@ -1634,3 +1634,28 @@ around (ADR-055), dark through the sea.
 - Checked: the bench before (dark kelp columns through the water) and
   after (clean water, `kelp_plant` a fluid). Kelp is now invisible in
   LODs, as seagrass: drawing it as crossed quads under water is left open.
+
+## ADR-065 — Kelp and seagrass are water with crossed quads
+
+**Date**: 2026-10-25 · **Status**: accepted (amends ADR-064)
+
+ADR-064 made kelp water, so it vanished from LODs. The user asked for it
+back as crossed quads, like the plants of ADR-059.
+
+- A plant without collision standing in its fluid (`BushBlock` or
+  `GrowingPlantBlock` with a fluid state: kelp, seagrass, a waterlogged
+  propagule) packs as `MaterialTable.packSubmerged()`: a translucent fluid,
+  as before, with a flag. `MaterialClassifier.hasPlant` reads the flag,
+  `fluidOf` names its fluid (the resolver's `fluid(key)`, the state's
+  legacy fluid block). Every rule that treats it as water stays as it was:
+  culling, neighbor planes, mips, the preview's masks.
+- The mesher gives its translucent faces the fluid's material (water over
+  kelp merges with the water around) and, on the finest level, the two
+  diagonals of `PLANT` with the plant's own material. Coarse levels keep
+  only the water (the coarse classifier has no `hasPlant`, but passes
+  `fluidOf`), so stored coarse voxels holding kelp draw as water: no
+  `MIPS_VERSION` bump.
+- `MaterialColors` builds such a material as a plant, and `lookOf` keeps
+  the plant's state: its look is its sprite, never the water's.
+- The plants' pass draws before the translucent one, so the water blends
+  over the kelp.

@@ -149,7 +149,8 @@ final class MaterialColors {
         int first = count;
         int id = count;
         while (id < size) {
-            int meshClass = classes.classOf(id);
+            // Kelp's material is its crossed quads; its water's faces take the water's (ADR-065).
+            int meshClass = classes.hasPlant(id) ? MaterialClassifier.PLANT : classes.classOf(id);
             String key = registry.key(id);
             flags[id] = build(key, id * STRIDE, meshClass, tints, probeBiome);
             for (int d = 0; d < 6; d++) {

@@ -51,6 +51,20 @@ public interface MaterialClassifier {
         return false;
     }
 
+    /**
+     * Whether a {@link #TRANSLUCENT} fluid holds a plant (kelp, seagrass):
+     * meshed as the fluid {@link #fluidOf} names, plus, like a {@link #PLANT},
+     * two crossed quads with its own material (ADR-065).
+     */
+    default boolean hasPlant(int material) {
+        return false;
+    }
+
+    /** The material whose faces a {@link #TRANSLUCENT} voxel shows: its fluid for one that {@link #hasPlant}. */
+    default int fluidOf(int material) {
+        return material;
+    }
+
     /** Number of boxes of a {@link #SHAPED} material (1..{@link ShapeBoxes#MAX}), 0 for the others. */
     default int boxCount(int material) {
         return 0;

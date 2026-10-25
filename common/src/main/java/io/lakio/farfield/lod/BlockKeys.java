@@ -14,6 +14,7 @@ import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.BushBlock;
+import net.minecraft.world.level.block.GrowingPlantBlock;
 import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.SugarCaneBlock;
@@ -49,6 +50,13 @@ public final class BlockKeys {
         public int[] boxes(String key) {
             BlockState state = state(key);
             return state == null ? null : BlockKeys.boxes(state);
+        }
+
+        @Override
+        public String fluid(String key) {
+            BlockState state = state(key);
+            return state == null || state.getFluidState().isEmpty() ? null
+                    : BlockKeys.key(state.getFluidState().createLegacyBlock());
         }
     };
 
@@ -155,7 +163,8 @@ public final class BlockKeys {
             // that water for the mesher too: no faces between them and the water around
             // (dark squares around kelp once ice and water showed their faces, ADR-055).
             // Before the full-block test: the kelp's body has a full outline (ADR-063).
-            return MaterialTable.packFluid();
+            // Kelp and seagrass also show their crossed quads in that water (ADR-065).
+            return isSubmergedPlant(state) ? MaterialTable.packSubmerged() : MaterialTable.packFluid();
         }
         if (Block.isShapeFullBlock(shape)) {
             int meshClass = state.canOcclude() ? MaterialClassifier.OPAQUE : MaterialClassifier.TRANSLUCENT;
@@ -184,6 +193,13 @@ public final class BlockKeys {
             }
         }
         return MaterialTable.pack(MaterialClassifier.AIR, MipBuilder.Shapes.SPARSE);
+    }
+
+    /** A plant without collision standing in its fluid: kelp, seagrass, a waterlogged propagule. */
+    private static boolean isSubmergedPlant(BlockState state) {
+        Block block = state.getBlock();
+        return !state.getFluidState().isEmpty() && !hasCollision(state)
+                && (block instanceof BushBlock || block instanceof GrowingPlantBlock);
     }
 
     private static boolean hasCollision(BlockState state) {
@@ -246,11 +262,13 @@ public final class BlockKeys {
     /**
      * The state whose look an LOD voxel of {@code state} takes: its fluid for
      * the blocks {@link #resolve} turns into water (waterlogged partial
-     * blocks, seagrass, kelp), else the state itself.
+     * blocks), else the state itself. Kelp and seagrass keep their own: their
+     * material is their crossed quads, the water's faces take the water's.
      */
     public static BlockState lookOf(BlockState state) {
         Block block = state.getBlock();
-        if (state.getFluidState().isEmpty() || block instanceof LiquidBlock || block instanceof LeavesBlock) {
+        if (state.getFluidState().isEmpty() || block instanceof LiquidBlock || block instanceof LeavesBlock
+                || isSubmergedPlant(state)) {
             return state;
         }
         try {
