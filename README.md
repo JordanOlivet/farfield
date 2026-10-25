@@ -1,9 +1,14 @@
+![Farfield](docs/brand/banner-icon.png)
+
 # Farfield
 
 Far-distance terrain rendering for Minecraft, using levels of detail (LOD):
-render hundreds to thousands of chunks at a low cost, seamlessly.
+the terrain beyond your render distance, up to 4,096 blocks away, at a
+fraction of the cost of real chunks.
 
-Status: early development, private. Minecraft 1.21.1, NeoForge and Fabric.
+Status: 0.1.0, early. Minecraft 1.21.1, NeoForge and Fabric. What it does
+today, its requirements and what is planned: [`docs/listing/description.md`](docs/listing/description.md)
+(the text of the Modrinth and CurseForge pages).
 
 - Vision: [`docs/VISION.md`](docs/VISION.md)
 - Decisions: [`docs/DECISIONS.md`](docs/DECISIONS.md)
@@ -20,7 +25,13 @@ Requires a JDK to launch Gradle; Java 21 is provisioned automatically.
 
 Jars: `neoforge/build/libs/` and `fabric/build/libs/`.
 
+## Brand
+
+Logo source `docs/brand/farfield-logo.svg`, banners and their render
+scripts in `docs/brand/` (fonts: Silkscreen and Outfit, SIL Open Font
+License, in `docs/brand/fonts/`).
+
 ## License
 
-All rights reserved for now; a license will be chosen before the first public
-release (ADR-003).
+All rights reserved for now; the license is still to be chosen (ADR-003,
+ADR-066).

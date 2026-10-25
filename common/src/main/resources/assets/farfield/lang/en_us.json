@@ -18,7 +18,7 @@
   "farfield.options.fog.off": "Off",
   "farfield.options.fog.vanilla": "Vanilla",
   "farfield.options.noise_preview": "Ungenerated Terrain Preview",
-  "farfield.options.noise_preview.tooltip": "Show terrain the world has not generated yet, coarsely, from the world seed: relief, water and a surface color, without trees or buildings. Real terrain replaces it as you explore. Single player only.",
+  "farfield.options.noise_preview.tooltip": "Show terrain the world has not generated yet, coarsely, from the world seed: relief, water, ice, trees, plants and villages. Real terrain replaces it as you explore. Single player only.",
   "farfield.options.mesh_threads": "LOD Building Threads",
   "farfield.options.mesh_threads.tooltip": "Threads that turn stored terrain into distant terrain to draw. More threads show new terrain sooner after a teleport and take more processor time. Auto: one per four logical processors, 1 to 4.",
   "farfield.options.preview_threads": "Preview Threads",

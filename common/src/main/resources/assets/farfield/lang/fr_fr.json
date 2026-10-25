@@ -18,7 +18,7 @@
   "farfield.options.fog.off": "Désactivé",
   "farfield.options.fog.vanilla": "Vanilla",
   "farfield.options.noise_preview": "Aperçu du terrain non généré",
-  "farfield.options.noise_preview.tooltip": "Montre le terrain que le monde n'a pas encore généré, grossièrement, à partir de la graine : relief, eau et couleur du sol, sans arbres ni constructions. Le vrai terrain le remplace à mesure que vous explorez. Solo uniquement.",
+  "farfield.options.noise_preview.tooltip": "Montre le terrain que le monde n'a pas encore généré, grossièrement, à partir de la graine : relief, eau, glace, arbres, plantes et villages. Le vrai terrain le remplace à mesure que vous explorez. Solo uniquement.",
   "farfield.options.mesh_threads": "Threads de construction des LOD",
   "farfield.options.mesh_threads.tooltip": "Threads qui transforment le terrain stocké en terrain lointain à afficher. Plus de threads montrent plus vite le nouveau terrain après une téléportation et prennent plus de temps processeur. Auto : un par quatre processeurs logiques, de 1 à 4.",
   "farfield.options.preview_threads": "Threads de l'aperçu",
