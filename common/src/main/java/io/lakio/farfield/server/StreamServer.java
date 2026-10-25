@@ -5,6 +5,8 @@ import io.lakio.farfield.core.LodKey;
 import io.lakio.farfield.core.anvil.KeyRegistry;
 import io.lakio.farfield.core.config.ServerConfig;
 import io.lakio.farfield.core.lod.LodSection;
+import io.lakio.farfield.core.preview.PreviewStore;
+import io.lakio.farfield.core.preview.PreviewTile;
 import io.lakio.farfield.core.storage.SectionStore;
 import io.lakio.farfield.core.stream.Bandwidth;
 import io.lakio.farfield.core.stream.StreamProtocol;
@@ -60,6 +62,9 @@ public final class StreamServer {
     private final AtomicLong unchanged = new AtomicLong();
     private final AtomicLong indexes = new AtomicLong();
     private final AtomicLong hiddenSent = new AtomicLong();
+    private final AtomicLong tilesSent = new AtomicLong();
+    /** Worlds whose preview store tells this server about new tiles. */
+    private final Map<LodWorld, Boolean> tileListeners = new ConcurrentHashMap<>();
     /**
      * Sections under the surface per world and region (ADR-013), with the
      * region's fingerprint (its versions) they were computed for.
@@ -123,10 +128,16 @@ public final class StreamServer {
             return;
         }
         instance = new StreamServer(server, config);
-        Farfield.LOG.info("LOD streaming ready: radius {} blocks, {} KB/s per player, {} KB/s in all, {} threads, {}",
-                config.radiusBlocks(), config.playerKBps(), config.totalKBps(),
+        Farfield.LOG.info("LOD streaming ready: radius {} blocks, {} KB/s per player, {} KB/s in all, {} threads, {},"
+                        + " preview {}", config.radiusBlocks(), config.playerKBps(), config.totalKBps(),
                 config.effectiveThreads(Runtime.getRuntime().availableProcessors()),
-                config.fullData() ? "full data" : "surface only");
+                config.fullData() ? "full data" : "surface only", config.preview() ? "on" : "off");
+    }
+
+    /** Whether this server streams the noise preview (a dedicated server then builds it). */
+    public static boolean streamsPreview() {
+        StreamServer s = instance;
+        return s != null && s.config.preview();
     }
 
     public static void onServerStopping() {
@@ -154,6 +165,7 @@ public final class StreamServer {
                 case StreamProtocol.HELLO -> s.hello(player, StreamProtocol.Hello.decode(message));
                 case StreamProtocol.INDEX_REQUEST -> s.index(player, StreamProtocol.IndexRequest.decode(message));
                 case StreamProtocol.FETCH -> s.fetch(player, StreamProtocol.Fetch.decode(message));
+                case StreamProtocol.TILE_FETCH -> s.tileFetch(player, StreamProtocol.TileFetch.decode(message));
                 default -> {
                 }
             }
@@ -196,6 +208,12 @@ public final class StreamServer {
             p.session = session;
             p.out.add(new StreamProtocol.Welcome(session, hello.dimension(), epoch, config.radiusBlocks()).encode());
             sendKeys(p, session);
+        }
+        if (config.preview()) {
+            tileListeners.computeIfAbsent(world, w -> {
+                w.preview().addListener(tile -> tileWritten(w, tile));
+                return Boolean.TRUE;
+            });
         }
         Farfield.LOG.info("LOD streaming to {}: {} (session {}, {} store)", sp.getGameProfile().getName(),
                 dimension.location(), session, hello.epoch() == epoch ? "same" : "new");
@@ -336,6 +354,74 @@ public final class StreamServer {
         });
     }
 
+    private void tileFetch(ServerPlayer sp, StreamProtocol.TileFetch fetch) {
+        Player p = current(sp, fetch.session());
+        if (p == null || !config.preview()) {
+            return;
+        }
+        double px = sp.getX();
+        double pz = sp.getZ();
+        readers.execute(() -> {
+            for (int i = 0; i < fetch.tiles().length; i++) {
+                long tile = fetch.tiles()[i];
+                if (p.session != fetch.session()) {
+                    return;
+                }
+                int tx = PreviewStore.tileX(tile);
+                int tz = PreviewStore.tileZ(tile);
+                byte[] file = null;
+                if (tileInRange(tx, tz, px, pz)) {
+                    try {
+                        file = p.world.preview().readFile(tx, tz);
+                    } catch (IOException e) {
+                        Farfield.LOG.warn("LOD streaming: reading preview tile {} {} failed", tx, tz, e);
+                    }
+                }
+                if (file == null) {
+                    p.out.add(new StreamProtocol.Answer(StreamProtocol.TILE_ABSENT, fetch.session(), tile).encode());
+                    continue;
+                }
+                long version = PreviewStore.version(file);
+                if (version == fetch.haves()[i]) {
+                    p.out.add(new StreamProtocol.Answer(StreamProtocol.TILE_UNCHANGED, fetch.session(), tile).encode());
+                    continue;
+                }
+                synchronized (p) {
+                    if (p.session != fetch.session()) {
+                        return;
+                    }
+                    // A tile names biomes and plants by the store's ids: their keys go first.
+                    sendKeys(p, fetch.session());
+                    for (StreamProtocol.Tile part : StreamProtocol.Tile.split(fetch.session(), tile, version, file)) {
+                        p.out.add(part.encode());
+                    }
+                }
+                tilesSent.incrementAndGet();
+            }
+        });
+    }
+
+    /** A tile was built: the players near it ask for it again. Any thread. */
+    private void tileWritten(LodWorld world, long tile) {
+        int tx = PreviewStore.tileX(tile);
+        int tz = PreviewStore.tileZ(tile);
+        for (Player p : players.values()) {
+            int session = p.session;
+            if (session >= 0 && p.world == world && tileInRange(tx, tz, p.player.getX(), p.player.getZ())) {
+                p.out.add(new StreamProtocol.Answer(StreamProtocol.TILE_CHANGED, session, tile).encode());
+            }
+        }
+    }
+
+    private boolean tileInRange(int tx, int tz, double px, double pz) {
+        double x0 = (double) tx * PreviewTile.BLOCKS;
+        double z0 = (double) tz * PreviewTile.BLOCKS;
+        double dx = Math.max(0, Math.max(x0 - px, px - (x0 + PreviewTile.BLOCKS)));
+        double dz = Math.max(0, Math.max(z0 - pz, pz - (z0 + PreviewTile.BLOCKS)));
+        double r = config.radiusBlocks();
+        return dx * dx + dz * dz <= r * r;
+    }
+
     /**
      * The sections of a region under the surface ({@link SurfaceIndex}),
      * computed once per state of the region (its keys and versions).
@@ -451,9 +537,11 @@ public final class StreamServer {
             long u = unchanged.getAndSet(0);
             long i = indexes.getAndSet(0);
             long h = hiddenSent.getAndSet(0);
+            long t = tilesSent.getAndSet(0);
             if (RenderSettings.performanceLogs() && (bytes > 0 || i > 0)) {
                 Farfield.LOG.info("LOD streaming: {} players, {} KB sent in 10 s ({} sections, {} unchanged, {} indexes,"
-                        + " {} sections under the surface left out)", players.size(), bytes >> 10, s, u, i, h);
+                        + " {} sections under the surface left out, {} preview tiles)", players.size(), bytes >> 10,
+                        s, u, i, h, t);
             }
             bytes = 0;
         }

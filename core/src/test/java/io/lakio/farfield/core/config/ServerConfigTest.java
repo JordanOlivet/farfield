@@ -18,7 +18,7 @@ class ServerConfigTest {
     void roundTripsAndFallsBackToDefaults() throws IOException {
         Path file = dir.resolve("farfield-server.properties");
         assertEquals(ServerConfig.DEFAULTS, ServerConfig.read(file));
-        ServerConfig config = new ServerConfig(false, 2048, 512, 0, 3, true);
+        ServerConfig config = new ServerConfig(false, 2048, 512, 0, 3, true, false);
         config.write(file);
         assertEquals(config, ServerConfig.read(file));
         ServerConfig.DEFAULTS.write(file);
@@ -31,6 +31,7 @@ class ServerConfigTest {
         assertEquals(1024, odd.playerKBps());
         assertEquals(16, odd.threads());
         assertEquals(false, odd.fullData());
+        assertEquals(true, odd.preview());
         assertEquals(4, ServerConfig.DEFAULTS.effectiveThreads(16));
         assertEquals(1, ServerConfig.DEFAULTS.effectiveThreads(1));
     }

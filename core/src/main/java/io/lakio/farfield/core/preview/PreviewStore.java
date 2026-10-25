@@ -131,6 +131,48 @@ public final class PreviewStore {
         }
     }
 
+    /**
+     * A stored tile's file as it is on disk (raw length, then its zstd
+     * frame), or null: sent as is to clients (ADR-068).
+     */
+    public byte[] readFile(int tileX, int tileZ) throws IOException {
+        if (!summaries.containsKey(key(tileX, tileZ))) {
+            return null;
+        }
+        try {
+            return Files.readAllBytes(file(tileX, tileZ));
+        } catch (java.nio.file.NoSuchFileException e) {
+            return null;
+        }
+    }
+
+    /** Version of a tile file {@link #readFile} returned: its CRC32C, never negative. */
+    public static long version(byte[] file) {
+        java.util.zip.CRC32C crc = new java.util.zip.CRC32C();
+        crc.update(file, 0, file.length);
+        return crc.getValue();
+    }
+
+    /**
+     * Writes a tile file {@link #readFile} returned, from another store,
+     * after checking it decodes; then tells the listeners.
+     */
+    public void writeFile(int tileX, int tileZ, byte[] data) throws IOException {
+        PreviewTile tile = decode(data);
+        Path file = file(tileX, tileZ);
+        Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
+        Files.write(tmp, data);
+        Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        long key = key(tileX, tileZ);
+        synchronized (cache) {
+            cache.put(key, tile);
+        }
+        summaries.put(key, tile.summary());
+        for (LongConsumer l : listeners) {
+            l.accept(key);
+        }
+    }
+
     public void addListener(LongConsumer onTileWritten) {
         listeners.add(onTileWritten);
     }
@@ -144,9 +186,12 @@ public final class PreviewStore {
     }
 
     private static PreviewTile load(Path file) throws IOException {
-        byte[] data = Files.readAllBytes(file);
+        return decode(Files.readAllBytes(file));
+    }
+
+    private static PreviewTile decode(byte[] data) throws IOException {
         if (data.length < 4) {
-            throw new IOException("truncated preview tile " + file);
+            throw new IOException("truncated preview tile");
         }
         int length = (data[0] & 0xFF) | (data[1] & 0xFF) << 8 | (data[2] & 0xFF) << 16 | (data[3] & 0xFF) << 24;
         byte[] raw = new byte[length];

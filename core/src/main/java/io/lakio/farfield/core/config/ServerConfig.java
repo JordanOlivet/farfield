@@ -15,17 +15,19 @@ import java.util.Properties;
  * streaming on or off, the radius in blocks within which players may ask
  * for sections, the bandwidth per player and for all players in KB/s (0:
  * no limit), the threads that read sections for players ({@link #AUTO}:
- * min(4, processors / 2)), and whether sections under the surface are sent
- * too (full data; off by default, ADR-013). Defaults from Neo-Voxy, whose
- * streaming worked at these values. Missing or invalid keys take their default.
+ * min(4, processors / 2)), whether sections under the surface are sent
+ * too (full data; off by default, ADR-013), and whether a dedicated server
+ * builds the noise preview of terrain not generated yet for its players.
+ * Defaults from Neo-Voxy, whose streaming worked at these values. Missing
+ * or invalid keys take their default.
  */
 public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, int totalKBps, int threads,
-                           boolean fullData) {
+                           boolean fullData, boolean preview) {
 
     public static final int AUTO = 0;
     public static final int MAX_RADIUS = 30_000_000;
 
-    public static final ServerConfig DEFAULTS = new ServerConfig(true, 4096, 1024, 10240, AUTO, false);
+    public static final ServerConfig DEFAULTS = new ServerConfig(true, 4096, 1024, 10240, AUTO, false, true);
 
     static final String STREAMING = "streaming";
     static final String RADIUS = "streaming_radius";
@@ -33,6 +35,7 @@ public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, 
     static final String TOTAL_KBPS = "total_kbps";
     static final String THREADS = "streaming_threads";
     static final String FULL_DATA = "full_data";
+    static final String PREVIEW = "preview";
 
     public ServerConfig {
         radiusBlocks = Math.max(0, Math.min(MAX_RADIUS, radiusBlocks));
@@ -57,7 +60,7 @@ public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, 
         }
         return new ServerConfig(bool(p, STREAMING, DEFAULTS.streaming), integer(p, RADIUS, DEFAULTS.radiusBlocks),
                 integer(p, PLAYER_KBPS, DEFAULTS.playerKBps), integer(p, TOTAL_KBPS, DEFAULTS.totalKBps),
-                threads(p), bool(p, FULL_DATA, DEFAULTS.fullData));
+                threads(p), bool(p, FULL_DATA, DEFAULTS.fullData), bool(p, PREVIEW, DEFAULTS.preview));
     }
 
     /** Writes the file through a temporary file. */
@@ -82,6 +85,9 @@ public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, 
             out.write("# Send the sections under the surface too (caves, ores): true lets players see\n");
             out.write("# them through the LODs. Default false: only what is seen from the sky down.\n");
             out.write(FULL_DATA + "=" + fullData + "\n");
+            out.write("# Build the preview of terrain not generated yet around players and send it to\n");
+            out.write("# them (costs server CPU on low-priority threads). Default true.\n");
+            out.write(PREVIEW + "=" + preview + "\n");
         }
         Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
     }

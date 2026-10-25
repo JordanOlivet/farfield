@@ -4,6 +4,8 @@ import io.lakio.farfield.Farfield;
 import io.lakio.farfield.core.LodKey;
 import io.lakio.farfield.core.anvil.KeyRegistry;
 import io.lakio.farfield.core.lod.LodSection;
+import io.lakio.farfield.core.preview.PreviewStore;
+import io.lakio.farfield.core.preview.PreviewTile;
 import io.lakio.farfield.core.storage.SectionStore;
 import io.lakio.farfield.core.stream.StreamProtocol;
 import io.lakio.farfield.core.world.LodWorld;
@@ -39,7 +41,9 @@ import java.util.stream.Stream;
  * indexes from the server), and hands it the sections it wants, nearest
  * and in view first; at most {@link StreamProtocol.Fetch#MAX_KEYS} are in
  * flight. Received records go into the mirror as they are; the versions it
- * holds are kept beside it, so a rejoin only checks them. Client thread only.
+ * holds are kept beside it, so a rejoin only checks them. The noise preview
+ * comes the same way, as tiles within the radius, nearest first, asked
+ * again when the server says one was built. Client thread only.
  */
 public final class StreamClient {
 
@@ -48,6 +52,9 @@ public final class StreamClient {
     private static final long STATS_NANOS = 10_000_000_000L;
     private static final String EPOCH_FILE = "server.epoch";
     private static final String VERSIONS_FILE = "versions.bin";
+    private static final String TILES_FILE = "tiles.bin";
+    private static final int TILES_IN_FLIGHT = StreamProtocol.TileFetch.MAX_TILES;
+    private static final long TILE_SCAN_NANOS = 250_000_000L;
 
     private static StreamClient instance;
 
@@ -67,6 +74,13 @@ public final class StreamClient {
     private final LongLinkedOpenHashSet wishes = new LongLinkedOpenHashSet();
     private final Long2LongOpenHashMap inFlight = new Long2LongOpenHashMap();
     private final Long2ObjectOpenHashMap<byte[][]> parts = new Long2ObjectOpenHashMap<>();
+    /** Preview tiles: versions held (kept beside the mirror), answered this session, in flight, parts. */
+    private final Long2LongOpenHashMap localTiles = new Long2LongOpenHashMap();
+    private final LongOpenHashSet tilesAnswered = new LongOpenHashSet();
+    private final Long2LongOpenHashMap tilesInFlight = new Long2LongOpenHashMap();
+    private final Long2ObjectOpenHashMap<byte[][]> tileParts = new Long2ObjectOpenHashMap<>();
+    private long nextTileScan;
+    private int tilesReceived;
     private int generation;
     private long nextStats = System.nanoTime() + STATS_NANOS;
     private long received;
@@ -78,6 +92,7 @@ public final class StreamClient {
         this.dir = dir;
         remote.defaultReturnValue(-1);
         local.defaultReturnValue(-1);
+        localTiles.defaultReturnValue(-1);
     }
 
     // ---------------------------------------------------------------- lifecycle (client tick)
@@ -164,36 +179,39 @@ public final class StreamClient {
         Path epochFile = dir.resolve(EPOCH_FILE);
         cachedEpoch = 0;
         local.clear();
+        localTiles.clear();
         if (Files.exists(epochFile)) {
             try {
                 cachedEpoch = Long.parseUnsignedLong(Files.readString(epochFile).trim(), 16);
-                readVersions();
+                readVersions(VERSIONS_FILE, local);
+                readVersions(TILES_FILE, localTiles);
             } catch (NumberFormatException | IOException e) {
                 cachedEpoch = 0;
                 local.clear();
+                localTiles.clear();
             }
         }
     }
 
-    private void readVersions() throws IOException {
-        Path file = dir.resolve(VERSIONS_FILE);
+    private void readVersions(String name, Long2LongOpenHashMap into) throws IOException {
+        Path file = dir.resolve(name);
         if (!Files.exists(file)) {
             return;
         }
         try (DataInputStream in = new DataInputStream(new BufferedInputStream(Files.newInputStream(file)))) {
             int n = in.readInt();
             for (int i = 0; i < n; i++) {
-                local.put(in.readLong(), in.readLong());
+                into.put(in.readLong(), in.readLong());
             }
         }
     }
 
-    private void writeVersions() throws IOException {
-        Path file = dir.resolve(VERSIONS_FILE);
-        Path tmp = dir.resolve(VERSIONS_FILE + ".tmp");
+    private void writeVersions(String name, Long2LongOpenHashMap from) throws IOException {
+        Path file = dir.resolve(name);
+        Path tmp = dir.resolve(name + ".tmp");
         try (DataOutputStream out = new DataOutputStream(new BufferedOutputStream(Files.newOutputStream(tmp)))) {
-            out.writeInt(local.size());
-            for (Long2LongOpenHashMap.Entry e : local.long2LongEntrySet()) {
+            out.writeInt(from.size());
+            for (Long2LongOpenHashMap.Entry e : from.long2LongEntrySet()) {
                 out.writeLong(e.getLongKey());
                 out.writeLong(e.getLongValue());
             }
@@ -213,6 +231,7 @@ public final class StreamClient {
         }
         mirror = LodWorld.open(dir, BlockKeys.RESOLVER);
         local.clear();
+        localTiles.clear();
         cachedEpoch = epoch;
         if (epoch != 0) {
             Files.writeString(dir.resolve(EPOCH_FILE), Long.toUnsignedString(epoch, 16));
@@ -222,10 +241,12 @@ public final class StreamClient {
     private void close() {
         try {
             if (session >= 0) {
-                writeVersions();
+                writeVersions(VERSIONS_FILE, local);
+                writeVersions(TILES_FILE, localTiles);
             }
             mirror.close();
-            Farfield.LOG.info("LOD stream mirror of {} closed: {} sections held", dimension.location(), local.size());
+            Farfield.LOG.info("LOD stream mirror of {} closed: {} sections and {} preview tiles held",
+                    dimension.location(), local.size(), localTiles.size());
         } catch (IOException | RuntimeException e) {
             Farfield.LOG.warn("LOD streaming: closing the mirror of {} failed", dimension.location(), e);
         }
@@ -243,6 +264,11 @@ public final class StreamClient {
         }
         // Requests the server never answered (it dropped them): asked again later.
         inFlight.long2LongEntrySet().removeIf(e -> now - e.getLongValue() > REQUEST_TIMEOUT_NANOS);
+        tilesInFlight.long2LongEntrySet().removeIf(e -> now - e.getLongValue() > REQUEST_TIMEOUT_NANOS);
+        if (RenderSettings.noisePreview() && now > nextTileScan && tilesInFlight.size() < TILES_IN_FLIGHT) {
+            nextTileScan = now + TILE_SCAN_NANOS;
+            askTiles(mc, now);
+        }
         askedRegions.long2LongEntrySet().removeIf(e -> now - e.getLongValue() > REQUEST_TIMEOUT_NANOS);
         while (inFlight.size() < StreamProtocol.Fetch.MAX_KEYS && !wishes.isEmpty()) {
             int n = Math.min(wishes.size(), StreamProtocol.Fetch.MAX_KEYS - inFlight.size());
@@ -259,14 +285,59 @@ public final class StreamClient {
         if (now > nextStats) {
             nextStats = now + STATS_NANOS;
             if (RenderSettings.performanceLogs() && (received > 0 || !inFlight.isEmpty())) {
-                Farfield.LOG.info("LOD streaming: {} KB received in 10 s ({} sections, {} unchanged), {} in flight,"
-                                + " {} wanted, {} known regions, {} sections held", received >> 10, sectionsReceived,
-                        unchangedReceived, inFlight.size(), wishes.size(), knownRegions.size(), local.size());
+                Farfield.LOG.info("LOD streaming: {} KB received in 10 s ({} sections, {} unchanged, {} preview tiles),"
+                                + " {} in flight, {} wanted, {} known regions, {} sections and {} tiles held",
+                        received >> 10, sectionsReceived, unchangedReceived, tilesReceived, inFlight.size(),
+                        wishes.size(), knownRegions.size(), local.size(), localTiles.size());
             }
             received = 0;
             sectionsReceived = 0;
             unchangedReceived = 0;
+            tilesReceived = 0;
         }
+    }
+
+    /** Asks for the preview tiles within the radius not checked yet this session, nearest first. */
+    private void askTiles(Minecraft mc, long now) {
+        var player = mc.player;
+        if (player == null) {
+            return;
+        }
+        double px = player.getX();
+        double pz = player.getZ();
+        int tile = PreviewTile.BLOCKS;
+        int x0 = Math.floorDiv((int) Math.floor(px - radius), tile);
+        int x1 = Math.floorDiv((int) Math.floor(px + radius), tile);
+        int z0 = Math.floorDiv((int) Math.floor(pz - radius), tile);
+        int z1 = Math.floorDiv((int) Math.floor(pz + radius), tile);
+        java.util.List<long[]> candidates = new java.util.ArrayList<>();
+        for (int tz = z0; tz <= z1; tz++) {
+            for (int tx = x0; tx <= x1; tx++) {
+                long key = PreviewStore.key(tx, tz);
+                if (tilesAnswered.contains(key) || tilesInFlight.containsKey(key)) {
+                    continue;
+                }
+                double dx = Math.max(0, Math.max((double) tx * tile - px, px - ((double) tx + 1) * tile));
+                double dz = Math.max(0, Math.max((double) tz * tile - pz, pz - ((double) tz + 1) * tile));
+                double d = dx * dx + dz * dz;
+                if (d <= (double) radius * radius) {
+                    candidates.add(new long[]{key, (long) d});
+                }
+            }
+        }
+        candidates.sort((a, b) -> Long.compare(a[1], b[1]));
+        int n = Math.min(candidates.size(), TILES_IN_FLIGHT - tilesInFlight.size());
+        if (n <= 0) {
+            return;
+        }
+        long[] tiles = new long[n];
+        long[] haves = new long[n];
+        for (int i = 0; i < n; i++) {
+            tiles[i] = candidates.get(i)[0];
+            haves[i] = localTiles.get(tiles[i]);
+            tilesInFlight.put(tiles[i], now);
+        }
+        send(new StreamProtocol.TileFetch(session, tiles, haves).encode());
     }
 
     private static void send(byte[] message) {
@@ -364,6 +435,9 @@ public final class StreamClient {
                 case StreamProtocol.INDEX -> c.index(StreamProtocol.Index.decode(message));
                 case StreamProtocol.SECTION -> c.section(StreamProtocol.Section.decode(message));
                 case StreamProtocol.UNCHANGED, StreamProtocol.ABSENT -> c.answer(StreamProtocol.Answer.decode(message));
+                case StreamProtocol.TILE -> c.tile(StreamProtocol.Tile.decode(message));
+                case StreamProtocol.TILE_ABSENT, StreamProtocol.TILE_UNCHANGED, StreamProtocol.TILE_CHANGED ->
+                        c.tileAnswer(StreamProtocol.Answer.decode(message));
                 default -> {
                 }
             }
@@ -392,6 +466,9 @@ public final class StreamClient {
         inFlight.clear();
         wishes.clear();
         parts.clear();
+        tilesAnswered.clear();
+        tilesInFlight.clear();
+        tileParts.clear();
         generation++;
         Farfield.LOG.info("LOD streaming from the server: {} (session {}, radius {} blocks, {} sections held)",
                 dimension.location(), session, radius, local.size());
@@ -463,6 +540,54 @@ public final class StreamClient {
         inFlight.remove(part.key());
         sectionsReceived++;
         mirror.putRecord(part.key(), record, 0, record.length);
+    }
+
+    private void tile(StreamProtocol.Tile part) throws IOException {
+        if (part.session() != session) {
+            return;
+        }
+        byte[] file;
+        if (part.parts() == 1) {
+            file = part.data();
+        } else {
+            byte[][] got = tileParts.computeIfAbsent(part.tile(), k -> new byte[part.parts()][]);
+            if (got.length != part.parts()) {
+                tileParts.remove(part.tile());
+                return;
+            }
+            got[part.part()] = part.data();
+            int length = 0;
+            for (byte[] b : got) {
+                if (b == null) {
+                    return;
+                }
+                length += b.length;
+            }
+            tileParts.remove(part.tile());
+            file = new byte[length];
+            int at = 0;
+            for (byte[] b : got) {
+                System.arraycopy(b, 0, file, at, b.length);
+                at += b.length;
+            }
+        }
+        tilesInFlight.remove(part.tile());
+        tilesAnswered.add(part.tile());
+        mirror.preview().writeFile(PreviewStore.tileX(part.tile()), PreviewStore.tileZ(part.tile()), file);
+        localTiles.put(part.tile(), part.version());
+        tilesReceived++;
+    }
+
+    private void tileAnswer(StreamProtocol.Answer answer) {
+        if (answer.session() != session) {
+            return;
+        }
+        if (answer.type() == StreamProtocol.TILE_CHANGED) {
+            tilesAnswered.remove(answer.key()); // asked again at the next scan
+            return;
+        }
+        tilesInFlight.remove(answer.key());
+        tilesAnswered.add(answer.key());
     }
 
     private void answer(StreamProtocol.Answer answer) {

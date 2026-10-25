@@ -59,6 +59,26 @@ class StreamProtocolTest {
     }
 
     @Test
+    void tileMessagesRoundTrip() {
+        long[] tiles = {io.lakio.farfield.core.preview.PreviewStore.key(-3, 7), 5L};
+        long[] haves = {-1, 123456789L};
+        StreamProtocol.TileFetch fetch = StreamProtocol.TileFetch.decode(
+                new StreamProtocol.TileFetch(2, tiles, haves).encode());
+        assertArrayEquals(tiles, fetch.tiles());
+        assertArrayEquals(haves, fetch.haves());
+        byte[] file = new byte[StreamProtocol.Section.MAX_DATA + 10];
+        file[file.length - 1] = 42;
+        StreamProtocol.Tile[] parts = StreamProtocol.Tile.split(2, tiles[0], 99L, file);
+        assertEquals(2, parts.length);
+        StreamProtocol.Tile back = StreamProtocol.Tile.decode(parts[1].encode());
+        assertEquals(tiles[0], back.tile());
+        assertEquals(99L, back.version());
+        assertEquals(42, back.data()[back.data().length - 1]);
+        StreamProtocol.Answer changed = new StreamProtocol.Answer(StreamProtocol.TILE_CHANGED, 2, tiles[0]);
+        assertEquals(changed, StreamProtocol.Answer.decode(changed.encode()));
+    }
+
+    @Test
     void largeRecordsSplitUnderThePayloadLimit() {
         byte[] record = new byte[StreamProtocol.Section.MAX_DATA * 2 + 5];
         Arrays.fill(record, (byte) 7);

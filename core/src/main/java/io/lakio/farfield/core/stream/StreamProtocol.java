@@ -17,8 +17,8 @@ import java.nio.charset.StandardCharsets;
  */
 public final class StreamProtocol {
 
-    /** Raised when the messages change shape; peers with another version do not stream. */
-    public static final int VERSION = 1;
+    /** Raised when the messages change shape; peers with another version do not stream (2: preview tiles). */
+    public static final int VERSION = 2;
     /** Largest body of one message, under the game's custom payload limits. */
     public static final int MAX_PAYLOAD = 30_000;
 
@@ -26,6 +26,7 @@ public final class StreamProtocol {
     public static final int HELLO = 1;
     public static final int INDEX_REQUEST = 2;
     public static final int FETCH = 3;
+    public static final int TILE_FETCH = 4;
     // Server to client.
     public static final int WELCOME = 10;
     public static final int KEYS = 11;
@@ -33,6 +34,11 @@ public final class StreamProtocol {
     public static final int SECTION = 13;
     public static final int ABSENT = 14;
     public static final int UNCHANGED = 15;
+    public static final int TILE = 16;
+    public static final int TILE_ABSENT = 17;
+    public static final int TILE_UNCHANGED = 18;
+    /** A tile near the player was built or rebuilt: ask for it again. */
+    public static final int TILE_CHANGED = 19;
 
     /** {@link Keys#kind}: block-state keys or biome keys. */
     public static final int BLOCK_STATES = 0;
@@ -305,7 +311,91 @@ public final class StreamProtocol {
         }
     }
 
-    /** Server: a requested section the store does not hold ({@link #ABSENT}), or holds at the client's version ({@link #UNCHANGED}). */
+    /**
+     * Client: noise preview tiles it wants ({@code PreviewStore} keys), each
+     * with the version it holds (-1 for none).
+     */
+    public record TileFetch(int session, long[] tiles, long[] haves) {
+        public static final int MAX_TILES = 16;
+
+        public byte[] encode() {
+            ByteWriter out = start(TILE_FETCH);
+            out.writeVarInt(session);
+            out.writeVarInt(tiles.length);
+            for (int i = 0; i < tiles.length; i++) {
+                out.writeLong(tiles[i]);
+                out.writeLong(haves[i]);
+            }
+            return out.toByteArray();
+        }
+
+        public static TileFetch decode(byte[] payload) {
+            ByteReader in = body(payload);
+            int session = in.readVarInt();
+            int n = in.readVarInt();
+            if (n < 0 || n > MAX_TILES) {
+                throw new IllegalArgumentException("bad tile fetch size " + n);
+            }
+            long[] tiles = new long[n];
+            long[] haves = new long[n];
+            for (int i = 0; i < n; i++) {
+                tiles[i] = in.readLong();
+                haves[i] = in.readLong();
+            }
+            return new TileFetch(session, tiles, haves);
+        }
+    }
+
+    /** Server: part {@code part} of {@code parts} of a preview tile's file, at {@code version}. */
+    public record Tile(int session, long tile, long version, int part, int parts, byte[] data) {
+        public byte[] encode() {
+            ByteWriter out = start(TILE);
+            out.writeVarInt(session);
+            out.writeLong(tile);
+            out.writeLong(version);
+            out.writeVarInt(part);
+            out.writeVarInt(parts);
+            out.writeVarInt(data.length);
+            out.writeBytes(data, 0, data.length);
+            return out.toByteArray();
+        }
+
+        public static Tile decode(byte[] payload) {
+            ByteReader in = body(payload);
+            int session = in.readVarInt();
+            long tile = in.readLong();
+            long version = in.readLong();
+            int part = in.readVarInt();
+            int parts = in.readVarInt();
+            int n = in.readVarInt();
+            if (n < 0 || n > in.remaining() || part < 0 || part >= parts) {
+                throw new IllegalArgumentException("bad tile part");
+            }
+            byte[] data = new byte[n];
+            in.readBytes(data, 0, n);
+            return new Tile(session, tile, version, part, parts, data);
+        }
+
+        /** The messages of one tile file, in order. */
+        public static Tile[] split(int session, long tile, long version, byte[] file) {
+            int max = Section.MAX_DATA;
+            int parts = Math.max(1, (file.length + max - 1) / max);
+            Tile[] out = new Tile[parts];
+            for (int p = 0; p < parts; p++) {
+                int from = p * max;
+                int to = Math.min(file.length, from + max);
+                out[p] = new Tile(session, tile, version, p, parts, java.util.Arrays.copyOfRange(file, from, to));
+            }
+            return out;
+        }
+    }
+
+    /**
+     * Server: a requested section the store does not hold ({@link #ABSENT}),
+     * or holds at the client's version ({@link #UNCHANGED}); the same for a
+     * tile ({@link #TILE_ABSENT}, {@link #TILE_UNCHANGED}), or a tile written
+     * since ({@link #TILE_CHANGED}). {@code key} is a section or tile key.
+     */
     public record Answer(int type, int session, long key) {
         public byte[] encode() {
             ByteWriter out = start(type);

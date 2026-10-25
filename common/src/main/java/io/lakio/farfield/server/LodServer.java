@@ -37,12 +37,12 @@ public final class LodServer {
     private static volatile LodServer instance;
 
     private final LodPipeline pipeline;
-    /** Null on a dedicated server: no protocol sends the preview to clients yet (ADR-038). */
+    /** Null on a dedicated server that does not stream the preview to its players (ADR-068). */
     private final NoisePreview preview;
     private volatile ImportJob importJob;
 
-    private LodServer(boolean dedicated) {
-        this.preview = dedicated ? null : new NoisePreview();
+    private LodServer(boolean preview) {
+        this.preview = preview ? new NoisePreview() : null;
         this.pipeline = new LodPipeline("server", level -> level instanceof ServerLevel,
                 level -> dimensionFolder((ServerLevel) level).resolve("farfield"), LevelChunk::isLightCorrect);
     }
@@ -54,8 +54,10 @@ public final class LodServer {
     // ---------------------------------------------------------------- loader events
 
     public static void onServerStarting(MinecraftServer server) {
-        instance = new LodServer(server.isDedicatedServer());
+        // Single player builds the preview for its own client; a dedicated server for its players
+        // when it streams it (ADR-068).
         StreamServer.onServerStarting(server);
+        instance = new LodServer(!server.isDedicatedServer() || StreamServer.streamsPreview());
     }
 
     public static void onServerStopping(MinecraftServer server) {

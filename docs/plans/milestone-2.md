@@ -78,8 +78,17 @@ Items:
   the mirror kept fetched 16 sections and settled at 4.4 s. Remains: two
   clients, the ping during a fill, NeoForge, change notices, client
   congestion control (AIMD)
-- [ ] B.3 Noise preview built by the dedicated server around each player
-  and streamed the same way.
+- [~] B.3 Noise preview built by the dedicated server around each player
+  and streamed the same way. Done: `preview` (default true) in
+  `farfield-server.properties` turns `NoisePreview` on for a dedicated
+  server; tiles pulled as their files (`TileFetch`, `Tile`, CRC32C
+  versions), nearest first, 16 in flight; the server tells the players
+  near a tile once it is built (`TILE_CHANGED`); protocol version 2.
+  Fabric dev server and client, empty mirror: the server built every
+  tile within 4,096 blocks in 33 s, the client held all 232 within 10 s,
+  view settled at 15.5 s, the horizon drawn from y 220. Remains: the
+  user's NeoForge pack on the server; faint grid lines seen on frozen
+  sea in the capture, not compared with single player yet
 - [ ] B.4 The user's NeoForge pack on a server: fill times and bandwidth
   from the log lines.
 

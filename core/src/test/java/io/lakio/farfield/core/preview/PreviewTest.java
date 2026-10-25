@@ -17,6 +17,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PreviewTest {
@@ -651,5 +652,27 @@ class PreviewTest {
         assertNotNull(reopened.summary(-3, 2));
         assertEquals(slope().sample(100, 7), reopened.read(-3, 2).sample(100, 7));
         assertNull(reopened.read(5, 5));
+    }
+
+    @Test
+    void tileFilesMirrorAnotherStore() throws IOException {
+        PreviewStore server = new PreviewStore(dir.resolve("server"));
+        server.write(4, -1, slope());
+        byte[] file = server.readFile(4, -1);
+        assertNotNull(file);
+        assertNull(server.readFile(0, 0));
+        long version = PreviewStore.version(file);
+        assertTrue(version >= 0);
+        assertEquals(version, PreviewStore.version(server.readFile(4, -1)));
+
+        PreviewStore client = new PreviewStore(dir.resolve("client"));
+        List<Long> heard = new ArrayList<>();
+        client.addListener(heard::add);
+        client.writeFile(4, -1, file);
+        assertEquals(List.of(PreviewStore.key(4, -1)), heard);
+        assertNotNull(client.summary(4, -1));
+        assertEquals(slope().sample(100, 7), client.read(4, -1).sample(100, 7));
+        assertEquals(version, PreviewStore.version(client.readFile(4, -1)));
+        assertThrows(IOException.class, () -> client.writeFile(1, 1, new byte[]{1, 2}));
     }
 }
