@@ -1659,3 +1659,23 @@ back as crossed quads, like the plants of ADR-059.
   the plant's state: its look is its sprite, never the water's.
 - The plants' pass draws before the translucent one, so the water blends
   over the kelp.
+
+## ADR-066 — The repository is public
+
+**Date**: 2026-10-25 · **Status**: accepted (amends ADR-002; ADR-003 still open)
+
+After release 0.1.0 and the logo, the user made `JordanOlivet/farfield`
+public: "maintenant qu'on a une première version et qu'on travaille le
+branding, c'est ok".
+
+- Checked before: no token or key in the git history (Modrinth `mrp_`,
+  GitHub `ghp_` and `github_pat_`, JWT, AWS keys, private keys, `token=`
+  or `password=` lines: none); `local.properties` never committed. The
+  history holds local paths (`C:\Users\Lakio\...`) and the skills'
+  autoharness notes of earlier commits: nothing secret.
+- The license is still "All rights reserved" (`LICENSE`, mod metadata):
+  ADR-003 meant to choose one before the first public release, and that
+  choice is still the user's to make (options in the analysis, §2). Until
+  then the code is visible, not reusable.
+- Listing images can now link to the repository; the banners are hosted
+  in the Modrinth gallery anyway, whose URLs work on both platforms.
