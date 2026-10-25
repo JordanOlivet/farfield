@@ -12,11 +12,15 @@ Legend: `[ ]` todo · `[~]` in progress (the text says what remains) ·
 - [ ] A.1 A real logo, in place of the word "farfield" in black on white:
   the icon of the jar (`farfield.png` of both loaders' metadata) and of the
   Modrinth and CurseForge pages. The user's call on the design.
-- [ ] A.2 Release 0.1.0 (tag `v0.1.0`, release type, not alpha): an alpha
+- [x] A.2 Release 0.1.0 (tag `v0.1.0`, release type, not alpha): an alpha
   is hidden from CurseForge search; Modrinth lists the project once it is
   approved. Checked before it: the user's Fabric pack (Cobblemon) and
   NeoForge pack with Farfield on the server and the client ("Le test est
-  concluant", 2026-10-25).
+  concluant", 2026-10-25). Published 2026-10-25, run 40195779172: five
+  jobs green, both Publish jobs `Successfully published the assets to
+  CurseForge, Modrinth`, GitHub Release `Farfield 0.1.0` (not a
+  pre-release) with both jars. Not checked: the CurseForge and Modrinth
+  pages (loaders, game version, dependencies) and CurseForge search
 
 ## M2.B — Server streaming of LODs and the noise preview (ADR-013)
 
