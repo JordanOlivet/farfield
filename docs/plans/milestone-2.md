@@ -16,9 +16,10 @@ Legend: `[ ]` todo · `[~]` in progress (the text says what remains) ·
   valide E". Source `docs/brand/farfield-logo.svg`, rendered by
   `docs/brand/render_logo.py` to `common/src/main/resources/farfield.png`
   (512 px), referenced by `fabric.mod.json` (`icon`) and
-  `neoforge.mods.toml` (`logoFile`); both jars hold it. Remains: the icon
-  in the in-game mod lists (Mod Menu, NeoForge), and the user's upload to
-  the CurseForge and Modrinth pages
+  `neoforge.mods.toml` (`logoFile`); both jars hold it. Modrinth: icon,
+  banner and description from `docs/listing/` (2026-10-25). Remains: the
+  icon in the in-game mod lists (Mod Menu, NeoForge), and CurseForge (the
+  user pastes the description and uploads the images)
 - [x] A.2 Release 0.1.0 (tag `v0.1.0`, release type, not alpha): an alpha
   is hidden from CurseForge search; Modrinth lists the project once it is
   approved. Checked before it: the user's Fabric pack (Cobblemon) and

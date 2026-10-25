@@ -1,4 +1,4 @@
-![Farfield](BANNER_URL)
+![Farfield](https://cdn.modrinth.com/data/3ToF1nXi/images/51830b7991218d6e6fca326bdf0fa9cfaac1a44e.png)
 
 **Farfield** draws the terrain beyond your render distance as levels of
 detail (LOD): mountains, coasts and forests up to 4,096 blocks away, for a

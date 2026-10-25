@@ -7,6 +7,7 @@ it). Commands:
     python docs/listing/modrinth.py push-body             # description.md as the page's body
     python docs/listing/modrinth.py push-icon <png>       # the project icon
     python docs/listing/modrinth.py add-image <png> <title> [--featured]  # a gallery image; prints its URL
+    python docs/listing/modrinth.py push-links            # source and issues links to GitHub
 """
 import json
 import sys
@@ -62,6 +63,13 @@ def push_icon(png):
     print(f'icon pushed: HTTP {status}')
 
 
+def push_links():
+    links = {'source_url': 'https://github.com/JordanOlivet/farfield',
+             'issues_url': 'https://github.com/JordanOlivet/farfield/issues'}
+    status, _ = call('PATCH', f'/project/{PROJECT}', links)
+    print(f'links pushed: HTTP {status}')
+
+
 def add_image(png, title, featured):
     query = f'ext=png&featured={"true" if featured else "false"}&title={urllib.request.quote(title)}'
     status, _ = call('POST', f'/project/{PROJECT}/gallery?{query}', Path(png).read_bytes(), 'image/png')
@@ -78,6 +86,8 @@ if __name__ == '__main__':
         push_body()
     elif command == 'push-icon':
         push_icon(sys.argv[2])
+    elif command == 'push-links':
+        push_links()
     elif command == 'add-image':
         add_image(sys.argv[2], sys.argv[3], '--featured' in sys.argv[4:])
     else:
