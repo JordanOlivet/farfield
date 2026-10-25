@@ -27,8 +27,9 @@ Legend: `[ ]` todo · `[~]` in progress (the text says what remains) ·
   concluant", 2026-10-25). Published 2026-10-25, run 40195779172: five
   jobs green, both Publish jobs `Successfully published the assets to
   CurseForge, Modrinth`, GitHub Release `Farfield 0.1.0` (not a
-  pre-release) with both jars. Not checked: the CurseForge and Modrinth
-  pages (loaders, game version, dependencies) and CurseForge search
+  pre-release) with both jars. CurseForge search shows the project once
+  the files were approved (the user, 2026-10-25). Not checked: Modrinth
+  search (the project is still in review)
 
 ## M2.B — Server streaming of LODs and the noise preview (ADR-013)
 
