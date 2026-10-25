@@ -1,5 +1,6 @@
 """Renders docs/brand/farfield-logo.svg to PNG: only the shapes it uses
-(rect, M/V/H/Z paths, square-cell patterns), 4x supersampled then box-averaged.
+(rect, M/V/H/Z paths, square-cell patterns, a rounded-rect clip on the
+content group), 4x supersampled then box-averaged; transparent outside.
 
     python docs/brand/render_logo.py docs/brand/farfield-logo.svg common/src/main/resources/farfield.png 512
 """
@@ -40,9 +41,12 @@ for p in root.iter(NS + 'pattern'):
             full.paste(tile, (x, y))
     patterns[p.get('id')] = full
 
+content = root.find(NS + 'g')
+if content is None:
+    content = root
 img = Image.new('RGBA', (N, N))
-draw_rects(img, root)
-for path in root.findall(NS + 'path'):
+draw_rects(img, content)
+for path in content.findall(NS + 'path'):
     pts = []
     x = y = 0
     for cmd, val in re.findall(r'([MVHZ])\s*([-\d.]*(?:\s+[-\d.]+)?)', path.get('d')):
@@ -60,5 +64,12 @@ for path in root.findall(NS + 'path'):
     pid = re.match(r'url\(#(.+)\)', path.get('fill')).group(1)
     img.paste(patterns[pid], (0, 0), mask)
 
-img.convert('RGB').resize((SIZE, SIZE), Image.Resampling.BOX).save(OUT, optimize=True)
+clip = root.find(f'{NS}defs/{NS}clipPath/{NS}rect')
+if clip is not None:
+    alpha = Image.new('L', (N, N))
+    r = float(clip.get('rx', 0)) * K
+    ImageDraw.Draw(alpha).rounded_rectangle([0, 0, N - 1, N - 1], radius=r, fill=255)
+    img.putalpha(alpha)
+# Box-average with premultiplied alpha, so the corners' edge keeps its color.
+img.resize((SIZE, SIZE), Image.Resampling.BOX, reducing_gap=None).save(OUT, optimize=True)
 print('saved', OUT, SIZE)
