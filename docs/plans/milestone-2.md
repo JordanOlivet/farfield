@@ -71,9 +71,13 @@ Items:
   the renderer fed by it; `config/farfield-server.properties`. Fabric dev
   server on a copy of the test world, one Fabric dev client: 10,188
   sections (about 25 MB) at 1,024 KB/s, the cap; view settled at 24.6 s;
-  then nothing in flight. Remains: two clients, the ping during a fill,
-  NeoForge, change notices, client congestion control (AIMD), surface
-  only (ADR-013)
+  then nothing in flight. Surface only (ADR-013, `SurfaceIndex`,
+  `full_data=false` by default): 7,706 sections and about 14.8 MB
+  instead of 10,188 and 25 MB, view settled at 15.9 s instead of 24.6 s,
+  the same image (captures identical to 8 levels of 255); a rejoin with
+  the mirror kept fetched 16 sections and settled at 4.4 s. Remains: two
+  clients, the ping during a fill, NeoForge, change notices, client
+  congestion control (AIMD)
 - [ ] B.3 Noise preview built by the dedicated server around each player
   and streamed the same way.
 - [ ] B.4 The user's NeoForge pack on a server: fill times and bandwidth

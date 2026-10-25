@@ -8,6 +8,7 @@ import io.lakio.farfield.core.lod.LodSection;
 import io.lakio.farfield.core.storage.SectionStore;
 import io.lakio.farfield.core.stream.Bandwidth;
 import io.lakio.farfield.core.stream.StreamProtocol;
+import io.lakio.farfield.core.stream.SurfaceIndex;
 import io.lakio.farfield.core.world.LodWorld;
 import io.lakio.farfield.lod.RenderSettings;
 import io.lakio.farfield.platform.Services;
@@ -58,6 +59,15 @@ public final class StreamServer {
     private final AtomicLong sections = new AtomicLong();
     private final AtomicLong unchanged = new AtomicLong();
     private final AtomicLong indexes = new AtomicLong();
+    private final AtomicLong hiddenSent = new AtomicLong();
+    /**
+     * Sections under the surface per world and region (ADR-013), with the
+     * region's fingerprint (its versions) they were computed for.
+     */
+    private final Map<LodWorld, Map<Long, Hidden>> hidden = new ConcurrentHashMap<>();
+
+    private record Hidden(long fingerprint, java.util.Set<Long> keys) {
+    }
     private long bytes;
 
     /** One player's streaming: its current session (one dimension) and its queue of messages. */
@@ -113,9 +123,10 @@ public final class StreamServer {
             return;
         }
         instance = new StreamServer(server, config);
-        Farfield.LOG.info("LOD streaming ready: radius {} blocks, {} KB/s per player, {} KB/s in all, {} threads",
+        Farfield.LOG.info("LOD streaming ready: radius {} blocks, {} KB/s per player, {} KB/s in all, {} threads, {}",
                 config.radiusBlocks(), config.playerKBps(), config.totalKBps(),
-                config.effectiveThreads(Runtime.getRuntime().availableProcessors()));
+                config.effectiveThreads(Runtime.getRuntime().availableProcessors()),
+                config.fullData() ? "full data" : "surface only");
     }
 
     public static void onServerStopping() {
@@ -243,6 +254,19 @@ public final class StreamServer {
                 return;
             }
             indexes.incrementAndGet();
+            if (!config.fullData()) {
+                java.util.Set<Long> under = hiddenKeys(p.world, request.level(), request.rx(), request.rz(), keys,
+                        versions);
+                if (!under.isEmpty()) {
+                    hiddenSent.addAndGet(under.size());
+                    for (int i = keys.size() - 1; i >= 0; i--) {
+                        if (under.contains(keys.get(i))) {
+                            keys.remove(i);
+                            versions.remove(i);
+                        }
+                    }
+                }
+            }
             int n = keys.size();
             int from = 0;
             do {
@@ -273,7 +297,7 @@ public final class StreamServer {
                 if (p.session != fetch.session()) {
                     return;
                 }
-                if (!inRange(key, px, pz)) {
+                if (!inRange(key, px, pz) || !config.fullData() && underSurface(p.world, key)) {
                     p.out.add(new StreamProtocol.Answer(StreamProtocol.ABSENT, fetch.session(), key).encode());
                     continue;
                 }
@@ -310,6 +334,58 @@ public final class StreamServer {
                 }
             }
         });
+    }
+
+    /**
+     * The sections of a region under the surface ({@link SurfaceIndex}),
+     * computed once per state of the region (its keys and versions).
+     */
+    private java.util.Set<Long> hiddenKeys(LodWorld world, int level, int rx, int rz, List<Long> keys,
+                                           List<Long> versions) {
+        // Order-independent: the index lists keys in no fixed order.
+        long sum = 0;
+        for (int i = 0; i < keys.size(); i++) {
+            sum += keys.get(i) * 0x9E3779B97F4A7C15L ^ versions.get(i);
+        }
+        long fingerprint = sum ^ keys.size();
+        long region = LodKey.pack(level, rx, 0, rz);
+        Map<Long, Hidden> regions = hidden.computeIfAbsent(world, w -> new ConcurrentHashMap<>());
+        Hidden cached = regions.get(region);
+        if (cached != null && cached.fingerprint() == fingerprint) {
+            return cached.keys();
+        }
+        long[] array = keys.stream().mapToLong(Long::longValue).toArray();
+        java.util.Set<Long> under;
+        try {
+            under = java.util.Set.copyOf(SurfaceIndex.hidden(array, world::read, world.materials()));
+        } catch (IOException | RuntimeException e) {
+            Farfield.LOG.warn("LOD streaming: surface of region {} {} {} failed, sending all", level, rx, rz, e);
+            under = java.util.Set.of();
+        }
+        regions.put(region, new Hidden(fingerprint, under));
+        return under;
+    }
+
+    /**
+     * Whether a section lies under the surface, so a direct request for a
+     * section the index left out is refused too; when the region cannot be
+     * read, refused.
+     */
+    private boolean underSurface(LodWorld world, long key) {
+        int level = LodKey.level(key);
+        int rx = LodKey.x(key) >> SectionStore.REGION_SHIFT;
+        int rz = LodKey.z(key) >> SectionStore.REGION_SHIFT;
+        List<Long> keys = new ArrayList<>();
+        List<Long> versions = new ArrayList<>();
+        try {
+            world.forEachVersion(level, rx, rz, (k, v) -> {
+                keys.add(k);
+                versions.add(v);
+            });
+        } catch (IOException e) {
+            return true;
+        }
+        return hiddenKeys(world, level, rx, rz, keys, versions).contains(key);
     }
 
     /** Whether a section lies within the radius around a player (horizontally, its nearest edge). */
@@ -374,9 +450,10 @@ public final class StreamServer {
             long s = sections.getAndSet(0);
             long u = unchanged.getAndSet(0);
             long i = indexes.getAndSet(0);
+            long h = hiddenSent.getAndSet(0);
             if (RenderSettings.performanceLogs() && (bytes > 0 || i > 0)) {
-                Farfield.LOG.info("LOD streaming: {} players, {} KB sent in 10 s ({} sections, {} unchanged, {} indexes)",
-                        players.size(), bytes >> 10, s, u, i);
+                Farfield.LOG.info("LOD streaming: {} players, {} KB sent in 10 s ({} sections, {} unchanged, {} indexes,"
+                        + " {} sections under the surface left out)", players.size(), bytes >> 10, s, u, i, h);
             }
             bytes = 0;
         }

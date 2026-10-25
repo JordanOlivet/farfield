@@ -14,22 +14,25 @@ import java.util.Properties;
  * The server's streaming settings (ADR-068), {@code config/farfield-server.properties}:
  * streaming on or off, the radius in blocks within which players may ask
  * for sections, the bandwidth per player and for all players in KB/s (0:
- * no limit), and the threads that read sections for players ({@link #AUTO}:
- * min(4, processors / 2)). Defaults from Neo-Voxy, whose streaming worked
- * at these values. Missing or invalid keys take their default.
+ * no limit), the threads that read sections for players ({@link #AUTO}:
+ * min(4, processors / 2)), and whether sections under the surface are sent
+ * too (full data; off by default, ADR-013). Defaults from Neo-Voxy, whose
+ * streaming worked at these values. Missing or invalid keys take their default.
  */
-public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, int totalKBps, int threads) {
+public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, int totalKBps, int threads,
+                           boolean fullData) {
 
     public static final int AUTO = 0;
     public static final int MAX_RADIUS = 30_000_000;
 
-    public static final ServerConfig DEFAULTS = new ServerConfig(true, 4096, 1024, 10240, AUTO);
+    public static final ServerConfig DEFAULTS = new ServerConfig(true, 4096, 1024, 10240, AUTO, false);
 
     static final String STREAMING = "streaming";
     static final String RADIUS = "streaming_radius";
     static final String PLAYER_KBPS = "player_kbps";
     static final String TOTAL_KBPS = "total_kbps";
     static final String THREADS = "streaming_threads";
+    static final String FULL_DATA = "full_data";
 
     public ServerConfig {
         radiusBlocks = Math.max(0, Math.min(MAX_RADIUS, radiusBlocks));
@@ -54,7 +57,7 @@ public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, 
         }
         return new ServerConfig(bool(p, STREAMING, DEFAULTS.streaming), integer(p, RADIUS, DEFAULTS.radiusBlocks),
                 integer(p, PLAYER_KBPS, DEFAULTS.playerKBps), integer(p, TOTAL_KBPS, DEFAULTS.totalKBps),
-                threads(p));
+                threads(p), bool(p, FULL_DATA, DEFAULTS.fullData));
     }
 
     /** Writes the file through a temporary file. */
@@ -76,6 +79,9 @@ public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, 
             out.write(TOTAL_KBPS + "=" + totalKBps + "\n");
             out.write("# Threads that read LODs for players, 1 to 16, or auto (half the processors, 1 to 4).\n");
             out.write(THREADS + "=" + (threads == AUTO ? "auto" : Integer.toString(threads)) + "\n");
+            out.write("# Send the sections under the surface too (caves, ores): true lets players see\n");
+            out.write("# them through the LODs. Default false: only what is seen from the sky down.\n");
+            out.write(FULL_DATA + "=" + fullData + "\n");
         }
         Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
     }
