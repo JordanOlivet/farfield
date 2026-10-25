@@ -777,6 +777,12 @@ public final class PreviewVoxels {
                 section = new LodSection(air);
             }
             section.set(i, vy, k, bottom < ground ? maskGround : maskFluid);
+            if (bottom >= ground) {
+                // The preview's land faces show against the fluid mask (it hides only water
+                // faces) and take its light: the real fluid's, not full light (light bands
+                // where the preview meets real sea).
+                section.skyLight().set(i, vy, k, seaSkyLight(Math.min(bottom + s, top) - 1, top, bottom + s > top));
+            }
         }
         return section;
     }

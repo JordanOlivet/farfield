@@ -413,6 +413,9 @@ class PreviewTest {
         assertEquals(8, hidden.material(4, 40 - 32, 4), "real fluid");
         assertEquals(8, hidden.material(4, 62 - 32, 4));
         assertEquals(AIR, hidden.material(4, 63 - 32, 4));
+        // The fluid mask lights the preview's land faces beside it: the real water's light.
+        assertEquals(14, hidden.skyLight().get(4, 62 - 32, 4), "the real water's top block");
+        assertEquals(0, hidden.skyLight().get(4, 40 - 32, 4), "23 blocks down");
         assertEquals(SAND, hidden.material(4, 54 - 32, 20));
         assertNull(PreviewVoxels.build(0, 40, 1, 0, (x, z) -> x == 0 && z == 0 ? t : null, null, AIR, -64, -1, -1, -1, 0));
     }

@@ -44,7 +44,9 @@ import java.util.function.IntPredicate;
  * not full mesh as {@link MaterialClassifier#PARTIAL}; in front of
  * a section border, the light of the neighbor section's touching voxel
  * when the caller gives it, else the face voxel's own light when it is
- * translucent (water), else full sky light (open terrain at section tops).
+ * translucent (water), else for side faces the light of the first open
+ * voxel above the face voxel (water over a sea floor), else full sky light
+ * (open terrain at section tops).
  * Ambient
  * occlusion is not part of the merge key.
  *
@@ -729,6 +731,14 @@ public final class BinaryGreedyMesher {
         }
         if (translucent[index] != 0 || partial[index] != 0 || shaped[index] != 0) {
             return section.skyLight().get(x, y, z) << 4 | section.blockLight().get(x, y, z);
+        }
+        // An opaque side face toward a section without data (not generated yet): the light of
+        // the first open voxel above it, as the face would see beside it; full light at the top.
+        // Full light everywhere lit sea floors on that border as white bands.
+        for (int above = axis == 1 ? S : y + 1; above < S; above++) {
+            if (opaque[section.paletteIndex(x, above, z)] == 0) {
+                return section.skyLight().get(x, above, z) << 4 | section.blockLight().get(x, above, z);
+            }
         }
         return 15 << 4;
     }

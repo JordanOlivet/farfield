@@ -312,6 +312,34 @@ class BinaryGreedyMesherTest {
     }
 
     @Test
+    void opaqueFacesTowardAMissingNeighborTakeTheLightOfTheWaterAbove() {
+        // Sea floor (stone) up to y 9 under water at light 7, nothing known beyond the section:
+        // the floor's sides on the border are lit like the water above them, not fully.
+        LodSection section = new LodSection(0);
+        for (int z = 0; z < 32; z++) {
+            for (int x = 0; x < 32; x++) {
+                for (int y = 0; y < 21; y++) {
+                    section.set(x, y, z, y < 10 ? 1 : 10);
+                    if (y >= 10) {
+                        section.skyLight().set(x, y, z, 7);
+                    }
+                }
+            }
+        }
+        section.compact();
+        mesher.mesh(section, CLASSES, null, null, null, new byte[6][], out);
+        int sides = 0;
+        for (int i = 0; i < out.count(Quad.POS_X); i++) {
+            long q = out.quads(Quad.POS_X)[i];
+            if (Quad.material(q) == 1) {
+                sides++;
+                assertEquals(7, Quad.skyLight(q), "floor side on the border");
+            }
+        }
+        assertTrue(sides > 0);
+    }
+
+    @Test
     void waterShowsNoFaceAgainstPartlyFilledGround() {
         // A coarse sea floor: ground filled to 6/16 under water at x < 16, water down to the
         // stone at x >= 16. Above its fill the ground's voxel holds water: the water draws no
