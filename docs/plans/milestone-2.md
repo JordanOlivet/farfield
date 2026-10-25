@@ -59,13 +59,21 @@ Neo-Voxy pieces to study (`<neo-voxy repo>/common/src/main/java/me/cortex/voxy/`
 
 Items:
 
-- [~] B.1 Design ADR (ADR-068, proposed 2026-10-25, waits for the user): protocol (versioned, capabilities at join), what is
+- [x] B.1 Design ADR (ADR-068, accepted 2026-10-25 with "go B.2"): protocol (versioned, capabilities at join), what is
   sent (stored sections and preview tiles, surface only by default per
   ADR-013), order (nearest and in view first, as `WantOrder`), budgets,
   the client cache per server (the client-mode store of ADR-022), what a
   client without Farfield on the server keeps doing.
-- [ ] B.2 LOD sections streamed to clients, with Neo-Voxy's defaults as
-  the first settings, measured on a dev server with two clients.
+- [~] B.2 LOD sections streamed to clients, with Neo-Voxy's defaults as
+  the first settings, measured on a dev server with two clients. Done:
+  handshake, key tables, region indexes, pull of sections with versions,
+  per-player and shared budgets, the client mirror with its versions,
+  the renderer fed by it; `config/farfield-server.properties`. Fabric dev
+  server on a copy of the test world, one Fabric dev client: 10,188
+  sections (about 25 MB) at 1,024 KB/s, the cap; view settled at 24.6 s;
+  then nothing in flight. Remains: two clients, the ping during a fill,
+  NeoForge, change notices, client congestion control (AIMD), surface
+  only (ADR-013)
 - [ ] B.3 Noise preview built by the dedicated server around each player
   and streamed the same way.
 - [ ] B.4 The user's NeoForge pack on a server: fill times and bandwidth

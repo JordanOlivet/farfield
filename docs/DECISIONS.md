@@ -1707,7 +1707,9 @@ options of the analysis (§2): "Partons sur LGPL-3.0".
 
 ## ADR-068 — Server streaming of LODs and the noise preview
 
-**Date**: 2026-10-25 · **Status**: proposed (M2 B.1; details ADR-013, ADR-022)
+**Date**: 2026-10-25 · **Status**: accepted (M2 B.1; details ADR-013, ADR-022). Proposed,
+then accepted with the user's "go B.2"; the client storage below was
+rewritten before acceptance, from the first implementation.
 
 With Farfield on the server, the server builds the LODs and the noise
 preview and sends them to its players. Today a dedicated server builds
@@ -1759,11 +1761,18 @@ concepts are reused, not its code (ADR-001).
   preview voxels itself, as in single player. Surface only by default
   (ADR-013): sections entirely below the surface of their columns are not
   sent unless the operator allows full data.
-- **Client storage**: the client-mode store of that server
-  (`farfield/servers/<server>/<seed hash>/<dimension>/`), the same format;
-  received sections and tiles are written there, so a rejoin only
-  revalidates. The client keeps ingesting the chunks it receives (the
-  freshest data near the player); far away, the server's data fills in.
+- **Client storage**: a mirror of the server's store per server and
+  dimension (`farfield/servers/<server>/<seed hash>/stream/<dimension>/`),
+  the same format and the same key ids as the server's (the client takes
+  the server's key tables in id order and empties the mirror when they
+  disagree, or when the server's store has another epoch). Received
+  records go in as they are, never rebuilt into mips; the versions held
+  are kept beside them (`versions.bin`), so a rejoin only checks them.
+  The client builds nothing itself while the server streams: a client
+  building level 0 next to coarse levels received from the server would
+  rebuild those from its own few chunks and blank them. A server whose
+  settings turn streaming off declines the hello (session -1), and the
+  client falls back to client mode.
 - **The noise preview on a dedicated server**: built around each player
   on low-priority threads, nearest and in front first (as in single
   player), and served like sections. An operator switch turns it off.

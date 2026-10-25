@@ -6,6 +6,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.BufferUploader;
 import io.lakio.farfield.Farfield;
 import io.lakio.farfield.client.LodWorldProvider;
+import io.lakio.farfield.client.StreamClient;
 import io.lakio.farfield.core.LodKey;
 import io.lakio.farfield.core.config.RenderConfig;
 import io.lakio.farfield.core.lod.LodSection;
@@ -277,6 +278,9 @@ public final class LodRenderer {
     private int timerSlot;
 
     private LodWorld world;
+    /** On a server with Farfield, the streaming that fills {@link #world} (ADR-068); else null. */
+    private StreamClient stream;
+    private int streamGeneration;
     private final AtomicInteger generation = new AtomicInteger();
     private final LodSelector selector = new LodSelector(LodWorld.LEVELS, 4.0);
     private final Long2ObjectOpenHashMap<Resident> resident = new Long2ObjectOpenHashMap<>();
@@ -631,6 +635,11 @@ public final class LodRenderer {
         if (world == null) {
             return;
         }
+        stream = StreamClient.of(world);
+        if (stream != null && stream.generation() != streamGeneration) {
+            streamGeneration = stream.generation(); // region indexes arrived: more sections exist
+            selectionDirty = true;
+        }
         long frameStart = System.nanoTime();
         RenderSettings.resize(meshers, RenderSettings.effectiveThreads(RenderSettings.meshThreads()), "LOD mesher");
         frame++;
@@ -950,6 +959,9 @@ public final class LodRenderer {
             }
         }
         wantOrder.sort();
+        if (stream != null) {
+            stream.newSelection();
+        }
         wantCursor = 0;
         if (fillStart != 0) {
             for (int i = 0; i < FILL_CHECKS.length; i++) {
@@ -971,6 +983,13 @@ public final class LodRenderer {
             long key = wantOrder.key(wantCursor++);
             if (requested.contains(key)) {
                 continue; // a stale section in flight stays stale: its data changed after the job read it
+            }
+            if (stream != null && stream.needsFetch(key)) {
+                // From the server first; an older copy in the mirror is drawn meanwhile.
+                stream.want(key);
+                if (!stream.hasLocal(key) || resident.containsKey(key)) {
+                    continue;
+                }
             }
             if (stale.remove(key) || !resident.containsKey(key)) {
                 request(key);
@@ -1023,6 +1042,9 @@ public final class LodRenderer {
     }
 
     private boolean sectionExists(long key) {
+        if (stream != null) {
+            return stream.exists(key); // the server's index: a hash lookup, not cached here
+        }
         byte known = existence.get(key);
         if (known != 0) {
             return known == EXISTS;

@@ -144,7 +144,9 @@ public final class LodClient {
      * player). Chunk loads can come before the first tick of a new level.
      */
     private static LodClient ensure(Minecraft mc, ClientLevel level) {
-        boolean remote = level != null && !mc.hasSingleplayerServer() && mc.getConnection() != null;
+        // A server with Farfield sends its LODs (ADR-068): nothing to build here.
+        boolean remote = level != null && !mc.hasSingleplayerServer() && mc.getConnection() != null
+                && !StreamClient.streaming(mc);
         LodClient c = instance;
         if (!remote) {
             if (c != null) {

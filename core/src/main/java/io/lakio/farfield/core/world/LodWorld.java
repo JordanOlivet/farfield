@@ -226,6 +226,16 @@ public final class LodWorld implements AutoCloseable {
     }
 
     /**
+     * Tells the listeners a stored section is current again without writing
+     * it (a server answered that the mirror's copy is its latest, ADR-068).
+     */
+    public void touch(long key) {
+        for (LongConsumer l : listeners) {
+            l.accept(key);
+        }
+    }
+
+    /**
      * A random id of this store, made once and kept in {@code stream.epoch}:
      * a client's mirror of a server's world is valid for one epoch only
      * (a server whose store was deleted gets a new one).

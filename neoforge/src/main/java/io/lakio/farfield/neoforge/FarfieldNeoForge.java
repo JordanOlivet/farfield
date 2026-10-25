@@ -21,6 +21,7 @@ public final class FarfieldNeoForge {
 
     public FarfieldNeoForge(IEventBus modBus, ModContainer container) {
         Farfield.init();
+        modBus.addListener(NeoForgeNetwork::register);
         if (FMLEnvironment.dist.isClient()) {
             FarfieldNeoForgeClient.init(modBus, container);
         }

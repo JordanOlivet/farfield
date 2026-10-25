@@ -3,6 +3,7 @@ package io.lakio.farfield.neoforge;
 import io.lakio.farfield.client.FarfieldSettingsScreen;
 import io.lakio.farfield.client.FarfieldClientCommands;
 import io.lakio.farfield.client.LodClient;
+import io.lakio.farfield.client.StreamClient;
 import io.lakio.farfield.client.SettingsKey;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -40,8 +41,13 @@ final class FarfieldNeoForgeClient {
                 LodClient.onChunkUnload(level, chunk);
             }
         });
+        // Streaming (ADR-068): LODs from a server with Farfield; before client mode, which it replaces.
+        NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post e) -> StreamClient.tick(Minecraft.getInstance()));
         NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post e) -> LodClient.tick(Minecraft.getInstance()));
-        NeoForge.EVENT_BUS.addListener((GameShuttingDownEvent e) -> LodClient.onClientStopping());
+        NeoForge.EVENT_BUS.addListener((GameShuttingDownEvent e) -> {
+            StreamClient.onClientStopping();
+            LodClient.onClientStopping();
+        });
         NeoForge.EVENT_BUS.addListener((RegisterClientCommandsEvent e) -> FarfieldClientCommands.register(
                 e.getDispatcher(), (source, line) -> source.sendSuccess(() -> line, false)));
     }

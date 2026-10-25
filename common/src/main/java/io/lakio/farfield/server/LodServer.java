@@ -55,9 +55,11 @@ public final class LodServer {
 
     public static void onServerStarting(MinecraftServer server) {
         instance = new LodServer(server.isDedicatedServer());
+        StreamServer.onServerStarting(server);
     }
 
     public static void onServerStopping(MinecraftServer server) {
+        StreamServer.onServerStopping();
         LodServer s = instance;
         instance = null;
         if (s != null) {
@@ -80,6 +82,7 @@ public final class LodServer {
     }
 
     public static void onServerTick(MinecraftServer server) {
+        StreamServer.tick(server);
         LodServer s = instance;
         if (s != null) {
             s.pipeline.tick();

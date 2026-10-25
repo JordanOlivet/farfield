@@ -17,9 +17,9 @@ import java.nio.file.Path;
 /**
  * Gives the renderer the {@link LodWorld} of the dimension the player is in,
  * whatever builds it (ADR-022): the integrated server in single player (and
- * for the host of a LAN game); on a remote server, the client's own store
- * ({@link LodClient}, client mode). The protocol cache of servers with
- * Farfield (ADR-013) comes later. Render thread only.
+ * for the host of a LAN game); on a server with Farfield, the mirror of the
+ * server's store ({@link StreamClient}, ADR-068); on another remote server,
+ * the client's own store ({@link LodClient}, client mode). Render thread only.
  */
 public final class LodWorldProvider {
 
@@ -31,7 +31,8 @@ public final class LodWorldProvider {
         if (mc.hasSingleplayerServer()) {
             return LodServer.world(level.dimension());
         }
-        return LodClient.world(level.dimension());
+        LodWorld streamed = StreamClient.world(level.dimension());
+        return streamed != null ? streamed : LodClient.world(level.dimension());
     }
 
     /**

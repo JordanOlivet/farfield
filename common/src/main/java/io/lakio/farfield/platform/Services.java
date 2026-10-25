@@ -1,6 +1,7 @@
 package io.lakio.farfield.platform;
 
 import io.lakio.farfield.Farfield;
+import io.lakio.farfield.platform.services.INetwork;
 import io.lakio.farfield.platform.services.IPlatform;
 
 import java.util.ServiceLoader;
@@ -12,6 +13,7 @@ import java.util.ServiceLoader;
 public final class Services {
 
     public static final IPlatform PLATFORM = load(IPlatform.class);
+    public static final INetwork NETWORK = load(INetwork.class);
 
     private Services() {
     }
