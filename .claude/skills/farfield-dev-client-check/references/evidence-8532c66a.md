@@ -1,0 +1,1 @@
+"Les logs de perf sont maintenant désactivés par défaut." / "Nouveau réglage `performance_logs` dans `farfield-client.properties`, à `false` par défaut." / "Serveur dédié : ajouter `-Dfarfield.perfLogs=true` aux arguments Java pour activer les lignes."

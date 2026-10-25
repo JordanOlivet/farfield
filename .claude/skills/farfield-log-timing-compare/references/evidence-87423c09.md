@@ -1,0 +1,1 @@
+"environ 175 µs par image, soit à peu près −6 % de fps" / "Les deux versions donnent exactement le même résultat à cet endroit : **ce n'est pas une régression du kelp ni des derniers changements.**" / "la passe des plantes prend **385 à 466 µs** par image en savane, ce qui correspond exactement à l'écart entre 380..."

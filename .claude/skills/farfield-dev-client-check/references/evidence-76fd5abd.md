@@ -1,0 +1,1 @@
+"Je peux lancer les clients de dev pour cette tâche ? Il faut 1 à 4 lancements d'environ 4 min chacun dans l'heure (biomes plaine, forêt, prairie, savane, forêt sombre), sans toucher au PC pendant chaque run." = "Oui pour la série". Option: "Je lance les runs nécessaires à ce point 2 sans redemander ; je te préviens avant chacun dans le chat."

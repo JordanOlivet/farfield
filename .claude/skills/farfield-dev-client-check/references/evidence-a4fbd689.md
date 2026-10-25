@@ -1,0 +1,1 @@
+`if phase == 900: Farfield.LOG.info("Bench shot {} plain", name)` / `mapfile -t shots < <(grep -a "Bench shot" "$L" | sed -E 's/.*Bench shot ([a-z_]+) ([a-z]+).*/\1-\2/')` / `// The heightmap gives the block above the top one; a double plant's column counts once.`

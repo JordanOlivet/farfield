@@ -36,9 +36,10 @@ public final class PreviewTile {
      * Format 2 adds the trees, 3 their shapes and the buildings, 4 the ice,
      * 5 the grid the heights were computed on, 6 the snow on tree tops and
      * tiered spruces, 7 the icebergs, 8 the plants, 9 only the plants the
-     * renderer draws as plants; older tiles are built again.
+     * renderer draws as plants, 10 a quarter as many plants (measured
+     * against generated chunks); older tiles are built again.
      */
-    private static final int FORMAT = 9;
+    private static final int FORMAT = 10;
     /** Most plant kinds a tile holds (the kind rides in 8 bits of a chunk's plant entry). */
     public static final int MAX_PLANT_KINDS = 255;
     /** Most tree kinds a tile holds (the kind rides in 8 bits of a tree). */

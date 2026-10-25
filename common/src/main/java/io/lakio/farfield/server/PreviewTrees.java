@@ -78,10 +78,12 @@ final class PreviewTrees {
     /** Patches try many spots around one; this share of the tries takes. */
     private static final double PATCH_SUCCESS = 0.15;
     /**
-     * The share for plants: grass and flowers only need a free block on
-     * grass, which most tries of a patch on a meadow find.
+     * The share for plants, measured: the plants on the ground of generated
+     * chunks against the preview's estimate, in plains, meadows, savannas and
+     * forests (0.8 drew about four times too many: tries land on the same
+     * blocks, or where the plant does not survive).
      */
-    private static final double PLANT_PATCH_SUCCESS = 0.8;
+    private static final double PLANT_PATCH_SUCCESS = 0.2;
 
     /** The trees of a biome: each spec with its average count per chunk; then its plants, the same way. */
     record BiomeTrees(List<Spec> specs, double[] perChunk, double total, List<BlockState> plants,

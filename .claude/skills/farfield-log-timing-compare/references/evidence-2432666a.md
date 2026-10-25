@@ -1,0 +1,1 @@
+"feat(render): stat line every 10 s; view fill line once the view settles" (commit log) / "Les logs de perf sont maintenant désactivés par défaut."
