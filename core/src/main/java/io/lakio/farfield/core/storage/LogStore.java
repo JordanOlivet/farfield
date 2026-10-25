@@ -274,6 +274,28 @@ public final class LogStore implements AutoCloseable {
         return index.keySet();
     }
 
+    /**
+     * Version of a key's latest record (its place in the log, which every
+     * write of the key moves; a compaction too), or -1 if absent.
+     */
+    public long version(long key) {
+        Long location = index.get(key);
+        return location == null ? -1 : location;
+    }
+
+    /** Calls {@code action} with every key and its {@link #version} (order unspecified). */
+    public void forEachVersion(KeyVersionConsumer action) {
+        for (Map.Entry<Long, Long> e : index.entrySet()) {
+            action.accept(e.getKey(), e.getValue());
+        }
+    }
+
+    /** A key and its version ({@link #version}). */
+    @FunctionalInterface
+    public interface KeyVersionConsumer {
+        void accept(long key, long version);
+    }
+
     /** Makes every record written so far durable. */
     public void sync() throws IOException {
         channel.force(false);

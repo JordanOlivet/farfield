@@ -7,6 +7,7 @@ import io.lakio.farfield.core.anvil.SectionData;
 import io.lakio.farfield.core.lod.LodSection;
 import io.lakio.farfield.core.lod.MipBuilder;
 import io.lakio.farfield.core.preview.PreviewStore;
+import io.lakio.farfield.core.storage.LogStore;
 import io.lakio.farfield.core.storage.SectionStore;
 import io.lakio.farfield.core.util.ByteWriter;
 
@@ -58,6 +59,7 @@ public final class LodWorld implements AutoCloseable {
     public static final int LEVELS = 5;
     private static final int LOCK_STRIPES = 64;
 
+    private final Path dir;
     private final KeyFile blockStateKeys;
     private final KeyFile biomeKeys;
     private final MaterialTable materials;
@@ -100,6 +102,7 @@ public final class LodWorld implements AutoCloseable {
     }
 
     private LodWorld(Path dir, MaterialTable.Resolver resolver, int maxPending) throws IOException {
+        this.dir = dir;
         this.maxPending = maxPending;
         blockStateKeys = KeyFile.open(dir.resolve("block_states.txt"));
         biomeKeys = KeyFile.open(dir.resolve("biomes.txt"));
@@ -192,6 +195,55 @@ public final class LodWorld implements AutoCloseable {
     /** True if a section is stored at {@code key}. Thread-safe, cheap. */
     public boolean exists(long key) throws IOException {
         return store.contains(key);
+    }
+
+    /** The stored record of a section, as {@link SectionStore#readRecord}; null if absent. */
+    public byte[] readRecord(long key) throws IOException {
+        return store.readRecord(key);
+    }
+
+    /** Version of a stored section ({@link SectionStore#version}), -1 if absent. */
+    public long version(long key) throws IOException {
+        return store.version(key);
+    }
+
+    /** Every stored key of a region file and its version ({@link SectionStore#forEachVersion}). */
+    public void forEachVersion(int level, int rx, int rz, LogStore.KeyVersionConsumer action) throws IOException {
+        store.forEachVersion(level, rx, rz, action);
+    }
+
+    /**
+     * Writes a record received from a server's store (ADR-068) as it is,
+     * without touching the mips: on a client, a server's world is mirrored,
+     * never rebuilt. Listeners hear about it as about any written section.
+     */
+    public void putRecord(long key, byte[] record, int offset, int length) throws IOException {
+        store.writeRecord(key, record, offset, length);
+        sectionsWritten.increment();
+        for (LongConsumer l : listeners) {
+            l.accept(key);
+        }
+    }
+
+    /**
+     * A random id of this store, made once and kept in {@code stream.epoch}:
+     * a client's mirror of a server's world is valid for one epoch only
+     * (a server whose store was deleted gets a new one).
+     */
+    public long epoch() throws IOException {
+        Path file = dir.resolve("stream.epoch");
+        synchronized (this) {
+            if (Files.exists(file)) {
+                try {
+                    return Long.parseUnsignedLong(Files.readString(file).trim(), 16);
+                } catch (NumberFormatException e) {
+                    // Rewritten below.
+                }
+            }
+            long epoch = new java.security.SecureRandom().nextLong() | 1;
+            Files.writeString(file, Long.toUnsignedString(epoch, 16));
+            return epoch;
+        }
     }
 
     /** The noise preview tiles of this world (ADR-039). */

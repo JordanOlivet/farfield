@@ -49,6 +49,54 @@ class LodWorldTest {
     }
 
     @Test
+    void recordsMirrorAWorldAndTheirVersionMovesOnRewrite() throws IOException {
+        Path server = dir.resolve("server");
+        Path client = dir.resolve("client");
+        long key = LodKey.pack(0, 1, 0, -1);
+        try (LodWorld from = LodWorld.open(server, MaterialTable.SIMPLE);
+             LodWorld to = LodWorld.open(client, MaterialTable.SIMPLE)) {
+            from.ingest(chunk(from, 3, -1));
+            from.flush(0);
+            long version = from.version(key);
+            assertTrue(version >= 0);
+            assertEquals(-1, from.version(LodKey.pack(0, 9, 9, 9)));
+            List<Long> regionKeys = new ArrayList<>();
+            List<Long> regionVersions = new ArrayList<>();
+            from.forEachVersion(0, 0, -1, (k, v) -> {
+                regionKeys.add(k);
+                regionVersions.add(v);
+            });
+            assertEquals(Set.of(key, LodKey.pack(0, 1, -1, -1)), Set.copyOf(regionKeys));
+            for (int i = 0; i < regionKeys.size(); i++) {
+                assertEquals(from.version(regionKeys.get(i)), regionVersions.get(i));
+            }
+
+            // The mirror takes the keys in the server's id order, then the records as they are.
+            for (int id = 0; id < from.blockStates().size(); id++) {
+                assertEquals(id, to.blockStates().id(from.blockStates().key(id)));
+            }
+            for (int id = 0; id < from.biomes().size(); id++) {
+                assertEquals(id, to.biomes().id(from.biomes().key(id)));
+            }
+            List<Long> heard = new ArrayList<>();
+            to.addListener(heard::add);
+            byte[] record = from.readRecord(key);
+            to.putRecord(key, record, 0, record.length);
+            assertEquals(List.of(key), heard);
+            LodSection mirrored = to.read(key);
+            assertEquals(from.blockStates().id("minecraft:dirt"), mirrored.material(16, 7, 16));
+            assertEquals(from.read(key).material(16, 8, 16), mirrored.material(16, 8, 16));
+            assertTrue(!to.hasDirtyMips(), "a mirror never rebuilds coarse levels");
+
+            // Another chunk in the same section: a new record, a new version.
+            from.ingest(chunk(from, 2, -1));
+            from.flush(0);
+            assertTrue(from.version(key) != version);
+            assertTrue(from.epoch() != 0 && from.epoch() == from.epoch());
+        }
+    }
+
+    @Test
     void ingestWritesTheChunkOctantsAndSkipsUnchangedSections() throws IOException {
         try (LodWorld world = LodWorld.open(dir, MaterialTable.SIMPLE)) {
             List<Long> written = new ArrayList<>();

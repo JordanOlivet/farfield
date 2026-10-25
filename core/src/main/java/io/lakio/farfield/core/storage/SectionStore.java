@@ -157,6 +157,39 @@ public final class SectionStore implements AutoCloseable {
         return b.decompressed;
     }
 
+    /**
+     * The stored record of a section as it is on disk (raw length, then the
+     * zstd frame of its codec bytes), or null if absent: sent as is to
+     * clients (ADR-068). A new array.
+     */
+    public byte[] readRecord(long key) throws IOException {
+        LogStore store = store(regionOf(key), false);
+        return store == null ? null : store.get(key);
+    }
+
+    /** Writes a record {@link #readRecord} returned, from another store. */
+    public void writeRecord(long key, byte[] record, int offset, int length) throws IOException {
+        beforeWrite.run();
+        store(regionOf(key), true).put(key, record, offset, length);
+    }
+
+    /** Version of a section's record ({@link LogStore#version}), or -1 if absent; cheap. */
+    public long version(long key) throws IOException {
+        LogStore store = store(regionOf(key), false);
+        return store == null ? -1 : store.version(key);
+    }
+
+    /**
+     * Calls {@code action} with every key of one region file (32 x 32 section
+     * columns of a level, {@link #REGION_SHIFT}) and its version.
+     */
+    public void forEachVersion(int level, int rx, int rz, LogStore.KeyVersionConsumer action) throws IOException {
+        LogStore s = store(regionKey(level, rx, rz), false);
+        if (s != null) {
+            s.forEachVersion(action);
+        }
+    }
+
     /** True if a section is stored at {@code key}; cheap (index lookup). */
     public boolean contains(long key) throws IOException {
         LogStore store = store(regionOf(key), false);
