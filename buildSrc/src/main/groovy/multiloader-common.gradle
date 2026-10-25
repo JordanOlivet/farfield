@@ -48,6 +48,9 @@ repositories {
 }
 
 jar {
+    // LGPL-3.0 (ADR-067): the license and the GPL it supplements ship with every jar.
+    from(rootProject.file('LICENSE')) { rename { "LICENSE_${mod_id}" } }
+    from(rootProject.file('COPYING')) { rename { "COPYING_${mod_id}" } }
     manifest {
         attributes([
                 'Specification-Title'   : mod_name,

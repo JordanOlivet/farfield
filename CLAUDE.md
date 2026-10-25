@@ -8,7 +8,7 @@ code in this repository.
 **Farfield**, a far-distance terrain rendering mod for Minecraft using levels
 of detail (LOD). MC 1.21.1 first (Java 21), NeoForge + Fabric from one
 codebase (MultiLoader pattern, no Architectury), Minecraft 26.x / Vulkan
-planned. Private repository until the mod is presentable (ADR-002, ADR-003).
+planned. Public repository (ADR-066), LGPL-3.0-only (ADR-067).
 
 It replaces our Neo-Voxy fork of Voxy. Reuse Neo-Voxy *concepts*, never copy
 its code as is, and never port Voxy-derived code (ADR-001).

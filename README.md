@@ -33,5 +33,6 @@ License, in `docs/brand/fonts/`).
 
 ## License
 
-All rights reserved for now; the license is still to be chosen (ADR-003,
-ADR-066).
+GNU Lesser General Public License v3.0 only (`LICENSE`), which supplements
+the GNU General Public License v3.0 (`COPYING`); ADR-067. Copyright (C)
+2026 Lakio.

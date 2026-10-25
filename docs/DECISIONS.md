@@ -1679,3 +1679,28 @@ branding, c'est ok".
   then the code is visible, not reusable.
 - Listing images can now link to the repository; the banners are hosted
   in the Modrinth gallery anyway, whose URLs work on both platforms.
+
+## ADR-067 — License: LGPL-3.0-only
+
+**Date**: 2026-10-25 · **Status**: accepted (closes ADR-003)
+
+The repository is public (ADR-066). The user chose LGPL-3.0 among the
+options of the analysis (§2): "Partons sur LGPL-3.0".
+
+- **Why**: the license of Distant Horizons, Iris and Nvidium, known to
+  players and pack makers; improvements to Farfield that are distributed
+  stay open; mods that only use Farfield and modpacks keep any license;
+  LGPL code of Iris or Distant Horizons may be reused (shader packs,
+  M2.C). The code is ours alone (clean room, ADR-001), so the choice was
+  free. Not legal advice; the analysis suggested a short outside check.
+- `LICENSE` holds the LGPL-3.0 text, `COPYING` the GPL-3.0 it supplements
+  (both from gnu.org); every jar carries them as `LICENSE_farfield` and
+  `COPYING_farfield`. `license=LGPL-3.0-only` in `gradle.properties`
+  (SPDX) feeds both loaders' metadata; the copyright holder stays "Lakio",
+  as in the former `LICENSE` and `mod_author`.
+- Modrinth's license is set from `gradle.properties` by
+  `docs/listing/modrinth.py push-license`; CurseForge's is set by the user
+  in the project settings.
+- Versions up to 0.1.0 were published "All rights reserved"; the next one
+  is the first under LGPL-3.0. Relicensing later needs the agreement of
+  every contributor whose code is in.
