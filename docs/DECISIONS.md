@@ -1704,3 +1704,87 @@ options of the analysis (§2): "Partons sur LGPL-3.0".
 - Versions up to 0.1.0 were published "All rights reserved"; the next one
   is the first under LGPL-3.0. Relicensing later needs the agreement of
   every contributor whose code is in.
+
+## ADR-068 — Server streaming of LODs and the noise preview
+
+**Date**: 2026-10-25 · **Status**: proposed (M2 B.1; details ADR-013, ADR-022)
+
+With Farfield on the server, the server builds the LODs and the noise
+preview and sends them to its players. Today a dedicated server builds
+LODs that nobody receives, the client builds its own from what it has
+seen (client mode, ADR-022), and the preview needs single player
+(ADR-038). The user: "il faut que le server génère les LOD et la preview
+et l'envoi aux clients (comme on l'avait fait sur neo-voxy)". Neo-Voxy's
+concepts are reused, not its code (ADR-001).
+
+### What Neo-Voxy taught
+
+- It pushed rings of sections around each player every 40 ms and cleared
+  its "sent" map on a teleport: about 16 MB/s on the game connection,
+  ping at 1 to 3 bars, input delayed, a 1 s stall of its own scheduler
+  (`neo-voxy/docs/diagnostics/lod-streaming-network-flood-analysis.md`).
+  Fixed by a per-player and global byte budget, small packets, nearest
+  first, no clear-and-burst on teleport.
+- What worked and is kept: a shared cache of serialized sections (one
+  serialization per section version for all players), serialization on a
+  small worker pool, a per-player and a global bandwidth cap, client AIMD
+  congestion control (start at 1 MB/s, +50 KB/s per second, back off on
+  congestion), a mapping table from the server's block and biome ids to
+  the client's, a capability handshake, and a per-client "already sent"
+  state persisted under a cache epoch, so a rejoin streams only changes.
+- Its defaults, the first values here: 1,024 KB/s per player, 10,240 KB/s
+  for all players, serialization threads min(4, cpus / 2), 4,096 cached
+  serialized sections, debug logs off.
+
+### Design
+
+- **Pull, not push.** The client asks; the server answers. The renderer
+  already knows what it lacks and in what order (`WantOrder`: nearest and
+  in view first, reselected when the view turns). The client sends those
+  keys with the version it holds (none, or the one in its cache); the
+  server answers each with the section, "unchanged", or "empty". At most
+  N requests in flight per player (first value 64, as `MAX_IN_FLIGHT`),
+  so a teleport costs a new request order, never a burst: Neo-Voxy's
+  flood cannot happen by construction.
+- **Version of a section**: the position of its record in the server's
+  append-only store (`LogStore`): every rewrite moves it, a compaction too
+  (a harmless resend). No extra state on the server.
+- **Changes near the player**: when a section within a player's radius is
+  rewritten, the server sends a small "changed: key, version" notice; the
+  client requests it again when its renderer still wants it.
+- **What travels**: a LOD section as its stored record (`SectionCodec`,
+  zstd), its palette ids translated on the client through the server's
+  key table (sent at join and as keys are added). Noise preview tiles as
+  their files (`PreviewTile`, zstd, a few KB): the client builds the
+  preview voxels itself, as in single player. Surface only by default
+  (ADR-013): sections entirely below the surface of their columns are not
+  sent unless the operator allows full data.
+- **Client storage**: the client-mode store of that server
+  (`farfield/servers/<server>/<seed hash>/<dimension>/`), the same format;
+  received sections and tiles are written there, so a rejoin only
+  revalidates. The client keeps ingesting the chunks it receives (the
+  freshest data near the player); far away, the server's data fills in.
+- **The noise preview on a dedicated server**: built around each player
+  on low-priority threads, nearest and in front first (as in single
+  player), and served like sections. An operator switch turns it off.
+- **Transport**: Minecraft custom payloads on the game connection, at
+  most 32 KB each, at most a byte budget per tick per player, inside the
+  per-player and global caps; gameplay packets are never queued behind a
+  burst. A side channel stays a later option (ADR-013).
+- **Handshake**: protocol version and capabilities (sections, preview,
+  surface only, compression) at join; a client or server without
+  Farfield, or with another protocol version, falls back to client mode.
+- **Server settings** (`config/farfield-server.properties`): streaming on
+  or off, radius in blocks (first value 4,096, the renderer's range; the
+  client's selection asks fine levels near and coarse ones far, so the
+  far sections are few), the two bandwidth caps, serialization threads,
+  the preview on or off and its threads, full data on or off.
+
+### Steps (M2 B.2 to B.4)
+
+1. Handshake, key table, request and answer of LOD sections, budgets;
+   two dev clients on a dev server: fill time, bandwidth, ping.
+2. Change notices and the persisted client cache (rejoin cost).
+3. The preview built on a dedicated server and streamed.
+4. The user's NeoForge pack on a server: fill time and bandwidth from the
+   log lines.

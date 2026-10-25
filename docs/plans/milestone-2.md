@@ -59,7 +59,7 @@ Neo-Voxy pieces to study (`<neo-voxy repo>/common/src/main/java/me/cortex/voxy/`
 
 Items:
 
-- [ ] B.1 Design ADR: protocol (versioned, capabilities at join), what is
+- [~] B.1 Design ADR (ADR-068, proposed 2026-10-25, waits for the user): protocol (versioned, capabilities at join), what is
   sent (stored sections and preview tiles, surface only by default per
   ADR-013), order (nearest and in view first, as `WantOrder`), budgets,
   the client cache per server (the client-mode store of ADR-022), what a
