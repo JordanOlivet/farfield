@@ -166,7 +166,8 @@ public final class LodRenderer {
     private static final byte EXISTS = 1;
     private static final byte ABSENT = 2;
     private static final int TIMER_SLOTS = 4;
-    private static final int TIMESTAMPS = 4;
+    /** GPU timestamps per frame: start, then after the pre-pass, opaque, plant and translucent passes. */
+    private static final int TIMESTAMPS = 5;
     private static final int[][] STEP = {{-1, 0, 0}, {1, 0, 0}, {0, -1, 0}, {0, 1, 0}, {0, 0, -1}, {0, 0, 1}};
     /**
      * Quad groups of a section, in range order: opaque quads by direction,
@@ -395,6 +396,7 @@ public final class LodRenderer {
     /** Quads of the drawn sections, and those of the directions that can face the camera (sent to the GPU). */
     private long quadsInView;
     private long quadsSubmitted;
+    private long plantQuadsSubmitted;
     /** Drawn sections in the pre-pass that may discard ({@link #DISCARD}). */
     private long discardSections;
     /** Sections in view the game draws entirely, skipped ({@link #gameDrawsAll}). */
@@ -693,7 +695,10 @@ public final class LodRenderer {
             addCommands(r, discards ? DISCARD : SOLID, faces);
             // Plants' diagonals face every way and always cut their holes: their own pass,
             // so a section with grass keeps its faces in the solid one (ADR-059).
-            addCommand(PLANTS, r.groups[PLANT_GROUP], r.groups[PLANT_GROUP + 1], r.slot);
+            if (RenderSettings.drawPlants()) {
+                plantQuadsSubmitted += r.groups[PLANT_GROUP + 1] - r.groups[PLANT_GROUP];
+                addCommand(PLANTS, r.groups[PLANT_GROUP], r.groups[PLANT_GROUP + 1], r.slot);
+            }
             if (r.groups[PLANT_GROUP] > r.opaqueCount) {
                 translucentOrder.add((long) Float.floatToIntBits(centerDistanceSq(key, cam)) << 32 | (long) i << 6 | faces);
             }
@@ -1035,20 +1040,25 @@ public final class LodRenderer {
         }
         Farfield.LOG.info("LOD renderer: {} sections drawn, {} resident, {} MB of {} MB quads used, {} meshing,"
                         + " {} meshes uploaded and {} freed, {} selections since last line; per frame {} us on the"
-                        + " render thread and {} us on the GPU (depth pre-pass {}, opaque {}, translucent {}), {} of"
-                        + " {} quads sent (face directions), {} sections may discard, {} left to the game, over {}"
+                        + " render thread and {} us on the GPU (depth pre-pass {}, opaque {}, plants {}, translucent {}),"
+                        + " {} of {} quads sent (face directions), {} of them plants, {} sections may discard, {} left"
+                        + " to the game, over {}"
                         + " frames; detail {}; at most {} coarse fallbacks per selection", count, resident.size(),
                 arena.used() * 8 >> 20, arena.capacity() * 8 >> 20, requested.size(), meshesUploaded, meshesEvicted,
                 selections, frameNanos / 1000 / Math.max(1, timedFrames),
-                (gpuPassNanos[0] + gpuPassNanos[1] + gpuPassNanos[2]) / 1000 / Math.max(1, gpuFrames),
+                (gpuPassNanos[0] + gpuPassNanos[1] + gpuPassNanos[2] + gpuPassNanos[3]) / 1000 / Math.max(1, gpuFrames),
                 RenderSettings.depthPrepass() ? gpuPassNanos[0] / 1000 / Math.max(1, gpuFrames) + " us" : "off",
-                gpuPassNanos[1] / 1000 / Math.max(1, gpuFrames), gpuPassNanos[2] / 1000 / Math.max(1, gpuFrames),
+                gpuPassNanos[1] / 1000 / Math.max(1, gpuFrames),
+                RenderSettings.drawPlants() ? gpuPassNanos[2] / 1000 / Math.max(1, gpuFrames) : "off",
+                gpuPassNanos[3] / 1000 / Math.max(1, gpuFrames),
                 quadsSubmitted / Math.max(1, timedFrames), quadsInView / Math.max(1, timedFrames),
+                plantQuadsSubmitted / Math.max(1, timedFrames),
                 discardSections / Math.max(1, timedFrames), leftToGame / Math.max(1, timedFrames), timedFrames,
                 String.format("%.1f", selector.detail()), maxFallbacks);
         maxFallbacks = 0;
         quadsInView = 0;
         quadsSubmitted = 0;
+        plantQuadsSubmitted = 0;
         discardSections = 0;
         leftToGame = 0;
         frameNanos = 0;
@@ -1964,6 +1974,9 @@ public final class LodRenderer {
             RenderSystem.depthFunc(GL_LEQUAL);
             RenderSystem.depthMask(true);
         }
+        if (timed) {
+            glQueryCounter(timerQueries[slot * TIMESTAMPS + 2], GL_TIMESTAMP);
+        }
         if (plantDraws > 0) {
             // Plants: once, depth-tested against the opaque faces and writing their own,
             // holes cut out; the pre-pass would draw their thin quads twice.
@@ -1971,7 +1984,7 @@ public final class LodRenderer {
             glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, plantOffset, plantDraws, 0);
         }
         if (timed) {
-            glQueryCounter(timerQueries[slot * TIMESTAMPS + 2], GL_TIMESTAMP);
+            glQueryCounter(timerQueries[slot * TIMESTAMPS + 3], GL_TIMESTAMP);
         }
         if (translucentDraws > 0) {
             use(shaded, cam, mc, true);
@@ -1985,7 +1998,7 @@ public final class LodRenderer {
         }
 
         if (timed) {
-            glQueryCounter(timerQueries[slot * TIMESTAMPS + 3], GL_TIMESTAMP);
+            glQueryCounter(timerQueries[slot * TIMESTAMPS + 4], GL_TIMESTAMP);
             timerPending[slot] = true;
             timerSlot = (slot + 1) % TIMER_SLOTS;
         }

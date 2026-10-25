@@ -82,7 +82,20 @@ public final class FarfieldCommands {
                         .then(Commands.literal("prepass")
                                 .executes(c -> debugPrepass(c, !RenderSettings.depthPrepass()))
                                 .then(Commands.literal("on").executes(c -> debugPrepass(c, true)))
-                                .then(Commands.literal("off").executes(c -> debugPrepass(c, false))))));
+                                .then(Commands.literal("off").executes(c -> debugPrepass(c, false))))
+                        .then(Commands.literal("plants")
+                                .executes(c -> debugPlants(c, !RenderSettings.drawPlants()))
+                                .then(Commands.literal("on").executes(c -> debugPlants(c, true)))
+                                .then(Commands.literal("off").executes(c -> debugPlants(c, false))))));
+    }
+
+    /** Single player: switches the plants' crossed quads, to compare GPU times on the stat line. Not saved. */
+    private static int debugPlants(CommandContext<CommandSourceStack> c, boolean on) {
+        RenderSettings.setDrawPlants(on);
+        Farfield.LOG.info("LOD plants switched {} by command", on ? "on" : "off");
+        c.getSource().sendSuccess(() -> Component.literal("LOD plants " + (on ? "on" : "off")
+                + " (default on, not saved; GPU times on the next stat lines; single player only)."), false);
+        return 1;
     }
 
     /** Single player: switches the LOD depth pre-pass, to compare GPU times on the stat line. Not saved. */

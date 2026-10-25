@@ -39,6 +39,7 @@ public final class RenderSettings {
     private static volatile int thickFogDistance = RenderConfig.DEFAULTS.thickFogDistance();
     private static volatile boolean noisePreview = RenderConfig.DEFAULTS.noisePreview();
     private static volatile boolean depthPrepass = true;
+    private static volatile boolean drawPlants = true;
     private static volatile int meshThreads = RenderConfig.DEFAULTS.meshThreads();
     private static volatile int previewThreads = RenderConfig.DEFAULTS.previewThreads();
 
@@ -99,6 +100,19 @@ public final class RenderSettings {
 
     public static void setDepthPrepass(boolean value) {
         depthPrepass = value;
+    }
+
+    /**
+     * Whether the plants' crossed quads are drawn (ADR-059, ADR-065). A
+     * diagnostic switch for comparing GPU times ({@code /farfield debug
+     * plants}), on at every start, not saved.
+     */
+    public static boolean drawPlants() {
+        return drawPlants;
+    }
+
+    public static void setDrawPlants(boolean value) {
+        drawPlants = value;
     }
 
     /** Threads that mesh LOD sections, as set: 1 to 8, or {@link RenderConfig#AUTO}. Applied live. */
