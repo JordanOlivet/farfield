@@ -156,7 +156,7 @@ public final class StreamServer {
         if (s == null) {
             if (off && StreamProtocol.type(message) == StreamProtocol.HELLO) {
                 // Session -1: not streamed here.
-                Services.NETWORK.sendToPlayer(player, new StreamProtocol.Welcome(-1, "", 0, 0).encode());
+                Services.NETWORK.sendToPlayer(player, new StreamProtocol.Welcome(-1, "", 0, 0, 0, 0).encode());
             }
             return;
         }
@@ -206,7 +206,10 @@ public final class StreamServer {
             p.blockStatesSent = sameStore ? clampKeys(hello.blockStates(), world.blockStates()) : 0;
             p.biomesSent = sameStore ? clampKeys(hello.biomes(), world.biomes()) : 0;
             p.session = session;
-            p.out.add(new StreamProtocol.Welcome(session, hello.dimension(), epoch, config.radiusBlocks()).encode());
+            int blockStates = world.blockStates().size();
+            int biomes = world.biomes().size();
+            p.out.add(new StreamProtocol.Welcome(session, hello.dimension(), epoch, config.radiusBlocks(), blockStates,
+                    biomes).encode());
             sendKeys(p, session);
         }
         if (config.preview()) {

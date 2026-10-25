@@ -17,8 +17,11 @@ import java.nio.charset.StandardCharsets;
  */
 public final class StreamProtocol {
 
-    /** Raised when the messages change shape; peers with another version do not stream (2: preview tiles). */
-    public static final int VERSION = 2;
+    /**
+     * Raised when the messages change shape; peers with another version do
+     * not stream (2: preview tiles; 3: the welcome tells the table sizes).
+     */
+    public static final int VERSION = 3;
     /** Largest body of one message, under the game's custom payload limits. */
     public static final int MAX_PAYLOAD = 30_000;
 
@@ -109,20 +112,27 @@ public final class StreamProtocol {
         }
     }
 
-    /** Server: the dimension streams under {@code session}, from a store of that epoch, within a radius. */
-    public record Welcome(int session, String dimension, long epoch, int radiusBlocks) {
+    /**
+     * Server: the dimension streams under {@code session}, from a store of
+     * that epoch, within a radius; its key tables hold {@code blockStates}
+     * and {@code biomes} keys, all sent right after.
+     */
+    public record Welcome(int session, String dimension, long epoch, int radiusBlocks, int blockStates, int biomes) {
         public byte[] encode() {
             ByteWriter out = start(WELCOME);
             out.writeVarInt(session);
             writeString(out, dimension);
             out.writeLong(epoch);
             out.writeVarInt(radiusBlocks);
+            out.writeVarInt(blockStates);
+            out.writeVarInt(biomes);
             return out.toByteArray();
         }
 
         public static Welcome decode(byte[] payload) {
             ByteReader in = body(payload);
-            return new Welcome(in.readVarInt(), readString(in), in.readLong(), in.readVarInt());
+            return new Welcome(in.readVarInt(), readString(in), in.readLong(), in.readVarInt(), in.readVarInt(),
+                    in.readVarInt());
         }
     }
 

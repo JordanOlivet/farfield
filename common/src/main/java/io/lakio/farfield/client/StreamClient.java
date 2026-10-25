@@ -66,6 +66,18 @@ public final class StreamClient {
     private int session = -1;
     private boolean declined;
     private int radius;
+    /** Key counts the server announced at welcome: the mirror is drawn once its tables hold them. */
+    private int blockStatesExpected = Integer.MAX_VALUE;
+    private int biomesExpected = Integer.MAX_VALUE;
+    /** Times the tables disagreed this connection; past {@link #MAX_MISMATCHES}, client mode instead. */
+    private int mismatches;
+    private static final int MAX_MISMATCHES = 2;
+    /**
+     * Keys of each table the server sent (kept with the epoch): announced at
+     * hello, so the server never skips a key the mirror lacks.
+     */
+    private int serverBlockStates;
+    private int serverBiomes;
     private long helloSent;
     private final Long2LongOpenHashMap remote = new Long2LongOpenHashMap();
     private final Long2LongOpenHashMap local = new Long2LongOpenHashMap();
@@ -143,13 +155,22 @@ public final class StreamClient {
      */
     public static LodWorld world(ResourceKey<Level> dimension) {
         StreamClient c = instance;
-        return c != null && !c.declined && c.session >= 0 && c.dimension == dimension ? c.mirror : null;
+        return c != null && c.ready() && c.dimension == dimension ? c.mirror : null;
+    }
+
+    /**
+     * Welcomed, and the mirror's key tables hold every key the server had
+     * then: nothing drawn before may add a key of its own in between.
+     */
+    private boolean ready() {
+        return !declined && session >= 0 && mirror.blockStates().size() >= blockStatesExpected
+                && mirror.biomes().size() >= biomesExpected;
     }
 
     /** The client streaming {@code world} (its mirror), or null. */
     public static StreamClient of(LodWorld world) {
         StreamClient c = instance;
-        return c != null && world != null && c.mirror == world && !c.declined && c.session >= 0 ? c : null;
+        return c != null && world != null && c.mirror == world && c.ready() ? c : null;
     }
 
     /** The game is closing. */
@@ -178,15 +199,28 @@ public final class StreamClient {
         mirror = LodWorld.open(dir, BlockKeys.RESOLVER);
         Path epochFile = dir.resolve(EPOCH_FILE);
         cachedEpoch = 0;
+        serverBlockStates = 0;
+        serverBiomes = 0;
         local.clear();
         localTiles.clear();
         if (Files.exists(epochFile)) {
             try {
-                cachedEpoch = Long.parseUnsignedLong(Files.readString(epochFile).trim(), 16);
-                readVersions(VERSIONS_FILE, local);
-                readVersions(TILES_FILE, localTiles);
-            } catch (NumberFormatException | IOException e) {
+                // "<epoch> <block-state keys> <biome keys>" as received; a table holding
+                // other keys (added here) is not the server's: the mirror starts again.
+                String[] parts = Files.readString(epochFile).trim().split("\\s+");
+                int blockStates = Integer.parseInt(parts[1]);
+                int biomes = Integer.parseInt(parts[2]);
+                if (mirror.blockStates().size() == blockStates && mirror.biomes().size() == biomes) {
+                    cachedEpoch = Long.parseUnsignedLong(parts[0], 16);
+                    serverBlockStates = blockStates;
+                    serverBiomes = biomes;
+                    readVersions(VERSIONS_FILE, local);
+                    readVersions(TILES_FILE, localTiles);
+                }
+            } catch (RuntimeException | IOException e) {
                 cachedEpoch = 0;
+                serverBlockStates = 0;
+                serverBiomes = 0;
                 local.clear();
                 localTiles.clear();
             }
@@ -233,16 +267,21 @@ public final class StreamClient {
         local.clear();
         localTiles.clear();
         cachedEpoch = epoch;
-        if (epoch != 0) {
-            Files.writeString(dir.resolve(EPOCH_FILE), Long.toUnsignedString(epoch, 16));
-        }
+        serverBlockStates = 0;
+        serverBiomes = 0;
     }
 
     private void close() {
         try {
-            if (session >= 0) {
+            Path epochFile = dir.resolve(EPOCH_FILE);
+            if (session >= 0 && mirror.blockStates().size() == serverBlockStates
+                    && mirror.biomes().size() == serverBiomes) {
                 writeVersions(VERSIONS_FILE, local);
                 writeVersions(TILES_FILE, localTiles);
+                Files.writeString(epochFile, Long.toUnsignedString(cachedEpoch, 16) + " " + serverBlockStates + " "
+                        + serverBiomes);
+            } else {
+                Files.deleteIfExists(epochFile); // not the server's tables: emptied at the next session
             }
             mirror.close();
             Farfield.LOG.info("LOD stream mirror of {} closed: {} sections and {} preview tiles held",
@@ -257,7 +296,7 @@ public final class StreamClient {
         if (session < 0 && !declined && now - helloSent > HELLO_RETRY_NANOS) {
             helloSent = now;
             send(new StreamProtocol.Hello(StreamProtocol.VERSION, dimension.location().toString(), cachedEpoch,
-                    mirror.blockStates().size(), mirror.biomes().size()).encode());
+                    serverBlockStates, serverBiomes).encode());
         }
         if (session < 0) {
             return;
@@ -460,6 +499,8 @@ public final class StreamClient {
         }
         session = welcome.session();
         radius = welcome.radiusBlocks();
+        blockStatesExpected = welcome.blockStates();
+        biomesExpected = welcome.biomes();
         remote.clear();
         knownRegions.clear();
         askedRegions.clear();
@@ -480,14 +521,27 @@ public final class StreamClient {
         }
         KeyRegistry registry = keys.kind() == StreamProtocol.BLOCK_STATES ? mirror.blockStates() : mirror.biomes();
         for (int i = 0; i < keys.keys().length; i++) {
-            if (registry.id(keys.keys()[i]) != keys.from() + i) {
-                // The mirror's tables disagree with the server's: start it again.
-                Farfield.LOG.warn("LOD streaming: key tables differ from the server's, emptying the mirror");
+            int id = registry.id(keys.keys()[i]);
+            if (id != keys.from() + i) {
+                // The mirror's tables disagree with the server's: start it again, at most twice.
+                mismatches++;
+                Farfield.LOG.warn("LOD streaming: key {} is {} here and {} on the server; {}", keys.keys()[i], id,
+                        keys.from() + i, mismatches > MAX_MISMATCHES ? "building the LODs from the chunks instead"
+                                : "emptying the mirror");
                 wipe(0);
                 session = -1;
                 helloSent = 0;
+                if (mismatches > MAX_MISMATCHES) {
+                    declined = true;
+                }
                 return;
             }
+        }
+        int end = keys.from() + keys.keys().length;
+        if (keys.kind() == StreamProtocol.BLOCK_STATES) {
+            serverBlockStates = Math.max(serverBlockStates, end);
+        } else {
+            serverBiomes = Math.max(serverBiomes, end);
         }
     }
 

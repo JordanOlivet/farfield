@@ -8,6 +8,9 @@ import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 
+import io.lakio.farfield.core.preview.PreviewVoxels;
+import net.minecraft.world.level.block.Blocks;
+
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Map;
@@ -65,7 +68,14 @@ public final class LodLevel {
     }
 
     static LodLevel open(Level level, Path dir) throws IOException {
-        return new LodLevel(level, dir, LodWorld.open(dir, BlockKeys.RESOLVER));
+        LodWorld world = LodWorld.open(dir, BlockKeys.RESOLVER);
+        // Keys a client adds on its own (the preview's masks, the water of kelp): in the
+        // store's table from the start, a streamed mirror gets them with the same ids
+        // instead of appending its own, which made the tables disagree (ADR-068).
+        world.blockStates().id(PreviewVoxels.MASK_GROUND_KEY);
+        world.blockStates().id(PreviewVoxels.MASK_FLUID_KEY);
+        world.blockStates().id(BlockKeys.key(Blocks.WATER.defaultBlockState()));
+        return new LodLevel(level, dir, world);
     }
 
     public Level level() {

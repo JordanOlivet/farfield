@@ -18,7 +18,7 @@ class StreamProtocolTest {
         assertEquals(hello, StreamProtocol.Hello.decode(hello.encode()));
         assertEquals(StreamProtocol.HELLO, StreamProtocol.type(hello.encode()));
 
-        StreamProtocol.Welcome welcome = new StreamProtocol.Welcome(7, "minecraft:the_nether", -5L, 4096);
+        StreamProtocol.Welcome welcome = new StreamProtocol.Welcome(7, "minecraft:the_nether", -5L, 4096, 6460, 127);
         assertEquals(welcome, StreamProtocol.Welcome.decode(welcome.encode()));
 
         StreamProtocol.Keys keys = new StreamProtocol.Keys(7, StreamProtocol.BIOMES, 3,
