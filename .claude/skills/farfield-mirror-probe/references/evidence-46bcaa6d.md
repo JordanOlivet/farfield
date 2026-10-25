@@ -1,0 +1,1 @@
+Write of MirrorLightProbe.java and the Bash run "FF_MIRROR=\"$S/mirror-copy\" ./gradlew.bat :core:test --tests \"*MirrorLightProbe*\" --no-daemon -q -i 2>&1 | grep -a \"PROBE\"", returning "PROBE level 1: 748 sections, 95585 water tops (95551 on the section's top layer); sky light above {0=34}".

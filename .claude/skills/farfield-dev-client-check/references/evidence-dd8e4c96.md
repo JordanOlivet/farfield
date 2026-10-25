@@ -1,0 +1,1 @@
+Bash, run in background, no question asked before it: "NOIMPORT=1 HIGH=1 TPX=39.5 TPZ=22.5 bash \"$S/streamtest.sh\" s10 > \"$S/streamtest10.txt\" 2>&1" (the view repro of the preview bug, with the client launched by the script).

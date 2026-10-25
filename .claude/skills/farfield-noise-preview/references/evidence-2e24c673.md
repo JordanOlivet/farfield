@@ -1,0 +1,1 @@
+PROBE output: "PROBE level 0: 3291 sections, 291842 water tops (21991 on the section's top layer); sky light above {0=108, ..., 15=269291}" and "PROBE level 1: 748 sections, 95585 water tops (95551 on the section's top layer)". Mesher: "return 15 << 4;" at the end of the light fallback.

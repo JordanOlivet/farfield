@@ -84,6 +84,14 @@ public final class StreamClient {
     private final LongOpenHashSet knownRegions = new LongOpenHashSet();
     private final Long2LongOpenHashMap askedRegions = new Long2LongOpenHashMap();
     private final LongLinkedOpenHashSet wishes = new LongLinkedOpenHashSet();
+    /**
+     * The coarsest sections of the radius, fetched in the background after
+     * the renderer's wishes: the preview reads them to hide itself where real
+     * terrain is, and the renderer, drawing finer levels near the player,
+     * never asks for them (the preview then drew over real terrain: water
+     * blended twice, its grass over real sand).
+     */
+    private final LongLinkedOpenHashSet background = new LongLinkedOpenHashSet();
     private final Long2LongOpenHashMap inFlight = new Long2LongOpenHashMap();
     private final Long2ObjectOpenHashMap<byte[][]> parts = new Long2ObjectOpenHashMap<>();
     /** Preview tiles: versions held (kept beside the mirror), answered this session, in flight, parts. */
@@ -317,17 +325,26 @@ public final class StreamClient {
             askTiles(mc, now);
         }
         askedRegions.long2LongEntrySet().removeIf(e -> now - e.getLongValue() > REQUEST_TIMEOUT_NANOS);
-        while (inFlight.size() < StreamProtocol.Fetch.MAX_KEYS && !wishes.isEmpty()) {
-            int n = Math.min(wishes.size(), StreamProtocol.Fetch.MAX_KEYS - inFlight.size());
+        while (inFlight.size() < StreamProtocol.Fetch.MAX_KEYS && (!wishes.isEmpty() || !background.isEmpty())) {
+            int n = Math.min(wishes.size() + background.size(), StreamProtocol.Fetch.MAX_KEYS - inFlight.size());
             long[] keys = new long[n];
             long[] haves = new long[n];
-            for (int i = 0; i < n; i++) {
-                long key = wishes.removeFirstLong();
-                keys[i] = key;
-                haves[i] = local.get(key);
+            int count = 0;
+            while (count < n && (!wishes.isEmpty() || !background.isEmpty())) {
+                long key = !wishes.isEmpty() ? wishes.removeFirstLong() : background.removeFirstLong();
+                if (inFlight.containsKey(key) || !needsFetch(key)) {
+                    continue;
+                }
+                keys[count] = key;
+                haves[count] = local.get(key);
                 inFlight.put(key, now);
+                count++;
             }
-            send(new StreamProtocol.Fetch(session, keys, haves).encode());
+            if (count == 0) {
+                break;
+            }
+            send(new StreamProtocol.Fetch(session, java.util.Arrays.copyOf(keys, count),
+                    java.util.Arrays.copyOf(haves, count)).encode());
         }
         if (now > nextStats) {
             nextStats = now + STATS_NANOS;
@@ -514,6 +531,7 @@ public final class StreamClient {
         askedRegions.clear();
         inFlight.clear();
         wishes.clear();
+        background.clear();
         parts.clear();
         tilesAnswered.clear();
         tilesInFlight.clear();
@@ -560,6 +578,9 @@ public final class StreamClient {
         long region = LodKey.pack(index.level(), index.rx(), 0, index.rz());
         for (int i = 0; i < index.keys().length; i++) {
             remote.put(index.keys()[i], index.versions()[i]);
+            if (index.level() == LodWorld.LEVELS - 1 && local.get(index.keys()[i]) != index.versions()[i]) {
+                background.add(index.keys()[i]);
+            }
         }
         if (index.last()) {
             knownRegions.add(region);
