@@ -7,6 +7,7 @@ import io.lakio.farfield.core.lod.LodSection;
 import io.lakio.farfield.core.preview.PreviewStore;
 import io.lakio.farfield.core.preview.PreviewTile;
 import io.lakio.farfield.core.storage.SectionStore;
+import io.lakio.farfield.core.stream.FetchWindow;
 import io.lakio.farfield.core.stream.StreamProtocol;
 import io.lakio.farfield.core.world.LodWorld;
 import io.lakio.farfield.core.world.RemoteWorldId;
@@ -40,7 +41,7 @@ import java.util.stream.Stream;
  * {@link LodClient}). The renderer asks it which sections exist (region
  * indexes from the server), and hands it the sections it wants, nearest
  * and in view first; at most {@link StreamProtocol.Fetch#MAX_KEYS} are in
- * flight. Received records go into the mirror as they are; the versions it
+ * flight, fewer when the answers come back late ({@link FetchWindow}). Received records go into the mirror as they are; the versions it
  * holds are kept beside it, so a rejoin only checks them. The noise preview
  * comes the same way, as tiles within the radius, nearest first, asked
  * again when the server says one was built. Client thread only.
@@ -55,6 +56,9 @@ public final class StreamClient {
     private static final String TILES_FILE = "tiles.bin";
     private static final int TILES_IN_FLIGHT = StreamProtocol.TileFetch.MAX_TILES;
     private static final long TILE_SCAN_NANOS = 250_000_000L;
+    /** Answers this much later than the quickest one halve the requests in flight. */
+    private static final long WINDOW_SLACK_NANOS = 1_000_000_000L;
+    private static final int WINDOW_MIN = 4;
 
     private static StreamClient instance;
 
@@ -93,6 +97,8 @@ public final class StreamClient {
      */
     private final LongLinkedOpenHashSet background = new LongLinkedOpenHashSet();
     private final Long2LongOpenHashMap inFlight = new Long2LongOpenHashMap();
+    private final FetchWindow window = new FetchWindow(WINDOW_MIN, StreamProtocol.Fetch.MAX_KEYS,
+            StreamProtocol.Fetch.MAX_KEYS, WINDOW_SLACK_NANOS);
     private final Long2ObjectOpenHashMap<byte[][]> parts = new Long2ObjectOpenHashMap<>();
     /** Preview tiles: versions held (kept beside the mirror), answered this session, in flight, parts. */
     private final Long2LongOpenHashMap localTiles = new Long2LongOpenHashMap();
@@ -106,6 +112,7 @@ public final class StreamClient {
     private long received;
     private int sectionsReceived;
     private int unchangedReceived;
+    private int regionsChanged;
 
     private StreamClient(ResourceKey<Level> dimension, Path dir) {
         this.dimension = dimension;
@@ -318,15 +325,17 @@ public final class StreamClient {
             return;
         }
         // Requests the server never answered (it dropped them): asked again later.
-        inFlight.long2LongEntrySet().removeIf(e -> now - e.getLongValue() > REQUEST_TIMEOUT_NANOS);
+        if (inFlight.long2LongEntrySet().removeIf(e -> now - e.getLongValue() > REQUEST_TIMEOUT_NANOS)) {
+            window.timedOut(now);
+        }
         tilesInFlight.long2LongEntrySet().removeIf(e -> now - e.getLongValue() > REQUEST_TIMEOUT_NANOS);
         if (RenderSettings.noisePreview() && now > nextTileScan && tilesInFlight.size() < TILES_IN_FLIGHT) {
             nextTileScan = now + TILE_SCAN_NANOS;
             askTiles(mc, now);
         }
         askedRegions.long2LongEntrySet().removeIf(e -> now - e.getLongValue() > REQUEST_TIMEOUT_NANOS);
-        while (inFlight.size() < StreamProtocol.Fetch.MAX_KEYS && (!wishes.isEmpty() || !background.isEmpty())) {
-            int n = Math.min(wishes.size() + background.size(), StreamProtocol.Fetch.MAX_KEYS - inFlight.size());
+        while (inFlight.size() < window.size() && (!wishes.isEmpty() || !background.isEmpty())) {
+            int n = Math.min(wishes.size() + background.size(), window.size() - inFlight.size());
             long[] keys = new long[n];
             long[] haves = new long[n];
             int count = 0;
@@ -349,15 +358,17 @@ public final class StreamClient {
         if (now > nextStats) {
             nextStats = now + STATS_NANOS;
             if (RenderSettings.performanceLogs() && (received > 0 || !inFlight.isEmpty())) {
-                Farfield.LOG.info("LOD streaming: {} KB received in 10 s ({} sections, {} unchanged, {} preview tiles),"
-                                + " {} in flight, {} wanted, {} known regions, {} sections and {} tiles held",
-                        received >> 10, sectionsReceived, unchangedReceived, tilesReceived, inFlight.size(),
-                        wishes.size(), knownRegions.size(), local.size(), localTiles.size());
+                Farfield.LOG.info("LOD streaming: {} KB received in 10 s ({} sections, {} unchanged, {} preview tiles,"
+                                + " {} regions changed), {} in flight of {}, {} wanted, {} known regions, {} sections"
+                                + " and {} tiles held", received >> 10, sectionsReceived, unchangedReceived,
+                        tilesReceived, regionsChanged, inFlight.size(), window.size(), wishes.size(),
+                        knownRegions.size(), local.size(), localTiles.size());
             }
             received = 0;
             sectionsReceived = 0;
             unchangedReceived = 0;
             tilesReceived = 0;
+            regionsChanged = 0;
         }
     }
 
@@ -502,6 +513,7 @@ public final class StreamClient {
                 case StreamProtocol.TILE -> c.tile(StreamProtocol.Tile.decode(message));
                 case StreamProtocol.TILE_ABSENT, StreamProtocol.TILE_UNCHANGED, StreamProtocol.TILE_CHANGED ->
                         c.tileAnswer(StreamProtocol.Answer.decode(message));
+                case StreamProtocol.CHANGED -> c.changed(StreamProtocol.Changed.decode(message));
                 default -> {
                 }
             }
@@ -530,6 +542,7 @@ public final class StreamClient {
         knownRegions.clear();
         askedRegions.clear();
         inFlight.clear();
+        window.reset(StreamProtocol.Fetch.MAX_KEYS);
         wishes.clear();
         background.clear();
         parts.clear();
@@ -589,6 +602,25 @@ public final class StreamClient {
         }
     }
 
+    /**
+     * Regions written on the server since their indexes came: asked again, so
+     * the sections whose version moved are fetched (the stale copies stay
+     * drawn meanwhile). Regions never asked for are left to the renderer.
+     */
+    private void changed(StreamProtocol.Changed changed) {
+        if (changed.session() != session) {
+            return;
+        }
+        for (long region : changed.regions()) {
+            if (knownRegions.contains(region) || askedRegions.containsKey(region)) {
+                askedRegions.put(region, System.nanoTime());
+                send(new StreamProtocol.IndexRequest(session, LodKey.level(region), LodKey.x(region),
+                        LodKey.z(region)).encode());
+                regionsChanged++;
+            }
+        }
+    }
+
     private void section(StreamProtocol.Section part) throws IOException {
         if (part.session() != session) {
             return;
@@ -620,7 +652,7 @@ public final class StreamClient {
         }
         local.put(part.key(), part.version());
         remote.put(part.key(), part.version());
-        inFlight.remove(part.key());
+        landed(part.key());
         sectionsReceived++;
         mirror.putRecord(part.key(), record, 0, record.length);
     }
@@ -673,11 +705,19 @@ public final class StreamClient {
         tilesAnswered.add(answer.key());
     }
 
+    /** A request was answered: no longer in flight, its round trip sizes the window. */
+    private void landed(long key) {
+        if (inFlight.containsKey(key)) {
+            long now = System.nanoTime();
+            window.answered(now - inFlight.remove(key), now);
+        }
+    }
+
     private void answer(StreamProtocol.Answer answer) {
         if (answer.session() != session) {
             return;
         }
-        inFlight.remove(answer.key());
+        landed(answer.key());
         if (answer.type() == StreamProtocol.UNCHANGED) {
             long version = remote.get(answer.key());
             if (version >= 0) {

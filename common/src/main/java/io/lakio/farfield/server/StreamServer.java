@@ -9,6 +9,7 @@ import io.lakio.farfield.core.preview.PreviewStore;
 import io.lakio.farfield.core.preview.PreviewTile;
 import io.lakio.farfield.core.storage.SectionStore;
 import io.lakio.farfield.core.stream.Bandwidth;
+import io.lakio.farfield.core.stream.RegionChanges;
 import io.lakio.farfield.core.stream.StreamProtocol;
 import io.lakio.farfield.core.stream.SurfaceIndex;
 import io.lakio.farfield.core.world.LodWorld;
@@ -46,6 +47,10 @@ public final class StreamServer {
 
     private static final String CONFIG_FILE = "farfield-server.properties";
     private static final long STATS_NANOS = 10_000_000_000L;
+    /** How often written regions are checked for notices, and their quiet time and longest wait. */
+    private static final long NOTICE_NANOS = 1_000_000_000L;
+    private static final long NOTICE_QUIET_NANOS = 3_000_000_000L;
+    private static final long NOTICE_MAX_WAIT_NANOS = 20_000_000_000L;
 
     private static volatile StreamServer instance;
     /** The settings turned streaming off: hellos get a refusal, so clients build their own LODs. */
@@ -65,6 +70,11 @@ public final class StreamServer {
     private final AtomicLong tilesSent = new AtomicLong();
     /** Worlds whose preview store tells this server about new tiles. */
     private final Map<LodWorld, Boolean> tileListeners = new ConcurrentHashMap<>();
+    /** Regions written per world since their last notice, and the listener feeding them. */
+    private final Map<LodWorld, RegionChanges> changes = new ConcurrentHashMap<>();
+    private final Map<LodWorld, java.util.function.LongConsumer> sectionListeners = new ConcurrentHashMap<>();
+    private long nextNotice;
+    private final AtomicLong noticesSent = new AtomicLong();
     /**
      * Sections under the surface per world and region (ADR-013), with the
      * region's fingerprint (its versions) they were computed for.
@@ -106,6 +116,7 @@ public final class StreamServer {
         });
         this.shared = new Bandwidth(config.totalKBps() * 1024L, System.nanoTime());
         this.nextStats = System.nanoTime() + STATS_NANOS;
+        this.nextNotice = System.nanoTime() + NOTICE_NANOS;
     }
 
     // ---------------------------------------------------------------- lifecycle
@@ -145,6 +156,7 @@ public final class StreamServer {
         instance = null;
         if (s != null) {
             s.readers.shutdownNow();
+            s.sectionListeners.forEach(LodWorld::removeListener);
         }
     }
 
@@ -212,6 +224,13 @@ public final class StreamServer {
                     biomes).encode());
             sendKeys(p, session);
         }
+        changes.computeIfAbsent(world, w -> {
+            RegionChanges c = new RegionChanges(NOTICE_QUIET_NANOS, NOTICE_MAX_WAIT_NANOS);
+            java.util.function.LongConsumer listener = key -> c.written(key, System.nanoTime());
+            sectionListeners.put(w, listener);
+            w.addListener(listener);
+            return c;
+        });
         if (config.preview()) {
             tileListeners.computeIfAbsent(world, w -> {
                 w.preview().addListener(tile -> tileWritten(w, tile));
@@ -489,15 +508,50 @@ public final class StreamServer {
     }
 
     private boolean regionInRange(ServerPlayer sp, int level, int rx, int rz) {
+        return regionInRange(level, rx, rz, sp.getX(), sp.getZ());
+    }
+
+    private boolean regionInRange(int level, int rx, int rz, double px, double pz) {
         long size = (long) LodSection.SIZE << level << SectionStore.REGION_SHIFT;
         double x0 = (double) rx * size;
         double z0 = (double) rz * size;
-        double px = sp.getX();
-        double pz = sp.getZ();
         double dx = Math.max(0, Math.max(x0 - px, px - (x0 + size)));
         double dz = Math.max(0, Math.max(z0 - pz, pz - (z0 + size)));
         double r = config.radiusBlocks();
         return dx * dx + dz * dz <= r * r;
+    }
+
+    /**
+     * Tells each player streaming {@code world} which regions near it were
+     * written since; its client asks for their indexes again, then for the
+     * sections whose version moved. Server thread.
+     */
+    private void notice(LodWorld world, RegionChanges c, long now) {
+        List<Long> due = new ArrayList<>();
+        c.drainDue(now, due::add);
+        if (due.isEmpty()) {
+            return;
+        }
+        for (Player p : players.values()) {
+            int session = p.session;
+            if (session < 0 || p.world != world) {
+                continue;
+            }
+            double px = p.player.getX();
+            double pz = p.player.getZ();
+            List<Long> near = new ArrayList<>();
+            for (long r : due) {
+                if (regionInRange(LodKey.level(r), LodKey.x(r), LodKey.z(r), px, pz)) {
+                    near.add(r);
+                }
+            }
+            for (int from = 0; from < near.size(); from += StreamProtocol.Changed.MAX_REGIONS) {
+                long[] regions = near.subList(from, Math.min(near.size(), from + StreamProtocol.Changed.MAX_REGIONS))
+                        .stream().mapToLong(Long::longValue).toArray();
+                p.out.add(new StreamProtocol.Changed(session, regions).encode());
+            }
+            noticesSent.addAndGet(near.size());
+        }
     }
 
     // ---------------------------------------------------------------- sending (server tick)
@@ -534,6 +588,10 @@ public final class StreamServer {
                 bytes += next.length;
             }
         }
+        if (now > nextNotice) {
+            nextNotice = now + NOTICE_NANOS;
+            changes.forEach((world, c) -> notice(world, c, now));
+        }
         if (now > nextStats) {
             nextStats = now + STATS_NANOS;
             long s = sections.getAndSet(0);
@@ -541,10 +599,19 @@ public final class StreamServer {
             long i = indexes.getAndSet(0);
             long h = hiddenSent.getAndSet(0);
             long t = tilesSent.getAndSet(0);
+            long c = noticesSent.getAndSet(0);
             if (RenderSettings.performanceLogs() && (bytes > 0 || i > 0)) {
+                // The game's ping of the streamed players: the streaming must not make it wait.
+                int ping = 0;
+                int queued = 0;
+                for (Player p : players.values()) {
+                    ping = Math.max(ping, p.player.connection.latency());
+                    queued = Math.max(queued, p.out.size());
+                }
                 Farfield.LOG.info("LOD streaming: {} players, {} KB sent in 10 s ({} sections, {} unchanged, {} indexes,"
-                        + " {} sections under the surface left out, {} preview tiles)", players.size(), bytes >> 10,
-                        s, u, i, h, t);
+                        + " {} sections under the surface left out, {} preview tiles, {} regions changed),"
+                        + " highest ping {} ms, longest queue {} messages", players.size(), bytes >> 10, s, u, i, h, t,
+                        c, ping, queued);
             }
             bytes = 0;
         }

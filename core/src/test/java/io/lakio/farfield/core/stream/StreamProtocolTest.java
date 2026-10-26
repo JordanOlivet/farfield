@@ -50,6 +50,68 @@ class StreamProtocolTest {
     }
 
     @Test
+    void changedCarriesRegionsOfEveryLevel() {
+        long[] regions = {RegionChanges.regionOf(LodKey.pack(0, -33, 5, 64)), LodKey.pack(4, 7, 0, -1),
+                LodKey.pack(2, -262_144, 0, 262_143)};
+        assertEquals(LodKey.pack(0, -2, 0, 2), regions[0]);
+        StreamProtocol.Changed back = StreamProtocol.Changed.decode(new StreamProtocol.Changed(5, regions).encode());
+        assertEquals(5, back.session());
+        assertArrayEquals(regions, back.regions());
+        long[] many = new long[StreamProtocol.Changed.MAX_REGIONS];
+        Arrays.fill(many, LodKey.pack(4, -262_144, 0, -262_144));
+        assertTrue(new StreamProtocol.Changed(5, many).encode().length <= StreamProtocol.MAX_PAYLOAD + 8);
+    }
+
+    @Test
+    void regionChangesWaitForQuietOrTheLongestWait() {
+        long s = 1_000_000_000L;
+        RegionChanges changes = new RegionChanges(3 * s, 20 * s);
+        long a = LodKey.pack(0, 1, 0, 1);
+        long b = LodKey.pack(0, 40, 0, 1);
+        changes.written(a, 0);
+        changes.written(LodKey.pack(0, 2, 3, 2), s); // same region as a
+        changes.written(b, 0);
+        java.util.List<Long> due = new java.util.ArrayList<>();
+        changes.drainDue(2 * s, due::add);
+        assertTrue(due.isEmpty());
+        assertEquals(2, changes.pendingRegions());
+        changes.drainDue(3 * s, due::add);
+        assertEquals(java.util.List.of(RegionChanges.regionOf(b)), due);
+        // a keeps being written: announced at its longest wait, then waits again.
+        for (long t = 2 * s; t <= 20 * s; t += s) {
+            changes.written(a, t);
+        }
+        due.clear();
+        changes.drainDue(19 * s + s / 2, due::add);
+        assertTrue(due.isEmpty());
+        changes.drainDue(20 * s, due::add);
+        assertEquals(java.util.List.of(RegionChanges.regionOf(a)), due);
+        assertEquals(0, changes.pendingRegions());
+    }
+
+    @Test
+    void fetchWindowHalvesOnLateAnswersOncePerRoundTrip() {
+        long ms = 1_000_000L;
+        FetchWindow w = new FetchWindow(4, 64, 64, 1000 * ms);
+        w.answered(50 * ms, 0);
+        assertEquals(64, w.size());
+        w.answered(1200 * ms, 100 * ms); // late: halved
+        assertEquals(32, w.size());
+        w.answered(1300 * ms, 200 * ms); // queued behind the first: not cut again
+        assertEquals(32, w.size());
+        w.answered(1300 * ms, 1600 * ms); // a round trip later: cut again
+        assertEquals(16, w.size());
+        for (int i = 0; i < 17; i++) {
+            w.answered(60 * ms, 2000 * ms);
+        }
+        assertEquals(17, w.size()); // one more per window of timely answers
+        w.timedOut(3000 * ms);
+        assertEquals(4, w.size());
+        w.reset(64);
+        assertEquals(64, w.size());
+    }
+
+    @Test
     void fetchCarriesTheVersionsHeld() {
         long[] keys = {LodKey.pack(0, 1, 2, 3), LodKey.pack(4, -1, -2, -3)};
         long[] haves = {-1, 99};

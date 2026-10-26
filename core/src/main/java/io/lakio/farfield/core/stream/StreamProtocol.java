@@ -19,9 +19,10 @@ public final class StreamProtocol {
 
     /**
      * Raised when the messages change shape; peers with another version do
-     * not stream (2: preview tiles; 3: the welcome tells the table sizes).
+     * not stream (2: preview tiles; 3: the welcome tells the table sizes;
+     * 4: change notices for regions).
      */
-    public static final int VERSION = 3;
+    public static final int VERSION = 4;
     /** Largest body of one message, under the game's custom payload limits. */
     public static final int MAX_PAYLOAD = 30_000;
 
@@ -42,6 +43,8 @@ public final class StreamProtocol {
     public static final int TILE_UNCHANGED = 18;
     /** A tile near the player was built or rebuilt: ask for it again. */
     public static final int TILE_CHANGED = 19;
+    /** Sections of these regions were written: ask for their indexes again. */
+    public static final int CHANGED = 20;
 
     /** {@link Keys#kind}: block-state keys or biome keys. */
     public static final int BLOCK_STATES = 0;
@@ -397,6 +400,43 @@ public final class StreamProtocol {
                 out[p] = new Tile(session, tile, version, p, parts, java.util.Arrays.copyOfRange(file, from, to));
             }
             return out;
+        }
+    }
+
+    /**
+     * Server: sections of these regions near the player were written since
+     * the client may have read their indexes; each region is a
+     * {@code LodKey.pack(level, rx, 0, rz)} ({@link SectionStore#REGION_SHIFT}).
+     */
+    public record Changed(int session, long[] regions) {
+        /** Regions per message: a level (1), a column (up to 10). */
+        public static final int MAX_REGIONS = MAX_PAYLOAD / 11;
+
+        public byte[] encode() {
+            ByteWriter out = start(CHANGED);
+            out.writeVarInt(session);
+            out.writeVarInt(regions.length);
+            for (long r : regions) {
+                out.writeVarInt(LodKey.level(r));
+                out.writeVarInt(zigzag(LodKey.x(r)));
+                out.writeVarInt(zigzag(LodKey.z(r)));
+            }
+            return out.toByteArray();
+        }
+
+        public static Changed decode(byte[] payload) {
+            ByteReader in = body(payload);
+            int session = in.readVarInt();
+            int n = in.readVarInt();
+            if (n < 0 || n > in.remaining()) {
+                throw new IllegalArgumentException("bad region count " + n);
+            }
+            long[] regions = new long[n];
+            for (int i = 0; i < n; i++) {
+                int level = in.readVarInt();
+                regions[i] = LodKey.pack(level, unzigzag(in.readVarInt()), 0, unzigzag(in.readVarInt()));
+            }
+            return new Changed(session, regions);
         }
     }
 

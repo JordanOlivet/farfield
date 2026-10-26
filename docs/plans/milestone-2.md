@@ -64,7 +64,7 @@ Items:
   ADR-013), order (nearest and in view first, as `WantOrder`), budgets,
   the client cache per server (the client-mode store of ADR-022), what a
   client without Farfield on the server keeps doing.
-- [~] B.2 LOD sections streamed to clients, with Neo-Voxy's defaults as
+- [x] B.2 LOD sections streamed to clients, with Neo-Voxy's defaults as
   the first settings, measured on a dev server with two clients. Done:
   handshake, key tables, region indexes, pull of sections with versions,
   per-player and shared budgets, the client mirror with its versions,
@@ -75,9 +75,21 @@ Items:
   `full_data=false` by default): 7,706 sections and about 14.8 MB
   instead of 10,188 and 25 MB, view settled at 15.9 s instead of 24.6 s,
   the same image (captures identical to 8 levels of 255); a rejoin with
-  the mirror kept fetched 16 sections and settled at 4.4 s. Remains: two
-  clients, the ping during a fill, NeoForge, change notices, client
-  congestion control (AIMD)
+  the mirror kept fetched 16 sections and settled at 4.4 s. 2026-10-26
+  (protocol 4): change notices (`CHANGED`: the server tells the players
+  near a region its sections were written, once the region is quiet for
+  3 s or at most every 20 s; the client asks for the index again and
+  fetches what moved) and a fetch window sized by the answers' delay
+  (AIMD, `FetchWindow`: 64 at most, halved when an answer is 1 s later
+  than the quickest). Fabric dev server with an empty store, two clients
+  (Dev at spawn, Dev2 at 1,500, 0), `farfield import` while both were
+  connected: Dev2 went from 401 sections held to 690 through the
+  notices, without reconnecting; its rejoin then fetched 19 of 690 and settled at
+  1.4 s. At 64 KB/s per player the window went 64, 32, 16, 4 and the
+  server's queue 144, 29, 20, 2 messages, then the window grew back to
+  22. NeoForge dev server and client: streamed, notices, no error. The
+  ping during a fill: the server's stat line now logs the highest ping
+  and the longest queue; 0 ms on a local link, a real link is B.4
 - [~] B.3 Noise preview built by the dedicated server around each player
   and streamed the same way. Done: `preview` (default true) in
   `farfield-server.properties` turns `NoisePreview` on for a dedicated
@@ -90,13 +102,18 @@ Items:
   NeoForge pack on the home server (deployed by SSH with the user's yes):
   236 tiles built in about 90 s and sent in 10 s, 4,988 sections held,
   view settled at 12.0 s; the user: "de mon côté ça a l'air de bien
-  marcher". Remains: the client handled the welcome 50 s after joining
-  (still loading the pack); 142 "Attempted to load class
-  net/minecraft/client" traces in 15 min on the server when the surface
-  filter resolves some modded blocks; faint grid lines on frozen sea in
-  a dev capture, not compared with single player
+  marcher". Not Farfield's (2026-10-26, from the logs): the welcome
+  came 1 s after the pack finished joining (connect 23:25:57, joined
+  23:26:58, welcome 23:26:59); the "Attempted to load class
+  net/minecraft/client" traces (63) are ScalableLux's mixin in a block
+  state's cache, built lazily by ModernFix, on whichever thread first
+  asks (52 from AE2's creative tab, 9 from the surface filter).
+  Remains: faint grid lines on frozen sea in a dev capture, not compared
+  with single player; the tile requests (16 in flight) are not sized by
+  the fetch window
 - [ ] B.4 The user's NeoForge pack on a server: fill times and bandwidth
-  from the log lines.
+  from the log lines, and the highest ping during a fill (server stat
+  line).
 
 ## M2.C — Shader packs
 
