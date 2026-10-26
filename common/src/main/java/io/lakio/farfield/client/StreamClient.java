@@ -54,7 +54,6 @@ public final class StreamClient {
     private static final String EPOCH_FILE = "server.epoch";
     private static final String VERSIONS_FILE = "versions.bin";
     private static final String TILES_FILE = "tiles.bin";
-    private static final int TILES_IN_FLIGHT = StreamProtocol.TileFetch.MAX_TILES;
     private static final long TILE_SCAN_NANOS = 250_000_000L;
     /** Answers this much later than the quickest one halve the requests in flight. */
     private static final long WINDOW_SLACK_NANOS = 1_000_000_000L;
@@ -99,6 +98,9 @@ public final class StreamClient {
     private final Long2LongOpenHashMap inFlight = new Long2LongOpenHashMap();
     private final FetchWindow window = new FetchWindow(WINDOW_MIN, StreamProtocol.Fetch.MAX_KEYS,
             StreamProtocol.Fetch.MAX_KEYS, WINDOW_SLACK_NANOS);
+    /** The same for preview tiles, apart: a tile weighs about six sections (14 KB against 2.5). */
+    private final FetchWindow tileWindow = new FetchWindow(1, StreamProtocol.TileFetch.MAX_TILES,
+            StreamProtocol.TileFetch.MAX_TILES, WINDOW_SLACK_NANOS);
     private final Long2ObjectOpenHashMap<byte[][]> parts = new Long2ObjectOpenHashMap<>();
     /** Preview tiles: versions held (kept beside the mirror), answered this session, in flight, parts. */
     private final Long2LongOpenHashMap localTiles = new Long2LongOpenHashMap();
@@ -328,8 +330,10 @@ public final class StreamClient {
         if (inFlight.long2LongEntrySet().removeIf(e -> now - e.getLongValue() > REQUEST_TIMEOUT_NANOS)) {
             window.timedOut(now);
         }
-        tilesInFlight.long2LongEntrySet().removeIf(e -> now - e.getLongValue() > REQUEST_TIMEOUT_NANOS);
-        if (RenderSettings.noisePreview() && now > nextTileScan && tilesInFlight.size() < TILES_IN_FLIGHT) {
+        if (tilesInFlight.long2LongEntrySet().removeIf(e -> now - e.getLongValue() > REQUEST_TIMEOUT_NANOS)) {
+            tileWindow.timedOut(now);
+        }
+        if (RenderSettings.noisePreview() && now > nextTileScan && tilesInFlight.size() < tileWindow.size()) {
             nextTileScan = now + TILE_SCAN_NANOS;
             askTiles(mc, now);
         }
@@ -359,10 +363,10 @@ public final class StreamClient {
             nextStats = now + STATS_NANOS;
             if (RenderSettings.performanceLogs() && (received > 0 || !inFlight.isEmpty())) {
                 Farfield.LOG.info("LOD streaming: {} KB received in 10 s ({} sections, {} unchanged, {} preview tiles,"
-                                + " {} regions changed), {} in flight of {}, {} wanted, {} known regions, {} sections"
-                                + " and {} tiles held", received >> 10, sectionsReceived, unchangedReceived,
-                        tilesReceived, regionsChanged, inFlight.size(), window.size(), wishes.size(),
-                        knownRegions.size(), local.size(), localTiles.size());
+                                + " {} regions changed), {} in flight of {}, {} tiles of {}, {} wanted, {} known regions,"
+                                + " {} sections and {} tiles held", received >> 10, sectionsReceived, unchangedReceived,
+                        tilesReceived, regionsChanged, inFlight.size(), window.size(), tilesInFlight.size(),
+                        tileWindow.size(), wishes.size(), knownRegions.size(), local.size(), localTiles.size());
             }
             received = 0;
             sectionsReceived = 0;
@@ -401,7 +405,7 @@ public final class StreamClient {
             }
         }
         candidates.sort((a, b) -> Long.compare(a[1], b[1]));
-        int n = Math.min(candidates.size(), TILES_IN_FLIGHT - tilesInFlight.size());
+        int n = Math.min(candidates.size(), tileWindow.size() - tilesInFlight.size());
         if (n <= 0) {
             return;
         }
@@ -548,6 +552,7 @@ public final class StreamClient {
         parts.clear();
         tilesAnswered.clear();
         tilesInFlight.clear();
+        tileWindow.reset(StreamProtocol.TileFetch.MAX_TILES);
         tileParts.clear();
         generation++;
         Farfield.LOG.info("LOD streaming from the server: {} (session {}, radius {} blocks, {} sections held)",
@@ -686,7 +691,7 @@ public final class StreamClient {
                 at += b.length;
             }
         }
-        tilesInFlight.remove(part.tile());
+        tileLanded(part.tile());
         tilesAnswered.add(part.tile());
         mirror.preview().writeFile(PreviewStore.tileX(part.tile()), PreviewStore.tileZ(part.tile()), file);
         localTiles.put(part.tile(), part.version());
@@ -701,8 +706,16 @@ public final class StreamClient {
             tilesAnswered.remove(answer.key()); // asked again at the next scan
             return;
         }
-        tilesInFlight.remove(answer.key());
+        tileLanded(answer.key());
         tilesAnswered.add(answer.key());
+    }
+
+    /** A tile request was answered: no longer in flight, its round trip sizes the tile window. */
+    private void tileLanded(long tile) {
+        if (tilesInFlight.containsKey(tile)) {
+            long now = System.nanoTime();
+            tileWindow.answered(now - tilesInFlight.remove(tile), now);
+        }
     }
 
     /** A request was answered: no longer in flight, its round trip sizes the window. */

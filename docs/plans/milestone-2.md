@@ -109,11 +109,14 @@ Items:
   state's cache, built lazily by ModernFix, on whichever thread first
   asks (52 from AE2's creative tab, 9 from the surface filter).
   Remains: faint grid lines on frozen sea in a dev capture, not compared
-  with single player; the tile requests (16 in flight) are not sized by
-  the fetch window
+  with single player. The tile requests have their own fetch window
+  (1 to 16) since 2026-10-26: at 64 KB/s per player it went 16, 8, 6,
+  5, 3 and the server's longest queue stayed at 7 to 10 messages (20 to
+  31 before)
 - [ ] B.4 The user's NeoForge pack on a server: fill times and bandwidth
-  from the log lines, and the highest ping during a fill (server stat
-  line).
+  from the log lines. The highest ping during a fill (server stat line)
+  needs a player away from the server: the user's server is on their
+  home network, where it reads 0 ms as on the dev runs.
 
 ## M2.C — Shader packs
 
