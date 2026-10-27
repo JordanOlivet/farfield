@@ -798,6 +798,31 @@ class PreviewTest {
         assertEquals(0, hollowContacts(g, w, d), "water touching a hollow under the coarse ground");
     }
 
+    @Test
+    void groundAndHollowsUnderTheSeaTakeTheWatersLight() {
+        // Ground and the hollows under it are never meant to be seen, but a face beside them
+        // takes their light: at full light, the side of a coarse column over finer terrain on
+        // a seam between levels lit far brighter than the sea floor around it.
+        PreviewTile t = ruggedSeaFloor();
+        PreviewVoxels.Tiles tiles = (x, z) -> x == 0 && z == 0 ? t : null;
+        for (int level = 0; level <= 2; level++) {
+            int s = 1 << level;
+            int sy = level == 0 ? 1 : 0; // the section holding the sea floor
+            LodSection section = PreviewVoxels.build(level, 1, sy, 1, tiles, null, AIR, -64, -1, -1, -1, 0);
+            for (int z = 0; z < 32; z++) {
+                for (int y = 0; y < 32; y++) {
+                    for (int x = 0; x < 32; x++) {
+                        int top = (sy * 32 + y) * s + s - 1;
+                        if (top < 63) {
+                            assertEquals(Math.max(0, 15 - (63 - top)), section.skyLight().get(x, y, z),
+                                    "level " + level + ", voxel " + x + "," + y + "," + z);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /** Heights jumping by up to 12 blocks between samples, under a sea at 63. */
     private static PreviewTile ruggedSeaFloor() {
         PreviewTile t = new PreviewTile();

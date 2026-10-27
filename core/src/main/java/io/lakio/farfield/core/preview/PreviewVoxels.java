@@ -137,6 +137,8 @@ public final class PreviewVoxels {
             }
         }
         LodSection section = null;
+        int[] seas = new int[S * S]; // per column, the sea's first free block; NONE without a preview sea
+        java.util.Arrays.fill(seas, NONE);
         for (int k = 0; k < S; k++) {
             if (layerAxis == 2 && k != layerIndex) {
                 continue;
@@ -182,6 +184,9 @@ public final class PreviewVoxels {
                 int water = tile.water();
                 int sea = tile.seaLevel();
                 boolean frozen = tile.frozen(cellX, cellZ);
+                if (water >= 0) {
+                    seas[k * S + i] = sea;
+                }
                 for (int vy = 0; vy < S; vy++) {
                     if (layerAxis == 1 && vy != layerIndex) {
                         continue;
@@ -236,6 +241,9 @@ public final class PreviewVoxels {
                     }
                 }
             }
+        }
+        if (section != null) {
+            seaLight(section, seas, oy, s, layerAxis, layerIndex);
         }
         if (layerAxis < 0) {
             // Layers only hide a neighbor's water faces: trees there are left out (a
@@ -747,6 +755,39 @@ public final class PreviewVoxels {
                 }
             }
             return section;
+        }
+    }
+
+    /**
+     * Gives every voxel under a preview sea, ground and the hollows under it
+     * included, the light of the water at its depth. Ground and hollows are
+     * never meant to be seen, but a face beside them still takes their light:
+     * left at full light, the side of a coarse column standing over the finer
+     * terrain beside it, on the seam between two levels, lit far brighter
+     * than the sea floor around (light specks along the seam, coming and going
+     * as the camera moves).
+     */
+    private static void seaLight(LodSection section, int[] seas, int oy, int s, int layerAxis, int layerIndex) {
+        for (int k = 0; k < S; k++) {
+            if (layerAxis == 2 && k != layerIndex) {
+                continue;
+            }
+            for (int i = 0; i < S; i++) {
+                int sea = seas[k * S + i];
+                if (sea == NONE || layerAxis == 0 && i != layerIndex) {
+                    continue;
+                }
+                for (int vy = 0; vy < S; vy++) {
+                    int bottom = oy + vy * s;
+                    if (bottom >= sea) {
+                        break;
+                    }
+                    if (layerAxis == 1 && vy != layerIndex) {
+                        continue;
+                    }
+                    section.skyLight().set(i, vy, k, seaSkyLight(Math.min(bottom + s, sea) - 1, sea, bottom + s > sea));
+                }
+            }
         }
     }
 
