@@ -116,7 +116,11 @@ public final class StreamClient {
      * the renderer's wishes: the preview reads them to hide itself where real
      * terrain is, and the renderer, drawing finer levels near the player,
      * never asks for them (the preview then drew over real terrain: water
-     * blended twice, its grass over real sand).
+     * blended twice, its grass over real sand). Also every section the
+     * mirror holds at an older version than an index says: the renderer
+     * asks only for sections it lacks, so a drawn copy fetched while its
+     * chunks were still generating stayed drawn (black holes over the sea,
+     * where a surface section lacked a chunk the section under it had).
      */
     private final LongLinkedOpenHashSet background = new LongLinkedOpenHashSet();
     private final Long2LongOpenHashMap inFlight = new Long2LongOpenHashMap();
@@ -139,6 +143,8 @@ public final class StreamClient {
     private int sectionsReceived;
     private int unchangedReceived;
     private int regionsChanged;
+    /** Sections held at an older version than an index said: fetched again. */
+    private int outdated;
 
     private StreamClient(ResourceKey<Level> dimension, Path dir) {
         this.dimension = dimension;
@@ -433,9 +439,10 @@ public final class StreamClient {
             nextStats = now + STATS_NANOS;
             if (RenderSettings.performanceLogs() && (received > 0 || !inFlight.isEmpty())) {
                 Farfield.LOG.info("LOD streaming: {} KB received in 10 s ({} sections, {} unchanged, {} preview tiles,"
-                                + " {} regions changed, {} translated), {} in flight of {}, {} tiles of {}, {} wanted,"
-                                + " {} known regions, {} sections and {} tiles held", received >> 10, sectionsReceived,
-                        unchangedReceived, tilesReceived, regionsChanged, translated.getAndSet(0), inFlight.size(), window.size(), tilesInFlight.size(),
+                                + " {} regions changed, {} outdated, {} translated), {} in flight of {}, {} tiles of {},"
+                                + " {} wanted, {} known regions, {} sections and {} tiles held", received >> 10,
+                        sectionsReceived, unchangedReceived, tilesReceived, regionsChanged, outdated,
+                        translated.getAndSet(0), inFlight.size(), window.size(), tilesInFlight.size(),
                         tileWindow.size(), wishes.size(), knownRegions.size(), local.size(), localTiles.size());
             }
             received = 0;
@@ -443,6 +450,7 @@ public final class StreamClient {
             unchangedReceived = 0;
             tilesReceived = 0;
             regionsChanged = 0;
+            outdated = 0;
         }
     }
 
@@ -673,9 +681,12 @@ public final class StreamClient {
         }
         long region = LodKey.pack(index.level(), index.rx(), 0, index.rz());
         for (int i = 0; i < index.keys().length; i++) {
-            remote.put(index.keys()[i], index.versions()[i]);
-            if (index.level() == LodWorld.LEVELS - 1 && local.get(index.keys()[i]) != index.versions()[i]) {
-                background.add(index.keys()[i]);
+            long key = index.keys()[i];
+            remote.put(key, index.versions()[i]);
+            long held = local.get(key);
+            if (held != index.versions()[i] && (held >= 0 || index.level() == LodWorld.LEVELS - 1)) {
+                background.add(key);
+                outdated += held >= 0 ? 1 : 0;
             }
         }
         if (index.last()) {

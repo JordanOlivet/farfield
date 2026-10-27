@@ -146,6 +146,30 @@ class BinaryGreedyMesherTest {
         assertEquals(15, Quad.skyLight(out.quads(Quad.POS_X)[0]));
     }
 
+    @Test
+    void borderFacesNameTheNeighborsThatLightThem() {
+        // A sea floor whose top is the section's top layer, away from the side borders.
+        LodSection floor = new LodSection(0);
+        for (int z = 4; z < 28; z++) {
+            for (int x = 4; x < 28; x++) {
+                for (int y = 20; y < 32; y++) {
+                    floor.set(x, y, z, 1);
+                }
+            }
+        }
+        floor.compact();
+        mesher.mesh(floor, CLASSES, null, out);
+        assertEquals(1 << Quad.POS_Y, mesher.borderFaces(), "only the top border lights faces");
+        // Its top faces took full light without the neighbor: they must be meshed again once it comes.
+        assertEquals(15, Quad.skyLight(out.quads(Quad.POS_Y)[0]));
+
+        LodSection inside = new LodSection(0);
+        inside.set(10, 10, 10, 1);
+        inside.compact();
+        mesher.mesh(inside, CLASSES, null, out);
+        assertEquals(0, mesher.borderFaces(), "no face on a border");
+    }
+
     private static int expectedSky(int direction, int u, int v) {
         return (direction * 5 + u * 3 + v) & 15;
     }

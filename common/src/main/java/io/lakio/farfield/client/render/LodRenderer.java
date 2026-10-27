@@ -474,6 +474,8 @@ public final class LodRenderer {
         boolean occluders;
         /** Last time the selection used it: drawn, or relied on to descend to its children. */
         long lastUsed;
+        /** Directions whose neighbor lights some of its faces ({@link BinaryGreedyMesher#borderFaces}). */
+        int borderFaces;
 
         Resident(int slot) {
             this.slot = slot;
@@ -484,7 +486,7 @@ public final class LodRenderer {
     /** {@code provisional}: {@code cutout} was guessed for materials whose looks were not built yet. */
     private record MeshResult(int generation, long key, long[] quads, int[] groups, boolean cutout,
                               boolean provisional, int[] occupancy, int[] biomeColumns,
-                              int maxMaterial) {
+                              int maxMaterial, int borderFaces) {
     }
 
     private static final int[] NO_GROUPS = new int[GROUPS + 1];
@@ -1155,11 +1157,12 @@ public final class LodRenderer {
             long start = System.nanoTime();
             try {
                 LodSection section = PreviewLayer.isPreview(key) ? previewLayer.build(w, key) : readSection(w, key);
-                result = section == null ? new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null, -1)
+                result = section == null
+                        ? new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null, -1, 0)
                         : mesh(w, gen, key, section);
             } catch (IOException | RuntimeException e) {
                 Farfield.LOG.debug("LOD mesh of {} failed", LodKey.toString(key), e);
-                result = new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null, -1);
+                result = new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null, -1, 0);
             }
             meshNanos.addAndGet(System.nanoTime() - start);
             meshJobs.incrementAndGet();
@@ -1270,7 +1273,8 @@ public final class LodRenderer {
         for (long q : all) {
             maxMaterial = Math.max(maxMaterial, Quad.material(q));
         }
-        return new MeshResult(gen, key, all, groups, cutout, provisional, occupied, packed, maxMaterial);
+        return new MeshResult(gen, key, all, groups, cutout, provisional, occupied, packed, maxMaterial,
+                mesher.get().borderFaces());
     }
 
     /** @param list a face direction, or {@link MeshBuffer#PLANTS} */
@@ -1354,7 +1358,9 @@ public final class LodRenderer {
                 stale.add(key.longValue());
             }
             previewLayer.realWritten(key);
-            // Translucent faces of the neighbors were culled against the old data.
+            // Translucent faces of the neighbors were culled against the old data, and faces on
+            // the shared border took their light from it, or full light while it was missing
+            // (white sea floors along section borders until the neighbor itself changed).
             long k = key;
             for (int d = 0; d < 6; d++) {
                 int y = LodKey.y(k) + STEP[d][1];
@@ -1363,7 +1369,8 @@ public final class LodRenderer {
                 }
                 long neighbor = LodKey.pack(LodKey.level(k), LodKey.x(k) + STEP[d][0], y, LodKey.z(k) + STEP[d][2]);
                 Resident r = resident.get(neighbor);
-                if (r != null && r.groups[PLANT_GROUP] > r.opaqueCount) {
+                // The neighbor sees this section in the opposite direction.
+                if (r != null && (r.groups[PLANT_GROUP] > r.opaqueCount || (r.borderFaces >> (d ^ 1) & 1) != 0)) {
                     stale.add(neighbor);
                 }
             }
@@ -1423,6 +1430,7 @@ public final class LodRenderer {
             r.opaqueCount = m.groups[Quad.DIRECTIONS];
             r.groups = m.groups;
             r.cutout = m.cutout;
+            r.borderFaces = m.borderFaces;
             r.maxMaterial = m.maxMaterial;
             if (m.provisional) {
                 provisional.add(m.key);

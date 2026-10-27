@@ -128,6 +128,8 @@ public final class BinaryGreedyMesher {
     private long facesEmitted;
     /** Per direction, the light of the neighbor layer (see {@link #borderLight}); null entries unknown. */
     private byte[][] neighborLight;
+    /** Bit per direction: some face of the last mesh lies on that border and took its light from there. */
+    private int borderFaces;
 
     /**
      * Whether a vertical column empty over the whole section counts as solid
@@ -180,6 +182,7 @@ public final class BinaryGreedyMesher {
         this.neighborLight = neighborLight;
         out.clear();
         facesEmitted = 0;
+        borderFaces = 0;
         if (!classify(section, classifier)) {
             return;
         }
@@ -719,6 +722,7 @@ public final class BinaryGreedyMesher {
         if (nx >= 0 && ny >= 0 && nz >= 0 && nx < S && ny < S && nz < S) {
             return section.skyLight().get(nx, ny, nz) << 4 | section.blockLight().get(nx, ny, nz);
         }
+        borderFaces |= 1 << axis * 2 + (step > 0 ? 1 : 0);
         byte[] border = neighborLight == null ? null : neighborLight[axis * 2 + (step > 0 ? 1 : 0)];
         if (border != null) {
             // Same plane layout as borderPlane: U then V of the direction's axes.
@@ -741,6 +745,16 @@ public final class BinaryGreedyMesher {
             }
         }
         return 15 << 4;
+    }
+
+    /**
+     * Bit {@code d} (a direction, {@code axis * 2 + positive}) is set when a
+     * face of the last mesh lies on that border: its light came from the
+     * neighbor there, or from a guess when that neighbor was missing, so the
+     * section must be meshed again when that neighbor is written.
+     */
+    public int borderFaces() {
+        return borderFaces;
     }
 
     /** Unit quads of the boxes of the shaped voxels (see the class comment). */
