@@ -1866,3 +1866,31 @@ notices, versions).
   an answer (a server from before this change).
 - **Cost**: one decode per received section on the writer thread, an
   encode and a compression more for a translated one.
+
+## ADR-071 — Coarse water lights the faces in it by depth
+
+Status: accepted, 2026-10-27.
+
+- **Context**: a coarse voxel keeps the brightest light of its blocks
+  (`MipBuilder`, so the lit air beside a surface survives). In water,
+  where sky light falls by one per block, that is the light of the
+  voxel's top block: a sea floor under a 16-block water voxel was lit
+  as the water 15 blocks above it. Measured on the dev store: mean sky
+  light above sea floors 3.2 on level 0, 3.6, 4.5, 6.6 and 11.9 on levels
+  1 to 4, and 461 of 579 level-4 floors at 15. The user saw white squares
+  along ridges under the sea, gone when zooming (finer levels).
+- **Decision**: at meshing, a face whose front voxel is water on a coarse
+  level of stored terrain takes less light by the depth of that voxel's
+  water (its fill): a face looking up sees the bottom of the water (minus
+  water blocks - 1), a side face its middle (half of that), a face
+  looking down its top (`BinaryGreedyMesher.waterSky`; across a section
+  border the same through `borderLight`). The stored mips do not change,
+  so no `MIPS_VERSION` bump and nothing to rebuild on servers; the noise
+  preview keeps its own light per voxel.
+- **Result**: meshing the dev store's coarse sections, underwater floor
+  tops at 15 went from 175 to 0 on level 4 and 141 to 0 on level 3.
+- **Rejected**: the minimum of the water children in the mips (exact for
+  floors, but too dark for underwater walls, and a rebuild of every
+  store); growing opaque quads to close T-junctions (the specks stayed:
+  they were lit faces, not cracks).
+

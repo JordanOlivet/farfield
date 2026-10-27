@@ -1218,6 +1218,8 @@ public final class LodRenderer {
         MeshBuffer out = meshBuffer.get();
         // Stored terrain reads missing chunks as air: no water walls into them.
         mesher.get().setEmptyColumnsUnknown(!PreviewLayer.isPreview(key));
+        // Coarse stored water keeps its brightest block's light: faces in it see less.
+        mesher.get().setVoxelBlocks(PreviewLayer.isPreview(key) ? 1 : 1 << LodKey.level(key));
         mesher.get().mesh(section, classes, tintedMaterials, null, solid, light, out);
         // Masked preview columns only hide faces: their own quads are dropped.
         boolean preview = PreviewLayer.isPreview(key);
@@ -1321,7 +1323,7 @@ public final class LodRenderer {
             long neighbor = LodKey.pack(level, LodKey.x(key) + STEP[d][0], y, LodKey.z(key) + STEP[d][2]);
             LodSection section = readSection(w, neighbor);
             if (section != null) {
-                light[d] = BinaryGreedyMesher.borderLight(section, d, lights[d]);
+                light[d] = BinaryGreedyMesher.borderLight(section, d, lights[d], classes, 1 << level);
                 if (solid != null) {
                     solid[d] = BinaryGreedyMesher.borderPlane(section, d, classes, true, planes[d]);
                     BinaryGreedyMesher.addEmptyColumns(section, d, classes, solid[d]);

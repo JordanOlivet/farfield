@@ -130,6 +130,8 @@ public final class BinaryGreedyMesher {
     private byte[][] neighborLight;
     /** Bit per direction: some face of the last mesh lies on that border and took its light from there. */
     private int borderFaces;
+    /** Blocks along a voxel of the sections meshed: 1 on the finest level ({@link #waterSky}). */
+    private int voxelBlocks = 1;
 
     /**
      * Whether a vertical column empty over the whole section counts as solid
@@ -720,7 +722,11 @@ public final class BinaryGreedyMesher {
             default -> nz += step;
         }
         if (nx >= 0 && ny >= 0 && nz >= 0 && nx < S && ny < S && nz < S) {
-            return section.skyLight().get(nx, ny, nz) << 4 | section.blockLight().get(nx, ny, nz);
+            int sky = section.skyLight().get(nx, ny, nz);
+            if (voxelBlocks > 1 && fluid[section.paletteIndex(nx, ny, nz)] != 0) {
+                sky = waterSky(sky, section.fill().get(nx, ny, nz), voxelBlocks, axis * 2 + (step > 0 ? 1 : 0));
+            }
+            return sky << 4 | section.blockLight().get(nx, ny, nz);
         }
         borderFaces |= 1 << axis * 2 + (step > 0 ? 1 : 0);
         byte[] border = neighborLight == null ? null : neighborLight[axis * 2 + (step > 0 ? 1 : 0)];
@@ -745,6 +751,33 @@ public final class BinaryGreedyMesher {
             }
         }
         return 15 << 4;
+    }
+
+    /**
+     * Blocks along a voxel of the sections meshed next: {@code 1 << level}
+     * for stored terrain, 1 where the light is already right per voxel (the
+     * finest level, the noise preview).
+     */
+    public void setVoxelBlocks(int blocks) {
+        voxelBlocks = Math.max(1, blocks);
+    }
+
+    /**
+     * The sky light a face sees when the voxel in front of it, on a coarse
+     * level, is water filled to {@code fill} (sixteenths minus one). A coarse
+     * voxel keeps the brightest light of its blocks ({@code MipBuilder}),
+     * in water its top block's, while light falls by one per block of water:
+     * a sea floor under a 16-block voxel took the light of the water 15
+     * blocks above it (white squares along ridges under the sea, on coarse
+     * levels only). A face looking up sees the bottom of that water, a side
+     * face its middle, a face looking down its top.
+     *
+     * @param direction the face's direction ({@link Quad#POS_Y} looks up)
+     */
+    public static int waterSky(int sky, int fill, int voxelBlocks, int direction) {
+        int water = Math.max(1, (fill + 1) * voxelBlocks / 16);
+        int drop = direction == Quad.POS_Y ? water - 1 : direction == Quad.NEG_Y ? 0 : (water - 1) / 2;
+        return Math.max(0, sky - drop);
     }
 
     /**
@@ -892,7 +925,26 @@ public final class BinaryGreedyMesher {
      * 1024 entries {@code u * 32 + v}, each sky light << 4 | block light.
      */
     public static byte[] borderLight(LodSection neighbor, int direction, byte[] out) {
+        return borderLight(neighbor, direction, out, null, 1);
+    }
+
+    /**
+     * {@link #borderLight(LodSection, int, byte[])}, with the light of the
+     * neighbor's water voxels as a face in {@code direction} sees it on a
+     * coarse level ({@link #waterSky}); {@code classifier} null or
+     * {@code voxelBlocks} 1 leaves it as stored.
+     */
+    public static byte[] borderLight(LodSection neighbor, int direction, byte[] out, MaterialClassifier classifier,
+                                     int voxelBlocks) {
         byte[] plane = out != null ? out : new byte[PLANE];
+        boolean[] water = null;
+        if (classifier != null && voxelBlocks > 1) {
+            water = new boolean[neighbor.paletteSize()];
+            for (int i = 0; i < water.length; i++) {
+                int m = neighbor.paletteEntry(i);
+                water[i] = classifier.classOf(m) == MaterialClassifier.TRANSLUCENT && classifier.isFluid(m);
+            }
+        }
         int axis = direction >> 1;
         int layer = (direction & 1) != 0 ? 0 : S - 1;
         NibbleBricks sky = neighbor.skyLight();
@@ -919,7 +971,11 @@ public final class BinaryGreedyMesher {
                         z = layer;
                     }
                 }
-                plane[u * S + v] = (byte) (sky.get(x, y, z) << 4 | block.get(x, y, z));
+                int s = sky.get(x, y, z);
+                if (water != null && water[neighbor.paletteIndex(x, y, z)]) {
+                    s = waterSky(s, neighbor.fill().get(x, y, z), voxelBlocks, direction);
+                }
+                plane[u * S + v] = (byte) (s << 4 | block.get(x, y, z));
             }
         }
         return plane;

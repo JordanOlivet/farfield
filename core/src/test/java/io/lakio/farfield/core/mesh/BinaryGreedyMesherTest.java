@@ -170,6 +170,41 @@ class BinaryGreedyMesherTest {
         assertEquals(0, mesher.borderFaces(), "no face on a border");
     }
 
+    @Test
+    void seaFloorsOnCoarseLevelsSeeTheBottomOfTheirWater() {
+        // A floor under a sea, all water at full stored light: a coarse voxel keeps the
+        // light of its brightest block, the top of its water.
+        LodSection sea = new LodSection(0);
+        for (int z = 0; z < 32; z++) {
+            for (int x = 0; x < 32; x++) {
+                for (int y = 0; y < 32; y++) {
+                    sea.set(x, y, z, y < 10 ? 1 : 10);
+                }
+            }
+        }
+        sea.compact();
+        mesher.setVoxelBlocks(1);
+        mesher.mesh(sea, CLASSES, null, out);
+        assertEquals(15, Quad.skyLight(out.quads(Quad.POS_Y)[0]), "finest level: as stored");
+        mesher.setVoxelBlocks(16);
+        mesher.mesh(sea, CLASSES, null, out);
+        assertEquals(0, Quad.skyLight(out.quads(Quad.POS_Y)[0]), "16 blocks of water above: their bottom");
+        mesher.setVoxelBlocks(1);
+
+        assertEquals(8, BinaryGreedyMesher.waterSky(15, 15, 8, Quad.POS_Y));
+        assertEquals(12, BinaryGreedyMesher.waterSky(15, 15, 8, Quad.POS_X), "side faces: the middle");
+        assertEquals(15, BinaryGreedyMesher.waterSky(15, 15, 8, Quad.NEG_Y), "looking down: the top");
+        assertEquals(12, BinaryGreedyMesher.waterSky(15, 7, 8, Quad.POS_Y), "half a voxel of water");
+        assertEquals(15, BinaryGreedyMesher.waterSky(15, 15, 1, Quad.POS_Y), "one block: as stored");
+        assertEquals(0, BinaryGreedyMesher.waterSky(3, 15, 16, Quad.POS_Y));
+
+        // Across a border, the neighbor's water seen from below.
+        LodSection above = new LodSection(10);
+        byte[] plane = BinaryGreedyMesher.borderLight(above, Quad.POS_Y, null, CLASSES, 16);
+        assertEquals(0, plane[0] >> 4 & 15);
+        assertEquals(15, BinaryGreedyMesher.borderLight(above, Quad.POS_Y, null)[0] >> 4 & 15);
+    }
+
     private static int expectedSky(int direction, int u, int v) {
         return (direction * 5 + u * 3 + v) & 15;
     }
