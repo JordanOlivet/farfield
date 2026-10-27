@@ -40,6 +40,7 @@ public final class RenderSettings {
     private static volatile boolean noisePreview = RenderConfig.DEFAULTS.noisePreview();
     private static volatile boolean depthPrepass = true;
     private static volatile boolean drawPlants = true;
+    private static volatile int forcedLevel = -1;
     private static volatile int meshThreads = RenderConfig.DEFAULTS.meshThreads();
     private static volatile int previewThreads = RenderConfig.DEFAULTS.previewThreads();
     private static volatile boolean performanceLogs = RenderConfig.DEFAULTS.performanceLogs();
@@ -90,6 +91,20 @@ public final class RenderSettings {
 
     public static void setDebugLevels(boolean value) {
         debugLevels = value;
+    }
+
+    /**
+     * A level every LOD section is drawn at, or -1 (a diagnostic, {@code
+     * /farfield debug level}): defects of one level can be seen up close.
+     * The game's terrain no longer hides the LODs meanwhile. Off at every
+     * start, not saved.
+     */
+    public static int forcedLevel() {
+        return forcedLevel;
+    }
+
+    public static void setForcedLevel(int level) {
+        forcedLevel = level;
     }
 
     /**

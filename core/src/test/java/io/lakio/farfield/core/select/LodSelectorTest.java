@@ -54,6 +54,34 @@ class LodSelectorTest {
     }
 
     @Test
+    void aLevelLockDrawsThatLevelOnlyWithinItsRadius() {
+        LodSelector selector = new LodSelector(5, 2.0);
+        selector.setForcedLevel(2);
+        Set<Long> notReady = new HashSet<>();
+        notReady.add(LodKey.pack(2, 1, -1, 1));
+        List<Long> draw = new ArrayList<>();
+        List<Long> want = new ArrayList<>();
+        selector.select(0, 70, 0, -64, 320, 4000, terrain(notReady), draw::add, want::add);
+        assertTrue(!draw.isEmpty());
+        double radius = (32 << 2) * LodSelector.FORCED_RADIUS_SECTIONS;
+        for (long key : draw) {
+            assertEquals(2, LodKey.level(key), "only the locked level, even far or near");
+            int size = 32 << 2;
+            double dx = Math.max(0, Math.max(LodKey.x(key) * size - 0.0, 0.0 - (LodKey.x(key) * size + size)));
+            double dz = Math.max(0, Math.max(LodKey.z(key) * size - 0.0, 0.0 - (LodKey.z(key) * size + size)));
+            assertTrue(Math.sqrt(dx * dx + dz * dz) <= radius);
+        }
+        // A section of that level not ready is asked for; nothing coarser stands in for it.
+        assertTrue(want.contains(LodKey.pack(2, 1, -1, 1)));
+        assertTrue(!draw.contains(LodKey.pack(3, 0, -1, 0)));
+
+        selector.setForcedLevel(-1);
+        draw.clear();
+        selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of()), draw::add, k -> { });
+        assertTrue(draw.stream().anyMatch(k -> LodKey.level(k) == 0) && draw.stream().anyMatch(k -> LodKey.level(k) == 4));
+    }
+
+    @Test
     void finerNearCoarserFarAndNoOverlap() {
         LodSelector selector = new LodSelector(5, 2.0);
         List<Long> draw = new ArrayList<>();

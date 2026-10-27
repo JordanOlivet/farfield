@@ -6,6 +6,8 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import io.lakio.farfield.Farfield;
 import io.lakio.farfield.core.config.RenderConfig;
+import io.lakio.farfield.core.select.LodSelector;
+import io.lakio.farfield.core.world.LodWorld;
 
 import java.util.function.Supplier;
 
@@ -82,6 +84,14 @@ public final class RenderCommands {
                                         () -> debugPrepass(true))))
                                 .then(LiteralArgumentBuilder.<S>literal("off").executes(c -> run.run(c.getSource(),
                                         () -> debugPrepass(false)))))
+                        .then(LiteralArgumentBuilder.<S>literal("level")
+                                .executes(c -> run.run(c.getSource(), RenderCommands::showForcedLevel))
+                                .then(LiteralArgumentBuilder.<S>literal("off").executes(c -> run.run(c.getSource(),
+                                        () -> forcedLevel(-1))))
+                                .then(RequiredArgumentBuilder.<S, Integer>argument("level", IntegerArgumentType.integer(
+                                                0, LodWorld.LEVELS - 1))
+                                        .executes(c -> run.run(c.getSource(),
+                                                () -> forcedLevel(IntegerArgumentType.getInteger(c, "level"))))))
                         .then(LiteralArgumentBuilder.<S>literal("plants")
                                 .executes(c -> run.run(c.getSource(), () -> debugPlants(!RenderSettings.drawPlants())))
                                 .then(LiteralArgumentBuilder.<S>literal("on").executes(c -> run.run(c.getSource(),
@@ -162,6 +172,22 @@ public final class RenderCommands {
         Farfield.LOG.info("LOD level colors switched {} by command", on ? "on" : "off");
         return on ? "LOD level colors on: red 1 block, orange 2, yellow 4, green 8, blue 16."
                 : "LOD level colors off.";
+    }
+
+    /** Locks every LOD section to one level, a diagnostic. Not saved. */
+    private static String forcedLevel(int level) {
+        RenderSettings.setForcedLevel(level);
+        Farfield.LOG.info("LOD level lock {} by command", level < 0 ? "off" : "on level " + level);
+        return level < 0 ? "LOD level lock off: levels by distance again."
+                : "LOD level lock on level " + level + " (" + (1 << level) + " blocks per voxel), within "
+                + LodSelector.FORCED_RADIUS_SECTIONS * (32 << level) + " blocks; the game's terrain no longer hides"
+                + " the LODs (lower the render distance to see them up close). Not saved; off: debug level off.";
+    }
+
+    private static String showForcedLevel() {
+        int level = RenderSettings.forcedLevel();
+        return level < 0 ? "LOD level lock off (debug level <0-" + (LodWorld.LEVELS - 1) + "> locks one)."
+                : "LOD level lock on level " + level + " (debug level off unlocks).";
     }
 
     /** Switches LOD drawing, to compare frame rates. */

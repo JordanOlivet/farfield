@@ -638,6 +638,10 @@ public final class LodRenderer {
             return;
         }
         stream = StreamClient.of(world);
+        if (RenderSettings.forcedLevel() != selector.forcedLevel()) {
+            selector.setForcedLevel(RenderSettings.forcedLevel()); // the level lock, a diagnostic
+            selectionDirty = true;
+        }
         if (stream != null && stream.generation() != streamGeneration) {
             streamGeneration = stream.generation(); // region indexes arrived: more sections exist
             selectionDirty = true;
@@ -930,7 +934,8 @@ public final class LodRenderer {
         selector.select(cam.x, cam.y, cam.z, level.getMinBuildHeight(), level.getMaxBuildHeight(), lastSelectionDistance,
                 sections, drawSink, wantSink);
         maxFallbacks = Math.max(maxFallbacks, selector.fallbacks());
-        selectedPreview = RenderSettings.noisePreview();
+        // A level lock shows the stored terrain alone.
+        selectedPreview = RenderSettings.noisePreview() && selector.forcedLevel() < 0;
         if (selectedPreview) {
             previewLayer.select(cam.x, cam.y, cam.z, level.getMinBuildHeight(), level.getMaxBuildHeight(),
                     lastSelectionDistance, sections::ready, drawSink, wantSink);
@@ -1766,8 +1771,8 @@ public final class LodRenderer {
      */
     private boolean gameDrawsAll(long key, Vec3 cam, int renderDistance) {
         int level = drawLevel(key);
-        if (level > 1 || gridWidth <= 0) {
-            return false;
+        if (level > 1 || gridWidth <= 0 || selector.forcedLevel() >= 0) {
+            return false; // under a level lock the LODs draw over the game's terrain
         }
         int chunks = 2 << level;
         int sx0 = LodKey.x(key) * chunks;
@@ -1916,7 +1921,9 @@ public final class LodRenderer {
         glUniform2f(s.depthRange, 8f, (float) MAX_DISTANCE * 2);
         glUniform1i(s.renderDistance, mc.options.getEffectiveRenderDistance());
         glUniform3i(s.gridMin, gridMinX, gridMinY, gridMinZ);
-        glUniform2i(s.gridSize, gridWidth, gridHeight);
+        // A level lock draws the LODs where the game draws too: an empty grid gives way nowhere.
+        boolean locked = selector.forcedLevel() >= 0;
+        glUniform2i(s.gridSize, locked ? 0 : gridWidth, locked ? 0 : gridHeight);
         glUniform1i(s.sodiumRule, sodiumRule ? 1 : 0);
         glUniform1i(s.lightmap, LIGHTMAP_UNIT);
         glUniform4f(s.fogColor, fogColor[0], fogColor[1], fogColor[2], 1f);
