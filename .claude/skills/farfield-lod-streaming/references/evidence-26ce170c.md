@@ -1,0 +1,1 @@
+- **Fix:** a tile's file could not replace the old one on Windows while a preview thread read it (`AccessDeniedException` on the move, seen once in the first run; the tile was fetched again). `PreviewStore` now tries the move again for a moment.

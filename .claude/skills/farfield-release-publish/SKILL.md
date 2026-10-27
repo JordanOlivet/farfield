@@ -6,7 +6,7 @@ category: minecraft-modding
 
 # Farfield release publish
 
-A release is a pushed tag `v<version>[-alpha.N]`. `.github/workflows/release.yml` builds both loader jars and publishes them. Never publish by hand, and never report a platform as published without its log line.
+A release is a pushed tag `v<version>[-alpha.N]`. Do not tag until the user says every feature planned for the release is complete: finishing one work item is not a reason to tag. `.github/workflows/release.yml` builds both loader jars and publishes them. Never publish by hand, and never report a platform as published without its log line.
 
 1. Check `version=` in `gradle.properties` is the core of the tag (`0.1.0` for `v0.1.0-alpha.1`). A mismatch stops the Prepare job before any upload.
 2. Check the ci-workflows PR that provides `publish-mod.yml@v1` is merged, and that the variables `MODRINTH_ID`, `CURSEFORGE_ID` and the secrets `MODRINTH_TOKEN`, `CURSEFORGE_TOKEN` exist (`gh variable list`, `gh secret list`). Missing ones: use the `git-github-config` skill.

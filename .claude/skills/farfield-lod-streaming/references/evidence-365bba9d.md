@@ -1,0 +1,1 @@
+- **Decision, versions**: a server answers a hello of another protocol version with a refusal (a welcome of session -1, its own version in the radius field); the welcome's shape stays the same in every version. The client then builds its own LODs, and does so too after 6 hellos without an answer (a server from before this change).
