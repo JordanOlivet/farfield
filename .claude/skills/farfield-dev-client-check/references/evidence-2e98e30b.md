@@ -1,0 +1,1 @@
+[Render thread/INFO] (Farfield) LOD view fill after a teleport: sections missing in view at 0 s 0, 1 s 0, 2 s 83, 5 s 0, 10 s 0, 20 s 0; view settled at 18.2 s; 1608 meshes uploaded

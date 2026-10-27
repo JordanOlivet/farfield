@@ -1,0 +1,2 @@
+[16:13:41] [Server thread/INFO] (Minecraft) The nearest minecraft:deep_ocean is at [74936, 100, -9576] (579 blocks away)
+[16:14:06] [Server thread/INFO] (Minecraft) Teleported Dev to 74936.500000, 140.000000, -9575.500000
