@@ -175,6 +175,21 @@ final class PreviewLayer {
         return changed;
     }
 
+    /** Whether the preview hides a chunk for real terrain, for {@code debug here}. Render thread. */
+    String describeChunk(int chunkX, int chunkZ) {
+        long tile = PreviewStore.key(Math.floorDiv(chunkX, PreviewTile.CHUNKS), Math.floorDiv(chunkZ, PreviewTile.CHUNKS));
+        int[] mask = masks.get(tile);
+        if (mask == null) {
+            return "mask of its tile not built";
+        }
+        int c = chunk(chunkX, chunkZ);
+        if ((mask[Math.floorMod(chunkZ, PreviewTile.CHUNKS)] >>> Math.floorMod(chunkX, PreviewTile.CHUNKS) & 1) == 0) {
+            return "shown (no real data at level " + TOP_LEVEL + ")";
+        }
+        return "hidden for real terrain (level " + TOP_LEVEL + " ground at " + mask[GROUND + c] + ", fluid top "
+                + mask[FLUID + c] + ")";
+    }
+
     /** The tile a preview key's section lies in. */
     static long tileOf(long key) {
         int shift = drawLevel(key);

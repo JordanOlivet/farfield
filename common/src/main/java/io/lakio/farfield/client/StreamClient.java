@@ -544,6 +544,18 @@ public final class StreamClient {
         return local.containsKey(key);
     }
 
+    /** What the stream knows of {@code key}, for {@code debug here}. Client thread. */
+    public String describe(long key) {
+        long region = regionOf(key);
+        String index = !knownRegions.contains(region)
+                ? (askedRegions.containsKey(region) ? "region index asked, not received" : "region index unknown")
+                : remote.containsKey(key) ? "in the server's index" : "not in the server's index";
+        long held = local.get(key);
+        String mirror = held < 0 ? "not held" : held == remote.get(key) ? "held, current" : "held, outdated";
+        return index + ", " + mirror + (inFlight.containsKey(key) ? ", in flight" : "")
+                + (wishes.contains(key) ? ", wished" : "") + (background.contains(key) ? ", queued in background" : "");
+    }
+
     /** The renderer wants {@code key}; the latest selection's order comes first. */
     public void want(long key) {
         if (!inFlight.containsKey(key)) {

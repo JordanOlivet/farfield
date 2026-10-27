@@ -4,6 +4,7 @@ import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.builder.RequiredArgumentBuilder;
+import io.lakio.farfield.client.render.LodRenderer;
 import io.lakio.farfield.core.world.RemoteWorldNames;
 import io.lakio.farfield.lod.RenderCommands;
 import net.minecraft.client.Minecraft;
@@ -50,6 +51,12 @@ public final class FarfieldClientCommands {
                                             reply.accept(c.getSource(), Component.literal(line));
                                             return name == null ? 0 : 1;
                                         }))));
+        // Where the view meets the LODs, and what every part knows there (hole reports).
+        root.then(LiteralArgumentBuilder.<S>literal("debug").then(LiteralArgumentBuilder.<S>literal("here")
+                .executes(c -> {
+                    reply.accept(c.getSource(), Component.literal(LodRenderer.describeLook()));
+                    return 1;
+                })));
         dispatcher.register(RenderCommands.addTo(root, "farfieldclient", (source, change) -> {
             reply.accept(source, Component.literal(change.get()));
             return 1;

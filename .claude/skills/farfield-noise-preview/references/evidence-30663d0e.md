@@ -1,0 +1,1 @@
+en gros, dans les fond marin, on ne genère pas les features comme les coraux et autres blocs aquatiques en preview. Sur le screenshot on voit bien où c'est des LOD et où c'est de la preview. Tout ce qui est illuminé sous l'eau, c'est du LOD et toute la partie de gauche (on voit bien la délimitation entre les deux), c'est de la preview.

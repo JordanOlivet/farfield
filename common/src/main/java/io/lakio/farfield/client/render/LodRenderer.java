@@ -16,6 +16,8 @@ import io.lakio.farfield.core.mesh.MaterialClassifier;
 import io.lakio.farfield.core.mesh.MeshBuffer;
 import io.lakio.farfield.core.mesh.Quad;
 import io.lakio.farfield.core.mesh.SurfaceBiomes;
+import io.lakio.farfield.core.preview.PreviewStore;
+import io.lakio.farfield.core.preview.PreviewTile;
 import io.lakio.farfield.core.select.LodSelector;
 import io.lakio.farfield.core.select.WantOrder;
 import io.lakio.farfield.core.util.RangeAllocator;
@@ -126,6 +128,8 @@ public final class LodRenderer {
     private static final LodRenderer INSTANCE = new LodRenderer();
 
     private static final double MAX_DISTANCE = 4096;
+    /** How far {@code debug here} follows the view. */
+    private static final int LOOK_DISTANCE = 4096;
     private static final float FOG_START = (float) MAX_DISTANCE * 0.6f;
     private static final float FOG_END = (float) MAX_DISTANCE;
     /** Mesh jobs in flight: 32 to 128 filled the view as fast (ADR-056). */
@@ -492,6 +496,166 @@ public final class LodRenderer {
     private static final int[] NO_GROUPS = new int[GROUPS + 1];
 
     private LodRenderer() {
+    }
+
+    /**
+     * {@code /farfieldclient debug here}: follows the view from the camera to
+     * the first stored opaque voxel or the preview's surface, and logs what
+     * each level, the stream, the preview and the game know there, so a hole
+     * can be reported by pointing at it. Returns the line for the chat.
+     */
+    public static String describeLook() {
+        return INSTANCE.lookReport(Minecraft.getInstance());
+    }
+
+    private String lookReport(Minecraft mc) {
+        LodWorld w = world;
+        if (w == null || mc.level == null) {
+            return "No LOD world is attached.";
+        }
+        Camera camera = mc.gameRenderer.getMainCamera();
+        Vec3 from = camera.getPosition();
+        org.joml.Vector3f look = camera.getLookVector();
+        MaterialClassifier classes = w.materials();
+        int minY = mc.level.getMinBuildHeight();
+        int maxY = mc.level.getMaxBuildHeight();
+        Long2ObjectOpenHashMap<LodSection> sections = new Long2ObjectOpenHashMap<>();
+        LongOpenHashSet absent = new LongOpenHashSet();
+        Long2ObjectOpenHashMap<PreviewTile> tiles = new Long2ObjectOpenHashMap<>();
+        int hx = 0;
+        int hy = 0;
+        int hz = 0;
+        int realLevel = -1;
+        double distance = -1;
+        int lastX = Integer.MIN_VALUE;
+        int lastY = 0;
+        int lastZ = 0;
+        try {
+            for (double t = 0; t < LOOK_DISTANCE; t += 0.25) {
+                int x = Mth.floor(from.x + look.x() * t);
+                int y = Mth.floor(from.y + look.y() * t);
+                int z = Mth.floor(from.z + look.z() * t);
+                if (x == lastX && y == lastY && z == lastZ) {
+                    continue;
+                }
+                lastX = x;
+                lastY = y;
+                lastZ = z;
+                if (y >= maxY && look.y() >= 0 || y < minY && look.y() <= 0) {
+                    break;
+                }
+                if (y < minY || y >= maxY) {
+                    continue;
+                }
+                for (int level = 0; level < LodWorld.LEVELS && realLevel < 0; level++) {
+                    long key = LodKey.pack(level, x >> (5 + level), y >> (5 + level), z >> (5 + level));
+                    LodSection s = sections.get(key);
+                    if (s == null && !absent.contains(key)) {
+                        s = w.exists(key) ? w.read(key) : null;
+                        if (s == null) {
+                            absent.add(key);
+                        } else {
+                            sections.put(key, s);
+                        }
+                    }
+                    if (s != null) {
+                        int c = classes.classOf(s.material((x >> level) & 31, (y >> level) & 31, (z >> level) & 31));
+                        if (c != MaterialClassifier.AIR && c != MaterialClassifier.TRANSLUCENT
+                                && c != MaterialClassifier.PLANT) {
+                            realLevel = level;
+                        }
+                    }
+                }
+                int tileX = Math.floorDiv(x, PreviewTile.BLOCKS);
+                int tileZ = Math.floorDiv(z, PreviewTile.BLOCKS);
+                long tileKey = PreviewStore.key(tileX, tileZ);
+                if (!tiles.containsKey(tileKey)) {
+                    tiles.put(tileKey, w.preview().read(tileX, tileZ));
+                }
+                PreviewTile tile = tiles.get(tileKey);
+                boolean previewHit = tile != null
+                        && y < tile.height(Math.floorMod(x, PreviewTile.BLOCKS), Math.floorMod(z, PreviewTile.BLOCKS));
+                if (realLevel >= 0 || previewHit) {
+                    hx = x;
+                    hy = y;
+                    hz = z;
+                    distance = t;
+                    break;
+                }
+            }
+        } catch (IOException e) {
+            return "Could not read the LODs: " + e.getMessage();
+        }
+        if (distance < 0) {
+            return "Nothing stored and no preview surface along the view within " + LOOK_DISTANCE + " blocks.";
+        }
+        String what = realLevel >= 0 ? "stored terrain (level " + realLevel + ")" : "the preview's surface, no stored terrain";
+        String head = "Here: " + hx + " " + hy + " " + hz + ", " + Math.round(distance) + " blocks away, " + what;
+        StringBuilder log = new StringBuilder(head).append(" (camera ").append(Math.round(from.x)).append(' ')
+                .append(Math.round(from.y)).append(' ').append(Math.round(from.z)).append(')');
+        for (int level = 0; level < LodWorld.LEVELS; level++) {
+            long key = LodKey.pack(level, hx >> (5 + level), hy >> (5 + level), hz >> (5 + level));
+            LodSection s = sections.get(key);
+            String voxel;
+            if (s == null) {
+                voxel = absent.contains(key) ? "no stored section" : "section not read";
+            } else {
+                int m = s.material((hx >> level) & 31, (hy >> level) & 31, (hz >> level) & 31);
+                voxel = "voxel " + w.blockStates().key(m) + " (class " + classes.classOf(m) + ")";
+            }
+            log.append("\n  level ").append(level).append(' ').append(LodKey.x(key)).append(',').append(LodKey.y(key))
+                    .append(',').append(LodKey.z(key)).append(": ").append(voxel)
+                    .append("; stream: ").append(stream != null ? stream.describe(key) : "none (single player)")
+                    .append("; renderer: ").append(rendererState(key))
+                    .append("; preview section: ").append(rendererState(PreviewLayer.toPreview(key)));
+        }
+        log.append("\n  preview chunk: ").append(previewLayer.describeChunk(hx >> 4, hz >> 4));
+        log.append("\n  game: ").append(gameState(mc, hx >> 4, hy >> 4, hz >> 4, from));
+        Farfield.LOG.info("LOD debug here: {}", log);
+        return head + " (details in the log).";
+    }
+
+    private String rendererState(long key) {
+        Resident r = resident.get(key);
+        String state = r == null ? "not meshed" : "meshed, " + r.quadCount + " quads";
+        if (drawList.contains(key)) {
+            state += ", drawn";
+        }
+        if (requested.contains(key)) {
+            state += ", meshing";
+        }
+        if (stale.contains(key)) {
+            state += ", stale";
+        }
+        if (wanted.contains(key)) {
+            state += ", wanted";
+        }
+        return state;
+    }
+
+    private String gameState(Minecraft mc, int sx, int sy, int sz, Vec3 cam) {
+        boolean loaded = mc.level.getChunkSource().getChunk(sx, sz, false) != null;
+        int gx = sx - gridMinX;
+        int gy = sy - gridMinY;
+        int gz = sz - gridMinZ;
+        if (gx < 0 || gy < 0 || gz < 0 || gx >= gridWidth || gz >= gridWidth || gy >= gridHeight) {
+            return "chunk " + (loaded ? "loaded" : "not loaded") + ", outside the compiled-sections grid";
+        }
+        int bit = (gz * gridWidth + gx) * gridHeight + gy;
+        boolean compiled = (compiledBits[bit >> 5] >>> (bit & 31) & 1) != 0;
+        boolean givesWay = (drawnBits[bit >> 5] >>> (bit & 31) & 1) != 0;
+        int rd = mc.options.getEffectiveRenderDistance();
+        int camX = Mth.floor(cam.x);
+        int camY = Mth.floor(cam.y);
+        int camZ = Mth.floor(cam.z);
+        double nx = nearest(sx * 16 - camX, cam.x - camX);
+        double ny = nearest(sy * 16 - camY, cam.y - camY);
+        double nz = nearest(sz * 16 - camZ, cam.z - camZ);
+        double d = rd * 16;
+        boolean inReach = nx * nx + nz * nz < d * d && Math.abs(ny) < d;
+        return "chunk " + (loaded ? "loaded" : "not loaded") + ", section " + (compiled ? "compiled" : "not compiled")
+                + ", in the drawn grid: " + (givesWay ? "yes" : "no") + ", within the render distance ("
+                + (sodiumRule ? "Sodium" : "vanilla") + " terrain, Sodium rule): " + (inReach ? "yes" : "no");
     }
 
     /** Whether LODs are drawn beyond the vanilla terrain (a LOD world is attached and rendering is on). */
