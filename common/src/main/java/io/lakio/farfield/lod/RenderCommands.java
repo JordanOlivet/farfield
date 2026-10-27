@@ -6,7 +6,6 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.mojang.brigadier.builder.RequiredArgumentBuilder;
 import io.lakio.farfield.Farfield;
 import io.lakio.farfield.core.config.RenderConfig;
-import io.lakio.farfield.core.select.LodSelector;
 import io.lakio.farfield.core.world.LodWorld;
 
 import java.util.function.Supplier;
@@ -179,9 +178,9 @@ public final class RenderCommands {
         RenderSettings.setForcedLevel(level);
         Farfield.LOG.info("LOD level lock {} by command", level < 0 ? "off" : "on level " + level);
         return level < 0 ? "LOD level lock off: levels by distance again."
-                : "LOD level lock on level " + level + " (" + (1 << level) + " blocks per voxel), within "
-                + LodSelector.FORCED_RADIUS_SECTIONS * (32 << level) + " blocks; the game's terrain no longer hides"
-                + " the LODs (lower the render distance to see them up close). Not saved; off: debug level off.";
+                : "LOD level lock on level " + level + " (" + (1 << level) + " blocks per voxel): nothing finer,"
+                + " coarser levels far away as usual; the game's terrain no longer hides the LODs (lower the render"
+                + " distance to see them up close). Not saved; off: debug level off.";
     }
 
     private static String showForcedLevel() {

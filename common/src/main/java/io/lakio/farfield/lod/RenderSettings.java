@@ -94,8 +94,8 @@ public final class RenderSettings {
     }
 
     /**
-     * A level every LOD section is drawn at, or -1 (a diagnostic, {@code
-     * /farfield debug level}): defects of one level can be seen up close.
+     * A level no LOD section is drawn finer than, or -1 (a diagnostic,
+     * {@code /farfield debug level}): defects of one level can be seen up close.
      * The game's terrain no longer hides the LODs meanwhile. Off at every
      * start, not saved.
      */

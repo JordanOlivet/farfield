@@ -34,10 +34,8 @@ public final class LodSelector {
     private LongPredicate inView;
     private double outsideDetail = Double.MAX_VALUE;
     private int fallbacks;
-    /** A diagnostic lock: every section drawn at this level, or -1 for the usual split. */
+    /** A diagnostic lock: no section drawn finer than this level, or -1 for the usual split. */
     private int forcedLevel = -1;
-    /** Sections of the locked level drawn around the camera, in its section sizes. */
-    public static final int FORCED_RADIUS_SECTIONS = 16;
     /** Sections that descended in the previous selection, and in the current one. */
     private Set<Long> descended = new HashSet<>();
     private Set<Long> descending = new HashSet<>();
@@ -73,11 +71,10 @@ public final class LodSelector {
     }
 
     /**
-     * Locks the selection to one level (a diagnostic, {@code /farfield debug
-     * level}): every section descends to it whatever the distance, none
-     * goes finer, and only {@link #FORCED_RADIUS_SECTIONS} sections of that
-     * level around the camera are drawn, so a lock on the finest level does
-     * not ask for the whole radius. -1 unlocks.
+     * Locks the selection at one level (a diagnostic, {@code /farfield debug
+     * level}): no section splits finer than it, so what the usual split draws
+     * at that level far away stays at it up close; farther, coarser levels
+     * as usual, over the whole distance. -1 unlocks.
      */
     public void setForcedLevel(int level) {
         forcedLevel = level < 0 ? -1 : Math.min(level, levels - 1);
@@ -112,9 +109,6 @@ public final class LodSelector {
                        Sections sections, LongConsumer draw, LongConsumer want) {
         fallbacks = 0;
         descending.clear();
-        if (forcedLevel >= 0) {
-            maxDistance = Math.min(maxDistance, (double) (LodSection.SIZE << forcedLevel) * FORCED_RADIUS_SECTIONS);
-        }
         int top = levels - 1;
         int size = LodSection.SIZE << top;
         int x0 = Math.floorDiv((int) Math.floor(camX - maxDistance), size);
@@ -154,18 +148,7 @@ public final class LodSelector {
         double dy = Math.max(0, Math.max(minY - camY, camY - (minY + size)));
         double distance = Math.sqrt(horizontal * horizontal + dy * dy);
         double split = inView != null && outsideDetail < detail && !inView.test(key) ? outsideDetail : detail;
-        if (forcedLevel >= 0 && level > forcedLevel) {
-            // Locked: down to that level, missing children asked for, nothing coarser drawn.
-            int x = LodKey.x(key) * 2;
-            int y = LodKey.y(key) * 2;
-            int z = LodKey.z(key) * 2;
-            for (int i = 0; i < 8; i++) {
-                visit(LodKey.pack(level - 1, x + (i & 1), y + (i >> 2), z + ((i >> 1) & 1)),
-                        camX, camY, camZ, maxDistance, sections, draw, want);
-            }
-            return;
-        }
-        if (forcedLevel < 0 && level > 0 && distance < split * size) {
+        if (level > Math.max(0, forcedLevel) && distance < split * size) {
             boolean childrenReady = true;
             int x = LodKey.x(key) * 2;
             int y = LodKey.y(key) * 2;
