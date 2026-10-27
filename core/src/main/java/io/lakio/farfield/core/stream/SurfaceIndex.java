@@ -3,12 +3,14 @@ package io.lakio.farfield.core.stream;
 import io.lakio.farfield.core.LodKey;
 import io.lakio.farfield.core.lod.LodSection;
 import io.lakio.farfield.core.mesh.MaterialClassifier;
+import io.lakio.farfield.core.storage.SectionStore;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.IntPredicate;
 
 /**
  * Which sections of a region lie entirely under the surface (ADR-013,
@@ -16,12 +18,21 @@ import java.util.Map;
  * full data, so a client cannot see caves or ores through the LODs.
  *
  * <p>Per section column: in each of its 32 x 32 voxel columns, the first
- * solid voxel from the sky down (air, fluids, glass, ice and plants let the
- * view through, so a sea floor counts); the column's floor is the lowest of
- * them. A section whose top lies under its column's floor is hidden. Cliffs
- * stay (they span from the floor up), so do sea floors; caves under the
- * floor go. A voxel column with no solid voxel at all leaves every section
- * of its column visible.
+ * solid voxel from the sky down (air, fluids, glass, ice, plants and leaves
+ * let the view through, so a sea floor counts, and the ground under a
+ * canopy); the column's floor is the lowest of them. A section whose top
+ * lies under the floor of its column and of the eight columns around is
+ * hidden: terrain seen from the side, under an overhang or an arch, stays.
+ * Cliffs stay (they span from the floor up), so do sea floors; caves under
+ * the floor go. A voxel column with no solid voxel at all leaves every
+ * section of its column, and of the columns around, visible; so does a
+ * column on the region's edge, whose neighbors are not read.
+ *
+ * <p>Only the finest level hides sections. A coarse section and its children
+ * found different floors (their voxels differ), so one level could be left
+ * out where the other was sent; the renderer, which reaches a section only
+ * through its parent and draws nothing where a child is missing, showed
+ * holes there (the sky through new terrain, under canopies and arches).
  */
 public final class SurfaceIndex {
 
@@ -34,30 +45,59 @@ public final class SurfaceIndex {
     private SurfaceIndex() {
     }
 
-    /** Whether a material stops the view from the sky. */
-    static boolean solid(MaterialClassifier classes, int material) {
+    /** Whether a material stops the view from the sky; {@code seeThrough} ones (leaves) do not. */
+    static boolean solid(MaterialClassifier classes, IntPredicate seeThrough, int material) {
         int c = classes.classOf(material);
-        return c == MaterialClassifier.OPAQUE || c == MaterialClassifier.PARTIAL || c == MaterialClassifier.SHAPED;
+        return (c == MaterialClassifier.OPAQUE || c == MaterialClassifier.PARTIAL || c == MaterialClassifier.SHAPED)
+                && !seeThrough.test(material);
+    }
+
+    /** {@link #hidden(long[], Sections, MaterialClassifier, IntPredicate)} with no see-through solid. */
+    public static List<Long> hidden(long[] keys, Sections sections, MaterialClassifier classes) throws IOException {
+        return hidden(keys, sections, classes, m -> false);
     }
 
     /**
      * The keys among {@code keys} (one region's sections) that lie entirely
-     * under their column's surface.
+     * under the surface of their column and of the columns around; none on
+     * a level other than the finest.
+     *
+     * @param seeThrough solid materials the view passes through all the same (leaves)
      */
-    public static List<Long> hidden(long[] keys, Sections sections, MaterialClassifier classes) throws IOException {
+    public static List<Long> hidden(long[] keys, Sections sections, MaterialClassifier classes,
+                                    IntPredicate seeThrough) throws IOException {
         Map<Long, List<Long>> columns = new HashMap<>();
         for (long key : keys) {
-            columns.computeIfAbsent(LodKey.pack(LodKey.level(key), LodKey.x(key), 0, LodKey.z(key)),
-                    c -> new ArrayList<>()).add(key);
+            if (LodKey.level(key) == 0) {
+                columns.computeIfAbsent(LodKey.pack(0, LodKey.x(key), 0, LodKey.z(key)), c -> new ArrayList<>()).add(key);
+            }
         }
+        Map<Long, Integer> floors = new HashMap<>();
+        for (Map.Entry<Long, List<Long>> column : columns.entrySet()) {
+            column.getValue().sort((a, b) -> Integer.compare(LodKey.y(b), LodKey.y(a)));
+            floors.put(column.getKey(), floor(column.getValue(), sections, classes, seeThrough));
+        }
+        int last = (1 << SectionStore.REGION_SHIFT) - 1;
         List<Long> hidden = new ArrayList<>();
-        for (List<Long> column : columns.values()) {
-            column.sort((a, b) -> Integer.compare(LodKey.y(b), LodKey.y(a)));
-            int floor = floor(column, sections, classes);
+        for (Map.Entry<Long, List<Long>> column : columns.entrySet()) {
+            int x = LodKey.x(column.getKey());
+            int z = LodKey.z(column.getKey());
+            int lx = x & last;
+            int lz = z & last;
+            if (lx == 0 || lz == 0 || lx == last || lz == last) {
+                continue;
+            }
+            int floor = Integer.MAX_VALUE;
+            for (int dz = -1; dz <= 1; dz++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    // A column without any section is not known here: everything around stays.
+                    floor = Math.min(floor, floors.getOrDefault(LodKey.pack(0, x + dx, 0, z + dz), Integer.MIN_VALUE));
+                }
+            }
             if (floor == Integer.MIN_VALUE) {
                 continue;
             }
-            for (long key : column) {
+            for (long key : column.getValue()) {
                 int top = LodKey.y(key) * LodSection.SIZE + LodSection.SIZE - 1;
                 if (top < floor) {
                     hidden.add(key);
@@ -72,7 +112,8 @@ public final class SurfaceIndex {
      * column's level; {@link Integer#MIN_VALUE} when some voxel column has
      * none (everything stays visible). {@code column} is sorted top down.
      */
-    static int floor(List<Long> column, Sections sections, MaterialClassifier classes) throws IOException {
+    static int floor(List<Long> column, Sections sections, MaterialClassifier classes, IntPredicate seeThrough)
+            throws IOException {
         final int s = LodSection.SIZE;
         boolean[] found = new boolean[s * s];
         int left = s * s;
@@ -87,7 +128,7 @@ public final class SurfaceIndex {
             boolean[] solidIndex = new boolean[section.paletteSize()];
             boolean any = false;
             for (int i = 0; i < solidIndex.length; i++) {
-                solidIndex[i] = solid(classes, section.paletteEntry(i));
+                solidIndex[i] = solid(classes, seeThrough, section.paletteEntry(i));
                 any |= solidIndex[i];
             }
             if (!any) {

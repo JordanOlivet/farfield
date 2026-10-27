@@ -547,6 +547,7 @@ public final class LodRenderer {
                 if (y < minY || y >= maxY) {
                     continue;
                 }
+                // The finest stored level decides: a coarse voxel is far bigger than what it holds.
                 for (int level = 0; level < LodWorld.LEVELS && realLevel < 0; level++) {
                     long key = LodKey.pack(level, x >> (5 + level), y >> (5 + level), z >> (5 + level));
                     LodSection s = sections.get(key);
@@ -564,6 +565,7 @@ public final class LodRenderer {
                                 && c != MaterialClassifier.PLANT) {
                             realLevel = level;
                         }
+                        break;
                     }
                 }
                 int tileX = Math.floorDiv(x, PreviewTile.BLOCKS);

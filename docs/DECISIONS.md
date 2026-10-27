@@ -1909,3 +1909,32 @@ Status: accepted, 2026-10-27. Extends ADR-071.
   through the same correction (`setVoxelBlocks(1 << draw level)`,
   `borderLight` with the classifier).
 
+
+## ADR-073 — The surface filter hides the finest level only, seen from around
+
+Status: accepted, 2026-10-27. Amends ADR-068 (surface only by default).
+
+- **Context**: in the user's pack, new terrain showed empty chunks for a
+  minute or two (the sky through mountains, under arches and jungle
+  canopies). `/farfieldclient debug here` on 24 of them: the client
+  wanted nothing (0 in flight, 0 wanted), the preview was hidden for real
+  terrain every time, and one level was missing from the server's index
+  where the others were sent: level 0 in 6 reports, level 1 in 8. The
+  surface filter ran per level, on each level's own voxels, and counted
+  leaves as solid; a coarse section and its children found different
+  floors. The renderer reaches a section only through its parent and draws
+  nothing where a child is missing, so a hidden level left a hole.
+- **Decision**: `SurfaceIndex` hides level-0 sections only. A section is
+  hidden when its top lies under the floor of its column and of the eight
+  columns around (terrain seen from the side stays); a column on the
+  region's edge, or next to a column without sections, stays. Leaves
+  (`BlockTags.LEAVES`) let the view through like glass and plants: the
+  LODs draw them with holes.
+- **Result**: unit tests (`SurfaceIndexTest`): sections under the floor
+  around hide, a section beside a lower column stays, the ground under a
+  canopy stays, coarse levels hide nothing. Not yet checked in the pack.
+- **Cost**: coarse sections under the surface are sent too (their voxels
+  are 2 blocks or more), and so are the region-edge columns.
+- **Rejected**: a renderer fallback drawing the parent where a child is
+  missing: under the surface every parent holds stone where its children
+  are hidden, so the sections around the player would have stayed coarse.

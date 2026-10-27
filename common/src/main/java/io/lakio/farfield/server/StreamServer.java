@@ -13,6 +13,7 @@ import io.lakio.farfield.core.stream.RegionChanges;
 import io.lakio.farfield.core.stream.StreamProtocol;
 import io.lakio.farfield.core.stream.SurfaceIndex;
 import io.lakio.farfield.core.world.LodWorld;
+import io.lakio.farfield.lod.BlockKeys;
 import io.lakio.farfield.lod.RenderSettings;
 import io.lakio.farfield.platform.Services;
 import net.minecraft.resources.ResourceKey;
@@ -470,13 +471,20 @@ public final class StreamServer {
         long[] array = keys.stream().mapToLong(Long::longValue).toArray();
         java.util.Set<Long> under;
         try {
-            under = java.util.Set.copyOf(SurfaceIndex.hidden(array, world::read, world.materials()));
+            under = java.util.Set.copyOf(SurfaceIndex.hidden(array, world::read, world.materials(), m -> leaves(world, m)));
         } catch (IOException | RuntimeException e) {
             Farfield.LOG.warn("LOD streaming: surface of region {} {} {} failed, sending all", level, rx, rz, e);
             under = java.util.Set.of();
         }
         regions.put(region, new Hidden(fingerprint, under));
         return under;
+    }
+
+    /** Whether a material of {@code world} is leaves: the LODs draw them with holes, the view passes. */
+    private static boolean leaves(LodWorld world, int material) {
+        String key = world.blockStates().key(material);
+        net.minecraft.world.level.block.state.BlockState state = key == null ? null : BlockKeys.state(key);
+        return state != null && state.is(net.minecraft.tags.BlockTags.LEAVES);
     }
 
     /**
