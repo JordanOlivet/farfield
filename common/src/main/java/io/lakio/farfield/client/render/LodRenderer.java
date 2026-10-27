@@ -2047,7 +2047,7 @@ public final class LodRenderer {
         if (timed) {
             glQueryCounter(timerQueries[slot * TIMESTAMPS + 3], GL_TIMESTAMP);
         }
-        if (translucentDraws > 0) {
+        if (translucentDraws > 0 && RenderSettings.drawTranslucent()) {
             use(shaded, cam, mc, true);
             RenderSystem.enableBlend();
             RenderSystem.blendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);

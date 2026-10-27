@@ -40,6 +40,7 @@ public final class RenderSettings {
     private static volatile boolean noisePreview = RenderConfig.DEFAULTS.noisePreview();
     private static volatile boolean depthPrepass = true;
     private static volatile boolean drawPlants = true;
+    private static volatile boolean drawTranslucent = true;
     private static volatile int forcedLevel = -1;
     private static volatile int meshThreads = RenderConfig.DEFAULTS.meshThreads();
     private static volatile int previewThreads = RenderConfig.DEFAULTS.previewThreads();
@@ -132,6 +133,19 @@ public final class RenderSettings {
 
     public static void setDrawPlants(boolean value) {
         drawPlants = value;
+    }
+
+    /**
+     * Whether the translucent pass (water, ice, glass) is drawn. A diagnostic
+     * switch for looking at sea floors through no water ({@code /farfield
+     * debug water}), on at every start, not saved.
+     */
+    public static boolean drawTranslucent() {
+        return drawTranslucent;
+    }
+
+    public static void setDrawTranslucent(boolean value) {
+        drawTranslucent = value;
     }
 
     /** Threads that mesh LOD sections, as set: 1 to 8, or {@link RenderConfig#AUTO}. Applied live. */

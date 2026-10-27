@@ -96,7 +96,20 @@ public final class RenderCommands {
                                 .then(LiteralArgumentBuilder.<S>literal("on").executes(c -> run.run(c.getSource(),
                                         () -> debugPlants(true))))
                                 .then(LiteralArgumentBuilder.<S>literal("off").executes(c -> run.run(c.getSource(),
-                                        () -> debugPlants(false))))));
+                                        () -> debugPlants(false)))))
+                        .then(LiteralArgumentBuilder.<S>literal("water")
+                                .executes(c -> run.run(c.getSource(), () -> debugWater(!RenderSettings.drawTranslucent())))
+                                .then(LiteralArgumentBuilder.<S>literal("on").executes(c -> run.run(c.getSource(),
+                                        () -> debugWater(true))))
+                                .then(LiteralArgumentBuilder.<S>literal("off").executes(c -> run.run(c.getSource(),
+                                        () -> debugWater(false))))));
+    }
+
+    /** Switches the LOD translucent pass (water, ice, glass), to look at sea floors. Not saved. */
+    private static String debugWater(boolean on) {
+        RenderSettings.setDrawTranslucent(on);
+        Farfield.LOG.info("LOD translucent pass switched {} by command", on ? "on" : "off");
+        return "LOD water, ice and glass " + (on ? "on" : "off") + " (default on, not saved).";
     }
 
     /** Switches the plants' crossed quads, to compare GPU times on the stat line. Not saved. */
