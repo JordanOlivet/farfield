@@ -379,7 +379,8 @@ class PreviewTest {
         assertEquals(GRASS, s.material(0, 4, 0));
         assertEquals(1, s.fill().get(0, 4, 0), "66 - 64 = 2 blocks: 2/16");
         assertEquals(DIRT, s.material(0, 3, 0), "the filler reaches into the voxel below");
-        assertEquals(AIR, s.material(0, 2, 0), "under the skin: one voxel below the lowest neighbor (66)");
+        assertEquals(STONE, s.material(0, 2, 0));
+        assertEquals(AIR, s.material(0, 1, 0), "under the skin: one voxel below the neighbors' lowest block (50)");
         assertEquals(15, s.fill().get(0, 3, 0));
     }
 
@@ -738,20 +739,7 @@ class PreviewTest {
         // Heights jumping by up to 12 blocks between samples, under the sea: no water voxel
         // may touch, by a face, an edge or a corner, the hollow under a preview column
         // (the sky showed through such edges as white specks on underwater ridges).
-        PreviewTile t = new PreviewTile();
-        java.util.SplittableRandom random = new java.util.SplittableRandom(7);
-        for (int k = 0; k < PreviewTile.SAMPLES; k++) {
-            for (int i = 0; i < PreviewTile.SAMPLES; i++) {
-                t.setHeight(i, k, 34 + random.nextInt(13));
-            }
-        }
-        for (int cz = 0; cz < PreviewTile.CELLS; cz++) {
-            for (int cx = 0; cx < PreviewTile.CELLS; cx++) {
-                t.setCell(cx, cz, SAND, SAND);
-            }
-        }
-        t.setBelow(STONE);
-        t.setWater(WATER, 63);
+        PreviewTile t = ruggedSeaFloor();
         PreviewVoxels.Tiles tiles = (x, z) -> x == 0 && z == 0 ? t : null;
         int sections = 4;
         byte[] g = new byte[(sections * 32) * 64 * (sections * 32)];
@@ -766,17 +754,83 @@ class PreviewTest {
                     for (int z = 0; z < 32; z++) {
                         for (int y = 0; y < 32; y++) {
                             for (int x = 0; x < 32; x++) {
-                                int m = s.material(x, y, z);
-                                g[((sz * 32 + z) * 64 + sy * 32 + y) * w + sx * 32 + x] =
-                                        (byte) (m == AIR ? 0 : m == WATER ? 1 : 2);
+                                g[((sz * 32 + z) * 64 + sy * 32 + y) * w + sx * 32 + x] = kind(s, x, y, z);
                             }
                         }
                     }
                 }
             }
         }
+        assertEquals(0, hollowContacts(g, w, w), "water touching a hollow under the ground");
+    }
+
+    @Test
+    void aCoarseSectionShowsNoHollowToAFinerOneBeside() {
+        // A level-1 section beside level-0 ones, as on the seam between two levels of
+        // detail: a coarse column stands as high as the highest of its blocks, so the finer
+        // terrain beside it can lie lower than the coarse column's floor. The view then passed
+        // under the coarse column, into its hollow (light-coloured specks along the seam).
+        PreviewTile t = ruggedSeaFloor();
+        PreviewVoxels.Tiles tiles = (x, z) -> x == 0 && z == 0 ? t : null;
+        int w = 96; // blocks 32 to 127 along X: level 0 up to 63, level 1 from 64
+        int d = 64;
+        byte[] g = new byte[w * 64 * d];
+        for (int sz = 0; sz < 2; sz++) {
+            for (int sy = 0; sy < 2; sy++) {
+                LodSection s = PreviewVoxels.build(0, 1, sy, sz, tiles, null, AIR, -64, -1, -1, -1, 0);
+                for (int z = 0; z < 32; z++) {
+                    for (int y = 0; y < 32; y++) {
+                        for (int x = 0; x < 32; x++) {
+                            g[((sz * 32 + z) * 64 + sy * 32 + y) * w + x] = kind(s, x, y, z);
+                        }
+                    }
+                }
+            }
+        }
+        LodSection coarse = PreviewVoxels.build(1, 1, 0, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
+        for (int z = 0; z < 64; z++) {
+            for (int y = 0; y < 64; y++) {
+                for (int x = 0; x < 64; x++) {
+                    g[(z * 64 + y) * w + 32 + x] = kind(coarse, x / 2, y / 2, z / 2);
+                }
+            }
+        }
+        assertEquals(0, hollowContacts(g, w, d), "water touching a hollow under the coarse ground");
+    }
+
+    /** Heights jumping by up to 12 blocks between samples, under a sea at 63. */
+    private static PreviewTile ruggedSeaFloor() {
+        PreviewTile t = new PreviewTile();
+        java.util.SplittableRandom random = new java.util.SplittableRandom(7);
+        for (int k = 0; k < PreviewTile.SAMPLES; k++) {
+            for (int i = 0; i < PreviewTile.SAMPLES; i++) {
+                t.setHeight(i, k, 34 + random.nextInt(13));
+            }
+        }
+        for (int cz = 0; cz < PreviewTile.CELLS; cz++) {
+            for (int cx = 0; cx < PreviewTile.CELLS; cx++) {
+                t.setCell(cx, cz, SAND, SAND);
+            }
+        }
+        t.setBelow(STONE);
+        t.setWater(WATER, 63);
+        return t;
+    }
+
+    /** 0 air, 1 water, 2 ground; a missing section is air. */
+    private static byte kind(LodSection s, int x, int y, int z) {
+        int m = s == null ? AIR : s.material(x, y, z);
+        return (byte) (m == AIR ? 0 : m == WATER ? 1 : 2);
+    }
+
+    /**
+     * Water blocks touching, by a face, an edge or a corner, an air block with ground
+     * above it in its column: a hollow under the terrain. Grid of {@code w} by 64 by
+     * {@code d} blocks, X fastest.
+     */
+    private static int hollowContacts(byte[] g, int w, int d) {
         int contacts = 0;
-        for (int z = 1; z < w - 1; z++) {
+        for (int z = 1; z < d - 1; z++) {
             for (int x = 1; x < w - 1; x++) {
                 for (int y = 1; y < 63; y++) {
                     if (g[(z * 64 + y) * w + x] != 1) {
@@ -803,6 +857,6 @@ class PreviewTest {
                 }
             }
         }
-        assertEquals(0, contacts, "water touching a hollow under the ground");
+        return contacts;
     }
 }

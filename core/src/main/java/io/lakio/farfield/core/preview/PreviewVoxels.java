@@ -110,11 +110,12 @@ public final class PreviewVoxels {
         TileCache cache = new TileCache(tiles);
         int n = (S + 2) * (S + 2);
         int[] h = new int[n];
+        int[] low = new int[n];
         int[] cells = new int[n];
         boolean[] real = new boolean[n];
         int[] ground = new int[n];
         int[] fluid = new int[n];
-        int[] cell = new int[1];
+        int[] cell = new int[2];
         // A layer along X or Z needs only its own row of columns and the two beside it.
         int iMin = layerAxis == 0 ? layerIndex - 1 : -1;
         int iMax = layerAxis == 0 ? layerIndex + 1 : S;
@@ -127,6 +128,7 @@ public final class PreviewVoxels {
                 int bz = oz + k * s;
                 h[c] = columnHeight(cache, bx, bz, s, cell);
                 cells[c] = cell[0];
+                low[c] = cell[1];
                 real[c] = mask != null && mask.real(bx >> 4, bz >> 4);
                 if (real[c]) {
                     ground[c] = mask.ground(bx >> 4, bz >> 4);
@@ -158,12 +160,14 @@ public final class PreviewVoxels {
                 // Down to under the lowest of the eight columns around, diagonals included: a
                 // column a block thick beside a much lower diagonal neighbor let the view pass
                 // along their shared edge into the hollow under it, and the sky showed through
-                // the sea floor (white specks on underwater ridges, far away).
+                // the sea floor (white specks on underwater ridges, far away). Under their lowest
+                // block, not their columns: a finer level beside, on the seam between two levels,
+                // has columns that low, and the view passed under this column into its hollow.
                 int floor = height;
                 for (int dz = -1; dz <= 1; dz++) {
                     for (int dx = -1; dx <= 1; dx++) {
                         if (dx != 0 || dz != 0) {
-                            floor = Math.min(floor, lower(height, c + dz * (S + 2) + dx, h, real, ground));
+                            floor = Math.min(floor, lower(height, c + dz * (S + 2) + dx, low, real, ground));
                         }
                     }
                 }
@@ -757,10 +761,11 @@ public final class PreviewVoxels {
 
     /**
      * The lower of a column's height and a neighbor's: a real neighbor's
-     * ground, else its preview surface; a neighbor without either is ignored.
+     * ground, else its preview footprint's lowest block ({@code low}); a
+     * neighbor without either is ignored.
      */
-    private static int lower(int height, int n, int[] h, boolean[] real, int[] ground) {
-        int neighbor = real[n] ? ground[n] : h[n];
+    private static int lower(int height, int n, int[] low, boolean[] real, int[] ground) {
+        int neighbor = real[n] ? ground[n] : low[n];
         return neighbor == NONE ? height : Math.min(height, neighbor);
     }
 
@@ -801,13 +806,16 @@ public final class PreviewVoxels {
      * The surface a voxel column stands at: below 4 blocks, the highest
      * interpolated block of its footprint; from 4 blocks, the highest sample
      * on or inside its footprint. {@link #NONE} without a tile. {@code cell}
-     * receives the tile cell of that highest point, {@code z * CELLS + x}.
+     * receives the tile cell of that highest point, {@code z * CELLS + x},
+     * then the lowest point of the footprint.
      */
     static int columnHeight(TileCache cache, int bx, int bz, int s, int[] cell) {
         PreviewTile tile = cache.tile(Math.floorDiv(bx, PreviewTile.BLOCKS), Math.floorDiv(bz, PreviewTile.BLOCKS));
         if (tile == null) {
+            cell[1] = NONE;
             return NONE;
         }
+        int lowest = Integer.MAX_VALUE;
         int lx = Math.floorMod(bx, PreviewTile.BLOCKS);
         int lz = Math.floorMod(bz, PreviewTile.BLOCKS);
         int best = NONE;
@@ -816,6 +824,7 @@ public final class PreviewVoxels {
             for (int dz = 0; dz < s; dz++) {
                 for (int dx = 0; dx < s; dx++) {
                     int v = tile.height(lx + dx, lz + dz);
+                    lowest = Math.min(lowest, v);
                     if (v > best) {
                         best = v;
                         cell[0] = (lz + dz) / PreviewTile.GRID * PreviewTile.CELLS + (lx + dx) / PreviewTile.GRID;
@@ -826,6 +835,7 @@ public final class PreviewVoxels {
             for (int k = lz / PreviewTile.GRID; k <= (lz + s) / PreviewTile.GRID; k++) {
                 for (int i = lx / PreviewTile.GRID; i <= (lx + s) / PreviewTile.GRID; i++) {
                     int v = tile.sample(i, k);
+                    lowest = Math.min(lowest, v);
                     if (v > best) {
                         best = v;
                         // A sample on the far edge belongs to the next tile's cell: keep the last one.
@@ -834,6 +844,7 @@ public final class PreviewVoxels {
                 }
             }
         }
+        cell[1] = best == NONE ? NONE : lowest;
         return best;
     }
 
