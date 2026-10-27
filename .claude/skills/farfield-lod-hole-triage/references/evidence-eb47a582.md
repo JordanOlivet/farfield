@@ -1,0 +1,1 @@
+Écarté en route : élargir les faces pour boucher des fentes, l'hypothèse des jonctions en T. Les points n'ont pas bougé : c'étaient des faces trop éclairées, pas des trous.

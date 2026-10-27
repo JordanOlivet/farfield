@@ -1,0 +1,1 @@
+Je laisse tomber la comparaison entre les deux sessions, peu fiable car la zone lointaine n'était pas chargée à l'identique. Je vais plutôt mesurer hors jeu en maillant les sections niveaux 3 et 4 du store de dev avec l'ancienne puis la nouvelle règle, en comptant les faces de fond sous l'eau éclairées à 15.

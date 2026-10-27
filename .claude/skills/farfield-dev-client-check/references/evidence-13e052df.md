@@ -1,0 +1,1 @@
+sent /farfieldclient textures all\r\n[16:56:42] [Render thread/INFO] (Minecraft) [System] [CHAT] LOD textures on every LOD (default all; /farfieldclient textures all|<blocks>, 0 turns them off).\ncaptured 3866 x 2090\r\ntexture_distance=all
