@@ -225,6 +225,23 @@ public final class LodWorld implements AutoCloseable {
         }
     }
 
+    /** The section of a record from a server's store, read with this store's codec. */
+    public LodSection decodeRecord(long key, byte[] record) throws IOException {
+        return store.decodeRecord(record, key);
+    }
+
+    /**
+     * Writes a section received from a server's store once its ids are this
+     * store's (ADR-068), like {@link #putRecord}: the mips stay untouched.
+     */
+    public void putSection(long key, LodSection section) throws IOException {
+        store.write(key, section);
+        sectionsWritten.increment();
+        for (LongConsumer l : listeners) {
+            l.accept(key);
+        }
+    }
+
     /**
      * Tells the listeners a stored section is current again without writing
      * it (a server answered that the mirror's copy is its latest, ADR-068).

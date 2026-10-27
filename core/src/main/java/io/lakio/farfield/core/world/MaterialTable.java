@@ -138,9 +138,7 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
         int q = Math.max(1, Math.min(CoveredKey.MAX_QUARTERS, quarters));
         return covered.computeIfAbsent((long) ground << 32 | (long) plant << 3 | q, k -> {
             String key = new CoveredKey(q, keys.key(plant), keys.key(ground)).key();
-            int id = keys.find(key);
-            // A mirror's table takes no key of its own (ADR-068): the bare ground then.
-            return id >= 0 ? id : keys.frozen() ? ground : keys.id(key);
+            return keys.id(key);
         });
     }
 
@@ -230,10 +228,8 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
                 // Resolved like its ground; the shapes' side gets its parts.
                 int[] g = coverGround.length > material ? coverGround : Arrays.copyOf(coverGround, p.length);
                 int[] q = coverPlant.length > material ? coverPlant : Arrays.copyOf(coverPlant, p.length);
-                int ground = keys.frozen() ? keys.find(cover.ground()) : keys.id(cover.ground());
-                int plant = keys.frozen() ? keys.find(cover.plant()) : keys.id(cover.plant());
-                g[material] = ground >= 0 ? ground : material;
-                q[material] = plant;
+                g[material] = keys.id(cover.ground());
+                q[material] = keys.id(cover.plant());
                 coverGround = g;
                 coverPlant = q;
                 value = value & ~(7 << COVER_SHIFT) | Math.min(CoveredKey.MAX_QUARTERS, cover.quarters()) << COVER_SHIFT;
@@ -248,15 +244,10 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
                 if (fluid == null) {
                     value &= ~SUBMERGED;
                 } else {
-                    int id = keys.frozen() ? keys.find(fluid) : keys.id(fluid);
-                    if (id < 0) {
-                        value &= ~SUBMERGED; // a mirror without that fluid's key: plain fluid
-                    } else {
-                        int[] f = submergedFluid.length > material ? submergedFluid
-                                : Arrays.copyOf(submergedFluid, p.length);
-                        f[material] = id;
-                        submergedFluid = f;
-                    }
+                    int[] f = submergedFluid.length > material ? submergedFluid
+                            : Arrays.copyOf(submergedFluid, p.length);
+                    f[material] = keys.id(fluid);
+                    submergedFluid = f;
                 }
             }
             if ((value & 15) == SHAPED) {

@@ -144,6 +144,21 @@ public final class SectionStore implements AutoCloseable {
         if (record == null) {
             return null;
         }
+        length[0] = decompress(record, key);
+        return BUFFERS.get().decompressed;
+    }
+
+    /** The section of a record {@link #readRecord} returned, possibly from another store. */
+    public LodSection decodeRecord(byte[] record, long key) throws IOException {
+        int n = decompress(record, key);
+        return BUFFERS.get().codec.decode(BUFFERS.get().decompressed, 0, n);
+    }
+
+    /** Decompresses a record into the calling thread's buffer; returns the codec bytes' length. */
+    private static int decompress(byte[] record, long key) throws IOException {
+        if (record.length < 4) {
+            throw new IOException("bad record for " + LodKey.toString(key));
+        }
         int rawLength = (record[0] & 0xFF) | (record[1] & 0xFF) << 8 | (record[2] & 0xFF) << 16 | (record[3] & 0xFF) << 24;
         Buffers b = BUFFERS.get();
         if (b.decompressed.length < rawLength) {
@@ -153,8 +168,7 @@ public final class SectionStore implements AutoCloseable {
         if (n != rawLength) {
             throw new IOException("bad record length for " + LodKey.toString(key));
         }
-        length[0] = n;
-        return b.decompressed;
+        return n;
     }
 
     /**

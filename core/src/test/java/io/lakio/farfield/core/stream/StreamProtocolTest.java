@@ -20,6 +20,12 @@ class StreamProtocolTest {
 
         StreamProtocol.Welcome welcome = new StreamProtocol.Welcome(7, "minecraft:the_nether", -5L, 4096, 6460, 127);
         assertEquals(welcome, StreamProtocol.Welcome.decode(welcome.encode()));
+        assertEquals(1, StreamProtocol.Hello.version(hello.encode()));
+        // A refusal reads the same in every version: session -1, the server's protocol as the radius.
+        StreamProtocol.Welcome declined = StreamProtocol.Welcome.decode(
+                StreamProtocol.Welcome.declined(StreamProtocol.VERSION).encode());
+        assertEquals(-1, declined.session());
+        assertEquals(StreamProtocol.VERSION, declined.radiusBlocks());
 
         StreamProtocol.Keys keys = new StreamProtocol.Keys(7, StreamProtocol.BIOMES, 3,
                 new String[]{"minecraft:plains", "cobblemon:é"});

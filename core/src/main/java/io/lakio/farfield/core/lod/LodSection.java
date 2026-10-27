@@ -150,6 +150,50 @@ public final class LodSection {
         biomes[(cellY * 8 + cellZ) * 8 + cellX] = biome;
     }
 
+    /**
+     * Replaces every material and biome id with {@code materials[id]} and
+     * {@code biomes[id]}: a section moving from one key table to another
+     * (a server's store into a client's mirror, ADR-068). Unknown biomes
+     * (-1) stay unknown. Two ids never map to one.
+     *
+     * @return whether any id changed
+     * @throws IllegalArgumentException for an id past the end of its map
+     */
+    public boolean remapIds(int[] materials, int[] biomes) {
+        boolean changed = false;
+        for (int i = 0; i < paletteSize; i++) {
+            int to = mapId(materials, palette[i]);
+            changed |= to != palette[i];
+            palette[i] = to;
+        }
+        if (changed) {
+            paletteLookup.clear();
+            for (int i = 0; i < paletteSize; i++) {
+                paletteLookup.put(palette[i], i);
+            }
+        }
+        if (this.biomes == null) {
+            int to = uniformBiome < 0 ? uniformBiome : mapId(biomes, uniformBiome);
+            changed |= to != uniformBiome;
+            uniformBiome = to;
+        } else {
+            for (int i = 0; i < this.biomes.length; i++) {
+                int from = this.biomes[i];
+                int to = from < 0 ? from : mapId(biomes, from);
+                changed |= to != from;
+                this.biomes[i] = to;
+            }
+        }
+        return changed;
+    }
+
+    private static int mapId(int[] map, int id) {
+        if (id < 0 || id >= map.length) {
+            throw new IllegalArgumentException("no mapping for id " + id);
+        }
+        return map[id];
+    }
+
     /** Collapses per-cell biomes back to one value when they are all equal. */
     public void compactBiomes() {
         if (biomes == null) {

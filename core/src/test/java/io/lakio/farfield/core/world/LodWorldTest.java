@@ -16,6 +16,7 @@ import java.util.Set;
 import java.util.concurrent.Executors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -87,6 +88,37 @@ class LodWorldTest {
             assertEquals(from.blockStates().id("minecraft:dirt"), mirrored.material(16, 7, 16));
             assertEquals(from.read(key).material(16, 8, 16), mirrored.material(16, 8, 16));
             assertTrue(!to.hasDirtyMips(), "a mirror never rebuilds coarse levels");
+
+            // A mirror with a key of its own first: the server's ids land elsewhere, translated on receipt.
+            try (LodWorld other = LodWorld.open(dir.resolve("other"), MaterialTable.SIMPLE)) {
+                int own = other.blockStates().id("farfield:client_only");
+                io.lakio.farfield.core.stream.KeyTranslation blocks =
+                        new io.lakio.farfield.core.stream.KeyTranslation(other.blockStates());
+                io.lakio.farfield.core.stream.KeyTranslation biomes =
+                        new io.lakio.farfield.core.stream.KeyTranslation(other.biomes());
+                String[] serverBlocks = new String[from.blockStates().size()];
+                for (int id = 0; id < serverBlocks.length; id++) {
+                    serverBlocks[id] = from.blockStates().key(id);
+                }
+                String[] serverBiomes = new String[from.biomes().size()];
+                for (int id = 0; id < serverBiomes.length; id++) {
+                    serverBiomes[id] = from.biomes().key(id);
+                }
+                assertTrue(blocks.add(0, serverBlocks));
+                assertTrue(biomes.add(0, serverBiomes));
+                assertTrue(blocks.add(1, java.util.Arrays.copyOfRange(serverBlocks, 1, 2)), "keys held again");
+                assertFalse(blocks.add(serverBlocks.length + 1, new String[]{"x:gap"}));
+                assertFalse(blocks.add(0, new String[]{"x:other"}));
+                LodSection received = other.decodeRecord(key, record);
+                assertTrue(received.remapIds(blocks.map(), biomes.map()));
+                other.putSection(key, received);
+                LodSection translated = other.read(key);
+                assertEquals("minecraft:dirt", other.blockStates().key(translated.material(16, 7, 16)));
+                assertTrue(translated.material(16, 7, 16) != own);
+                LodSection original = from.read(key);
+                assertEquals(from.biomes().key(original.biome(4, 1, 4)),
+                        other.biomes().key(translated.biome(4, 1, 4)));
+            }
 
             // Another chunk in the same section: a new record, a new version.
             from.ingest(chunk(from, 2, -1));

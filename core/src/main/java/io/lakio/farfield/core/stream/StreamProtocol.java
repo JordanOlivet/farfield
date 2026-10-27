@@ -109,6 +109,11 @@ public final class StreamProtocol {
             return out.toByteArray();
         }
 
+        /** The protocol version of a hello, the one field every version starts with. */
+        public static int version(byte[] payload) {
+            return body(payload).readVarInt();
+        }
+
         public static Hello decode(byte[] payload) {
             ByteReader in = body(payload);
             return new Hello(in.readVarInt(), readString(in), in.readLong(), in.readVarInt(), in.readVarInt());
@@ -118,9 +123,21 @@ public final class StreamProtocol {
     /**
      * Server: the dimension streams under {@code session}, from a store of
      * that epoch, within a radius; its key tables hold {@code blockStates}
-     * and {@code biomes} keys, all sent right after.
+     * and {@code biomes} keys, all sent right after. A session of -1
+     * declines: the client builds its own LODs. This shape stays the same
+     * in every protocol version, so a client of another version still reads
+     * a refusal.
      */
     public record Welcome(int session, String dimension, long epoch, int radiusBlocks, int blockStates, int biomes) {
+        /**
+         * A refusal: streaming is off ({@code serverVersion} 0), or the
+         * client speaks another protocol than {@code serverVersion}, carried
+         * in {@link #radiusBlocks}.
+         */
+        public static Welcome declined(int serverVersion) {
+            return new Welcome(-1, "", 0, serverVersion, 0, 0);
+        }
+
         public byte[] encode() {
             ByteWriter out = start(WELCOME);
             out.writeVarInt(session);

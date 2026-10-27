@@ -120,7 +120,7 @@ public final class PreviewStore {
         Path file = file(tileX, tileZ);
         Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
         Files.write(tmp, java.util.Arrays.copyOf(out, n + 4));
-        Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        replace(tmp, file);
         long key = key(tileX, tileZ);
         synchronized (cache) {
             cache.put(key, tile);
@@ -154,22 +154,14 @@ public final class PreviewStore {
     }
 
     /**
-     * Writes a tile file {@link #readFile} returned, from another store,
-     * after checking it decodes; then tells the listeners.
+     * The tile of a file {@link #readFile} returned, from another store
+     * (ADR-068): its ids are that store's until {@link PreviewTile#remapIds}.
      */
-    public void writeFile(int tileX, int tileZ, byte[] data) throws IOException {
-        PreviewTile tile = decode(data);
-        Path file = file(tileX, tileZ);
-        Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-        Files.write(tmp, data);
-        Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-        long key = key(tileX, tileZ);
-        synchronized (cache) {
-            cache.put(key, tile);
-        }
-        summaries.put(key, tile.summary());
-        for (LongConsumer l : listeners) {
-            l.accept(key);
+    public static PreviewTile decodeFile(byte[] file) throws IOException {
+        try {
+            return decode(file);
+        } catch (RuntimeException e) {
+            throw new IOException("bad preview tile file", e);
         }
     }
 
@@ -183,6 +175,30 @@ public final class PreviewStore {
 
     private Path file(int tileX, int tileZ) {
         return dir.resolve("t." + tileX + "." + tileZ + ".ffp");
+    }
+
+    /**
+     * Moves a written file over the old one. On Windows the move fails while
+     * another thread reads the old file (a reader of the preview, the
+     * streaming): tried again for a moment.
+     */
+    private static void replace(Path tmp, Path file) throws IOException {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                return;
+            } catch (java.nio.file.AccessDeniedException e) {
+                if (attempt == 10) {
+                    throw e;
+                }
+                try {
+                    Thread.sleep(10L * attempt);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+            }
+        }
     }
 
     private static PreviewTile load(Path file) throws IOException {

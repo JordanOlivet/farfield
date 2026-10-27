@@ -700,11 +700,36 @@ class PreviewTest {
         PreviewStore client = new PreviewStore(dir.resolve("client"));
         List<Long> heard = new ArrayList<>();
         client.addListener(heard::add);
-        client.writeFile(4, -1, file);
+        client.write(4, -1, PreviewStore.decodeFile(file));
         assertEquals(List.of(PreviewStore.key(4, -1)), heard);
         assertNotNull(client.summary(4, -1));
         assertEquals(slope().sample(100, 7), client.read(4, -1).sample(100, 7));
         assertEquals(version, PreviewStore.version(client.readFile(4, -1)));
-        assertThrows(IOException.class, () -> client.writeFile(1, 1, new byte[]{1, 2}));
+        assertThrows(IOException.class, () -> PreviewStore.decodeFile(new byte[]{1, 2}));
+        assertThrows(IOException.class, () -> PreviewStore.decodeFile(new byte[]{1, 2, 3, 4, 5, 6}));
+    }
+
+    @Test
+    void remappedTilesNameTheMirrorsIds() {
+        PreviewTile t = new PreviewTile();
+        t.setBelow(1);
+        t.setCell(0, 0, 2, 3);
+        t.setBiome(0, 0, 0);
+        t.setPlantGround(2);
+        int kind = t.kind(new PreviewTile.TreeKind(4, 5, 6, 2, 3, PreviewTile.BLOB, -1));
+        t.plantKind(5);
+        int[] materials = {10, 11, 12, 13, 14, 15};
+        int[] biomes = {7};
+        t.remapIds(materials, biomes);
+        assertEquals(11, t.below());
+        assertEquals(12, t.top(0, 0));
+        assertEquals(13, t.filler(0, 0));
+        assertEquals(7, t.biome(0, 0));
+        assertEquals(12, t.plantGround());
+        assertEquals(14, t.treeKind(kind).trunk());
+        assertEquals(15, t.treeKind(kind).leaves());
+        assertEquals(-1, t.treeKind(kind).snow());
+        assertEquals(15, t.plantMaterial(0));
+        assertThrows(IllegalArgumentException.class, () -> t.remapIds(new int[3], biomes));
     }
 }

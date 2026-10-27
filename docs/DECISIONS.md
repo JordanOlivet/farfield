@@ -1838,3 +1838,31 @@ water over them.
   water), which needs a depth range shared with vanilla: not started.
 - To check: the user's walk along the edge with the stat line's count
   above 0, and no column of LODs left in place of built vanilla terrain.
+
+## ADR-070 — Streamed mirrors translate the server's ids; other versions declined
+
+Status: accepted, 2026-10-27. Amends ADR-068 (client storage, change
+notices, versions).
+
+- **Context**: ADR-068's mirror kept the server's key tables id for id,
+  so nothing on the client could add a key: the preview's covered
+  materials (ADR-060) fell back to the bare ground, and the streamed
+  preview lost its speckle on coarse levels. A client of another protocol
+  version got no answer to its hello and waited, drawing no LODs at all.
+- **Decision, ids**: the mirror's key tables are its own. The client keeps
+  the server's keys in id order beside the mirror
+  (`server-block-states.txt`, `server-biomes.txt`, `KeyTranslation`) with
+  the mirror's id of each, and a writer thread translates every received
+  section (`LodSection.remapIds`) and tile (`PreviewTile.remapIds`) before
+  storing it; a section whose ids are all the same is stored as it came.
+  A mirror of before keeps its tables as the server's keys (no refetch).
+- **Decision, notices**: the server announces written regions, not
+  sections (`CHANGED`): a region once its writes paused for 3 s, or at
+  most every 20 s; the client asks its index again (2026-10-26).
+- **Decision, versions**: a server answers a hello of another protocol
+  version with a refusal (a welcome of session -1, its own version in the
+  radius field); the welcome's shape stays the same in every version. The
+  client then builds its own LODs, and does so too after 6 hellos without
+  an answer (a server from before this change).
+- **Cost**: one decode per received section on the writer thread, an
+  encode and a compression more for a translated one.

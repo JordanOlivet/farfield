@@ -8,7 +8,6 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MaterialTableTest {
@@ -75,22 +74,6 @@ class MaterialTableTest {
         // Without a fluid key: plain water, its own faces.
         assertFalse(table.hasPlant(lost));
         assertEquals(lost, table.fluidOf(lost));
-    }
-
-    @Test
-    void aFrozenTableTakesNoKeyOfItsOwn() {
-        KeyRegistry keys = new KeyRegistry();
-        int ground = keys.id("minecraft:grass_block[snowy=false]");
-        int plant = keys.id("minecraft:short_grass");
-        MaterialTable table = new MaterialTable(keys, key -> key.contains("short_grass")
-                ? MaterialTable.pack(MaterialClassifier.PLANT, MipBuilder.Shapes.SPARSE)
-                : MaterialTable.pack(MaterialClassifier.OPAQUE, MipBuilder.Shapes.FULL));
-        keys.freeze();
-        assertEquals(ground, table.covered(ground, plant, 2), "no covered key here: the bare ground");
-        assertEquals(2, keys.size());
-        assertThrows(IllegalStateException.class, () -> keys.id("minecraft:stone"));
-        assertEquals(2, keys.idForced("minecraft:stone"));
-        assertEquals(-1, keys.find("minecraft:dirt"));
     }
 
     @Test

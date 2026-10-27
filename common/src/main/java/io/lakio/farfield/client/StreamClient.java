@@ -2,12 +2,12 @@ package io.lakio.farfield.client;
 
 import io.lakio.farfield.Farfield;
 import io.lakio.farfield.core.LodKey;
-import io.lakio.farfield.core.anvil.KeyRegistry;
 import io.lakio.farfield.core.lod.LodSection;
 import io.lakio.farfield.core.preview.PreviewStore;
 import io.lakio.farfield.core.preview.PreviewTile;
 import io.lakio.farfield.core.storage.SectionStore;
 import io.lakio.farfield.core.stream.FetchWindow;
+import io.lakio.farfield.core.stream.KeyTranslation;
 import io.lakio.farfield.core.stream.StreamProtocol;
 import io.lakio.farfield.core.world.LodWorld;
 import io.lakio.farfield.core.world.RemoteWorldId;
@@ -31,6 +31,10 @@ import java.io.BufferedOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
 /**
@@ -41,7 +45,10 @@ import java.util.stream.Stream;
  * {@link LodClient}). The renderer asks it which sections exist (region
  * indexes from the server), and hands it the sections it wants, nearest
  * and in view first; at most {@link StreamProtocol.Fetch#MAX_KEYS} are in
- * flight, fewer when the answers come back late ({@link FetchWindow}). Received records go into the mirror as they are; the versions it
+ * flight, fewer when the answers come back late ({@link FetchWindow}).
+ * Received records name blocks and biomes by the server's ids: a writer
+ * thread translates them to the mirror's ({@link KeyTranslation}) and
+ * stores them, so the mirror keeps key tables of its own. The versions it
  * holds are kept beside it, so a rejoin only checks them. The noise preview
  * comes the same way, as tiles within the radius, nearest first, asked
  * again when the server says one was built. Client thread only.
@@ -54,6 +61,10 @@ public final class StreamClient {
     private static final String EPOCH_FILE = "server.epoch";
     private static final String VERSIONS_FILE = "versions.bin";
     private static final String TILES_FILE = "tiles.bin";
+    private static final String BLOCK_KEYS_FILE = "server-block-states.txt";
+    private static final String BIOME_KEYS_FILE = "server-biomes.txt";
+    /** Hellos without an answer before the client builds its own LODs (a server of another version). */
+    private static final int HELLO_ATTEMPTS = 6;
     private static final long TILE_SCAN_NANOS = 250_000_000L;
     /** Answers this much later than the quickest one halve the requests in flight. */
     private static final long WINDOW_SLACK_NANOS = 1_000_000_000L;
@@ -76,12 +87,25 @@ public final class StreamClient {
     private int mismatches;
     private static final int MAX_MISMATCHES = 2;
     /**
-     * Keys of each table the server sent (kept with the epoch): announced at
-     * hello, so the server never skips a key the mirror lacks.
+     * The server's keys of each table and their ids in the mirror (kept with
+     * the epoch): their counts are announced at hello, so the server never
+     * skips a key the mirror lacks.
      */
-    private int serverBlockStates;
-    private int serverBiomes;
+    private KeyTranslation blockKeys;
+    private KeyTranslation biomeKeys;
     private long helloSent;
+    private int hellos;
+    /** Translates and stores received sections and tiles, in order, off the client thread. */
+    private final ExecutorService writer = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "farfield-stream-mirror");
+        t.setDaemon(true);
+        return t;
+    });
+    /** Sections and tiles the writer could not store: fetched again. */
+    private final ConcurrentLinkedQueue<Long> lostSections = new ConcurrentLinkedQueue<>();
+    private final ConcurrentLinkedQueue<Long> lostTiles = new ConcurrentLinkedQueue<>();
+    /** Sections whose ids differed from the server's (counted by the writer). */
+    private final java.util.concurrent.atomic.AtomicInteger translated = new java.util.concurrent.atomic.AtomicInteger();
     private final Long2LongOpenHashMap remote = new Long2LongOpenHashMap();
     private final Long2LongOpenHashMap local = new Long2LongOpenHashMap();
     private final LongOpenHashSet knownRegions = new LongOpenHashSet();
@@ -176,12 +200,12 @@ public final class StreamClient {
     }
 
     /**
-     * Welcomed, and the mirror's key tables hold every key the server had
-     * then: nothing drawn before may add a key of its own in between.
+     * Welcomed, and the mirror holds every key the server had then: the
+     * sections drawn can all be translated.
      */
     private boolean ready() {
-        return !declined && session >= 0 && mirror.blockStates().size() >= blockStatesExpected
-                && mirror.biomes().size() >= biomesExpected;
+        return !declined && session >= 0 && blockKeys.size() >= blockStatesExpected
+                && biomeKeys.size() >= biomesExpected;
     }
 
     /** The client streaming {@code world} (its mirror), or null. */
@@ -214,41 +238,66 @@ public final class StreamClient {
 
     private void openMirror() throws IOException {
         mirror = LodWorld.open(dir, BlockKeys.RESOLVER);
-        freezeKeys();
+        blockKeys = new KeyTranslation(mirror.blockStates());
+        biomeKeys = new KeyTranslation(mirror.biomes());
         Path epochFile = dir.resolve(EPOCH_FILE);
         cachedEpoch = 0;
-        serverBlockStates = 0;
-        serverBiomes = 0;
         local.clear();
         localTiles.clear();
         if (Files.exists(epochFile)) {
             try {
-                // "<epoch> <block-state keys> <biome keys>" as received; a table holding
-                // other keys (added here) is not the server's: the mirror starts again.
+                // "<epoch> <block-state keys> <biome keys>" as received, the server's keys beside.
                 String[] parts = Files.readString(epochFile).trim().split("\\s+");
                 int blockStates = Integer.parseInt(parts[1]);
                 int biomes = Integer.parseInt(parts[2]);
-                if (mirror.blockStates().size() == blockStates && mirror.biomes().size() == biomes) {
+                boolean held = blockKeys.read(dir.resolve(BLOCK_KEYS_FILE))
+                        && biomeKeys.read(dir.resolve(BIOME_KEYS_FILE)) || adoptOwnTables(blockStates, biomes);
+                if (held && blockKeys.size() == blockStates && biomeKeys.size() == biomes) {
                     cachedEpoch = Long.parseUnsignedLong(parts[0], 16);
-                    serverBlockStates = blockStates;
-                    serverBiomes = biomes;
                     readVersions(VERSIONS_FILE, local);
                     readVersions(TILES_FILE, localTiles);
                 }
             } catch (RuntimeException | IOException e) {
                 cachedEpoch = 0;
-                serverBlockStates = 0;
-                serverBiomes = 0;
                 local.clear();
                 localTiles.clear();
+            }
+            if (cachedEpoch == 0) {
+                blockKeys.clear();
+                biomeKeys.clear();
             }
         }
     }
 
-    /** The mirror's tables are the server's, id for id: nothing here adds a key to them. */
-    private void freezeKeys() {
-        mirror.blockStates().freeze();
-        mirror.biomes().freeze();
+    /**
+     * A mirror written before the translation kept the server's tables as its
+     * own, id for id, and no file of the server's keys: those are its tables.
+     */
+    private boolean adoptOwnTables(int blockStates, int biomes) {
+        if (mirror.blockStates().size() != blockStates || mirror.biomes().size() != biomes) {
+            return false;
+        }
+        String[] b = new String[blockStates];
+        for (int i = 0; i < blockStates; i++) {
+            b[i] = mirror.blockStates().key(i);
+        }
+        String[] m = new String[biomes];
+        for (int i = 0; i < biomes; i++) {
+            m[i] = mirror.biomes().key(i);
+        }
+        blockKeys.clear();
+        biomeKeys.clear();
+        return blockKeys.add(0, b) && biomeKeys.add(0, m);
+    }
+
+    /** Waits until the writer stored everything received so far. */
+    private void drainWriter() {
+        try {
+            writer.submit(() -> {
+            }).get(30, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            Farfield.LOG.warn("LOD streaming: the mirror's writer did not finish", e);
+        }
     }
 
     private void readVersions(String name, Long2LongOpenHashMap into) throws IOException {
@@ -279,6 +328,7 @@ public final class StreamClient {
 
     /** Empties the mirror: the server's store is another one (new epoch) or its keys disagree. */
     private void wipe(long epoch) throws IOException {
+        drainWriter();
         mirror.close();
         if (Files.exists(dir)) {
             try (Stream<Path> files = Files.walk(dir)) {
@@ -288,29 +338,40 @@ public final class StreamClient {
             }
         }
         mirror = LodWorld.open(dir, BlockKeys.RESOLVER);
-        freezeKeys();
+        blockKeys = new KeyTranslation(mirror.blockStates());
+        biomeKeys = new KeyTranslation(mirror.biomes());
         local.clear();
         localTiles.clear();
         cachedEpoch = epoch;
-        serverBlockStates = 0;
-        serverBiomes = 0;
     }
 
     private void close() {
+        writer.shutdown();
+        try {
+            if (!writer.awaitTermination(30, TimeUnit.SECONDS)) {
+                Farfield.LOG.warn("LOD streaming: the mirror's writer did not finish");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        dropLost();
         try {
             Path epochFile = dir.resolve(EPOCH_FILE);
-            if (session >= 0 && mirror.blockStates().size() == serverBlockStates
-                    && mirror.biomes().size() == serverBiomes) {
+            if (session >= 0) {
                 writeVersions(VERSIONS_FILE, local);
                 writeVersions(TILES_FILE, localTiles);
-                Files.writeString(epochFile, Long.toUnsignedString(cachedEpoch, 16) + " " + serverBlockStates + " "
-                        + serverBiomes);
+                blockKeys.write(dir.resolve(BLOCK_KEYS_FILE));
+                biomeKeys.write(dir.resolve(BIOME_KEYS_FILE));
+                Files.writeString(epochFile, Long.toUnsignedString(cachedEpoch, 16) + " " + blockKeys.size() + " "
+                        + biomeKeys.size());
             } else {
-                Files.deleteIfExists(epochFile); // not the server's tables: emptied at the next session
+                Files.deleteIfExists(epochFile); // not welcomed, or the keys disagreed: emptied at the next session
             }
             mirror.close();
-            Farfield.LOG.info("LOD stream mirror of {} closed: {} sections and {} preview tiles held",
-                    dimension.location(), local.size(), localTiles.size());
+            Farfield.LOG.info("LOD stream mirror of {} closed: {} sections and {} preview tiles held, {} keys of the"
+                            + " server's and {} of its own", dimension.location(), local.size(), localTiles.size(),
+                    blockKeys.size() + biomeKeys.size(), mirror.blockStates().size() + mirror.biomes().size()
+                            - blockKeys.size() - biomeKeys.size());
         } catch (IOException | RuntimeException e) {
             Farfield.LOG.warn("LOD streaming: closing the mirror of {} failed", dimension.location(), e);
         }
@@ -319,13 +380,22 @@ public final class StreamClient {
     private void update(Minecraft mc) {
         long now = System.nanoTime();
         if (session < 0 && !declined && now - helloSent > HELLO_RETRY_NANOS) {
+            if (hellos >= HELLO_ATTEMPTS) {
+                // A server whose Farfield speaks another protocol and does not say so (before 0.2.0).
+                declined = true;
+                Farfield.LOG.info("LOD streaming: no answer from the server's Farfield after {} tries (another"
+                        + " version?); building the LODs from its chunks", hellos);
+                return;
+            }
+            hellos++;
             helloSent = now;
             send(new StreamProtocol.Hello(StreamProtocol.VERSION, dimension.location().toString(), cachedEpoch,
-                    serverBlockStates, serverBiomes).encode());
+                    blockKeys.size(), biomeKeys.size()).encode());
         }
         if (session < 0) {
             return;
         }
+        dropLost();
         // Requests the server never answered (it dropped them): asked again later.
         if (inFlight.long2LongEntrySet().removeIf(e -> now - e.getLongValue() > REQUEST_TIMEOUT_NANOS)) {
             window.timedOut(now);
@@ -363,9 +433,9 @@ public final class StreamClient {
             nextStats = now + STATS_NANOS;
             if (RenderSettings.performanceLogs() && (received > 0 || !inFlight.isEmpty())) {
                 Farfield.LOG.info("LOD streaming: {} KB received in 10 s ({} sections, {} unchanged, {} preview tiles,"
-                                + " {} regions changed), {} in flight of {}, {} tiles of {}, {} wanted, {} known regions,"
-                                + " {} sections and {} tiles held", received >> 10, sectionsReceived, unchangedReceived,
-                        tilesReceived, regionsChanged, inFlight.size(), window.size(), tilesInFlight.size(),
+                                + " {} regions changed, {} translated), {} in flight of {}, {} tiles of {}, {} wanted,"
+                                + " {} known regions, {} sections and {} tiles held", received >> 10, sectionsReceived,
+                        unchangedReceived, tilesReceived, regionsChanged, translated.getAndSet(0), inFlight.size(), window.size(), tilesInFlight.size(),
                         tileWindow.size(), wishes.size(), knownRegions.size(), local.size(), localTiles.size());
             }
             received = 0;
@@ -373,6 +443,18 @@ public final class StreamClient {
             unchangedReceived = 0;
             tilesReceived = 0;
             regionsChanged = 0;
+        }
+    }
+
+    /** Forgets what the writer could not store, so it is fetched again. */
+    private void dropLost() {
+        Long key;
+        while ((key = lostSections.poll()) != null) {
+            local.remove(key.longValue());
+        }
+        while ((key = lostTiles.poll()) != null) {
+            localTiles.remove(key.longValue());
+            tilesAnswered.remove(key.longValue());
         }
     }
 
@@ -529,7 +611,12 @@ public final class StreamClient {
     private void welcome(StreamProtocol.Welcome welcome) throws IOException {
         if (welcome.session() < 0) {
             declined = true;
-            Farfield.LOG.info("LOD streaming: the server does not stream; building the LODs from its chunks");
+            if (welcome.radiusBlocks() > 0) {
+                Farfield.LOG.info("LOD streaming: the server's Farfield speaks protocol {}, this one {}; building the"
+                        + " LODs from its chunks", welcome.radiusBlocks(), StreamProtocol.VERSION);
+            } else {
+                Farfield.LOG.info("LOD streaming: the server does not stream; building the LODs from its chunks");
+            }
             return;
         }
         if (!welcome.dimension().equals(dimension.location().toString())) {
@@ -539,6 +626,7 @@ public final class StreamClient {
             wipe(welcome.epoch());
         }
         session = welcome.session();
+        hellos = 0;
         radius = welcome.radiusBlocks();
         blockStatesExpected = welcome.blockStates();
         biomesExpected = welcome.biomes();
@@ -563,29 +651,19 @@ public final class StreamClient {
         if (keys.session() != session) {
             return;
         }
-        KeyRegistry registry = keys.kind() == StreamProtocol.BLOCK_STATES ? mirror.blockStates() : mirror.biomes();
-        for (int i = 0; i < keys.keys().length; i++) {
-            int id = registry.idForced(keys.keys()[i]);
-            if (id != keys.from() + i) {
-                // The mirror's tables disagree with the server's: start it again, at most twice.
-                mismatches++;
-                Farfield.LOG.warn("LOD streaming: key {} is {} here and {} on the server; {}", keys.keys()[i], id,
-                        keys.from() + i, mismatches > MAX_MISMATCHES ? "building the LODs from the chunks instead"
-                                : "emptying the mirror");
-                wipe(0);
-                session = -1;
-                helloSent = 0;
-                if (mismatches > MAX_MISMATCHES) {
-                    declined = true;
-                }
-                return;
+        KeyTranslation table = keys.kind() == StreamProtocol.BLOCK_STATES ? blockKeys : biomeKeys;
+        if (!table.add(keys.from(), keys.keys())) {
+            // The server's keys disagree with those the mirror holds: start it again, at most twice.
+            mismatches++;
+            Farfield.LOG.warn("LOD streaming: keys from {} disagree with the server's held here ({}); {}",
+                    keys.from(), table.size(), mismatches > MAX_MISMATCHES
+                            ? "building the LODs from the chunks instead" : "emptying the mirror");
+            wipe(0);
+            session = -1;
+            helloSent = 0;
+            if (mismatches > MAX_MISMATCHES) {
+                declined = true;
             }
-        }
-        int end = keys.from() + keys.keys().length;
-        if (keys.kind() == StreamProtocol.BLOCK_STATES) {
-            serverBlockStates = Math.max(serverBlockStates, end);
-        } else {
-            serverBiomes = Math.max(serverBiomes, end);
         }
     }
 
@@ -659,7 +737,25 @@ public final class StreamClient {
         remote.put(part.key(), part.version());
         landed(part.key());
         sectionsReceived++;
-        mirror.putRecord(part.key(), record, 0, record.length);
+        long key = part.key();
+        LodWorld m = mirror;
+        int[] blocks = blockKeys.map();
+        int[] biomes = biomeKeys.map();
+        byte[] received = record;
+        writer.execute(() -> {
+            try {
+                LodSection section = m.decodeRecord(key, received);
+                if (section.remapIds(blocks, biomes)) {
+                    translated.incrementAndGet();
+                    m.putSection(key, section);
+                } else {
+                    m.putRecord(key, received, 0, received.length); // the same ids: kept as it came
+                }
+            } catch (IOException | RuntimeException e) {
+                lostSections.add(key);
+                Farfield.LOG.warn("LOD streaming: could not store {}", LodKey.toString(key), e);
+            }
+        });
     }
 
     private void tile(StreamProtocol.Tile part) throws IOException {
@@ -693,9 +789,24 @@ public final class StreamClient {
         }
         tileLanded(part.tile());
         tilesAnswered.add(part.tile());
-        mirror.preview().writeFile(PreviewStore.tileX(part.tile()), PreviewStore.tileZ(part.tile()), file);
         localTiles.put(part.tile(), part.version());
         tilesReceived++;
+        long key = part.tile();
+        LodWorld m = mirror;
+        int[] blocks = blockKeys.map();
+        int[] biomes = biomeKeys.map();
+        byte[] received = file;
+        writer.execute(() -> {
+            try {
+                PreviewTile tile = PreviewStore.decodeFile(received);
+                tile.remapIds(blocks, biomes);
+                m.preview().write(PreviewStore.tileX(key), PreviewStore.tileZ(key), tile);
+            } catch (IOException | RuntimeException e) {
+                lostTiles.add(key);
+                Farfield.LOG.warn("LOD streaming: could not store preview tile {} {}", PreviewStore.tileX(key),
+                        PreviewStore.tileZ(key), e);
+            }
+        });
     }
 
     private void tileAnswer(StreamProtocol.Answer answer) {

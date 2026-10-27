@@ -416,6 +416,43 @@ public final class PreviewTile {
         }
     }
 
+    /**
+     * Replaces every material and biome id with {@code materials[id]} and
+     * {@code biomes[id]}: a tile moving from a server's store into a
+     * client's mirror (ADR-068). -1 (none) stays -1.
+     *
+     * @throws IllegalArgumentException for an id past the end of its map
+     */
+    public void remapIds(int[] materials, int[] biomes) {
+        below = mapId(materials, below);
+        water = mapId(materials, water);
+        ice = mapId(materials, ice);
+        iceberg = mapId(materials, iceberg);
+        plantGround = mapId(materials, plantGround);
+        for (int i = 0; i < top.length; i++) {
+            top[i] = mapId(materials, top[i]);
+            filler[i] = mapId(materials, filler[i]);
+        }
+        for (int i = 0; i < this.biomes.length; i++) {
+            this.biomes[i] = mapId(biomes, this.biomes[i]);
+        }
+        kinds.replaceAll(k -> new TreeKind(mapId(materials, k.trunk()), mapId(materials, k.leaves()), k.height(),
+                k.radius(), k.crownHeight(), k.shape(), mapId(materials, k.snow())));
+        buildings.replaceAll(b -> new Building(b.x(), b.z(), b.width(), b.depth(), b.floor(), b.top(),
+                mapId(materials, b.wall()), mapId(materials, b.roof())));
+        plantKinds.replaceAll(m -> mapId(materials, m));
+    }
+
+    private static int mapId(int[] map, int id) {
+        if (id < 0) {
+            return id;
+        }
+        if (id >= map.length) {
+            throw new IllegalArgumentException("no mapping for id " + id);
+        }
+        return map[id];
+    }
+
     public void encode(ByteWriter out) {
         out.writeVarInt(FORMAT);
         out.writeVarInt(grid);

@@ -168,13 +168,13 @@ public final class StreamServer {
         if (s == null) {
             if (off && StreamProtocol.type(message) == StreamProtocol.HELLO) {
                 // Session -1: not streamed here.
-                Services.NETWORK.sendToPlayer(player, new StreamProtocol.Welcome(-1, "", 0, 0, 0, 0).encode());
+                Services.NETWORK.sendToPlayer(player, StreamProtocol.Welcome.declined(0).encode());
             }
             return;
         }
         try {
             switch (StreamProtocol.type(message)) {
-                case StreamProtocol.HELLO -> s.hello(player, StreamProtocol.Hello.decode(message));
+                case StreamProtocol.HELLO -> s.hello(player, message);
                 case StreamProtocol.INDEX_REQUEST -> s.index(player, StreamProtocol.IndexRequest.decode(message));
                 case StreamProtocol.FETCH -> s.fetch(player, StreamProtocol.Fetch.decode(message));
                 case StreamProtocol.TILE_FETCH -> s.tileFetch(player, StreamProtocol.TileFetch.decode(message));
@@ -186,12 +186,17 @@ public final class StreamServer {
         }
     }
 
-    private void hello(ServerPlayer sp, StreamProtocol.Hello hello) {
-        if (hello.version() != StreamProtocol.VERSION) {
+    private void hello(ServerPlayer sp, byte[] message) {
+        int version = StreamProtocol.Hello.version(message);
+        if (version != StreamProtocol.VERSION) {
+            // Declined, so its client builds its own LODs instead of waiting for a welcome; the rest
+            // of the hello is not read, its shape may be another.
             Farfield.LOG.info("LOD streaming: {} speaks protocol {}, this server {}: not streamed",
-                    sp.getGameProfile().getName(), hello.version(), StreamProtocol.VERSION);
+                    sp.getGameProfile().getName(), version, StreamProtocol.VERSION);
+            Services.NETWORK.sendToPlayer(sp, StreamProtocol.Welcome.declined(StreamProtocol.VERSION).encode());
             return;
         }
+        StreamProtocol.Hello hello = StreamProtocol.Hello.decode(message);
         ResourceKey<Level> dimension = sp.level().dimension();
         if (!dimension.location().toString().equals(hello.dimension())) {
             return; // the player moved on since; its client sends another hello
