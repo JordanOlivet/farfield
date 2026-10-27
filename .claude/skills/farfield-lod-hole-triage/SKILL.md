@@ -1,6 +1,6 @@
 ---
 name: farfield-lod-hole-triage
-description: Use when LOD terrain shows holes, missing chunks, or a stepped line or seam at the vanilla render edge.
+description: Use when LOD terrain shows holes, missing chunks, white or black squares under water, or a stepped line or seam at the vanilla render edge.
 category: minecraft-modding
 ---
 
@@ -39,4 +39,4 @@ A band lighter than the ice around it, one block wide, that stays along one side
 
 Black rectangles over new sea, with the stored light right: sections the client drew were fetched while one of their chunks was still generating, and never refreshed. Check with `/farfieldclient render off` at the same spot (the rectangles vanish with the LOD geometry) and `/farfieldclient debug levels` (they sit on level 0). Then compare the mirror's water voxels per section with the server store: fewer in the mirror means an outdated fetch. The fix is in `farfield-lod-streaming`, not the renderer. A pale patch with straight edges on a sea floor is a section border face that took full light from a missing neighbor: see `farfield-lod-renderer`.
 
-Single bright specks on a sea floor under coarse water, at the same pixels across rebuilds, are lit faces, not cracks. Growing quads to close T-junctions did not move them (seen 2026-10-27). The cause is the coarse water light, see `farfield-lod-renderer` (ADR-071). Count isolated bright pixels in a fixed box with the textures off, before and after.
+White squares on a sea floor under coarse water: a coarse water voxel keeps its highest block's light, in the mips (ADR-071) and in the noise preview (`PreviewVoxels`, ADR-072), so floors under it took the light of the water's top. On a streamed server most of the far sea is preview: ADR-071 alone left the squares there (user pass of `c158067`). Several squares of one exact colour do not prove holes: sand at full light under the same water is one colour too. Growing quads to close T-junctions did not move them. To look at one, lock the level with `/farfieldclient debug level <n>` (the whole displayed distance, the preview locked the same way) and walk toward it from far away.

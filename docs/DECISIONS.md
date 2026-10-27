@@ -1894,3 +1894,18 @@ Status: accepted, 2026-10-27.
   store); growing opaque quads to close T-junctions (the specks stayed:
   they were lit faces, not cracks).
 
+## ADR-072 — The noise preview's water lit by depth too
+
+Status: accepted, 2026-10-27. Extends ADR-071.
+
+- **Context**: ADR-071 left the preview out, taken as lit right per
+  voxel. It is not: `PreviewVoxels` gives a water voxel the light of its
+  highest block, as the mips do. The user's far view over the sea, where
+  the white squares show, is mostly preview (the level lock, which then
+  turned the preview off, left only the stored terrain near the player),
+  and ADR-071's fix did not reach it: sand under a coarse preview voxel of
+  water lit as the water's top, all of the same color.
+- **Decision**: the preview's sections and their neighbor layers go
+  through the same correction (`setVoxelBlocks(1 << draw level)`,
+  `borderLight` with the classifier).
+

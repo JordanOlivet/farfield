@@ -111,6 +111,11 @@ final class PreviewLayer {
         selector.setDetail(detail);
     }
 
+    /** See {@link LodSelector#setForcedLevel}: the level lock applies to the preview too. */
+    void setForcedLevel(int level) {
+        selector.setForcedLevel(level);
+    }
+
     /** See {@link LodSelector#setOutsideView}; {@code inView} takes plain keys (their level is the draw level). */
     void setOutsideView(LongPredicate inView, double detail) {
         selector.setOutsideView(inView, detail);
@@ -419,7 +424,8 @@ final class PreviewLayer {
             LodSection layer = build(w, neighbor, d >> 1, (d & 1) != 0 ? 0 : LodSection.SIZE - 1);
             if (layer != null) {
                 solid[d] = BinaryGreedyMesher.borderPlane(layer, d, classes, true, planes[d]);
-                light[d] = BinaryGreedyMesher.borderLight(layer, d, null);
+                // The preview's water keeps its highest block's light, as the mips do (ADR-071).
+                light[d] = BinaryGreedyMesher.borderLight(layer, d, null, classes, 1 << drawLevel(key));
             }
         }
         return solid;

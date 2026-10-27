@@ -754,9 +754,9 @@ public final class BinaryGreedyMesher {
     }
 
     /**
-     * Blocks along a voxel of the sections meshed next: {@code 1 << level}
-     * for stored terrain, 1 where the light is already right per voxel (the
-     * finest level, the noise preview).
+     * Blocks along a voxel of the sections meshed next: {@code 1 << level},
+     * stored terrain or noise preview (both keep a water voxel's highest
+     * block's light); 1 on the finest level.
      */
     public void setVoxelBlocks(int blocks) {
         voxelBlocks = Math.max(1, blocks);

@@ -640,6 +640,7 @@ public final class LodRenderer {
         stream = StreamClient.of(world);
         if (RenderSettings.forcedLevel() != selector.forcedLevel()) {
             selector.setForcedLevel(RenderSettings.forcedLevel()); // the level lock, a diagnostic
+            previewLayer.setForcedLevel(RenderSettings.forcedLevel());
             selectionDirty = true;
         }
         if (stream != null && stream.generation() != streamGeneration) {
@@ -934,8 +935,9 @@ public final class LodRenderer {
         selector.select(cam.x, cam.y, cam.z, level.getMinBuildHeight(), level.getMaxBuildHeight(), lastSelectionDistance,
                 sections, drawSink, wantSink);
         maxFallbacks = Math.max(maxFallbacks, selector.fallbacks());
-        // A level lock shows the stored terrain alone.
-        selectedPreview = RenderSettings.noisePreview() && selector.forcedLevel() < 0;
+        // The preview stays under a level lock, locked the same way: on a server most of the
+        // far view is preview, and without it the lock left only the stored terrain nearby.
+        selectedPreview = RenderSettings.noisePreview();
         if (selectedPreview) {
             previewLayer.select(cam.x, cam.y, cam.z, level.getMinBuildHeight(), level.getMaxBuildHeight(),
                     lastSelectionDistance, sections::ready, drawSink, wantSink);
@@ -1223,8 +1225,8 @@ public final class LodRenderer {
         MeshBuffer out = meshBuffer.get();
         // Stored terrain reads missing chunks as air: no water walls into them.
         mesher.get().setEmptyColumnsUnknown(!PreviewLayer.isPreview(key));
-        // Coarse stored water keeps its brightest block's light: faces in it see less.
-        mesher.get().setVoxelBlocks(PreviewLayer.isPreview(key) ? 1 : 1 << LodKey.level(key));
+        // Coarse water keeps its highest block's light, stored or preview: faces in it see less.
+        mesher.get().setVoxelBlocks(1 << drawLevel(key));
         mesher.get().mesh(section, classes, tintedMaterials, null, solid, light, out);
         // Masked preview columns only hide faces: their own quads are dropped.
         boolean preview = PreviewLayer.isPreview(key);

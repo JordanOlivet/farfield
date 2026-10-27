@@ -96,6 +96,7 @@ public final class RenderSettings {
     /**
      * A level no LOD section is drawn finer than, or -1 (a diagnostic,
      * {@code /farfield debug level}): defects of one level can be seen up close.
+     * The noise preview stays drawn, locked the same way.
      * The game's terrain no longer hides the LODs meanwhile. Off at every
      * start, not saved.
      */
