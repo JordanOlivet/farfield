@@ -155,8 +155,18 @@ public final class PreviewVoxels {
                 if (height == NONE) {
                     continue;
                 }
-                int floor = Math.min(Math.min(lower(height, c - 1, h, real, ground), lower(height, c + 1, h, real, ground)),
-                        Math.min(lower(height, c - S - 2, h, real, ground), lower(height, c + S + 2, h, real, ground)));
+                // Down to under the lowest of the eight columns around, diagonals included: a
+                // column a block thick beside a much lower diagonal neighbor let the view pass
+                // along their shared edge into the hollow under it, and the sky showed through
+                // the sea floor (white specks on underwater ridges, far away).
+                int floor = height;
+                for (int dz = -1; dz <= 1; dz++) {
+                    for (int dx = -1; dx <= 1; dx++) {
+                        if (dx != 0 || dz != 0) {
+                            floor = Math.min(floor, lower(height, c + dz * (S + 2) + dx, h, real, ground));
+                        }
+                    }
+                }
                 floor = Math.max(floor - s, minY);
                 int bx = ox + i * s;
                 int bz = oz + k * s;

@@ -732,4 +732,77 @@ class PreviewTest {
         assertEquals(15, t.plantMaterial(0));
         assertThrows(IllegalArgumentException.class, () -> t.remapIds(new int[3], biomes));
     }
+
+    @Test
+    void aRuggedSeaFloorShowsNoHollowToTheWater() {
+        // Heights jumping by up to 12 blocks between samples, under the sea: no water voxel
+        // may touch, by a face, an edge or a corner, the hollow under a preview column
+        // (the sky showed through such edges as white specks on underwater ridges).
+        PreviewTile t = new PreviewTile();
+        java.util.SplittableRandom random = new java.util.SplittableRandom(7);
+        for (int k = 0; k < PreviewTile.SAMPLES; k++) {
+            for (int i = 0; i < PreviewTile.SAMPLES; i++) {
+                t.setHeight(i, k, 34 + random.nextInt(13));
+            }
+        }
+        for (int cz = 0; cz < PreviewTile.CELLS; cz++) {
+            for (int cx = 0; cx < PreviewTile.CELLS; cx++) {
+                t.setCell(cx, cz, SAND, SAND);
+            }
+        }
+        t.setBelow(STONE);
+        t.setWater(WATER, 63);
+        PreviewVoxels.Tiles tiles = (x, z) -> x == 0 && z == 0 ? t : null;
+        int sections = 4;
+        byte[] g = new byte[(sections * 32) * 64 * (sections * 32)];
+        int w = sections * 32;
+        for (int sz = 0; sz < sections; sz++) {
+            for (int sx = 0; sx < sections; sx++) {
+                for (int sy = 0; sy < 2; sy++) {
+                    LodSection s = PreviewVoxels.build(0, sx, sy, sz, tiles, null, AIR, -64, -1, -1, -1, 0);
+                    if (s == null) {
+                        continue;
+                    }
+                    for (int z = 0; z < 32; z++) {
+                        for (int y = 0; y < 32; y++) {
+                            for (int x = 0; x < 32; x++) {
+                                int m = s.material(x, y, z);
+                                g[((sz * 32 + z) * 64 + sy * 32 + y) * w + sx * 32 + x] =
+                                        (byte) (m == AIR ? 0 : m == WATER ? 1 : 2);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        int contacts = 0;
+        for (int z = 1; z < w - 1; z++) {
+            for (int x = 1; x < w - 1; x++) {
+                for (int y = 1; y < 63; y++) {
+                    if (g[(z * 64 + y) * w + x] != 1) {
+                        continue;
+                    }
+                    for (int dz = -1; dz <= 1; dz++) {
+                        for (int dy = -1; dy <= 1; dy++) {
+                            for (int dx = -1; dx <= 1; dx++) {
+                                int nx = x + dx;
+                                int ny = y + dy;
+                                int nz = z + dz;
+                                if (g[(nz * 64 + ny) * w + nx] != 0) {
+                                    continue;
+                                }
+                                for (int yy = ny + 1; yy < 64; yy++) {
+                                    if (g[(nz * 64 + yy) * w + nx] == 2) {
+                                        contacts++;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assertEquals(0, contacts, "water touching a hollow under the ground");
+    }
 }

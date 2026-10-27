@@ -1,0 +1,2 @@
+cp -r $M/preview $M/block_states.txt $M/biomes.txt $M/mips.version $S/pmirror/ && cat > core/src/test/java/io/lakio/farfield/core/world/PreviewHoleProbe.java <<'JEOF'
+PROBE 163840 floor columns, 0 without a top face, 0 water faces against a hollow under the ground
