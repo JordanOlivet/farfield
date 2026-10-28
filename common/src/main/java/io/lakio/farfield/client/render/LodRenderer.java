@@ -1333,6 +1333,12 @@ public final class LodRenderer {
             for (int y = Math.floorDiv(selectedMinY, size); y <= Math.floorDiv(selectedMaxY - 1, size); y++) {
                 long key = LodKey.pack(level, x, y, z);
                 if (drawn.contains(key)) {
+                    if (selector.isFallback(key)) {
+                        // A coarse stand-in for children not meshed yet: the preview left new chunks to
+                        // it, and its coarse sea showed as lighter bands along the generation front
+                        // for a frame or two, until the finer meshes came (ADR-094).
+                        return false;
+                    }
                     boolean draws = drawsColumn(resident.get(key), level, chunkX, chunkZ);
                     // Waiting for a new mesh holds the preview only where the mesh drawn has nothing
                     // in this column yet: at a generation front, sections already drawing it are meshed

@@ -128,6 +128,8 @@ class LodSelectorTest {
                 want::add);
         assertTrue(draw.contains(LodKey.parent(middle)));
         assertEquals(1, fresh.fallbackReasons().size());
+        assertTrue(fresh.isFallback(LodKey.parent(middle)));
+        assertTrue(!selector.isFallback(LodKey.parent(middle)));
     }
 
     @Test

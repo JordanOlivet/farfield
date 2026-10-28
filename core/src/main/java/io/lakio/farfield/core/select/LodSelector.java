@@ -63,6 +63,8 @@ public final class LodSelector {
     private int finerFallbacks;
     /** Why sections were drawn coarser than wanted in the last selection, a few of them (ADR-093). */
     private final java.util.List<String> fallbackReasons = new java.util.ArrayList<>();
+    /** The sections the last selection drew coarser than wanted, waiting for their children. */
+    private final Set<Long> fallbackKeys = new HashSet<>();
     private static final int FALLBACK_REASONS = 4;
     /** A diagnostic lock: no section drawn finer than this level, or -1 for the usual split. */
     private int forcedLevel = -1;
@@ -123,6 +125,14 @@ public final class LodSelector {
         return fallbackReasons;
     }
 
+    /**
+     * Whether the last selection drew {@code key} coarser than wanted, its
+     * children not meshed yet: a stand-in, not the terrain at its detail.
+     */
+    public boolean isFallback(long key) {
+        return fallbackKeys.contains(key);
+    }
+
     public int fallbacks() {
         return fallbacks;
     }
@@ -161,6 +171,7 @@ public final class LodSelector {
         fallbacks = 0;
         finerFallbacks = 0;
         fallbackReasons.clear();
+        fallbackKeys.clear();
         descending.clear();
         int top = levels - 1;
         int size = LodSection.SIZE << top;
@@ -235,6 +246,7 @@ public final class LodSelector {
         if (sections.ready(key)) {
             if (level > 0 && distance < split * size) {
                 fallbacks++;
+                fallbackKeys.add(key);
                 if (fallbackReasons.size() < FALLBACK_REASONS && notReady != 0) {
                     fallbackReasons.add(LodKey.toString(key) + " for " + Integer.bitCount(notReady)
                             + " children not meshed (" + LodKey.toString(firstNotReady) + (Integer.bitCount(notReady) > 1

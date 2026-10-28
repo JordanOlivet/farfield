@@ -2519,3 +2519,22 @@ Status: accepted, 2026-10-28. Amends ADR-074 and ADR-076 (LodSelector).
   s with the performance logs, as `LOD coarse fallbacks, a few`.
 - **Result**: `gradlew build` passes, `LodSelectorTest` covers both cases.
   Not run in game yet.
+
+## ADR-094 — The preview does not leave a chunk to a coarse stand-in
+
+Status: accepted, 2026-10-28. Amends ADR-076 and ADR-093.
+
+- **Context**: with ADR-093 the user saw the bands at every chunk going
+  from preview to LOD ("le front de génération est maintenant
+  caractérisé par ces bandes"). Its new log line named the fallbacks
+  left: level-1 and level-2 sections drawn for level-0 children not
+  meshed yet, "not split in the last selection", at the generation front
+  (24 and 30 per selection while loading). The preview left a chunk once
+  any drawn real section had quads in its column, such a coarse stand-in
+  included, so the front showed the coarse sea for a frame or two, until
+  the fine meshes came.
+- **Decision**: the selector keeps the sections it drew as coarse
+  stand-ins; a chunk covered by one is not ready for the preview to
+  leave (2 s at most, as before).
+- **Result**: `gradlew build` passes, `LodSelectorTest` checks the
+  stand-in set. Not run in game yet.
