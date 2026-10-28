@@ -1938,3 +1938,44 @@ Status: accepted, 2026-10-27. Amends ADR-068 (surface only by default).
 - **Rejected**: a renderer fallback drawing the parent where a child is
   missing: under the surface every parent holds stone where its children
   are hidden, so the sections around the player would have stayed coarse.
+
+
+## ADR-074 — New terrain streams in coarse first, never as a hole
+
+Status: accepted, 2026-10-28. Amends ADR-068 (the renderer's side of the
+mirror).
+
+- **Context**: after ADR-073, the user's pack still showed empty chunks in
+  new terrain, less often. 11 `debug here` reports: the client wanted
+  nothing and held nothing in flight; the hole showed where the preview
+  was hidden for real terrain and a finer level drew nothing (a level-0
+  section drawn with 0 quads above a level-4 ground, the view through the
+  ground down to y 61). Two mechanisms leave the preview hidden over an
+  area no drawn section covers. (1) The selector kept a split parent
+  split when a child was not ready, on the grounds that a new child had
+  nothing drawn before it; on a mirror the coarse levels arrive first
+  (every level-4 section is fetched in the background for the preview's
+  mask), so the parent did show that area, and the new child left a hole
+  until fetched and meshed. (2) A drawn copy older than the server's
+  waited behind the whole background queue (ADR-068, outdated copies),
+  while the preview had already hidden itself for the newer level 4.
+  Latency adds up on top: a region written without pause is announced at
+  most every 20 s.
+- **Decision**: a mesh records the octants its quads draw in. A split
+  parent keeps splitting over a child that is not ready only if its own
+  mesh draws nothing in that child's octant; otherwise it draws itself
+  until the child is meshed (a coarse flash, never a hole). A section
+  drawn from an outdated copy is fetched with the selection's wishes, ahead
+  of the background queue. Measured: the server's stat line gives how long
+  written regions waited for their notice, the client's how long outdated
+  sections took to land after their index, and the renderer's line the
+  outdated sections drawn per selection.
+- **Result**: unit tests (`LodSelectorTest`, `QuadTest`,
+  `RegionChangesTest`); `gradlew build` passes. Not checked in a dev run
+  nor in the pack yet.
+- **Rejected**: a completeness flag per section in the index (chunks
+  generated or not), proposed first: the preview already hides itself
+  chunk by chunk from level 4, so a section missing chunks is covered by
+  the preview there; the holes come from the levels disagreeing on the
+  client, not from incomplete sections. Announcing near regions without
+  the quiet time (push) waits for the measures.

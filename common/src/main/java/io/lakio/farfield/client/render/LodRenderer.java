@@ -352,6 +352,12 @@ public final class LodRenderer {
             }
             return r != null;
         }
+
+        @Override
+        public int octants(long key) {
+            Resident r = resident.get(key);
+            return r != null ? r.octants : 0;
+        }
     };
     private boolean selectionDirty = true;
     /** The noise preview setting the last selection ran with. */
@@ -360,6 +366,8 @@ public final class LodRenderer {
     private final LongOpenHashSet changedTiles = new LongOpenHashSet();
     /** Most sections a selection drew coarser than wanted since the last stat line. */
     private int maxFallbacks;
+    /** Most sections a selection drew from a copy older than the server's since the last stat line. */
+    private int maxOutdatedDrawn;
     private double loggedDetail = 1e-9;
     /** Detail of the options' field of view, unzoomed: sections outside the view split at it at most. */
     private double outsideDetail = Double.MAX_VALUE;
@@ -480,6 +488,8 @@ public final class LodRenderer {
         long lastUsed;
         /** Directions whose neighbor lights some of its faces ({@link BinaryGreedyMesher#borderFaces}). */
         int borderFaces;
+        /** The octants its quads draw in: a parent showing a new child's octant covers it until it is meshed. */
+        int octants;
 
         Resident(int slot) {
             this.slot = slot;
@@ -488,9 +498,10 @@ public final class LodRenderer {
 
     /** {@code groups}: start of each quad group ({@link #GROUPS}), then the quad count. */
     /** {@code provisional}: {@code cutout} was guessed for materials whose looks were not built yet. */
+    /** {@code octants}: the octants its quads draw in ({@link Quad#octants}). */
     private record MeshResult(int generation, long key, long[] quads, int[] groups, boolean cutout,
                               boolean provisional, int[] occupancy, int[] biomeColumns,
-                              int maxMaterial, int borderFaces) {
+                              int maxMaterial, int borderFaces, int octants) {
     }
 
     private static final int[] NO_GROUPS = new int[GROUPS + 1];
@@ -1108,12 +1119,22 @@ public final class LodRenderer {
             previewLayer.select(cam.x, cam.y, cam.z, level.getMinBuildHeight(), level.getMaxBuildHeight(),
                     lastSelectionDistance, sections::ready, drawSink, wantSink);
         }
+        int outdatedDrawn = 0;
         for (int i = 0, n = drawList.size(); i < n; i++) {
-            Resident r = resident.get(drawList.getLong(i));
+            long key = drawList.getLong(i);
+            Resident r = resident.get(key);
             if (r != null) {
                 r.lastUsed = now;
             }
+            // A drawn copy older than the server's: fetched with the meshes this selection wants, not
+            // after the whole background queue; the preview already hides itself for the newer data,
+            // so the old copy can leave a hole where the new chunks are (ADR-074).
+            if (stream != null && !PreviewLayer.isPreview(key) && stream.needsFetch(key)) {
+                stale.add(key);
+                outdatedDrawn++;
+            }
         }
+        maxOutdatedDrawn = Math.max(maxOutdatedDrawn, outdatedDrawn);
         // The traversal walks the grid from one corner: ask for what is near and in view first,
         // or the meshes in flight go to far sections behind the camera (ADR-056).
         wantOrder.clear();
@@ -1254,7 +1275,8 @@ public final class LodRenderer {
                             + " render thread and {} us on the GPU (depth pre-pass {}, opaque {}, plants {}, translucent {}),"
                             + " {} of {} quads sent (face directions), {} of them plants, {} sections may discard, {} left"
                             + " to the game, over {}"
-                            + " frames; detail {}; at most {} coarse fallbacks per selection", count, resident.size(),
+                            + " frames; detail {}; at most {} coarse fallbacks and {} outdated sections drawn per"
+                            + " selection", count, resident.size(),
                     arena.used() * 8 >> 20, arena.capacity() * 8 >> 20, requested.size(), meshesUploaded, meshesEvicted,
                     selections, frameNanos / 1000 / Math.max(1, timedFrames),
                     (gpuPassNanos[0] + gpuPassNanos[1] + gpuPassNanos[2] + gpuPassNanos[3]) / 1000 / Math.max(1, gpuFrames),
@@ -1265,9 +1287,10 @@ public final class LodRenderer {
                     quadsSubmitted / Math.max(1, timedFrames), quadsInView / Math.max(1, timedFrames),
                     plantQuadsSubmitted / Math.max(1, timedFrames),
                     discardSections / Math.max(1, timedFrames), leftToGame / Math.max(1, timedFrames), timedFrames,
-                    String.format("%.1f", selector.detail()), maxFallbacks);
+                    String.format("%.1f", selector.detail()), maxFallbacks, maxOutdatedDrawn);
         }
         maxFallbacks = 0;
+        maxOutdatedDrawn = 0;
         quadsInView = 0;
         quadsSubmitted = 0;
         plantQuadsSubmitted = 0;
@@ -1331,11 +1354,11 @@ public final class LodRenderer {
             try {
                 LodSection section = PreviewLayer.isPreview(key) ? previewLayer.build(w, key) : readSection(w, key);
                 result = section == null
-                        ? new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null, -1, 0)
+                        ? new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null, -1, 0, 0)
                         : mesh(w, gen, key, section);
             } catch (IOException | RuntimeException e) {
                 Farfield.LOG.debug("LOD mesh of {} failed", LodKey.toString(key), e);
-                result = new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null, -1, 0);
+                result = new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null, -1, 0, 0);
             }
             meshNanos.addAndGet(System.nanoTime() - start);
             meshJobs.incrementAndGet();
@@ -1445,11 +1468,15 @@ public final class LodRenderer {
             packed[i] = columns[2 * i] | columns[2 * i + 1] << 16;
         }
         int maxMaterial = -1;
+        int octants = 0;
         for (long q : all) {
             maxMaterial = Math.max(maxMaterial, Quad.material(q));
+            if (octants != 0xFF) {
+                octants |= Quad.octants(q);
+            }
         }
         return new MeshResult(gen, key, all, groups, cutout, provisional, occupied, packed, maxMaterial,
-                mesher.get().borderFaces());
+                mesher.get().borderFaces(), octants);
     }
 
     /** @param list a face direction, or {@link MeshBuffer#PLANTS} */
@@ -1606,6 +1633,7 @@ public final class LodRenderer {
             r.groups = m.groups;
             r.cutout = m.cutout;
             r.borderFaces = m.borderFaces;
+            r.octants = m.octants;
             r.maxMaterial = m.maxMaterial;
             if (m.provisional) {
                 provisional.add(m.key);

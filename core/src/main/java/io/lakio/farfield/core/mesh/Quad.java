@@ -132,6 +132,49 @@ public final class Quad {
         return (int) (q >>> 57) & 15;
     }
 
+    /**
+     * The octants of its section (16 voxels a side) whose voxels the quad
+     * covers, one bit per octant {@code x | z << 1 | y << 2}, as
+     * {@link io.lakio.farfield.core.select.LodSelector} numbers children.
+     */
+    public static int octants(long q) {
+        int x = x(q);
+        int y = y(q);
+        int z = z(q);
+        int x1 = x;
+        int y1 = y;
+        int z1 = z;
+        int d = direction(q);
+        if (d < DIRECTIONS) {
+            // The plane axes are cyclic: X faces span (Y, Z), Y faces (Z, X), Z faces (X, Y).
+            int u = sizeU(q) - 1;
+            int v = sizeV(q) - 1;
+            switch (axis(d)) {
+                case 0 -> {
+                    y1 += u;
+                    z1 += v;
+                }
+                case 1 -> {
+                    z1 += u;
+                    x1 += v;
+                }
+                default -> {
+                    x1 += u;
+                    y1 += v;
+                }
+            }
+        }
+        int mask = 0;
+        for (int oy = y >> 4; oy <= y1 >> 4; oy++) {
+            for (int oz = z >> 4; oz <= z1 >> 4; oz++) {
+                for (int ox = x >> 4; ox <= x1 >> 4; ox++) {
+                    mask |= 1 << (ox | oz << 1 | oy << 2);
+                }
+            }
+        }
+        return mask;
+    }
+
     /** Axis of a direction: 0 X, 1 Y, 2 Z. */
     public static int axis(int direction) {
         return direction >> 1;

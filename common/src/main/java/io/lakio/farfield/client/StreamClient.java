@@ -145,6 +145,12 @@ public final class StreamClient {
     private int regionsChanged;
     /** Sections held at an older version than an index said: fetched again. */
     private int outdated;
+    /** Outdated sections and when an index said so, until their new version lands. */
+    private final Long2LongOpenHashMap outdatedSince = new Long2LongOpenHashMap();
+    /** Outdated sections refreshed since the stat line, their summed and longest wait since their index. */
+    private int refreshed;
+    private long refreshSum;
+    private long refreshMax;
 
     private StreamClient(ResourceKey<Level> dimension, Path dir) {
         this.dimension = dimension;
@@ -152,6 +158,7 @@ public final class StreamClient {
         remote.defaultReturnValue(-1);
         local.defaultReturnValue(-1);
         localTiles.defaultReturnValue(-1);
+        outdatedSince.defaultReturnValue(-1);
     }
 
     // ---------------------------------------------------------------- lifecycle (client tick)
@@ -440,11 +447,17 @@ public final class StreamClient {
             if (RenderSettings.performanceLogs() && (received > 0 || !inFlight.isEmpty())) {
                 Farfield.LOG.info("LOD streaming: {} KB received in 10 s ({} sections, {} unchanged, {} preview tiles,"
                                 + " {} regions changed, {} outdated, {} translated), {} in flight of {}, {} tiles of {},"
-                                + " {} wanted, {} known regions, {} sections and {} tiles held", received >> 10,
-                        sectionsReceived, unchangedReceived, tilesReceived, regionsChanged, outdated,
+                                + " {} wanted, {} known regions, {} sections and {} tiles held; {} outdated sections"
+                                + " refreshed {} ms after their index on average, {} ms at most, {} waiting",
+                        received >> 10, sectionsReceived, unchangedReceived, tilesReceived, regionsChanged, outdated,
                         translated.getAndSet(0), inFlight.size(), window.size(), tilesInFlight.size(),
-                        tileWindow.size(), wishes.size(), knownRegions.size(), local.size(), localTiles.size());
+                        tileWindow.size(), wishes.size(), knownRegions.size(), local.size(), localTiles.size(),
+                        refreshed, refreshed == 0 ? 0 : refreshSum / refreshed / 1_000_000, refreshMax / 1_000_000,
+                        outdatedSince.size());
             }
+            refreshed = 0;
+            refreshSum = 0;
+            refreshMax = 0;
             received = 0;
             sectionsReceived = 0;
             unchangedReceived = 0;
@@ -657,6 +670,7 @@ public final class StreamClient {
         window.reset(StreamProtocol.Fetch.MAX_KEYS);
         wishes.clear();
         background.clear();
+        outdatedSince.clear();
         parts.clear();
         tilesAnswered.clear();
         tilesInFlight.clear();
@@ -698,7 +712,10 @@ public final class StreamClient {
             long held = local.get(key);
             if (held != index.versions()[i] && (held >= 0 || index.level() == LodWorld.LEVELS - 1)) {
                 background.add(key);
-                outdated += held >= 0 ? 1 : 0;
+                if (held >= 0) {
+                    outdated++;
+                    outdatedSince.putIfAbsent(key, System.nanoTime());
+                }
             }
         }
         if (index.last()) {
@@ -759,6 +776,7 @@ public final class StreamClient {
         local.put(part.key(), part.version());
         remote.put(part.key(), part.version());
         landed(part.key());
+        refreshedNow(part.key());
         sectionsReceived++;
         long key = part.key();
         LodWorld m = mirror;
@@ -852,6 +870,17 @@ public final class StreamClient {
         }
     }
 
+    /** A section landed: if an index had said it was outdated, how long that took, for the stat line. */
+    private void refreshedNow(long key) {
+        long since = outdatedSince.remove(key);
+        if (since >= 0) {
+            long wait = System.nanoTime() - since;
+            refreshed++;
+            refreshSum += wait;
+            refreshMax = Math.max(refreshMax, wait);
+        }
+    }
+
     /** A request was answered: no longer in flight, its round trip sizes the window. */
     private void landed(long key) {
         if (inFlight.containsKey(key)) {
@@ -865,6 +894,7 @@ public final class StreamClient {
             return;
         }
         landed(answer.key());
+        outdatedSince.remove(answer.key());
         if (answer.type() == StreamProtocol.UNCHANGED) {
             long version = remote.get(answer.key());
             if (version >= 0) {

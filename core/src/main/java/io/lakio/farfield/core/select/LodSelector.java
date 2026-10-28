@@ -19,12 +19,14 @@ import java.util.function.LongPredicate;
  * <p>Coverage while meshes stream in: a section descends only when all its
  * existing children are ready to draw; otherwise it draws itself (if ready)
  * and asks for the missing children. A section that already descended in the
- * previous selection keeps descending when a child is not ready: that child
- * is new (it did not exist, so nothing was drawn there) or being remeshed
- * (its old mesh stays ready), and falling back would flash the whole area to
- * the coarse level, up to the top when the parents are new too (terrain
- * explored for the first time). Sections absent from the store are air and
- * skipped.
+ * previous selection keeps descending when a child is not ready (a child
+ * being remeshed keeps its old mesh, so it is ready), unless its own mesh
+ * draws something in that child's octant: then the child is new terrain the
+ * parent already shows (a server's mirror fetches the coarse levels first,
+ * ADR-074), and descending would leave a hole until the child is fetched and
+ * meshed. When the parent shows nothing there, descending keeps the area fine
+ * instead of flashing it to the coarse level. Sections absent from the store
+ * are air and skipped.
  */
 public final class LodSelector {
 
@@ -96,6 +98,14 @@ public final class LodSelector {
 
         /** True if the section's mesh is on the GPU. */
         boolean ready(long key);
+
+        /**
+         * The octants of a ready section its mesh draws something in, one bit
+         * per child ({@code x | z << 1 | y << 2}); 0 when not known.
+         */
+        default int octants(long key) {
+            return 0;
+        }
     }
 
     /**
@@ -149,18 +159,20 @@ public final class LodSelector {
         double distance = Math.sqrt(horizontal * horizontal + dy * dy);
         double split = inView != null && outsideDetail < detail && !inView.test(key) ? outsideDetail : detail;
         if (level > Math.max(0, forcedLevel) && distance < split * size) {
-            boolean childrenReady = true;
+            int notReady = 0;
             int x = LodKey.x(key) * 2;
             int y = LodKey.y(key) * 2;
             int z = LodKey.z(key) * 2;
             for (int i = 0; i < 8; i++) {
                 long child = LodKey.pack(level - 1, x + (i & 1), y + (i >> 2), z + ((i >> 1) & 1));
                 if (sections.exists(child) && !sections.ready(child)) {
-                    childrenReady = false;
+                    notReady |= 1 << i;
                     want.accept(child);
                 }
             }
-            if (childrenReady || descended.contains(key)) {
+            // A parent not ready draws nothing anywhere: its ready children are better than a hole.
+            if (notReady == 0 || descended.contains(key)
+                    && (!sections.ready(key) || (notReady & sections.octants(key)) == 0)) {
                 descending.add(key);
                 for (int i = 0; i < 8; i++) {
                     visit(LodKey.pack(level - 1, x + (i & 1), y + (i >> 2), z + ((i >> 1) & 1)),

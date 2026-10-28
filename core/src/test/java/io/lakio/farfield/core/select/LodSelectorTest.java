@@ -126,4 +126,49 @@ class LodSelectorTest {
         assertTrue(draw.contains(LodKey.pack(0, 1, -1, 0)));
         assertEquals(0, selector.fallbacks());
     }
+
+    @Test
+    void descendingParentFallsBackWhenItShowsWhatANewChildLacks() {
+        LodSelector selector = new LodSelector(5, 2.0);
+        long child = LodKey.pack(0, 0, -1, 0);
+        long parent = LodKey.parent(child);
+        List<Long> draw = new ArrayList<>();
+        List<Long> want = new ArrayList<>();
+        selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of()), draw::add, want::add);
+        assertTrue(draw.contains(child));
+        // The child is new terrain streamed in, and the parent's mesh already draws its octant:
+        // the parent covers it until the child is meshed, no hole meanwhile.
+        int octant = (LodKey.x(child) & 1) | (LodKey.z(child) & 1) << 1 | (LodKey.y(child) & 1) << 2;
+        LodSelector.Sections sections = new LodSelector.Sections() {
+            final LodSelector.Sections base = terrain(Set.of(child));
+
+            @Override
+            public boolean exists(long key) {
+                return base.exists(key);
+            }
+
+            @Override
+            public boolean ready(long key) {
+                return base.ready(key);
+            }
+
+            @Override
+            public int octants(long key) {
+                return key == parent ? 1 << octant : 0;
+            }
+        };
+        draw.clear();
+        want.clear();
+        selector.select(0, 70, 0, -64, 320, 4000, sections, draw::add, want::add);
+        assertTrue(draw.contains(parent));
+        assertTrue(!draw.contains(child));
+        assertTrue(!draw.contains(LodKey.pack(0, 1, -1, 0)), "the parent's siblings fall back with it");
+        assertTrue(want.contains(child));
+        assertEquals(1, selector.fallbacks());
+        // Once meshed, the parent splits again.
+        draw.clear();
+        selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of()), draw::add, want::add);
+        assertTrue(draw.contains(child));
+        assertTrue(!draw.contains(parent));
+    }
 }

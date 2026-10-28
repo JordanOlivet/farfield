@@ -6,6 +6,7 @@ import io.lakio.farfield.core.storage.SectionStore;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * The regions of one store written since they were last announced, so the
@@ -22,6 +23,10 @@ public final class RegionChanges {
     private final long maxWaitNanos;
     /** Region key to {first write, last write} not announced yet. */
     private final Map<Long, long[]> pending = new ConcurrentHashMap<>();
+    /** Regions announced since {@link #takeWaits}, their summed and longest wait from the first write. */
+    private final AtomicLong announced = new AtomicLong();
+    private final AtomicLong waitSum = new AtomicLong();
+    private final AtomicLong waitMax = new AtomicLong();
 
     public RegionChanges(long quietNanos, long maxWaitNanos) {
         this.quietNanos = quietNanos;
@@ -54,10 +59,23 @@ public final class RegionChanges {
             if (nowNanos - t[1] >= quietNanos || nowNanos - t[0] >= maxWaitNanos) {
                 // A write landing meanwhile is covered too: the index is read after the notice.
                 if (pending.remove(e.getKey(), t)) {
+                    long wait = nowNanos - t[0];
+                    announced.incrementAndGet();
+                    waitSum.addAndGet(wait);
+                    waitMax.accumulateAndGet(wait, Math::max);
                     action.accept(e.getKey());
                 }
             }
         }
+    }
+
+    /**
+     * The regions announced since the last call, with their summed and
+     * longest wait between their first write and their notice, in
+     * nanoseconds; then starts counting again.
+     */
+    public long[] takeWaits() {
+        return new long[]{announced.getAndSet(0), waitSum.getAndSet(0), waitMax.getAndSet(0)};
     }
 
     public int pendingRegions() {

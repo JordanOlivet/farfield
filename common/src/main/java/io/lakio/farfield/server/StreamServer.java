@@ -613,6 +613,17 @@ public final class StreamServer {
             long h = hiddenSent.getAndSet(0);
             long t = tilesSent.getAndSet(0);
             long c = noticesSent.getAndSet(0);
+            // How long the written regions waited for their notice: the server's share of the delay
+            // between a chunk generated and its LODs drawn by the clients.
+            long announced = 0;
+            long waitSum = 0;
+            long waitMax = 0;
+            for (RegionChanges rc : changes.values()) {
+                long[] w = rc.takeWaits();
+                announced += w[0];
+                waitSum += w[1];
+                waitMax = Math.max(waitMax, w[2]);
+            }
             if (RenderSettings.performanceLogs() && (bytes > 0 || i > 0)) {
                 // The game's ping of the streamed players: the streaming must not make it wait.
                 int ping = 0;
@@ -623,8 +634,10 @@ public final class StreamServer {
                 }
                 Farfield.LOG.info("LOD streaming: {} players, {} KB sent in 10 s ({} sections, {} unchanged, {} indexes,"
                         + " {} sections under the surface left out, {} preview tiles, {} regions changed),"
-                        + " highest ping {} ms, longest queue {} messages", players.size(), bytes >> 10, s, u, i, h, t,
-                        c, ping, queued);
+                        + " highest ping {} ms, longest queue {} messages; {} written regions announced {} ms after"
+                        + " their first write on average, {} ms at most", players.size(), bytes >> 10, s, u, i, h, t,
+                        c, ping, queued, announced, announced == 0 ? 0 : waitSum / announced / 1_000_000,
+                        waitMax / 1_000_000);
             }
             bytes = 0;
         }
