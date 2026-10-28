@@ -368,6 +368,12 @@ public final class LodRenderer {
     private int maxFallbacks;
     /** Most sections a selection drew from a copy older than the server's since the last stat line. */
     private int maxOutdatedDrawn;
+    /** Most sections a selection drew as their children, waiting for their own mesh. */
+    private int maxFinerFallbacks;
+    /** The real sections the last selection draws, and the build height it ran with. */
+    private final LongOpenHashSet drawnReal = new LongOpenHashSet();
+    private int selectedMinY;
+    private int selectedMaxY;
     private double loggedDetail = 1e-9;
     /** Detail of the options' field of view, unzoomed: sections outside the view split at it at most. */
     private double outsideDetail = Double.MAX_VALUE;
@@ -1112,6 +1118,7 @@ public final class LodRenderer {
         selector.select(cam.x, cam.y, cam.z, level.getMinBuildHeight(), level.getMaxBuildHeight(), lastSelectionDistance,
                 sections, drawSink, wantSink);
         maxFallbacks = Math.max(maxFallbacks, selector.fallbacks());
+        maxFinerFallbacks = Math.max(maxFinerFallbacks, selector.finerFallbacks());
         // The preview stays under a level lock, locked the same way: on a server most of the
         // far view is preview, and without it the lock left only the stored terrain nearby.
         selectedPreview = RenderSettings.noisePreview();
@@ -1120,11 +1127,17 @@ public final class LodRenderer {
                     lastSelectionDistance, sections::ready, drawSink, wantSink);
         }
         int outdatedDrawn = 0;
+        drawnReal.clear();
+        selectedMinY = level.getMinBuildHeight();
+        selectedMaxY = level.getMaxBuildHeight();
         for (int i = 0, n = drawList.size(); i < n; i++) {
             long key = drawList.getLong(i);
             Resident r = resident.get(key);
             if (r != null) {
                 r.lastUsed = now;
+            }
+            if (!PreviewLayer.isPreview(key)) {
+                drawnReal.add(key);
             }
             // A drawn copy older than the server's: fetched with the meshes this selection wants, not
             // after the whole background queue; the preview already hides itself for the newer data,
@@ -1233,6 +1246,31 @@ public final class LodRenderer {
         fillStart = 0;
     }
 
+    /**
+     * Whether the real terrain the last selection draws over a chunk column
+     * is meshed from its current data: some drawn real section covers it,
+     * and none covering it waits for a new mesh. The preview hides itself
+     * over new real chunks only then (ADR-076).
+     */
+    private boolean realReady(int chunkX, int chunkZ) {
+        boolean covered = false;
+        for (int level = 0; level < LodWorld.LEVELS; level++) {
+            int size = LodSection.SIZE << level;
+            int x = chunkX >> (level + 1);
+            int z = chunkZ >> (level + 1);
+            for (int y = Math.floorDiv(selectedMinY, size); y <= Math.floorDiv(selectedMaxY - 1, size); y++) {
+                long key = LodKey.pack(level, x, y, z);
+                if (drawnReal.contains(key)) {
+                    if (stale.contains(key) || requested.contains(key)) {
+                        return false;
+                    }
+                    covered = true;
+                }
+            }
+        }
+        return covered;
+    }
+
     /** The level a section is drawn at (preview keys carry an offset). */
     private static int drawLevel(long key) {
         return PreviewLayer.drawLevel(key);
@@ -1276,8 +1314,8 @@ public final class LodRenderer {
                             + " render thread and {} us on the GPU (depth pre-pass {}, opaque {}, plants {}, translucent {}),"
                             + " {} of {} quads sent (face directions), {} of them plants, {} sections may discard, {} left"
                             + " to the game, over {}"
-                            + " frames; detail {}; at most {} coarse fallbacks and {} outdated sections drawn per"
-                            + " selection", count, resident.size(),
+                            + " frames; detail {}; at most {} coarse fallbacks, {} finer fallbacks and {} outdated"
+                            + " sections drawn per selection", count, resident.size(),
                     arena.used() * 8 >> 20, arena.capacity() * 8 >> 20, requested.size(), meshesUploaded, meshesEvicted,
                     selections, frameNanos / 1000 / Math.max(1, timedFrames),
                     (gpuPassNanos[0] + gpuPassNanos[1] + gpuPassNanos[2] + gpuPassNanos[3]) / 1000 / Math.max(1, gpuFrames),
@@ -1288,9 +1326,10 @@ public final class LodRenderer {
                     quadsSubmitted / Math.max(1, timedFrames), quadsInView / Math.max(1, timedFrames),
                     plantQuadsSubmitted / Math.max(1, timedFrames),
                     discardSections / Math.max(1, timedFrames), leftToGame / Math.max(1, timedFrames), timedFrames,
-                    String.format("%.1f", selector.detail()), maxFallbacks, maxOutdatedDrawn);
+                    String.format("%.1f", selector.detail()), maxFallbacks, maxFinerFallbacks, maxOutdatedDrawn);
         }
         maxFallbacks = 0;
+        maxFinerFallbacks = 0;
         maxOutdatedDrawn = 0;
         quadsInView = 0;
         quadsSubmitted = 0;
@@ -1578,6 +1617,7 @@ public final class LodRenderer {
                 }
             }
         }
+        previewLayer.applyHeld(this::realReady, System.nanoTime());
         if (previewLayer.drainChanges(changedTiles)) {
             selectionDirty = true;
         }

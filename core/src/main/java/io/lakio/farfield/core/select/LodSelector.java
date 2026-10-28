@@ -25,8 +25,10 @@ import java.util.function.LongPredicate;
  * parent already shows (a server's mirror fetches the coarse levels first,
  * ADR-074), and descending would leave a hole until the child is fetched and
  * meshed. When the parent shows nothing there, descending keeps the area fine
- * instead of flashing it to the coarse level. Sections absent from the store
- * are air and skipped.
+ * instead of flashing it to the coarse level. The other way, a section far
+ * enough to draw itself but not meshed yet draws its children meanwhile when
+ * they all are (ADR-076). Sections absent from the store are air and
+ * skipped.
  */
 public final class LodSelector {
 
@@ -36,6 +38,7 @@ public final class LodSelector {
     private LongPredicate inView;
     private double outsideDetail = Double.MAX_VALUE;
     private int fallbacks;
+    private int finerFallbacks;
     /** A diagnostic lock: no section drawn finer than this level, or -1 for the usual split. */
     private int forcedLevel = -1;
     /** Sections that descended in the previous selection, and in the current one. */
@@ -91,6 +94,11 @@ public final class LodSelector {
         return fallbacks;
     }
 
+    /** Sections the last selection drew as their children, waiting for their own mesh. */
+    public int finerFallbacks() {
+        return finerFallbacks;
+    }
+
     /** What the store and the mesh cache know about sections. */
     public interface Sections {
         /** True if the store has the section (it holds non-air voxels). */
@@ -118,6 +126,7 @@ public final class LodSelector {
     public void select(double camX, double camY, double camZ, int minY, int maxY, double maxDistance,
                        Sections sections, LongConsumer draw, LongConsumer want) {
         fallbacks = 0;
+        finerFallbacks = 0;
         descending.clear();
         int top = levels - 1;
         int size = LodSection.SIZE << top;
@@ -186,8 +195,35 @@ public final class LodSelector {
                 fallbacks++;
             }
             draw.accept(key);
-        } else {
-            want.accept(key);
+            return;
+        }
+        want.accept(key);
+        // Not meshed yet, while its children are: they draw meanwhile, finer than wanted. On a
+        // server's mirror the children arrive first (ADR-075), so moving away from terrain seen
+        // up close found its parent never meshed, and the area vanished until it was.
+        if (level > Math.max(0, forcedLevel)) {
+            int x = LodKey.x(key) * 2;
+            int y = LodKey.y(key) * 2;
+            int z = LodKey.z(key) * 2;
+            boolean any = false;
+            for (int i = 0; i < 8; i++) {
+                long child = LodKey.pack(level - 1, x + (i & 1), y + (i >> 2), z + ((i >> 1) & 1));
+                if (sections.exists(child)) {
+                    if (!sections.ready(child)) {
+                        return;
+                    }
+                    any = true;
+                }
+            }
+            if (any) {
+                finerFallbacks++;
+                for (int i = 0; i < 8; i++) {
+                    long child = LodKey.pack(level - 1, x + (i & 1), y + (i >> 2), z + ((i >> 1) & 1));
+                    if (sections.exists(child)) {
+                        draw.accept(child);
+                    }
+                }
+            }
         }
     }
 }

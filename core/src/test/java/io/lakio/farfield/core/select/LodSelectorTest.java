@@ -128,6 +128,33 @@ class LodSelectorTest {
     }
 
     @Test
+    void aParentNotMeshedYetDrawsItsChildrenMeanwhile() {
+        // A level-3 section 768 blocks east draws itself (its split distance is 2 * 256); its parent
+        // splits (within 2 * 512). Not meshed yet, its ready children stand in.
+        LodSelector selector = new LodSelector(5, 2.0);
+        long far = LodKey.pack(3, 3, -1, 0);
+        List<Long> draw = new ArrayList<>();
+        List<Long> want = new ArrayList<>();
+        selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of()), draw::add, want::add);
+        assertTrue(draw.contains(far));
+        draw.clear();
+        selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of(far)), draw::add, want::add);
+        assertTrue(want.contains(far));
+        assertTrue(!draw.contains(far));
+        assertTrue(draw.contains(LodKey.pack(2, 6, -1, 0)));
+        assertTrue(draw.contains(LodKey.pack(2, 7, -1, 1)));
+        assertEquals(1, selector.finerFallbacks());
+        // A child not ready either: nothing finer to show, the section is only asked for.
+        draw.clear();
+        want.clear();
+        selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of(far, LodKey.pack(2, 6, -1, 0))), draw::add,
+                want::add);
+        assertTrue(want.contains(far));
+        assertTrue(draw.stream().noneMatch(k -> LodKey.level(k) == 2 && LodKey.x(k) >> 1 == 3 && LodKey.z(k) >> 1 == 0));
+        assertEquals(0, selector.finerFallbacks());
+    }
+
+    @Test
     void descendingParentFallsBackWhenItShowsWhatANewChildLacks() {
         LodSelector selector = new LodSelector(5, 2.0);
         long child = LodKey.pack(0, 0, -1, 0);

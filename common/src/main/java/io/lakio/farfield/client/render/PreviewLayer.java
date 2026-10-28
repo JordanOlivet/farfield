@@ -60,6 +60,15 @@ final class PreviewLayer {
     private final Set<Long> maskPending = ConcurrentHashMap.newKeySet();
     /** Tiles whose real data changed since their mask was last read. */
     private final Set<Long> maskDirty = ConcurrentHashMap.newKeySet();
+    /**
+     * Masks that hide the preview over more chunks, waiting until the real
+     * terrain drawn there is meshed from its current data (ADR-076); with the
+     * time they were read.
+     */
+    private final Map<Long, int[]> heldMasks = new ConcurrentHashMap<>();
+    private final Map<Long, Long> heldSince = new ConcurrentHashMap<>();
+    /** A held mask goes in after this long anyway: real terrain the selection does not draw there. */
+    private static final long HOLD_NANOS = 2_000_000_000L;
     /** Tiles whose sections must be meshed again: written again, or their real data changed. */
     private final ConcurrentLinkedQueue<Long> changedTiles = new ConcurrentLinkedQueue<>();
     private final LongConsumer tileListener = changedTiles::add;
@@ -101,6 +110,8 @@ final class PreviewLayer {
         masks.clear();
         maskPending.clear();
         maskDirty.clear();
+        heldMasks.clear();
+        heldSince.clear();
         changedTiles.clear();
         if (next != null) {
             next.preview().addListener(tileListener);
@@ -266,7 +277,17 @@ final class PreviewLayer {
                 do {
                     maskDirty.remove(tile);
                     int[] fresh = readMask(w, tile);
-                    int[] old = masks.put(tile, fresh);
+                    int[] old = masks.get(tile);
+                    if (old != null && hidesMore(old, fresh)) {
+                        // Real chunks came in: the preview stays over them until the real
+                        // terrain drawn there is meshed (applyHeld), or it showed a hole meanwhile.
+                        heldMasks.put(tile, fresh);
+                        heldSince.putIfAbsent(tile, System.nanoTime());
+                        continue;
+                    }
+                    heldMasks.remove(tile);
+                    heldSince.remove(tile);
+                    masks.put(tile, fresh);
                     if (old == null || !Arrays.equals(old, fresh)) {
                         masksChanged = true;
                         if (old != null) {
@@ -284,6 +305,58 @@ final class PreviewLayer {
                 requestMask(w, tile);
             }
         });
+    }
+
+    /** Whether {@code fresh} marks a chunk real that {@code old} did not. */
+    private static boolean hidesMore(int[] old, int[] fresh) {
+        for (int z = 0; z < PreviewTile.CHUNKS; z++) {
+            if ((fresh[z] & ~old[z]) != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether the real terrain drawn over a chunk is meshed from its current data. */
+    interface RealReady {
+        boolean test(int chunkX, int chunkZ);
+    }
+
+    /**
+     * Puts in the held masks whose new real chunks are all drawn by real
+     * terrain meshed from its current data, or held for {@link #HOLD_NANOS}.
+     * Render thread, before {@link #drainChanges}.
+     */
+    void applyHeld(RealReady ready, long now) {
+        if (heldMasks.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<Long, int[]> e : heldMasks.entrySet()) {
+            long tile = e.getKey();
+            int[] fresh = e.getValue();
+            int[] old = masks.get(tile);
+            Long since = heldSince.get(tile);
+            boolean go = old == null || since == null || now - since > HOLD_NANOS;
+            if (!go) {
+                go = true;
+                int baseX = PreviewStore.tileX(tile) * PreviewTile.CHUNKS;
+                int baseZ = PreviewStore.tileZ(tile) * PreviewTile.CHUNKS;
+                for (int z = 0; z < PreviewTile.CHUNKS && go; z++) {
+                    int added = fresh[z] & ~old[z];
+                    while (added != 0 && go) {
+                        int x = Integer.numberOfTrailingZeros(added);
+                        added &= added - 1;
+                        go = ready.test(baseX + x, baseZ + z);
+                    }
+                }
+            }
+            if (go && heldMasks.remove(tile, fresh)) {
+                heldSince.remove(tile);
+                masks.put(tile, fresh);
+                masksChanged = true;
+                changedTiles.add(tile);
+            }
+        }
     }
 
     /** The tile's mask, read from the real level-4 sections when not known. Any thread. */

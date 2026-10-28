@@ -2033,3 +2033,29 @@ ADR-074 (its delay figures).
   versions sent: the client already knows its versions and asks for what
   its renderer draws, nearest and in view first, which is cheaper over a
   4,096-block radius than walking every level around the player.
+
+
+## ADR-076 — Transitions keep something drawn
+
+Status: accepted, 2026-10-28. Amends ADR-074 (coverage while meshes stream
+in) and ADR-039 (the preview's mask).
+
+- **Context**: with ADR-075 sections reach the client 20 to 140 ms after
+  their write (1.4 s at most at the generation front). The user: "quand il
+  y a un changement de niveau de LOD ou au passage de la preview au LOD,
+  on a encore des portions qui disparaissent [...] très rapide mais
+  visible". Two gaps in the drawing, not in the data. (1) The preview hid
+  itself over a chunk as soon as the mirror's level 4 had it, before the
+  real terrain drawn there was meshed. (2) Pushes come children first, so
+  a section seen up close had its parent never meshed: moving away, the
+  parent was wanted and nothing was drawn until it was.
+- **Decision**: (1) a new mask that marks more chunks real is held until
+  every new real chunk is drawn by real sections meshed from their current
+  data (drawn, not stale, not being meshed), or for 2 s at most; the
+  preview's old mesh stays meanwhile. (2) A section far enough to draw
+  itself but not meshed yet draws its children while they all are
+  (`finer fallbacks` in the renderer's stat line).
+- **Result**: unit test (`LodSelectorTest.aParentNotMeshedYetDrawsItsChildrenMeanwhile`);
+  `gradlew build` passes. Not checked in game yet.
+- **Cost**: the preview and the real terrain can both draw a chunk for a
+  frame or two.
