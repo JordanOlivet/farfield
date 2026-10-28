@@ -2431,3 +2431,23 @@ Status: accepted, 2026-10-28. Amends ADR-039's masks and ADR-088.
   chunk's first level-0 write to its mask hiding it (the preview's
   sections are then meshed again), beside the holds.
 - **Result**: `gradlew build` passes. Not run in game yet.
+
+## ADR-090 — Level 0 hides the preview only once it reaches the surface
+
+Status: accepted, 2026-10-28. Amends ADR-089.
+
+- **Context**: with ADR-089 the overlap and the lighter ice patches were
+  gone (user: "le chevauchement a disparu et la grille sur la glace
+  aussi"; holes line: new real chunks hidden 235 to 416 ms after their
+  first level-0 write on average). But portions vanished again while
+  flying over frozen sea: dark pits with straight walls where the ice
+  should be (annotated captures), with the hole detector at 0, so each
+  column drew something. A chunk's level-0 sections come one by one, and
+  the first one stored (a sea floor) marked the chunk real: the preview
+  left before the section holding the sea's top was there.
+- **Decision**: a level-0 read marks a chunk real only when its real data
+  reaches the surface the preview expects there (the lowest of its
+  corners and center, the sea's top over a preview sea), 4 blocks of
+  slack; short of it, level 4 shows the chunk real later, as before
+  ADR-089. The holes line counts the reads left short.
+- **Result**: `gradlew build` passes. Not run in game yet.

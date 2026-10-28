@@ -276,6 +276,7 @@ final class PreviewLayer {
                 }
             }
         }
+        PreviewTile previewTile = w.preview().read(PreviewStore.tileX(tile), PreviewStore.tileZ(tile));
         int[] fine = fineMasks.computeIfAbsent(tile, t -> {
             int[] m = new int[MASK_INTS];
             Arrays.fill(m, GROUND, MASK_INTS, Integer.MIN_VALUE);
@@ -307,12 +308,50 @@ final class PreviewLayer {
             int cx = Math.floorMod(sx * 2 + (q & 1), PreviewTile.CHUNKS);
             int cz = Math.floorMod(sz * 2 + (q >> 1), PreviewTile.CHUNKS);
             int c = cz * PreviewTile.CHUNKS + cx;
+            // Only a column that reaches the surface the preview expects there: its sections come one
+            // by one, and the sea floor alone hid the preview over a sea without its top (dark pits
+            // with straight walls, ADR-090). Short of it, level 4 shows the chunk real later.
+            int realTop = Math.max(high, maxGround(ground, qx, qz));
+            if (previewTile != null && realTop < expectedTop(previewTile, cx * 16, cz * 16) - SURFACE_SLACK) {
+                fineShort.incrementAndGet();
+                continue;
+            }
             synchronized (fine) {
                 fine[cz] |= 1 << cx;
                 fine[GROUND + c] = g;
                 fine[FLUID + c] = Math.max(g, high);
             }
         }
+    }
+
+    /** Blocks a real column may stay under the preview's surface and still count as complete. */
+    private static final int SURFACE_SLACK = 4;
+    /** Chunks a level-0 read left to level 4 for want of their top, since the last report. */
+    private final java.util.concurrent.atomic.AtomicLong fineShort = new java.util.concurrent.atomic.AtomicLong();
+
+    /** The highest column top of solid voxels in a chunk quarter of a level-0 column; MIN_VALUE for none. */
+    private static int maxGround(int[] ground, int qx, int qz) {
+        int high = Integer.MIN_VALUE;
+        for (int z = qz; z < qz + 16; z++) {
+            for (int x = qx; x < qx + 16; x++) {
+                high = Math.max(high, ground[z * LodSection.SIZE + x]);
+            }
+        }
+        return high;
+    }
+
+    /**
+     * The lowest first free block the preview expects over a chunk (block
+     * {@code bx, bz} of its tile, its corner): its corners and center, the
+     * sea's top where the tile has a sea.
+     */
+    private static int expectedTop(PreviewTile tile, int bx, int bz) {
+        int low = Integer.MAX_VALUE;
+        int[][] at = {{0, 0}, {15, 0}, {0, 15}, {15, 15}, {8, 8}};
+        for (int[] p : at) {
+            low = Math.min(low, tile.height(bx + p[0], bz + p[1]));
+        }
+        return tile.water() >= 0 ? Math.max(low, tile.seaLevel()) : low;
     }
 
     /**
@@ -715,7 +754,8 @@ final class PreviewLayer {
     synchronized String heldReport() {
         String out = hiddenChunks + " new real chunks hidden from the preview "
                 + (hiddenChunks == 0 ? 0 : hiddenNanos / hiddenChunks / 1_000_000) + " ms after their first level-0 write"
-                + " on average, " + hiddenMaxNanos / 1_000_000 + " ms at most (then meshed again); "
+                + " on average, " + hiddenMaxNanos / 1_000_000 + " ms at most (then meshed again), " + fineShort.getAndSet(0)
+                + " level-0 reads short of the expected surface; "
                 + heldChunks + " chunks left by the preview after a hold of "
                 + (heldChunks == 0 ? 0 : heldNanos / heldChunks / 1_000_000)
                 + " ms on average, " + heldMaxNanos / 1_000_000 + " ms at most, " + heldTimedOut + " at the 2 s limit";
