@@ -141,3 +141,25 @@ Items:
   guessed from the biome: Biomes O' Plenty's white sand, Terralith's
   surfaces), with the same stand-in world.
 - [ ] D.3 A client toggle per kind of feature (trees, plants, rocks).
+- [ ] D.4 Vegetation without collision that grows like kelp or vines
+  (`GrowingPlantBlock`: Biomes O' Plenty's `high_grass`) is drawn as
+  nothing, in real LODs and in the preview, where it also fills the
+  feature voxels (15,770 runs in one tile of the user's pack): class it
+  as a plant; leave out of the tiles what LODs never draw and the plants
+  under the sea; tile format 12, protocol 7. Proposed 2026-10-28, waiting
+  for the user's go.
+
+## M2.E — Distance up to 16,384 blocks
+
+- [ ] E.1 The user (2026-10-28): raise the limit from 4,096 to 16,384
+  blocks, 4,096 staying the default. A server maximum never exceeded
+  (`streaming_radius`, capped at 16,384); a client wish (default 4,096),
+  clamped by the server's maximum when connected, applied as is in single
+  player or client-only rendering. Raise the hard-coded 4,096 caps
+  (`LodRenderer.MAX_DISTANCE`, `NoisePreview.RANGE`, `RenderConfig` fog and
+  texture maxima); update every tooltip and text (en_us, fr_fr).
+- [ ] E.2 A cheap preview beyond 4,096 blocks: the area is 16 times larger
+  (about 3,200 tiles instead of 236, 50 to 60 min of server work after a
+  teleport at today's 5 to 7 s a tile, about 250 MB a world and as much
+  for each client). Heights every 32 or 64 blocks there and no feature
+  voxels (a canopy cover per chunk instead), measured before choosing.
