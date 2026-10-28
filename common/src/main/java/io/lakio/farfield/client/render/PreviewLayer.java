@@ -454,16 +454,55 @@ final class PreviewLayer {
             if (go) {
                 if (heldMasks.remove(tile, fresh)) {
                     heldSince.remove(tile);
+                    if (old != null && since != null) {
+                        countHeld(old, fresh, now - since, now - since > HOLD_NANOS);
+                    }
                     masks.put(tile, fresh);
                     masksChanged = true;
                     changed(tile, changedChunks(old, fresh));
                 }
             } else if (!Arrays.equals(partial, old) && heldMasks.get(tile) == fresh) {
+                countHeld(old, partial, now - since, false);
                 masks.put(tile, partial);
                 masksChanged = true;
                 changed(tile, changedChunks(old, partial));
             }
         }
+    }
+
+    /** Chunks the preview left after a hold since the last report, their summed and longest hold, and those timed out. */
+    private long heldChunks;
+    private long heldNanos;
+    private long heldMaxNanos;
+    private long heldTimedOut;
+
+    /**
+     * Counts the chunks {@code to} hides that {@code from} did not, held for
+     * at most {@code nanos} (from the tile's first hold). Render thread.
+     */
+    private void countHeld(int[] from, int[] to, long nanos, boolean timedOut) {
+        int n = 0;
+        for (int z = 0; z < PreviewTile.CHUNKS; z++) {
+            n += Integer.bitCount(to[z] & ~from[z]);
+        }
+        heldChunks += n;
+        heldNanos += nanos * n;
+        heldMaxNanos = Math.max(heldMaxNanos, nanos);
+        heldTimedOut += timedOut ? n : 0;
+    }
+
+    /**
+     * How long the preview stayed over new real chunks since the last call,
+     * for the renderer's holes line (ADR-087); resets. Render thread.
+     */
+    String heldReport() {
+        String out = heldChunks + " chunks left by the preview after " + (heldChunks == 0 ? 0 : heldNanos / heldChunks / 1_000_000)
+                + " ms on average, " + heldMaxNanos / 1_000_000 + " ms at most, " + heldTimedOut + " at the 2 s limit";
+        heldChunks = 0;
+        heldNanos = 0;
+        heldMaxNanos = 0;
+        heldTimedOut = 0;
+        return out;
     }
 
     /** The tile's mask, read from the real level-4 sections when not known. Any thread. */

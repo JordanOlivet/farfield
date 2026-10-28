@@ -1311,9 +1311,9 @@ public final class LodRenderer {
 
     /**
      * Whether the real terrain the last selection draws over a chunk column
-     * is meshed from its current data and draws something there: some drawn
-     * real section has quads in that column, and none covering it waits for
-     * a new mesh. The preview hides itself over new real chunks only then
+     * draws it: some drawn real section has quads in that column, and none
+     * covering it without quads there waits for a new mesh (it may be the
+     * one that gets this chunk's terrain). The preview hides itself over new real chunks only then
      * (ADR-076, ADR-077).
      */
     private boolean realReady(int chunkX, int chunkZ) {
@@ -1325,10 +1325,15 @@ public final class LodRenderer {
             for (int y = Math.floorDiv(selectedMinY, size); y <= Math.floorDiv(selectedMaxY - 1, size); y++) {
                 long key = LodKey.pack(level, x, y, z);
                 if (drawn.contains(key)) {
-                    if (stale.contains(key) || requested.contains(key)) {
+                    boolean draws = drawsColumn(resident.get(key), level, chunkX, chunkZ);
+                    // Waiting for a new mesh holds the preview only where the mesh drawn has nothing
+                    // in this column yet: at a generation front, sections already drawing it are meshed
+                    // again for each new chunk beside, and the preview stayed over drawn terrain
+                    // (ADR-087).
+                    if (!draws && (stale.contains(key) || requested.contains(key))) {
                         return false;
                     }
-                    covered |= drawsColumn(resident.get(key), level, chunkX, chunkZ);
+                    covered |= draws;
                 }
             }
         }
@@ -1549,9 +1554,11 @@ public final class LodRenderer {
         }
         if (RenderSettings.performanceLogs()) {
             Farfield.LOG.info("LOD holes: at most {} chunk columns without anything drawn within {} chunks;"
-                            + " {} closed in 10 s, {} ms on average, {} ms at most; {} open now", maxHoles,
+                            + " {} closed in 10 s, {} ms on average, {} ms at most; {} open now; {}", maxHoles,
                     HOLE_RADIUS_CHUNKS, holesClosed, holesClosed == 0 ? 0 : holeNanos / holesClosed / 1_000_000,
-                    holeMaxNanos / 1_000_000, holeSince.size());
+                    holeMaxNanos / 1_000_000, holeSince.size(), previewLayer.heldReport());
+        } else {
+            previewLayer.heldReport();
         }
         maxHoles = 0;
         holesClosed = 0;

@@ -2388,3 +2388,25 @@ Status: accepted, 2026-10-28. Amends ADR-076.
   others stay held (2 s at most, as before).
 - **Result**: `gradlew build` passes. Not run in game yet. Whether the
   pale lines go with the overlap is to be seen.
+
+## ADR-088 — A section drawing a chunk no longer holds the preview over it
+
+Status: accepted, 2026-10-28. Amends ADR-087 and ADR-076.
+
+- **Context**: after ADR-087 the user's A/B pair (same view, same second)
+  still showed the brown preview drawn through grey real terrain in a Cold
+  Desert, gone in the second capture. With `debug levels`, the "pale
+  lines" over frozen sea turned out to be level-0 ice patches with
+  straight chunk edges, slightly lighter than the ice around (contrast
+  stretched), that move between captures: two translucent ice layers, the
+  preview's over the real one. Both are the preview held over new real
+  chunks. `realReady` refused a chunk while any drawn section covering it
+  waited for a new mesh, and at a generation front every section beside
+  new chunks is meshed again for each of them.
+- **Decision**: a section waiting for a new mesh holds the preview over a
+  chunk only where its drawn mesh has nothing in that chunk's column (it
+  may be the one getting that chunk's terrain); one that already draws
+  the column does not. The renderer's holes line gives the chunks the
+  preview left after a hold, how long on average and at most, and how
+  many at the 2 s limit.
+- **Result**: `gradlew build` passes. Not run in game yet.
