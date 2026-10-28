@@ -70,6 +70,13 @@ public final class LodWorld implements AutoCloseable {
     @SuppressWarnings("unchecked")
     private final Set<Long>[] dirty = new Set[LEVELS];
     /**
+     * Coarse sections to build again from level 0 ({@link #rebuildCoarseLevels},
+     * a change of the mip rules), apart from {@link #dirty}: new chunks go
+     * first, the rebuild only fills the time they leave (ADR-083).
+     */
+    @SuppressWarnings("unchecked")
+    private final Set<Long>[] rebuild = new Set[LEVELS];
+    /**
      * Version of the mip rules the stored coarse levels were built with; a
      * world built with older rules rebuilds them all once, from level 0
      * (version 2: per-voxel fill; 3: ground covered by plants, ADR-060; 4:
@@ -103,6 +110,10 @@ public final class LodWorld implements AutoCloseable {
     }
 
     private LodWorld(Path dir, MaterialTable.Resolver resolver, int maxPending) throws IOException {
+        this(dir, resolver, maxPending, false);
+    }
+
+    private LodWorld(Path dir, MaterialTable.Resolver resolver, int maxPending, boolean mirror) throws IOException {
         this.dir = dir;
         this.maxPending = maxPending;
         blockStateKeys = KeyFile.open(dir.resolve("block_states.txt"));
@@ -123,13 +134,16 @@ public final class LodWorld implements AutoCloseable {
         }
         for (int level = 0; level < LEVELS; level++) {
             dirty[level] = ConcurrentHashMap.newKeySet();
+            rebuild[level] = ConcurrentHashMap.newKeySet();
         }
         mips = ThreadLocal.withInitial(() -> new MipBuilder(air, materials));
         mipsVersionFile = dir.resolve("mips.version");
         String version = Files.exists(mipsVersionFile) ? Files.readString(mipsVersionFile).trim() : "";
-        if (!MIPS_VERSION.equals(version)) {
-            store.forEachKey(0, key -> dirty[1].add(LodKey.parent(key)));
-            mipsToUpgrade = dirty[1].size();
+        // A mirror of a server's store builds no coarse level of its own: the server's come with
+        // the rest. Built from the mirror's partial level 0 at its close, they replaced the
+        // server's and held the client for 46 s (ADR-083).
+        if (!mirror && !MIPS_VERSION.equals(version)) {
+            queueRebuild();
             if (mipsToUpgrade == 0) {
                 Files.writeString(mipsVersionFile, MIPS_VERSION);
             }
@@ -164,19 +178,86 @@ public final class LodWorld implements AutoCloseable {
      * the level-1 sections queued.
      */
     public int rebuildCoarseLevels() throws IOException {
-        store.forEachKey(0, key -> dirty[1].add(LodKey.parent(key)));
-        mipsToUpgrade = Math.max(1, dirty[1].size());
-        return dirty[1].size();
+        queueRebuild();
+        return rebuild[1].size();
     }
 
-    /** Coarse sections waiting to be built, per level from 1 to 4 (index 0 unused). */
+    /**
+     * Queues every coarse section level 0 makes, level by level (the parents
+     * of level 0, then theirs): a rule change can alter a level whose
+     * children did not change.
+     */
+    private void queueRebuild() throws IOException {
+        store.forEachKey(0, key -> rebuild[1].add(LodKey.parent(key)));
+        for (int level = 2; level < LEVELS; level++) {
+            for (long key : rebuild[level - 1]) {
+                rebuild[level].add(LodKey.parent(key));
+            }
+        }
+        int total = 0;
+        for (int level = 1; level < LEVELS; level++) {
+            total += rebuild[level].size();
+        }
+        mipsToUpgrade = total;
+    }
+
+    /** Coarse sections a rebuild still has to build, per level from 1 to 4 (index 0 unused). */
     public int[] coarseLevelsPending() {
         int[] out = new int[LEVELS];
         for (int level = 1; level < LEVELS; level++) {
-            out[level] = dirty[level].size();
+            out[level] = rebuild[level].size();
         }
         return out;
     }
+
+    /** Whether a rebuild of the coarse levels is under way. */
+    public boolean rebuilding() {
+        for (Set<Long> r : rebuild) {
+            if (!r.isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Builds rebuild work for at most {@code budgetNanos}, the finest level
+     * first (a level starts once the one under it is done, so each section is
+     * built once from its final children), in batches on {@code executor}.
+     * Returns the sections written; once nothing is left, the store is
+     * marked as built with the current rules.
+     */
+    public synchronized int buildRebuildSlice(ExecutorService executor, long budgetNanos) throws IOException {
+        long deadline = System.nanoTime() + budgetNanos;
+        int written = 0;
+        while (System.nanoTime() < deadline) {
+            int level = 1;
+            while (level < LEVELS && rebuild[level].isEmpty()) {
+                level++;
+            }
+            if (level == LEVELS) {
+                break;
+            }
+            List<Long> keys = new ArrayList<>(REBUILD_BATCH);
+            for (Long key : rebuild[level]) {
+                if (keys.size() >= REBUILD_BATCH) {
+                    break;
+                }
+                keys.add(key);
+            }
+            rebuild[level].removeAll(keys);
+            // Rebuilt sections mark no parent: every coarse section is queued already.
+            written += buildAll(executor, keys, false);
+        }
+        if (mipsToUpgrade > 0 && !rebuilding()) {
+            Files.writeString(mipsVersionFile, MIPS_VERSION);
+            mipsToUpgrade = 0;
+        }
+        return written;
+    }
+
+    /** Sections a rebuild slice builds at a time. */
+    private static final int REBUILD_BATCH = 256;
 
     /** Opens with a write-back cache of up to 2048 level-0 sections. */
     public static LodWorld open(Path dir, MaterialTable.Resolver resolver) throws IOException {
@@ -185,6 +266,14 @@ public final class LodWorld implements AutoCloseable {
 
     public static LodWorld open(Path dir, MaterialTable.Resolver resolver, int maxPending) throws IOException {
         return new LodWorld(dir, resolver, maxPending);
+    }
+
+    /**
+     * Opens a mirror of a server's store (ADR-068): it never rebuilds its
+     * coarse levels, whatever its mip rules' version; the server's are mirrored.
+     */
+    public static LodWorld openMirror(Path dir, MaterialTable.Resolver resolver) throws IOException {
+        return new LodWorld(dir, resolver, 2048, true);
     }
 
     public KeyRegistry blockStates() {
@@ -425,6 +514,11 @@ public final class LodWorld implements AutoCloseable {
 
     /** Compacts, encodes and writes a section unless its encoding is unchanged; marks its parent dirty. */
     private boolean write(long key, LodSection section, byte[] oldEncoding) throws IOException {
+        return write(key, section, oldEncoding, true);
+    }
+
+    /** Like {@link #write(long, LodSection, byte[])}; {@code markParent} false for a rebuild's sections. */
+    private boolean write(long key, LodSection section, byte[] oldEncoding, boolean markParent) throws IOException {
         section.compact();
         section.prunePalette();
         section.compactBiomes();
@@ -436,7 +530,7 @@ public final class LodWorld implements AutoCloseable {
         store.writeEncoded(key, raw.array(), raw.length());
         sectionsWritten.increment();
         int level = LodKey.level(key);
-        if (level + 1 < LEVELS) {
+        if (markParent && level + 1 < LEVELS) {
             dirty[level + 1].add(LodKey.parent(key));
         }
         for (LongConsumer l : listeners) {
@@ -472,12 +566,7 @@ public final class LodWorld implements AutoCloseable {
      * One call at a time.
      */
     public synchronized int buildMips(ExecutorService executor, int perLevel) throws IOException {
-        int written = buildMipLevels(executor, perLevel);
-        if (mipsToUpgrade > 0 && !hasDirtyMips()) {
-            Files.writeString(mipsVersionFile, MIPS_VERSION);
-            mipsToUpgrade = 0;
-        }
-        return written;
+        return buildMipLevels(executor, perLevel);
     }
 
     private int buildMipLevels(ExecutorService executor, int perLevel) throws IOException {
@@ -491,42 +580,49 @@ public final class LodWorld implements AutoCloseable {
                 keys.add(key);
             }
             dirty[level].removeAll(keys);
-            if (keys.isEmpty()) {
-                continue;
+            written += buildAll(executor, keys, true);
+        }
+        return written;
+    }
+
+    /** Builds parents, in parallel on {@code executor} when given; returns those written. */
+    private int buildAll(ExecutorService executor, List<Long> keys, boolean markParents) throws IOException {
+        if (keys.isEmpty()) {
+            return 0;
+        }
+        int written = 0;
+        if (executor == null) {
+            for (long key : keys) {
+                written += buildParent(key, markParents) ? 1 : 0;
             }
-            if (executor == null) {
-                for (long key : keys) {
-                    written += buildParent(key) ? 1 : 0;
+            return written;
+        }
+        int tasks = Math.min(keys.size(), 64);
+        List<Future<Integer>> futures = new ArrayList<>(tasks);
+        for (int t = 0; t < tasks; t++) {
+            List<Long> share = keys.subList(keys.size() * t / tasks, keys.size() * (t + 1) / tasks);
+            futures.add(executor.submit(() -> {
+                int built = 0;
+                for (long key : share) {
+                    built += buildParent(key, markParents) ? 1 : 0;
                 }
-                continue;
-            }
-            int tasks = Math.min(keys.size(), 64);
-            List<Future<Integer>> futures = new ArrayList<>(tasks);
-            for (int t = 0; t < tasks; t++) {
-                List<Long> share = keys.subList(keys.size() * t / tasks, keys.size() * (t + 1) / tasks);
-                futures.add(executor.submit(() -> {
-                    int built = 0;
-                    for (long key : share) {
-                        built += buildParent(key) ? 1 : 0;
-                    }
-                    return built;
-                }));
-            }
-            for (Future<Integer> f : futures) {
-                try {
-                    written += f.get();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new IOException("interrupted while building mips", e);
-                } catch (ExecutionException e) {
-                    throw e.getCause() instanceof IOException io ? io : new IOException(e.getCause());
-                }
+                return built;
+            }));
+        }
+        for (Future<Integer> f : futures) {
+            try {
+                written += f.get();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("interrupted while building mips", e);
+            } catch (ExecutionException e) {
+                throw e.getCause() instanceof IOException io ? io : new IOException(e.getCause());
             }
         }
         return written;
     }
 
-    private boolean buildParent(long key) throws IOException {
+    private boolean buildParent(long key, boolean markParent) throws IOException {
         int level = LodKey.level(key);
         int x = LodKey.x(key);
         int y = LodKey.y(key);
@@ -544,7 +640,7 @@ public final class LodWorld implements AutoCloseable {
         int[] length = new int[1];
         byte[] old = store.readEncoded(key, length);
         byte[] oldCopy = old == null ? null : Arrays.copyOf(old, length[0]);
-        return write(key, parent, oldCopy);
+        return write(key, parent, oldCopy, markParent);
     }
 
     public void sync() throws IOException {

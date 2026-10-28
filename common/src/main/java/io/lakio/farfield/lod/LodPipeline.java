@@ -84,8 +84,8 @@ public final class LodPipeline {
     private final ScheduledExecutorService maintenance;
     /** Maintenance period, and how long a section stays untouched before it is written. */
     private static final long MAINTENANCE_MILLIS = 250;
-    /** Coarse sections built per level and maintenance pass. */
-    private static final int MIPS_PER_PASS = 2048;
+    /** Time a maintenance pass gives a rebuild of the coarse levels when no new chunk waits. */
+    private static final long REBUILD_SLICE_NANOS = 50_000_000L;
     private final ThreadLocal<ChunkSnapshot.Scratch> scratch = ThreadLocal.withInitial(ChunkSnapshot.Scratch::new);
     private final AtomicInteger inFlight = new AtomicInteger();
     private volatile boolean stopping;
@@ -355,13 +355,16 @@ public final class LodPipeline {
             try {
                 lod.world().flush(TimeUnit.MILLISECONDS.toNanos(MAINTENANCE_MILLIS));
                 if (lod.world().hasDirtyMips()) {
-                    boolean upgrading = lod.world().mipsToUpgrade() > 0;
-                    // A batch per level and pass: a whole store rebuilt at once held the new chunks'
-                    // writes and pushes for minutes (ADR-082).
-                    int written = lod.world().buildMips(workers, MIPS_PER_PASS);
-                    if (upgrading && lod.world().mipsToUpgrade() == 0) {
+                    // New chunks first, every coarse section they changed (ADR-083).
+                    lod.world().buildMips(workers);
+                } else if (lod.world().rebuilding() && inFlight.get() == 0 && lod.world().pendingSections() == 0) {
+                    // Nothing new to build: a slice of the rebuild, short, so a chunk arriving meanwhile
+                    // waits for it at most that long (ADR-083; built at once, it held new chunks' writes
+                    // and pushes for seconds).
+                    int written = lod.world().buildRebuildSlice(workers, REBUILD_SLICE_NANOS);
+                    if (!lod.world().rebuilding()) {
                         Farfield.LOG.info("LOD store of {}: coarse levels rebuilt ({} sections written in the last"
-                                + " pass)", lod.name(), written);
+                                + " slice)", lod.name(), written);
                     }
                 }
                 if (sync) {

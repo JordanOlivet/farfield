@@ -162,7 +162,7 @@ class LodWorldTest {
     }
 
     @Test
-    void aRebuildQueuesEveryCoarseLevelAndBuildsItABatchAtATime() throws IOException {
+    void aRebuildQueuesEveryCoarseLevelApartAndBuildsItInSlices() throws IOException {
         try (LodWorld world = LodWorld.open(dir, MaterialTable.SIMPLE)) {
             // Chunks far apart: four level-0 columns of two sections (y -1 and 0), under eight
             // level-1 parents.
@@ -171,26 +171,48 @@ class LodWorldTest {
             }
             world.flush(0);
             world.buildMips();
-            assertTrue(!world.hasDirtyMips());
             long top = world.version(LodKey.pack(4, 0, -1, 0));
             assertTrue(top >= 0);
 
             assertEquals(8, world.rebuildCoarseLevels());
-            assertTrue(world.mipsToUpgrade() > 0);
+            int[] pending = world.coarseLevelsPending();
+            assertEquals(8, pending[1]);
+            assertTrue(pending[4] >= 1, "every level is queued, not only level 1");
+            assertTrue(world.rebuilding());
+            // The rebuild is apart from new chunks' work: building that leaves it as it was.
+            assertTrue(!world.hasDirtyMips());
+            world.ingest(chunk(world, 40, 0));
+            world.flush(0);
+            world.buildMips();
             assertEquals(8, world.coarseLevelsPending()[1]);
-            // One section per level and pass: level 1 drains over eight passes, the levels above
-            // follow as their children are rebuilt.
-            world.buildMips(null, 1);
-            assertEquals(7, world.coarseLevelsPending()[1]);
-            int passes = 1;
-            while (world.hasDirtyMips()) {
-                world.buildMips(null, 1);
-                passes++;
+            // Slices of time until done, the finest level first.
+            int slices = 0;
+            while (world.rebuilding()) {
+                world.buildRebuildSlice(null, 1_000_000L);
+                slices++;
+                assertTrue(slices < 10_000);
             }
-            assertTrue(passes >= 8, passes + " passes");
             assertEquals(0, world.mipsToUpgrade());
             // Built again from the same level 0: the same data, so the top section is unchanged.
             assertEquals(top, world.version(LodKey.pack(4, 0, -1, 0)));
+        }
+    }
+
+    @Test
+    void aMirrorNeverRebuildsItsCoarseLevels() throws IOException {
+        try (LodWorld world = LodWorld.open(dir, MaterialTable.SIMPLE)) {
+            world.ingest(chunk(world, 0, 0));
+            world.flush(0);
+            world.buildMips();
+        }
+        // An older mip rules version on disk: a store rebuilds at open, a mirror does not.
+        java.nio.file.Files.writeString(dir.resolve("mips.version"), "1");
+        try (LodWorld mirror = LodWorld.openMirror(dir, MaterialTable.SIMPLE)) {
+            assertTrue(!mirror.rebuilding());
+            assertEquals(0, mirror.mipsToUpgrade());
+        }
+        try (LodWorld store = LodWorld.open(dir, MaterialTable.SIMPLE)) {
+            assertTrue(store.rebuilding());
         }
     }
 

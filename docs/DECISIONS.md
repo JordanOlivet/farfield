@@ -2253,3 +2253,32 @@ Status: accepted, 2026-10-28. Amends ADR-060 (mip rules version).
 - **Result**: unit test (`LodWorldTest`: queued, built a batch at a time,
   the same data gives the same top section); `gradlew build` passes. Not
   run on the server yet.
+
+
+## ADR-083 — New chunks before a rebuild; mirrors never rebuild
+
+Status: accepted, 2026-10-28. Amends ADR-082.
+
+- **Context**: deployed, ADR-082 rebuilt the server's coarse levels at
+  open (`MIPS_VERSION` 4: 543,420 level-1 sections queued in the
+  overworld). New chunks streamed, but pushes went from 25 to 90 ms to 0.5
+  to 3 s (10 s at most): each maintenance pass built a batch of 2,048
+  sections per level before writing the new chunks, whose parents also
+  waited behind the rebuild in the same queue. The user: "Si on a des
+  chunk neuf a traiter on le fait, sinon on fait la maintenance". Then a
+  disconnect took 46 s: the client's mirror (266,254 sections) had queued
+  the same rebuild at open, and `LodWorld.close` built it all, from the
+  mirror's partial level 0, over the server's coarse levels, while the
+  client kept the server's versions for them.
+- **Decision**: a rebuild has its own queue, filled level by level (the
+  parents of level 0, then theirs: a rule change can alter a level whose
+  children did not change) and built the finest level first. New chunks'
+  coarse sections keep the live queue, built whole at every pass; the
+  rebuild runs only when no chunk is being ingested, none waits to be
+  written and nothing live is dirty, for 50 ms a pass in batches of 256.
+  A mirror (`LodWorld.openMirror`) never rebuilds its coarse levels. Once
+  per mirror, the client forgets the versions it holds of coarse levels,
+  so they are fetched from the server again (`coarse.v1` marker).
+- **Result**: unit tests (`LodWorldTest`: the rebuild apart from live
+  work, slices until done, the same data; a mirror does not rebuild);
+  `gradlew build` passes. Not run on the server yet.

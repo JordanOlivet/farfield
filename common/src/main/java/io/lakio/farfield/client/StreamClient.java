@@ -61,6 +61,8 @@ public final class StreamClient {
     private static final long STATS_NANOS = 10_000_000_000L;
     private static final String EPOCH_FILE = "server.epoch";
     private static final String VERSIONS_FILE = "versions.bin";
+    /** Written once the mirror's coarse levels are known to be the server's (ADR-083). */
+    private static final String COARSE_MARKER_FILE = "coarse.v1";
     private static final String TILES_FILE = "tiles.bin";
     private static final String BLOCK_KEYS_FILE = "server-block-states.txt";
     private static final String BIOME_KEYS_FILE = "server-biomes.txt";
@@ -258,7 +260,7 @@ public final class StreamClient {
     }
 
     private void openMirror() throws IOException {
-        mirror = LodWorld.open(dir, BlockKeys.RESOLVER);
+        mirror = LodWorld.openMirror(dir, BlockKeys.RESOLVER);
         blockKeys = new KeyTranslation(mirror.blockStates());
         biomeKeys = new KeyTranslation(mirror.biomes());
         Path epochFile = dir.resolve(EPOCH_FILE);
@@ -277,6 +279,7 @@ public final class StreamClient {
                     cachedEpoch = Long.parseUnsignedLong(parts[0], 16);
                     readVersions(VERSIONS_FILE, local);
                     readVersions(TILES_FILE, localTiles);
+                    forgetLocalCoarseLevels();
                 }
             } catch (RuntimeException | IOException e) {
                 cachedEpoch = 0;
@@ -319,6 +322,23 @@ public final class StreamClient {
         } catch (Exception e) {
             Farfield.LOG.warn("LOD streaming: the mirror's writer did not finish", e);
         }
+    }
+
+    /**
+     * Once per mirror: forgets the versions held of its coarse levels, so
+     * they are fetched again. A client of ADR-082 rebuilt them from its own
+     * partial level 0 when it closed, and kept the server's versions for
+     * them (ADR-083).
+     */
+    private void forgetLocalCoarseLevels() throws IOException {
+        Path marker = dir.resolve(COARSE_MARKER_FILE);
+        if (Files.exists(marker)) {
+            return;
+        }
+        local.long2LongEntrySet().removeIf(e -> LodKey.level(e.getLongKey()) > 0);
+        writeVersions(VERSIONS_FILE, local);
+        Files.writeString(marker, "coarse levels are the server's" + System.lineSeparator());
+        Farfield.LOG.info("LOD stream mirror: its coarse levels are fetched again from the server, once");
     }
 
     private void readVersions(String name, Long2LongOpenHashMap into) throws IOException {
