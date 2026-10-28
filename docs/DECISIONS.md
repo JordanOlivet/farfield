@@ -2365,3 +2365,26 @@ Status: accepted, 2026-10-28. Amends ADR-085 and ADR-079.
   along chunk borders over frozen sea, seen during the same transitions,
   are not explained: faces toward a missing neighbor already count it as
   solid; to look at again once the overlap is gone.
+
+## ADR-087 — The preview leaves new real chunks one by one
+
+Status: accepted, 2026-10-28. Amends ADR-076.
+
+- **Context**: after ADR-086 the user still saw the preview over new real
+  terrain in a BOP Cold Desert, where the preview's brown ground differs
+  from the real grey one (annotated captures), and pale lines on frozen
+  sea during the same transitions. A mask that hides the preview over new
+  real chunks is held until the real terrain drawn there is meshed from
+  its current data (`realReady`), so no hole shows meanwhile; it was held
+  for its whole tile (512 blocks) until every new chunk of the tile was
+  ready, or 2 s. At a generation front new chunks keep coming into the
+  same tile, so the preview stayed over chunks long drawn. The user asked
+  whether the pale lines are a height difference: a probe of the client
+  mirror and tiles over the frozen sea of the 20:41 captures found the
+  real ice top at y 63 on levels 0 to 3, as the preview's (sea level 63):
+  no difference in the data.
+- **Decision**: a held mask goes in chunk by chunk: each new real chunk
+  whose terrain is drawn and current leaves the preview at once, the
+  others stay held (2 s at most, as before).
+- **Result**: `gradlew build` passes. Not run in game yet. Whether the
+  pale lines go with the overlap is to be seen.

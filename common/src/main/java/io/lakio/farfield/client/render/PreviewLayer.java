@@ -412,8 +412,8 @@ final class PreviewLayer {
     }
 
     /**
-     * Puts in the held masks whose new real chunks are all drawn by real
-     * terrain meshed from its current data, or held for {@link #HOLD_NANOS}.
+     * Puts in the chunks of the held masks whose real terrain is drawn and
+     * meshed from its current data; a whole mask after {@link #HOLD_NANOS}.
      * Render thread, before {@link #drainChanges}.
      */
     void applyHeld(RealReady ready, long now) {
@@ -426,24 +426,42 @@ final class PreviewLayer {
             int[] old = masks.get(tile);
             Long since = heldSince.get(tile);
             boolean go = old == null || since == null || now - since > HOLD_NANOS;
+            // Chunk by chunk: the preview leaves each new real chunk once that one is drawn. Held for
+            // the whole tile until every new chunk was, it stayed over real terrain for seconds at a
+            // generation front, where new chunks keep coming (ADR-087).
+            int[] partial = null;
             if (!go) {
-                go = true;
                 int baseX = PreviewStore.tileX(tile) * PreviewTile.CHUNKS;
                 int baseZ = PreviewStore.tileZ(tile) * PreviewTile.CHUNKS;
-                for (int z = 0; z < PreviewTile.CHUNKS && go; z++) {
+                for (int z = 0; z < PreviewTile.CHUNKS; z++) {
                     int added = fresh[z] & ~old[z];
-                    while (added != 0 && go) {
+                    while (added != 0) {
                         int x = Integer.numberOfTrailingZeros(added);
                         added &= added - 1;
-                        go = ready.test(baseX + x, baseZ + z);
+                        if (!ready.test(baseX + x, baseZ + z)) {
+                            if (partial == null) {
+                                partial = fresh.clone();
+                            }
+                            int c = z * PreviewTile.CHUNKS + x;
+                            partial[z] &= ~(1 << x);
+                            partial[GROUND + c] = old[GROUND + c];
+                            partial[FLUID + c] = old[FLUID + c];
+                        }
                     }
                 }
+                go = partial == null;
             }
-            if (go && heldMasks.remove(tile, fresh)) {
-                heldSince.remove(tile);
-                masks.put(tile, fresh);
+            if (go) {
+                if (heldMasks.remove(tile, fresh)) {
+                    heldSince.remove(tile);
+                    masks.put(tile, fresh);
+                    masksChanged = true;
+                    changed(tile, changedChunks(old, fresh));
+                }
+            } else if (!Arrays.equals(partial, old) && heldMasks.get(tile) == fresh) {
+                masks.put(tile, partial);
                 masksChanged = true;
-                changed(tile, changedChunks(old, fresh));
+                changed(tile, changedChunks(old, partial));
             }
         }
     }
