@@ -84,6 +84,8 @@ public final class LodPipeline {
     private final ScheduledExecutorService maintenance;
     /** Maintenance period, and how long a section stays untouched before it is written. */
     private static final long MAINTENANCE_MILLIS = 250;
+    /** Coarse sections built per level and maintenance pass. */
+    private static final int MIPS_PER_PASS = 2048;
     private final ThreadLocal<ChunkSnapshot.Scratch> scratch = ThreadLocal.withInitial(ChunkSnapshot.Scratch::new);
     private final AtomicInteger inFlight = new AtomicInteger();
     private volatile boolean stopping;
@@ -243,6 +245,11 @@ public final class LodPipeline {
         }
     }
 
+    /** The open levels and their LOD stores. */
+    public java.util.Collection<LodLevel> levels() {
+        return levels.values();
+    }
+
     /** The LOD world of an open level of this dimension, or null. */
     public LodWorld world(ResourceKey<Level> dimension) {
         if (stopping) {
@@ -349,10 +356,12 @@ public final class LodPipeline {
                 lod.world().flush(TimeUnit.MILLISECONDS.toNanos(MAINTENANCE_MILLIS));
                 if (lod.world().hasDirtyMips()) {
                     boolean upgrading = lod.world().mipsToUpgrade() > 0;
-                    int written = lod.world().buildMips(workers);
+                    // A batch per level and pass: a whole store rebuilt at once held the new chunks'
+                    // writes and pushes for minutes (ADR-082).
+                    int written = lod.world().buildMips(workers, MIPS_PER_PASS);
                     if (upgrading && lod.world().mipsToUpgrade() == 0) {
-                        Farfield.LOG.info("LOD store of {}: coarse levels rebuilt with the current mip rules"
-                                + " ({} sections written in the last pass)", lod.name(), written);
+                        Farfield.LOG.info("LOD store of {}: coarse levels rebuilt ({} sections written in the last"
+                                + " pass)", lod.name(), written);
                     }
                 }
                 if (sync) {

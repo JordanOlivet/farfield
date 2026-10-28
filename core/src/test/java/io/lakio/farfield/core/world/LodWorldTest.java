@@ -162,6 +162,39 @@ class LodWorldTest {
     }
 
     @Test
+    void aRebuildQueuesEveryCoarseLevelAndBuildsItABatchAtATime() throws IOException {
+        try (LodWorld world = LodWorld.open(dir, MaterialTable.SIMPLE)) {
+            // Chunks far apart: four level-0 columns of two sections (y -1 and 0), under eight
+            // level-1 parents.
+            for (int i = 0; i < 4; i++) {
+                world.ingest(chunk(world, i * 4, 0));
+            }
+            world.flush(0);
+            world.buildMips();
+            assertTrue(!world.hasDirtyMips());
+            long top = world.version(LodKey.pack(4, 0, -1, 0));
+            assertTrue(top >= 0);
+
+            assertEquals(8, world.rebuildCoarseLevels());
+            assertTrue(world.mipsToUpgrade() > 0);
+            assertEquals(8, world.coarseLevelsPending()[1]);
+            // One section per level and pass: level 1 drains over eight passes, the levels above
+            // follow as their children are rebuilt.
+            world.buildMips(null, 1);
+            assertEquals(7, world.coarseLevelsPending()[1]);
+            int passes = 1;
+            while (world.hasDirtyMips()) {
+                world.buildMips(null, 1);
+                passes++;
+            }
+            assertTrue(passes >= 8, passes + " passes");
+            assertEquals(0, world.mipsToUpgrade());
+            // Built again from the same level 0: the same data, so the top section is unchanged.
+            assertEquals(top, world.version(LodKey.pack(4, 0, -1, 0)));
+        }
+    }
+
+    @Test
     void buildMipsPropagatesToTheTopLevel() throws IOException {
         try (LodWorld world = LodWorld.open(dir, MaterialTable.SIMPLE)) {
             int stone = world.blockStates().id("minecraft:stone");

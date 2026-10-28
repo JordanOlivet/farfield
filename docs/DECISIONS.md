@@ -2229,3 +2229,27 @@ Status: accepted, 2026-10-28. Amends ADR-078.
 - **Result**: unit tests (`LooksCacheTest`: appends, a shared tile written
   once, reopen and append, another fingerprint, a tail cut short);
   `gradlew build` passes. Not run in a client yet.
+
+
+## ADR-082 — `/farfield rebuild` builds the coarse levels again
+
+Status: accepted, 2026-10-28. Amends ADR-060 (mip rules version).
+
+- **Context**: ADR-080 changed which blocks are plants, which the mip
+  rule reads (a plant covers the ground under it), but the coarse levels
+  already stored keep the old rule; `/farfield import` would not help (an
+  unchanged level-0 section is not written again, so its parents are not
+  rebuilt, and the import resumes from its checkpoint). The user wants to
+  force the rebuild on a server by command; "mips ça parlera à personne".
+- **Decision**: `/farfield rebuild` queues every coarse level of the
+  stores of the player's dimension (every dimension from the console) for
+  a rebuild from level 0, as a change of `MIPS_VERSION` does at open;
+  `/farfield rebuild status` shows what is left per level; the end is
+  logged (`coarse levels rebuilt`). The maintenance builds 2,048 sections
+  per level and pass (every 250 ms) instead of every dirty parent at
+  once, which held the new chunks' writes and pushes for minutes on a
+  large store. `MIPS_VERSION` 4, so stores rebuild once at their next open.
+  Clients get the rebuilt sections by the push and the indexes.
+- **Result**: unit test (`LodWorldTest`: queued, built a batch at a time,
+  the same data gives the same top section); `gradlew build` passes. Not
+  run on the server yet.

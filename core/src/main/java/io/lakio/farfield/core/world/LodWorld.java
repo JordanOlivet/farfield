@@ -72,9 +72,10 @@ public final class LodWorld implements AutoCloseable {
     /**
      * Version of the mip rules the stored coarse levels were built with; a
      * world built with older rules rebuilds them all once, from level 0
-     * (version 2: per-voxel fill; 3: ground covered by plants, ADR-060).
+     * (version 2: per-voxel fill; 3: ground covered by plants, ADR-060; 4:
+     * vines-like and double plants are plants, ADR-080).
      */
-    private static final String MIPS_VERSION = "3";
+    private static final String MIPS_VERSION = "4";
     private final Path mipsVersionFile;
     private volatile int mipsToUpgrade;
     private final List<LongConsumer> listeners = new CopyOnWriteArrayList<>();
@@ -154,6 +155,27 @@ public final class LodWorld implements AutoCloseable {
      */
     public int mipsToUpgrade() {
         return mipsToUpgrade;
+    }
+
+    /**
+     * Queues every coarse level for a rebuild from level 0, as a change of
+     * the mip rules does at open ({@code /farfield rebuild}, ADR-082); built
+     * a batch at a time by {@link #buildMips(ExecutorService, int)}. Returns
+     * the level-1 sections queued.
+     */
+    public int rebuildCoarseLevels() throws IOException {
+        store.forEachKey(0, key -> dirty[1].add(LodKey.parent(key)));
+        mipsToUpgrade = Math.max(1, dirty[1].size());
+        return dirty[1].size();
+    }
+
+    /** Coarse sections waiting to be built, per level from 1 to 4 (index 0 unused). */
+    public int[] coarseLevelsPending() {
+        int[] out = new int[LEVELS];
+        for (int level = 1; level < LEVELS; level++) {
+            out[level] = dirty[level].size();
+        }
+        return out;
     }
 
     /** Opens with a write-back cache of up to 2048 level-0 sections. */
@@ -438,14 +460,19 @@ public final class LodWorld implements AutoCloseable {
         return buildMips(null);
     }
 
+    /** Every dirty parent, as {@link #buildMips(ExecutorService, int)} without a limit. */
+    public int buildMips(ExecutorService executor) throws IOException {
+        return buildMips(executor, Integer.MAX_VALUE);
+    }
+
     /**
      * Rebuilds every dirty parent, level 1 first, so a change reaches the top
      * level in one call; the parents of one level are built in parallel on
      * {@code executor} when given. Returns the number of parents written.
      * One call at a time.
      */
-    public synchronized int buildMips(ExecutorService executor) throws IOException {
-        int written = buildMipLevels(executor);
+    public synchronized int buildMips(ExecutorService executor, int perLevel) throws IOException {
+        int written = buildMipLevels(executor, perLevel);
         if (mipsToUpgrade > 0 && !hasDirtyMips()) {
             Files.writeString(mipsVersionFile, MIPS_VERSION);
             mipsToUpgrade = 0;
@@ -453,10 +480,16 @@ public final class LodWorld implements AutoCloseable {
         return written;
     }
 
-    private int buildMipLevels(ExecutorService executor) throws IOException {
+    private int buildMipLevels(ExecutorService executor, int perLevel) throws IOException {
         int written = 0;
         for (int level = 1; level < LEVELS; level++) {
-            List<Long> keys = new ArrayList<>(dirty[level]);
+            List<Long> keys = new ArrayList<>(Math.min(perLevel, dirty[level].size()));
+            for (Long key : dirty[level]) {
+                if (keys.size() >= perLevel) {
+                    break;
+                }
+                keys.add(key);
+            }
             dirty[level].removeAll(keys);
             if (keys.isEmpty()) {
                 continue;

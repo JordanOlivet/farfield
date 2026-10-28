@@ -86,6 +86,11 @@ public final class LodLevel {
         return dir;
     }
 
+    /** The dimension this store belongs to. */
+    public net.minecraft.resources.ResourceKey<Level> dimension() {
+        return level.dimension();
+    }
+
     public LodWorld world() {
         return world;
     }

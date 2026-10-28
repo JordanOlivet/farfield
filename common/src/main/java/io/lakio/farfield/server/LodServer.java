@@ -1,5 +1,7 @@
 package io.lakio.farfield.server;
 
+import java.util.List;
+import java.util.ArrayList;
 import io.lakio.farfield.Farfield;
 import io.lakio.farfield.core.importer.ImportListener;
 import io.lakio.farfield.core.importer.ImportOptions;
@@ -96,6 +98,47 @@ public final class LodServer {
 
     static LodServer get() {
         return instance;
+    }
+
+    /**
+     * {@code /farfield rebuild} (ADR-082): queues every coarse level of the
+     * open stores of {@code dimension} (null: every dimension) for a rebuild
+     * from level 0, which the maintenance builds a batch at a time; one line
+     * per store, or none without a server.
+     */
+    static List<String> rebuildCoarseLevels(ResourceKey<Level> dimension) throws IOException {
+        LodServer s = instance;
+        List<String> lines = new ArrayList<>();
+        if (s == null) {
+            return lines;
+        }
+        for (LodLevel lod : s.pipeline.levels()) {
+            if (dimension == null || lod.dimension() == dimension) {
+                int queued = lod.world().rebuildCoarseLevels();
+                lines.add(lod.name() + ": " + queued + " level-1 sections queued, the levels above follow");
+            }
+        }
+        return lines;
+    }
+
+    /** {@code /farfield rebuild status}: per open store, the coarse sections left to build per level. */
+    static List<String> coarseLevelsPending() {
+        LodServer s = instance;
+        List<String> lines = new ArrayList<>();
+        if (s == null) {
+            return lines;
+        }
+        for (LodLevel lod : s.pipeline.levels()) {
+            int[] pending = lod.world().coarseLevelsPending();
+            int total = 0;
+            for (int n : pending) {
+                total += n;
+            }
+            lines.add(lod.name() + ": " + (total == 0 ? "nothing left to build"
+                    : total + " sections left (levels 1 to 4: " + pending[1] + ", " + pending[2] + ", " + pending[3]
+                    + ", " + pending[4] + ")"));
+        }
+        return lines;
     }
 
     /**

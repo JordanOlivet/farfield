@@ -1,5 +1,8 @@
 package io.lakio.farfield.server;
 
+import net.minecraft.world.level.Level;
+import net.minecraft.resources.ResourceKey;
+import java.util.List;
 import com.mojang.brigadier.CommandDispatcher;
 import io.lakio.farfield.Farfield;
 import io.lakio.farfield.lod.RenderCommands;
@@ -39,6 +42,9 @@ public final class FarfieldCommands {
                                 .executes(c -> start(c, IntegerArgumentType.getInteger(c, "threads"))))
                         .then(Commands.literal("stop").executes(FarfieldCommands::stop))
                         .then(Commands.literal("status").executes(FarfieldCommands::status)))
+                .then(Commands.literal("rebuild")
+                        .executes(FarfieldCommands::rebuild)
+                        .then(Commands.literal("status").executes(FarfieldCommands::rebuildStatus)))
                 .then(Commands.literal("spike")
                         .then(Commands.literal("generation")
                                 .executes(c -> generationSpike(c, 16))
@@ -112,6 +118,55 @@ public final class FarfieldCommands {
             return 0;
         }
         source.sendSuccess(() -> Component.literal("Preview tile spike started over " + biome), true);
+        return 1;
+    }
+
+    /**
+     * Rebuilds the coarse levels of the stored LODs from their finest level
+     * (ADR-082), in the background: those of the player's dimension, of every
+     * dimension from the console. For a change of the rules that build them;
+     * clients get the new sections by themselves.
+     */
+    private static int rebuild(CommandContext<CommandSourceStack> c) {
+        CommandSourceStack source = c.getSource();
+        ResourceKey<Level> dimension = source.getEntity() instanceof ServerPlayer p ? p.level().dimension() : null;
+        Thread t = new Thread(() -> {
+            List<String> lines;
+            try {
+                lines = LodServer.rebuildCoarseLevels(dimension);
+            } catch (java.io.IOException | RuntimeException e) {
+                Farfield.LOG.warn("LOD rebuild failed", e);
+                source.getServer().execute(() -> source.sendFailure(Component.literal("LOD rebuild failed: " + e)));
+                return;
+            }
+            source.getServer().execute(() -> {
+                if (lines.isEmpty()) {
+                    source.sendFailure(Component.literal("No LOD store is open"
+                            + (dimension == null ? "." : " in " + dimension.location() + ".")));
+                    return;
+                }
+                for (String line : lines) {
+                    Farfield.LOG.info("LOD rebuild of {}", line);
+                    source.sendSuccess(() -> Component.literal("LOD rebuild of " + line), true);
+                }
+                source.sendSuccess(() -> Component.literal("The coarse levels are built again in the background;"
+                        + " /farfield rebuild status shows what is left."), false);
+            });
+        }, "farfield-rebuild");
+        t.setDaemon(true);
+        t.start();
+        return 1;
+    }
+
+    private static int rebuildStatus(CommandContext<CommandSourceStack> c) {
+        List<String> lines = LodServer.coarseLevelsPending();
+        if (lines.isEmpty()) {
+            c.getSource().sendFailure(Component.literal("No LOD store is open."));
+            return 0;
+        }
+        for (String line : lines) {
+            c.getSource().sendSuccess(() -> Component.literal("LOD store of " + line), false);
+        }
         return 1;
     }
 
