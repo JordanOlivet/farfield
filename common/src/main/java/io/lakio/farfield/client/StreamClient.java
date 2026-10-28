@@ -583,6 +583,9 @@ public final class StreamClient {
     }
 
     /** Whether the mirror lacks {@code key} or holds another version than the server's. */
+    /** Received sections the writer has not stored yet, and how many versions of each wait. */
+    private final java.util.concurrent.ConcurrentHashMap<Long, Integer> storing = new java.util.concurrent.ConcurrentHashMap<>();
+
     public boolean needsFetch(long key) {
         long version = remote.get(key);
         return version >= 0 && local.get(key) != version;
@@ -602,6 +605,7 @@ public final class StreamClient {
         long held = local.get(key);
         String mirror = held < 0 ? "not held" : held == remote.get(key) ? "held, current" : "held, outdated";
         return index + ", " + mirror + (inFlight.containsKey(key) ? ", in flight" : "")
+                + (storing.containsKey(key) ? ", being stored" : "")
                 + (wishes.contains(key) ? ", wished" : "") + (background.contains(key) ? ", queued in background" : "");
     }
 
@@ -854,6 +858,7 @@ public final class StreamClient {
         int[] blocks = blockKeys.map();
         int[] biomes = biomeKeys.map();
         byte[] received = record;
+        storing.merge(key, 1, Integer::sum);
         writer.execute(() -> {
             try {
                 LodSection section = m.decodeRecord(key, received);
@@ -866,8 +871,19 @@ public final class StreamClient {
             } catch (IOException | RuntimeException e) {
                 lostSections.add(key);
                 Farfield.LOG.warn("LOD streaming: could not store {}", LodKey.toString(key), e);
+            } finally {
+                storing.computeIfPresent(key, (k, n) -> n == 1 ? null : n - 1);
             }
         });
+    }
+
+    /**
+     * Whether a received version of {@code key} still waits for the mirror's
+     * writer: its version is already held, its data not yet stored. The
+     * renderer meshes it once stored (ADR-086). Any thread.
+     */
+    public boolean storing(long key) {
+        return storing.containsKey(key);
     }
 
     private void tile(StreamProtocol.Tile part) throws IOException {

@@ -263,6 +263,23 @@ final class PreviewFeatures {
         return chunk;
     }
 
+    /**
+     * The block the features find on top of the ground: the tile's top,
+     * except snow over dirt, which the game generates as snowy grass (its
+     * snow layer comes with the top layer step). On a snow block no sapling
+     * survives, so snowy forests had almost no trees in the preview
+     * (ADR-086); snow over snow stays, as on snowy peaks.
+     */
+    private static BlockState soil(BlockState top, BlockState filler) {
+        if (top.is(Blocks.SNOW_BLOCK) && !filler.is(Blocks.SNOW_BLOCK)) {
+            return SNOWY_GRASS;
+        }
+        return top;
+    }
+
+    private static final BlockState SNOWY_GRASS = Blocks.GRASS_BLOCK.defaultBlockState()
+            .setValue(net.minecraft.world.level.block.SnowyDirtBlock.SNOWY, true);
+
     /** Fills the blocks of one section from y0 up: top, filler, ground, then the sea. */
     private void fill(PalettedContainer<BlockState> blocks, int bx0, int y0, int bz0, int[] heights, BlockState below) {
         for (int z = 0; z < 16; z++) {
@@ -270,8 +287,8 @@ final class PreviewFeatures {
                 int h = heights[z * 16 + x];
                 int cx = clamp(bx0 + x - x0) / PreviewTile.GRID;
                 int cz = clamp(bz0 + z - z0) / PreviewTile.GRID;
-                BlockState top = state(tile.top(cx, cz));
                 BlockState filler = state(tile.filler(cx, cz));
+                BlockState top = soil(state(tile.top(cx, cz)), filler);
                 for (int y = 0; y < 16; y++) {
                     int by = y0 + y;
                     BlockState s;

@@ -295,6 +295,8 @@ public final class LodRenderer {
     private final LongOpenHashSet stale = new LongOpenHashSet();
     /** Sections written while their first mesh was being built: meshed again once it lands. */
     private final LongOpenHashSet rewrittenWhileMeshing = new LongOpenHashSet();
+    /** Wanted sections skipped while the mirror stores their data; selected again once it is stored. */
+    private final LongOpenHashSet waitingStore = new LongOpenHashSet();
     /** Sections meshed before the looks of their materials were built: meshed again once they are. */
     private final LongOpenHashSet provisional = new LongOpenHashSet();
     private final Long2ByteOpenHashMap existence = new Long2ByteOpenHashMap();
@@ -1256,6 +1258,12 @@ public final class LodRenderer {
                     continue;
                 }
             }
+            if (stream != null && stream.storing(key)) {
+                // Its version is held, its data not stored yet: a mesh now reads the old data, then
+                // waits stale for a second one, the preview held over it (ADR-086). Asked once stored.
+                waitingStore.add(key);
+                continue;
+            }
             if (stale.remove(key) || !resident.containsKey(key)) {
                 request(key);
             }
@@ -1580,6 +1588,7 @@ public final class LodRenderer {
         resident.clear();
         requested.clear();
         rewrittenWhileMeshing.clear();
+        waitingStore.clear();
         stale.clear();
         provisional.clear();
         existence.clear();
@@ -1882,6 +1891,16 @@ public final class LodRenderer {
      */
     private void applyRewrites() {
         int staleBefore = stale.size();
+        if (!waitingStore.isEmpty()) {
+            // Polled, not taken from the write's notice: that comes before the writer counts it done.
+            LongIterator waiting = waitingStore.iterator();
+            while (waiting.hasNext()) {
+                if (stream == null || !stream.storing(waiting.nextLong())) {
+                    waiting.remove();
+                    selectionDirty = true;
+                }
+            }
+        }
         Long key;
         while ((key = rewritten.poll()) != null) {
             if (existence.put(key.longValue(), EXISTS) != EXISTS) {

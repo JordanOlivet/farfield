@@ -2334,3 +2334,34 @@ side) and ADR-082 (the rebuild command).
   by a rule change comes back at the next open.
 - **Result**: `gradlew build` passes, `LodWorldTest` 7. Not run in game
   yet.
+
+## ADR-086 — Pushed sections are meshed once stored; snowy grass under the preview's features
+
+Status: accepted, 2026-10-28. Amends ADR-085 and ADR-079.
+
+- **Context**: after ADR-085 the user saw the preview and the LODs overlap
+  for a while where new chunks came in ("ça le faisait pas avant"), and
+  still snowy forests without trees. ADR-085 meshed a section again when
+  its data was stored during its first mesh; at the generation front that
+  is almost every pushed section, and a section waiting for its second
+  mesh keeps the preview held over it (`realReady`), so both drew. The
+  trees: a probe over the user's mirror and the server's region files
+  around 117357, -2113 found the mirror's level 0 holding the world's
+  tree blocks exactly (614,757 both), so the treeless land was the noise
+  preview. Its tiles there have the right biomes, but snowy forests got
+  almost no tree (Snowy Maple Woods: 669 chunks, 6 maple runs; Terralith's
+  Wintry Forest 84 runs a chunk): the stand-in ground of a biome cold
+  enough to snow is a snow block, where no sapling survives, so every
+  `would_survive` sapling filter failed. The game generates snowy grass
+  there and lays the snow with the top layer step.
+- **Decision**: `StreamClient` counts the received sections its writer has
+  not stored yet; the renderer leaves those for later and selects them
+  again once stored, so a pushed section is meshed once, from its data.
+  ADR-085's second mesh stays for a section written while its mesh is in
+  flight. The preview's stand-in ground puts snowy grass where the tile's
+  top is snow over dirt (snow over snow stays, as on peaks); tile format
+  13, so the server builds every tile again.
+- **Result**: `gradlew build` passes. Not run in game yet. Pale lines
+  along chunk borders over frozen sea, seen during the same transitions,
+  are not explained: faces toward a missing neighbor already count it as
+  solid; to look at again once the overlap is gone.
