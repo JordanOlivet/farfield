@@ -34,6 +34,12 @@ import io.lakio.farfield.core.lod.MipBuilder;
  * coarser levels a tree voxel holding such a top block shows the snow, as
  * the real mip rule's view from above.
  *
+ * <p>The world's own features (ADR-079) stand where the tile's runs put
+ * them: on the finest level each {@link PreviewTile#FEATURE_VOXEL}-block
+ * voxel of a run fills its blocks; on coarser levels a voxel takes a run's
+ * material when runs fill a quarter of it, the trees' rule. Runs over real
+ * chunks are left out.
+ *
  * <p>Plants without collision (ADR-060) grow on the tile's plant ground at
  * their chunk's density: on the finest level one in the block above the
  * ground where the block's hash falls under the chunk's cover, of a kind
@@ -355,6 +361,16 @@ public final class PreviewVoxels {
                 }
             }
         }
+        // Features reach at most their margin out of their tile: the tiles around are enough.
+        int reach = PreviewTile.FEATURE_MARGIN;
+        for (int tz = Math.floorDiv(oz - reach, PreviewTile.BLOCKS); tz <= Math.floorDiv(oz + size + reach, PreviewTile.BLOCKS); tz++) {
+            for (int tx = Math.floorDiv(ox - reach, PreviewTile.BLOCKS); tx <= Math.floorDiv(ox + size + reach, PreviewTile.BLOCKS); tx++) {
+                PreviewTile tile = cache.tile(tx, tz);
+                if (tile != null) {
+                    features(stamp, tile, tx * PreviewTile.BLOCKS, tz * PreviewTile.BLOCKS, ox, oy, oz, size, mask);
+                }
+            }
+        }
         // Buildings stay within 16 blocks of their tile: the tiles around the footprint are enough.
         for (int tz = Math.floorDiv(oz - 16, PreviewTile.BLOCKS); tz <= Math.floorDiv(oz + size + 16, PreviewTile.BLOCKS); tz++) {
             for (int tx = Math.floorDiv(ox - 16, PreviewTile.BLOCKS); tx <= Math.floorDiv(ox + size + 16, PreviewTile.BLOCKS); tx++) {
@@ -373,6 +389,37 @@ public final class PreviewVoxels {
             }
         }
         return stamp.finish();
+    }
+
+    /** Stamps the feature runs of one tile (its west and north side at x0, z0) that reach the section. */
+    private static void features(Stamp stamp, PreviewTile tile, int x0, int z0, int ox, int oy, int oz, int size,
+                                 Mask mask) {
+        int v = PreviewTile.FEATURE_VOXEL;
+        int margin = PreviewTile.FEATURE_MARGIN;
+        int fx0 = Math.max(0, Math.floorDiv(ox - x0 + margin, v));
+        int fx1 = Math.min(PreviewTile.FEATURE_SIDE - 1, Math.floorDiv(ox + size - 1 - x0 + margin, v));
+        int fz0 = Math.max(0, Math.floorDiv(oz - z0 + margin, v));
+        int fz1 = Math.min(PreviewTile.FEATURE_SIDE - 1, Math.floorDiv(oz + size - 1 - z0 + margin, v));
+        for (int fz = fz0; fz <= fz1; fz++) {
+            for (int fx = fx0; fx <= fx1; fx++) {
+                int[] runs = tile.featureColumn(fx, fz);
+                if (runs.length == 0) {
+                    continue;
+                }
+                int bx = x0 + fx * v - margin;
+                int bz = z0 + fz * v - margin;
+                if (mask != null && mask.real(bx >> 4, bz >> 4)) {
+                    continue; // real terrain draws its own trees there
+                }
+                for (int r = 0; r < runs.length; r += 2) {
+                    int y = PreviewTile.featureRunY(runs[r]);
+                    int blocks = PreviewTile.featureRunBlocks(runs[r]);
+                    if (y + blocks > oy && y < oy + size) {
+                        stamp.box(bx, y, bz, v, blocks, v, runs[r + 1]);
+                    }
+                }
+            }
+        }
     }
 
     /** Writes tree blocks into a section, or counts them per voxel on coarse levels. */
@@ -683,6 +730,48 @@ public final class PreviewVoxels {
                 for (int dz = 0; dz < b.depth(); dz++) {
                     for (int dx = 0; dx < b.width(); dx++) {
                         put(x + dx, y, z + dz, material, chunkX, chunkZ);
+                    }
+                }
+            }
+        }
+
+        /**
+         * Puts a box of blocks [x, x + w) x [y, y + h) x [z, z + d) of one
+         * material, over a chunk whose mask was checked: block by block on
+         * the finest level, by its overlap with each voxel on coarser ones.
+         */
+        void box(int x, int y, int z, int w, int h, int d, int material) {
+            int x0 = Math.max(x, ox);
+            int y0 = Math.max(y, oy);
+            int z0 = Math.max(z, oz);
+            int x1 = Math.min(x + w, ox + size);
+            int y1 = Math.min(y + h, oy + size);
+            int z1 = Math.min(z + d, oz + size);
+            if (x0 >= x1 || y0 >= y1 || z0 >= z1) {
+                return;
+            }
+            for (int vy = (y0 - oy) >> level; vy <= (y1 - 1 - oy) >> level; vy++) {
+                if (layerAxis == 1 && vy != layerIndex) {
+                    continue;
+                }
+                int dy = Math.min(y1, oy + (vy + 1) * s) - Math.max(y0, oy + vy * s);
+                for (int vz = (z0 - oz) >> level; vz <= (z1 - 1 - oz) >> level; vz++) {
+                    if (layerAxis == 2 && vz != layerIndex) {
+                        continue;
+                    }
+                    int dz = Math.min(z1, oz + (vz + 1) * s) - Math.max(z0, oz + vz * s);
+                    for (int vx = (x0 - ox) >> level; vx <= (x1 - 1 - ox) >> level; vx++) {
+                        if (layerAxis == 0 && vx != layerIndex) {
+                            continue;
+                        }
+                        int i = (vy * S + vz) * S + vx;
+                        if (level == 0) {
+                            setIfAir(i, material);
+                        } else {
+                            int dx = Math.min(x1, ox + (vx + 1) * s) - Math.max(x0, ox + vx * s);
+                            counts[i] += dx * dy * dz;
+                            materials[i] = material;
+                        }
                     }
                 }
             }

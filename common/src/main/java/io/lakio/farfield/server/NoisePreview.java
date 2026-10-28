@@ -57,10 +57,10 @@ import java.util.function.IntBinaryOperator;
  * the neighbor sample's height, then bisects to the block), the biome per
  * chunk and the surface blocks per 4-block cell, guessed from the biome and
  * the slope, and whether the sea freezes over it (vanilla's rule); the houses of the villages to come ({@link PreviewVillages});
- * then the biome's trees and plants at their average density
- * ({@link PreviewTrees}), at random but always the same places (seeded by
- * the world and the chunk), on the ground each needs, above the sea and
- * away from villages. The client turns tiles into sections of every level.
+ * then the world's own features grown on that ground ({@link
+ * PreviewFeatures}, ADR-079: every mod's trees, plants and rocks where the
+ * game will put them), away from villages. The client turns tiles into
+ * sections of every level.
  */
 final class NoisePreview {
 
@@ -91,15 +91,13 @@ final class NoisePreview {
                 return t;
             });
     private final Map<ResourceKey<Level>, Optional<Dimension>> dimensions = new ConcurrentHashMap<>();
-    private final PreviewTrees trees = new PreviewTrees();
-    /** Most trees placed in one chunk, whatever the biome says. */
-    private static final int MAX_TREES_PER_CHUNK = 48;
     private volatile boolean stopped;
     private long ticks;
 
     /** What one dimension's preview needs, and its progress. */
     private static final class Dimension {
         final ResourceKey<Level> key;
+        final ServerLevel level;
         final BiomeSource biomes;
         final Climate.Sampler sampler;
         final DensityFunction density;
@@ -120,6 +118,10 @@ final class NoisePreview {
         final NormalNoise icebergPillarRoof;
         final NormalNoise icebergSurface;
         final AtomicInteger villagesBuilt = new AtomicInteger();
+        /** Features that threw in the stand-in world since the last report (ADR-079). */
+        final AtomicInteger featureFailures = new AtomicInteger();
+        /** Where the last tile's feature time went (the spike's report). */
+        volatile String lastFeatureTiming = "";
         volatile LodWorld world;
         /** Tiles stored or built, with the grid of their heights. */
         final Map<Long, Integer> done = new ConcurrentHashMap<>();
@@ -142,6 +144,7 @@ final class NoisePreview {
 
         Dimension(ServerLevel level, NoiseBasedChunkGenerator generator) {
             key = level.dimension();
+            this.level = level;
             RandomState state = level.getChunkSource().randomState();
             biomes = generator.getBiomeSource();
             sampler = state.sampler();
@@ -338,12 +341,12 @@ final class NoisePreview {
     }
 
     /** The steps of a tile build, timed for the report line. */
-    private static final String[] STAGES = {"heights", "cells", "biomes", "villages", "trees", "write"};
+    private static final String[] STAGES = {"heights", "cells", "biomes", "villages", "features", "write"};
     private static final int HEIGHTS = 0;
     private static final int CELLS = 1;
     private static final int BIOMES = 2;
     private static final int VILLAGES = 3;
-    private static final int TREES = 4;
+    private static final int FEATURES = 4;
     private static final int WRITE = 5;
 
     private void report(Dimension d) {
@@ -356,9 +359,10 @@ final class NoisePreview {
                         .append(d.stageNanos.getAndSet(i, 0) / 1_000_000 / built);
             }
             if (RenderSettings.performanceLogs()) {
-                Farfield.LOG.info("Noise preview of {}: {} tiles built in the last minute ({} ms each: {}; {} villages),"
-                        + " {} left within {} blocks", d.key.location(), built, nanos / 1_000_000 / built, stages,
-                        d.villagesBuilt.getAndSet(0), d.left, (int) RANGE);
+                Farfield.LOG.info("Noise preview of {}: {} tiles built in the last minute ({} ms each: {}; {} villages,"
+                        + " {} features failed), {} left within {} blocks", d.key.location(), built,
+                        nanos / 1_000_000 / built, stages, d.villagesBuilt.getAndSet(0), d.featureFailures.getAndSet(0),
+                        d.left, (int) RANGE);
             }
             d.reportedDone = false;
         } else if (d.left == 0 && !d.reportedDone) {
@@ -368,6 +372,40 @@ final class NoisePreview {
             }
             d.reportedDone = true;
         }
+    }
+
+    /**
+     * Spike for ADR-079: builds one tile now, on the calling thread; returns
+     * the time of each {@link #STAGES} in nanoseconds, then the features that
+     * failed, or null when the dimension has no preview.
+     */
+    long[] buildNow(ServerLevel level, LodWorld world, int tileX, int tileZ) {
+        Optional<Dimension> found = dimensions.computeIfAbsent(level.dimension(), k -> open(level));
+        if (found.isEmpty()) {
+            return null;
+        }
+        Dimension d = found.get();
+        d.world = world;
+        for (int i = 0; i < STAGES.length; i++) {
+            d.stageNanos.set(i, 0);
+        }
+        d.featureFailures.set(0);
+        build(d, PreviewStore.key(tileX, tileZ), PreviewTile.GRID);
+        long[] out = new long[STAGES.length + 1];
+        for (int i = 0; i < STAGES.length; i++) {
+            out[i] = d.stageNanos.getAndSet(i, 0);
+        }
+        out[STAGES.length] = d.featureFailures.getAndSet(0);
+        lastTiming = d.lastFeatureTiming;
+        return out;
+    }
+
+    /** Where the last tile {@link #buildNow} built spent its feature time. */
+    volatile String lastTiming = "";
+
+    /** The names of the stages {@link #buildNow} times. */
+    static String[] stages() {
+        return STAGES.clone();
     }
 
     /** Adds the time since {@code from} to a stage; returns now. */
@@ -453,8 +491,8 @@ final class NoisePreview {
             tile.setPlantGround(m.grass);
             List<PreviewVillages.Village> villages = villages(d, tile, x0, z0, m);
             t = stage(d, VILLAGES, t);
-            plantTrees(d, tile, tileX, tileZ, chunkBiomes, m, villages);
-            t = stage(d, TREES, t);
+            growFeatures(d, tile, tileX, tileZ, villages);
+            t = stage(d, FEATURES, t);
             world.preview().write(tileX, tileZ, tile);
             stage(d, WRITE, t);
             d.done.put(key, grid);
@@ -560,63 +598,21 @@ final class NoisePreview {
     }
 
     /**
-     * Places each chunk's trees and plants: the biome's average count, at
-     * random cells of the ground each needs, above the sea and outside villages.
+     * Grows the world's own features on the tile's ground (ADR-079), unless
+     * the server's settings turn them off; none within a village's radius,
+     * where the preview lays its houses.
      */
-    private void plantTrees(Dimension d, PreviewTile tile, int tileX, int tileZ, Holder<Biome>[] chunkBiomes,
-                            Materials m, List<PreviewVillages.Village> villages) {
-        for (int cz = 0; cz < PreviewTile.CHUNKS; cz++) {
-            for (int cx = 0; cx < PreviewTile.CHUNKS; cx++) {
-                Holder<Biome> biome = chunkBiomes[cz * PreviewTile.CHUNKS + cx];
-                PreviewTrees.BiomeTrees bt = trees.of(biome);
-                if (!bt.plants().isEmpty()) {
-                    int[] entries = new int[bt.plants().size()];
-                    int n = 0;
-                    for (int i = 0; i < entries.length; i++) {
-                        int kind = tile.plantKind(m.id(bt.plants().get(i)));
-                        if (kind >= 0) {
-                            entries[n++] = PreviewTile.plantEntry(kind, bt.plantsPerChunk()[i]);
-                        }
-                    }
-                    tile.setPlants(cx, cz, java.util.Arrays.copyOf(entries, n));
-                }
-                if (bt.total() <= 0) {
-                    continue;
-                }
-                long chunkX = tileX * (long) PreviewTile.CHUNKS + cx;
-                long chunkZ = tileZ * (long) PreviewTile.CHUNKS + cz;
-                java.util.Random random = new java.util.Random(d.seed ^ chunkX * 341873128712L ^ chunkZ * 132897987541L);
-                double expected = Math.min(MAX_TREES_PER_CHUNK, bt.total());
-                int n = (int) expected + (random.nextDouble() < expected - (int) expected ? 1 : 0);
-                for (int i = 0; i < n; i++) {
-                    int bx = cx * 16 + random.nextInt(16);
-                    int bz = cz * 16 + random.nextInt(16);
-                    PreviewTrees.Spec spec = bt.pick(random.nextDouble());
-                    int top = tile.top(bx / PreviewTile.GRID, bz / PreviewTile.GRID);
-                    boolean ground = switch (spec.ground()) {
-                        case SOIL -> top == m.grass || top == m.snow;
-                        case FUNGAL -> top == m.grass || top == m.mycelium;
-                        case SAND -> top == m.sand;
-                    };
-                    int surface = tile.height(bx, bz);
-                    int x = tileX * TILE + bx;
-                    int z = tileZ * TILE + bz;
-                    if (!ground || surface <= d.seaLevel || inVillage(villages, x, z)) {
-                        continue;
-                    }
-                    // Vanilla's freeze_top_layer: snow over the crown where the block above its
-                    // top is cold enough to snow (the chunk's biome, as the snowy ground).
-                    boolean snowy = spec.leaves() != null && spec.shape() != PreviewTile.COLUMN
-                            && biome.value().coldEnoughToSnow(new BlockPos(x, surface + spec.height() + 1, z));
-                    int kind = tile.kind(new PreviewTile.TreeKind(m.id(spec.trunk()),
-                            spec.leaves() == null ? -1 : m.id(spec.leaves()), spec.height(), spec.radius(),
-                            spec.crownHeight(), spec.shape(), snowy ? m.snowLayer : -1));
-                    if (kind >= 0) {
-                        tile.addTree(bx, bz, kind);
-                    }
-                }
-            }
+    private void growFeatures(Dimension d, PreviewTile tile, int tileX, int tileZ,
+                              List<PreviewVillages.Village> villages) {
+        io.lakio.farfield.core.config.ServerConfig settings = StreamServer.settings();
+        if (!settings.previewFeatures()) {
+            return;
         }
+        PreviewFeatures features = new PreviewFeatures(d.level, d.biomes, d.columnSampler.get(), d.fluid, d.seaLevel,
+                d.world, settings, tile, tileX, tileZ, (x, z) -> inVillage(villages, x, z));
+        features.decorate();
+        d.featureFailures.addAndGet(features.failures());
+        d.lastFeatureTiming = features.timing();
     }
 
     private static boolean inVillage(List<PreviewVillages.Village> villages, int x, int z) {

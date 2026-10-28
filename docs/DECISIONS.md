@@ -2129,3 +2129,50 @@ budget).
 - **Cost**: the file holds every look met with these mods (about 20 MB
   for the user's pack); another mod list or resource pack bakes again.
   `BAKE_VERSION` must be raised with any change to how looks are baked.
+
+
+## ADR-079 — The preview grows the world's own features
+
+Status: accepted, 2026-10-28. Replaces ADR-040 and ADR-041's trees and
+plants (their villages stay); amends ADR-060 (plant counts).
+
+- **Context**: the user saw plains in the preview where giant mod trees
+  grew once generated. `PreviewTrees` read vanilla tree configurations and
+  a few plant kinds, then scattered them at an estimated density: in the
+  user's pack 52 of 60 Biomes O' Plenty biomes and 33 of 75 Terralith
+  biomes got under one tree per chunk (`redwood_forest`: none), since
+  Biomes O' Plenty grows its trees with 15 feature classes of its own. The
+  user: "si on gère chaque feature une par une on y arrivera jamais", and
+  every type of feature should be handled, with a way to turn some off.
+- **Decision**: each chunk of a tile is decorated with the generator's own
+  placed features, in its order and with its seeds, in a stand-in world
+  (`FeatureSandbox`, a `WorldGenLevel` over `ProtoChunk`s at the carvers
+  status): the tile's ground (top block, filler, ground material, the sea),
+  one biome per quart column at its ground from the biome source. Steps
+  run: raw generation, lakes, local modifications, surface structures,
+  vegetal decoration, top layer; not the underground ones. A feature that
+  throws is skipped and logged once. What the features set above the
+  ground goes into the tile (format 11): blocks LODs draw as plants as
+  exact counts per chunk (ADR-060's representation), the rest as 2-block
+  voxels (filled when 2 of their 8 blocks are) in runs per column, over
+  the tile and a 16-block margin. `PreviewVoxels` draws the runs block by
+  block on the finest level and by a quarter's fill on coarser ones;
+  nothing over real chunks or within a village's radius. Protocol 6.
+  Settings (`farfield-server.properties`): `preview_features` (default
+  true) and `preview_feature_exclude`, placed feature ids with `*`.
+- **Result**: spike against real generation with Biomes O' Plenty,
+  Terralith, TerraBlender, Lithostitched in a dev server, ground copied
+  from the real chunks before their features, 8 x 8 chunks: 0 features
+  failed in 5 biomes; columns with logs found 94 % (redwood forest), 93 %
+  (forested highlands), 88 % (dark forest), 34 % (amethyst rainforest,
+  not explained yet), the sandbox's right 94 %, 97 %, 91 %, 37 %; 3 to
+  14 ms a chunk. Whole tiles in the dev server: 3.0 to 5.8 s on one
+  thread (6 ms a stand-in chunk until the biomes were sampled once per
+  quart column at the ground, 0.5 ms after), 59 to 113 KB a tile file
+  (about 14 KB before). Unit tests (`PreviewTest` feature runs,
+  `ServerConfigTest` exclusions). Not seen in a client yet.
+- **Cost**: a tile takes several times longer to build and its file is 4
+  to 8 times larger; tiles are built once and kept, nearest first.
+- **Not yet**: real surface rules on the stand-in ground (the top block is
+  still guessed from the biome); a client toggle per kind of feature; mod
+  structures other than villages.

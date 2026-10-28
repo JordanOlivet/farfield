@@ -70,6 +70,8 @@ public final class StreamServer {
     private static final int RECORD_CACHE = 512;
 
     private static volatile StreamServer instance;
+    /** The settings read at the last server start, streaming on or off: the preview reads its own there. */
+    private static volatile ServerConfig settings = ServerConfig.DEFAULTS;
     /** The settings turned streaming off: hellos get a refusal, so clients build their own LODs. */
     private static volatile boolean off;
 
@@ -174,6 +176,7 @@ public final class StreamServer {
             Farfield.LOG.warn("Could not read {}, streaming settings at their defaults", file, e);
             config = ServerConfig.DEFAULTS;
         }
+        settings = config;
         off = !config.streaming();
         if (off) {
             Farfield.LOG.info("LOD streaming off ({}): clients build their own LODs", CONFIG_FILE);
@@ -185,6 +188,11 @@ public final class StreamServer {
                         + " preview {}", config.radiusBlocks(), config.playerKBps(), config.totalKBps(),
                 config.effectiveThreads(Runtime.getRuntime().availableProcessors()),
                 config.fullData() ? "full data" : "surface only", config.preview() ? "on" : "off");
+    }
+
+    /** The settings read at the server's start ({@link ServerConfig#DEFAULTS} before). */
+    public static ServerConfig settings() {
+        return settings;
     }
 
     /** Whether this server streams the noise preview (a dedicated server then builds it). */

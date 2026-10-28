@@ -127,10 +127,17 @@ Items:
 
 ## M2.D — Mod features in the noise preview
 
-- [ ] D.1 Features that come from mods in the preview. The user
+- [~] D.1 Features that come from mods in the preview. The user
   (2026-10-28): plains in the preview turned out, flown over, to be full
-  of giant trees from a mod; the same for vegetation. The preview places
-  vanilla features only (`PreviewTrees`, `PreviewVillages`). To do once
-  the streaming and rendering polish is done (the user's order): find
-  how mods register their trees and plants (placed features per biome),
-  then an ADR on what the preview can draw from them.
+  of giant trees from a mod; the same for vegetation; handle every type
+  generically, with a way to turn some off. ADR-079: the world's own
+  placed features grown on the tile's ground in a stand-in world, stored
+  as 2-block voxels and plant counts; server settings `preview_features`
+  and `preview_feature_exclude`. Spike: 88 to 94 % of real tree columns
+  found in three biomes, 0 failures; tiles 3 to 6 s, 59 to 113 KB.
+  Remains: a look in a client and in the pack, the amethyst rainforest's
+  34 %, the tile size.
+- [ ] D.2 Real surface rules on the preview's ground (the top block is
+  guessed from the biome: Biomes O' Plenty's white sand, Terralith's
+  surfaces), with the same stand-in world.
+- [ ] D.3 A client toggle per kind of feature (trees, plants, rocks).

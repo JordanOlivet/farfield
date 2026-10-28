@@ -11,7 +11,11 @@ import io.lakio.farfield.core.util.ByteWriter;
  * the buildings of villages (ADR-041); per cell whether the sea's top
  * block freezes; for the whole tile the ground's material, the sea and its
  * ice; per chunk its plants without collision, as kinds and mean counts,
- * and the ground they grow on (ADR-060).
+ * and the ground they grow on (ADR-060); the blocks the world's own
+ * features set above the ground (ADR-079: trees, rocks, every mod's), as
+ * {@link #FEATURE_VOXEL}-block voxels in runs per column, over the tile and
+ * a {@link #FEATURE_MARGIN}-block margin around it (a crown spreading out
+ * of the tile).
  *
  * <p>A far tile computes its heights every {@link #grid()} blocks only (8
  * or 16 instead of {@link #GRID}) and fills the samples between them
@@ -37,9 +41,16 @@ public final class PreviewTile {
      * 5 the grid the heights were computed on, 6 the snow on tree tops and
      * tiered spruces, 7 the icebergs, 8 the plants, 9 only the plants the
      * renderer draws as plants, 10 a quarter as many plants (measured
-     * against generated chunks); older tiles are built again.
+     * against generated chunks), 11 the world's own features instead of the
+     * guessed trees; older tiles are built again.
      */
-    private static final int FORMAT = 10;
+    private static final int FORMAT = 11;
+    /** Blocks a side of a feature voxel. */
+    public static final int FEATURE_VOXEL = 2;
+    /** Blocks around the tile its features may reach. */
+    public static final int FEATURE_MARGIN = 16;
+    /** Feature columns a side: the tile and its margin. */
+    public static final int FEATURE_SIDE = (BLOCKS + 2 * FEATURE_MARGIN) / FEATURE_VOXEL;
     /** Most plant kinds a tile holds (the kind rides in 8 bits of a chunk's plant entry). */
     public static final int MAX_PLANT_KINDS = 255;
     /** Most tree kinds a tile holds (the kind rides in 8 bits of a tree). */
@@ -68,6 +79,13 @@ public final class PreviewTile {
     private final int[][] plants = new int[CHUNKS * CHUNKS][];
     /** The top material plants grow on; -1 for none. */
     private int plantGround = -1;
+    /**
+     * Per feature column ({@code fz * FEATURE_SIDE + fx}), its runs bottom up,
+     * two ints each: {@code voxelY << 8 | voxels} (voxelY in {@link
+     * #FEATURE_VOXEL}-block units, may be negative), then the material; null
+     * for none.
+     */
+    private final int[][] features = new int[FEATURE_SIDE * FEATURE_SIDE][];
 
     /** Crown shapes of a {@link TreeKind}. */
     public static final int BLOB = 0;
@@ -149,6 +167,36 @@ public final class PreviewTile {
     }
 
     private static final int[] NO_TREES = new int[0];
+
+    /**
+     * Sets the feature runs of column (fx, fz), its west and north side at
+     * block {@code fx * FEATURE_VOXEL - FEATURE_MARGIN} of the tile; runs as
+     * {@link #features} holds them, null or empty for none.
+     */
+    public void setFeatureColumn(int fx, int fz, int[] runs) {
+        features[fz * FEATURE_SIDE + fx] = runs == null || runs.length == 0 ? null : runs.clone();
+    }
+
+    /** The feature runs of column (fx, fz) ({@link #setFeatureColumn}); never null. */
+    public int[] featureColumn(int fx, int fz) {
+        int[] runs = features[fz * FEATURE_SIDE + fx];
+        return runs == null ? NO_TREES : runs;
+    }
+
+    /** A run's word: its first voxel's y (in voxels) and its length (1 to 255 voxels). */
+    public static int featureRun(int voxelY, int voxels) {
+        return voxelY << 8 | voxels;
+    }
+
+    /** The lowest block of a run. */
+    public static int featureRunY(int word) {
+        return (word >> 8) * FEATURE_VOXEL;
+    }
+
+    /** The blocks a run spans upward. */
+    public static int featureRunBlocks(int word) {
+        return (word & 0xFF) * FEATURE_VOXEL;
+    }
 
     /** The index of a plant material, added when new; -1 when the tile holds {@link #MAX_PLANT_KINDS} already. */
     public int plantKind(int material) {
@@ -367,6 +415,24 @@ public final class PreviewTile {
                 }
             }
         }
+        // Feature tops raise the chunks they stand over (columns of the margin raise none here).
+        for (int fz = 0; fz < FEATURE_SIDE; fz++) {
+            for (int fx = 0; fx < FEATURE_SIDE; fx++) {
+                int[] runs = features[fz * FEATURE_SIDE + fx];
+                if (runs == null) {
+                    continue;
+                }
+                int bx = fx * FEATURE_VOXEL - FEATURE_MARGIN;
+                int bz = fz * FEATURE_VOXEL - FEATURE_MARGIN;
+                if (bx < 0 || bz < 0 || bx >= BLOCKS || bz >= BLOCKS) {
+                    continue;
+                }
+                int last = runs[runs.length - 2];
+                int topY = featureRunY(last) + featureRunBlocks(last);
+                int i = (bz >> 4) * CHUNKS + (bx >> 4);
+                max[i] = (short) Math.max(max[i], topY);
+            }
+        }
         for (Building b : buildings) {
             for (int cz = Math.max(0, (b.z() >> 4) - 1); cz <= Math.min(CHUNKS - 1, ((b.z() + b.depth()) >> 4) + 1); cz++) {
                 for (int cx = Math.max(0, (b.x() >> 4) - 1); cx <= Math.min(CHUNKS - 1, ((b.x() + b.width()) >> 4) + 1); cx++) {
@@ -441,6 +507,13 @@ public final class PreviewTile {
         buildings.replaceAll(b -> new Building(b.x(), b.z(), b.width(), b.depth(), b.floor(), b.top(),
                 mapId(materials, b.wall()), mapId(materials, b.roof())));
         plantKinds.replaceAll(m -> mapId(materials, m));
+        for (int[] runs : features) {
+            if (runs != null) {
+                for (int j = 1; j < runs.length; j += 2) {
+                    runs[j] = mapId(materials, runs[j]);
+                }
+            }
+        }
     }
 
     private static int mapId(int[] map, int id) {
@@ -522,6 +595,20 @@ public final class PreviewTile {
                 out.writeVarInt(list[i]);
             }
         }
+        // Feature runs: per column their count, then each run's rise from the last one's top
+        // (small numbers for the compressor), its length and its material.
+        for (int[] runs : features) {
+            int n = runs == null ? 0 : runs.length / 2;
+            out.writeVarInt(n);
+            int y = 0;
+            for (int r = 0; r < n; r++) {
+                int word = runs[r * 2];
+                out.writeVarInt(zigZag((word >> 8) - y));
+                out.writeVarInt(word & 0xFF);
+                out.writeVarInt(runs[r * 2 + 1]);
+                y = (word >> 8) + (word & 0xFF);
+            }
+        }
     }
 
     public static PreviewTile decode(ByteReader in) {
@@ -589,6 +676,24 @@ public final class PreviewTile {
                     list[i] = in.readVarInt();
                 }
                 t.plants[c] = list;
+            }
+        }
+        for (int c = 0; c < t.features.length; c++) {
+            int n = in.readVarInt();
+            if (n < 0 || n > 4096) {
+                throw new IllegalArgumentException("bad feature run count " + n);
+            }
+            if (n > 0) {
+                int[] runs = new int[n * 2];
+                int y = 0;
+                for (int r = 0; r < n; r++) {
+                    int voxelY = y + unZigZag(in.readVarInt());
+                    int voxels = in.readVarInt();
+                    runs[r * 2] = featureRun(voxelY, voxels);
+                    runs[r * 2 + 1] = in.readVarInt();
+                    y = voxelY + voxels;
+                }
+                t.features[c] = runs;
             }
         }
         return t;

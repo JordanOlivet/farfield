@@ -884,4 +884,79 @@ class PreviewTest {
         }
         return contacts;
     }
+
+    /**
+     * Flat land at y 64 (the first free block 65) with one feature column:
+     * a trunk from 66 to 75 (voxels 33 to 37, as {@code PreviewFeatures}
+     * puts the blocks y 66 to 75 in 2-block voxels), leaves from 76 to 79,
+     * at blocks x 10..11, z 20..21 of the tile.
+     */
+    private static PreviewTile featureTile() {
+        PreviewTile t = new PreviewTile();
+        for (int k = 0; k < PreviewTile.SAMPLES; k++) {
+            for (int i = 0; i < PreviewTile.SAMPLES; i++) {
+                t.setHeight(i, k, 65);
+            }
+        }
+        for (int c = 0; c < PreviewTile.CELLS * PreviewTile.CELLS; c++) {
+            t.setCell(c % PreviewTile.CELLS, c / PreviewTile.CELLS, GRASS, DIRT);
+        }
+        t.setBelow(STONE);
+        int fx = (10 + PreviewTile.FEATURE_MARGIN) / PreviewTile.FEATURE_VOXEL;
+        int fz = (20 + PreviewTile.FEATURE_MARGIN) / PreviewTile.FEATURE_VOXEL;
+        t.setFeatureColumn(fx, fz, new int[]{PreviewTile.featureRun(33, 5), LOG, PreviewTile.featureRun(38, 2), LEAVES});
+        return t;
+    }
+
+    @Test
+    void featureColumnsRoundTripAndRaiseTheSummary() {
+        PreviewTile t = featureTile();
+        // A run of the margin, west of the tile: stored, but no chunk of this tile under it.
+        t.setFeatureColumn(0, 0, new int[]{PreviewTile.featureRun(-40, 3), LEAVES});
+        ByteWriter out = new ByteWriter(1024);
+        t.encode(out);
+        PreviewTile back = PreviewTile.decode(new ByteReader().reset(out.array(), 0, out.length()));
+        int fx = (10 + PreviewTile.FEATURE_MARGIN) / PreviewTile.FEATURE_VOXEL;
+        int fz = (20 + PreviewTile.FEATURE_MARGIN) / PreviewTile.FEATURE_VOXEL;
+        int[] runs = back.featureColumn(fx, fz);
+        assertEquals(4, runs.length);
+        assertEquals(66, PreviewTile.featureRunY(runs[0]));
+        assertEquals(10, PreviewTile.featureRunBlocks(runs[0]));
+        assertEquals(LOG, runs[1]);
+        assertEquals(76, PreviewTile.featureRunY(runs[2]));
+        assertEquals(LEAVES, runs[3]);
+        assertEquals(-80, PreviewTile.featureRunY(back.featureColumn(0, 0)[0]));
+        assertEquals(0, back.featureColumn(5, 5).length);
+        // The chunk under the column reaches the crown's top (80); its neighbors keep the ground.
+        PreviewTile.Summary summary = back.summary();
+        assertEquals(80, summary.chunkMax()[1 * PreviewTile.CHUNKS]);
+        assertEquals(65, summary.chunkMax()[1 * PreviewTile.CHUNKS + 1]);
+
+        int[] materials = new int[LEAVES + 1];
+        for (int m = 0; m < materials.length; m++) {
+            materials[m] = m + 100;
+        }
+        back.remapIds(materials, new int[]{0});
+        assertEquals(LOG + 100, back.featureColumn(fx, fz)[1]);
+    }
+
+    @Test
+    void featuresStandBlockByBlockAndFillCoarseVoxelsByAQuarter() {
+        PreviewTile t = featureTile();
+        PreviewVoxels.Tiles tiles = (x, z) -> x == 0 && z == 0 ? t : null;
+        // Level 0, section (0, 2, 0): blocks 64..95. The 2-block voxels fill their blocks.
+        LodSection fine = PreviewVoxels.build(0, 0, 2, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
+        assertEquals(LOG, fine.material(10, 66 - 64, 20));
+        assertEquals(LOG, fine.material(11, 75 - 64, 21));
+        assertEquals(LEAVES, fine.material(10, 79 - 64, 21));
+        assertEquals(AIR, fine.material(10, 80 - 64, 20));
+        assertEquals(AIR, fine.material(12, 70 - 64, 20));
+        // Level 2 (4-block voxels): a 2 x 2 trunk fills a quarter of the voxels it passes through.
+        LodSection coarse = PreviewVoxels.build(2, 0, 0, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
+        assertEquals(LOG, coarse.material(10 / 4, 68 / 4, 20 / 4));
+        // Over a real chunk, nothing grows.
+        PreviewVoxels.Mask real = (cx, cz) -> cx == 0 && cz == 1;
+        LodSection masked = PreviewVoxels.build(0, 0, 2, 0, tiles, real, AIR, -64, -1, -1, -1, 0);
+        assertTrue(masked == null || masked.material(10, 66 - 64, 20) == AIR);
+    }
 }

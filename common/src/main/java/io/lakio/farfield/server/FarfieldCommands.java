@@ -43,7 +43,15 @@ public final class FarfieldCommands {
                         .then(Commands.literal("generation")
                                 .executes(c -> generationSpike(c, 16))
                                 .then(Commands.argument("side", IntegerArgumentType.integer(1, 64))
-                                        .executes(c -> generationSpike(c, IntegerArgumentType.getInteger(c, "side"))))));
+                                        .executes(c -> generationSpike(c, IntegerArgumentType.getInteger(c, "side")))))
+                        .then(Commands.literal("tile")
+                                .then(Commands.argument("biome", net.minecraft.commands.arguments.ResourceLocationArgument.id())
+                                        .executes(FarfieldCommands::tileSpike)))
+                        .then(Commands.literal("features")
+                                .then(Commands.argument("biome", net.minecraft.commands.arguments.ResourceLocationArgument.id())
+                                        .executes(c -> featureSpike(c, 8))
+                                        .then(Commands.argument("side", IntegerArgumentType.integer(1, 64))
+                                                .executes(c -> featureSpike(c, IntegerArgumentType.getInteger(c, "side")))))));
         dispatcher.register(RenderCommands.addTo(root, "farfield", FarfieldCommands::clientSetting));
     }
 
@@ -75,6 +83,35 @@ public final class FarfieldCommands {
         source.sendSuccess(() -> Component.literal("Generation spike started in "
                 + source.getLevel().dimension().location() + ": noise preview, then " + side + "x" + side
                 + " chunks up to noise, surface and full. It generates far chunks into this world."), true);
+        return 1;
+    }
+
+    /** Spike for ADR-079: the world's features in a stand-in, against the same chunks for real. */
+    private static int featureSpike(CommandContext<CommandSourceStack> c, int side) {
+        CommandSourceStack source = c.getSource();
+        var biome = net.minecraft.commands.arguments.ResourceLocationArgument.getId(c, "biome");
+        boolean started = FeatureSpike.start(source.getLevel(), biome, side,
+                line -> source.getServer().execute(() -> source.sendSuccess(() -> Component.literal(line), true)));
+        if (!started) {
+            source.sendFailure(Component.literal("A feature spike is already running."));
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal("Feature spike started near " + biome + ", " + side + "x" + side
+                + " chunks. It generates far chunks into this world."), true);
+        return 1;
+    }
+
+    /** Spike for ADR-079: one preview tile with the world's features, built now over a biome. */
+    private static int tileSpike(CommandContext<CommandSourceStack> c) {
+        CommandSourceStack source = c.getSource();
+        var biome = net.minecraft.commands.arguments.ResourceLocationArgument.getId(c, "biome");
+        boolean started = FeatureSpike.startTile(source.getLevel(), biome,
+                line -> source.getServer().execute(() -> source.sendSuccess(() -> Component.literal(line), true)));
+        if (!started) {
+            source.sendFailure(Component.literal("A feature spike is already running."));
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal("Preview tile spike started over " + biome), true);
         return 1;
     }
 

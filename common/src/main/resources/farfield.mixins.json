@@ -6,6 +6,7 @@
   "refmap": "farfield.refmap.json",
   "mixins": [
     "BiomeManagerAccessor",
+    "ChunkGeneratorAccessor",
     "LevelChunkMixin"
   ],
   "client": [

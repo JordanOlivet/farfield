@@ -99,6 +99,27 @@ public final class LodServer {
     }
 
     /**
+     * Spike for ADR-079: builds one preview tile of {@code level} now, on the
+     * calling thread, as the preview builds it for a player; the stage times
+     * in nanoseconds ({@link NoisePreview#buildNow}), or null without a
+     * preview or a store there.
+     */
+    static long[] buildPreviewTileNow(ServerLevel level, int tileX, int tileZ) {
+        LodServer s = instance;
+        LodLevel lod = s == null ? null : s.pipeline.level(level);
+        if (s == null || s.preview == null || lod == null) {
+            return null;
+        }
+        return s.preview.buildNow(level, lod.world(), tileX, tileZ);
+    }
+
+    /** Where the last tile {@link #buildPreviewTileNow} built spent its feature time. */
+    static String lastPreviewTiming() {
+        LodServer s = instance;
+        return s == null || s.preview == null ? "" : s.preview.lastTiming;
+    }
+
+    /**
      * The LOD world of a dimension of the running server, or null (no
      * server, or the dimension has no store yet). For the single-player
      * renderer, which reads the integrated server's store in process.
