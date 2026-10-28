@@ -42,9 +42,10 @@ public final class PreviewTile {
      * tiered spruces, 7 the icebergs, 8 the plants, 9 only the plants the
      * renderer draws as plants, 10 a quarter as many plants (measured
      * against generated chunks), 11 the world's own features instead of the
-     * guessed trees; older tiles are built again.
+     * guessed trees, 12 vines-like plants as plants and nothing LODs leave
+     * out among the features (ADR-080); older tiles are built again.
      */
-    private static final int FORMAT = 11;
+    private static final int FORMAT = 12;
     /** Blocks a side of a feature voxel. */
     public static final int FEATURE_VOXEL = 2;
     /** Blocks around the tile its features may reach. */

@@ -670,6 +670,15 @@ class PreviewTest {
     }
 
     @Test
+    void theStorePersistsTheKeysATileNamesBeforeWritingIt() throws IOException {
+        List<String> order = new ArrayList<>();
+        PreviewStore store = new PreviewStore(dir.resolve("keys"), () -> order.add("keys"));
+        store.addListener(tile -> order.add("tile"));
+        store.write(0, 0, slope());
+        assertEquals(List.of("keys", "tile"), order);
+    }
+
+    @Test
     void theStoreKeepsTilesAndSummariesAcrossReopening() throws IOException {
         List<Long> written = new ArrayList<>();
         PreviewStore store = new PreviewStore(dir);

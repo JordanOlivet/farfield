@@ -133,10 +133,19 @@ public final class BlockKeys {
 
     /** Whether LODs draw a state as a plant's crossed quads ({@link MaterialClassifier#PLANT}). */
     public static boolean isPlant(BlockState state) {
+        return meshClass(state) == MaterialClassifier.PLANT;
+    }
+
+    /**
+     * How LODs draw a state ({@link MaterialClassifier}'s classes; {@code AIR}
+     * for what they leave out, torches and rails), {@code AIR} when it
+     * cannot be told.
+     */
+    public static int meshClass(BlockState state) {
         try {
-            return (resolve(state) & 15) == MaterialClassifier.PLANT;
+            return resolve(state) & 15;
         } catch (RuntimeException e) {
-            return false;
+            return MaterialClassifier.AIR;
         }
     }
 
@@ -166,6 +175,13 @@ public final class BlockKeys {
             // Kelp and seagrass also show their crossed quads in that water (ADR-065).
             return isSubmergedPlant(state) ? MaterialTable.packSubmerged() : MaterialTable.packFluid();
         }
+        if (isVegetation(block) && !shape.isEmpty() && shape.max(net.minecraft.core.Direction.Axis.Y) >= 0.5
+                && !hasCollision(state)) {
+            // Before the full-block test: a double plant's outline is a whole block (tall grass,
+            // sunflowers, lilacs), and they showed as see-through cubes (ADR-080). Flat ones
+            // (pink petals, clover) stay low covers below.
+            return MaterialTable.pack(MaterialClassifier.PLANT, MipBuilder.Shapes.SPARSE);
+        }
         if (Block.isShapeFullBlock(shape)) {
             int meshClass = state.canOcclude() ? MaterialClassifier.OPAQUE : MaterialClassifier.TRANSLUCENT;
             return MaterialTable.pack(meshClass, MipBuilder.Shapes.FULL);
@@ -188,11 +204,20 @@ public final class BlockKeys {
                 // rails stay out of the LODs.
                 return MaterialTable.pack(MaterialClassifier.SHAPED, MipBuilder.Shapes.SPARSE, 0);
             }
-            if (block instanceof BushBlock || block instanceof SugarCaneBlock) {
+            if (isVegetation(block)) {
                 return MaterialTable.pack(MaterialClassifier.PLANT, MipBuilder.Shapes.SPARSE);
             }
         }
         return MaterialTable.pack(MaterialClassifier.AIR, MipBuilder.Shapes.SPARSE);
+    }
+
+    /**
+     * Blocks that grow as plants: bushes, flowers, grass, sugar cane, and
+     * those that grow like kelp or vines (Biomes O' Plenty's high grass,
+     * twisting vines), which the LODs left out before ADR-080.
+     */
+    private static boolean isVegetation(Block block) {
+        return block instanceof BushBlock || block instanceof SugarCaneBlock || block instanceof GrowingPlantBlock;
     }
 
     /** A plant without collision standing in its fluid: kelp, seagrass, a waterlogged propagule. */

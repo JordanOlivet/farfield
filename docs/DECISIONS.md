@@ -2176,3 +2176,36 @@ plants (their villages stay); amends ADR-060 (plant counts).
 - **Not yet**: real surface rules on the stand-in ground (the top block is
   still guessed from the biome); a client toggle per kind of feature; mod
   structures other than villages.
+
+
+## ADR-080 — Vegetation classed as plants; the preview's keys persisted
+
+Status: accepted, 2026-10-28. Amends ADR-059 (which blocks are plants)
+and ADR-079.
+
+- **Context**: the user's screenshots of the preview showed bare ground
+  beside the game's dense grass. A tile of the user's server held
+  Biomes O' Plenty's `high_grass` (a `GrowingPlantHeadBlock`, like kelp)
+  as 15,770 feature runs drawn as nothing: `BlockKeys` took only bushes
+  and sugar cane as plants, so the LODs, real and preview, left that grass
+  out. Probing a dev tile also showed vanilla double plants (tall grass,
+  sunflowers, lilacs) classed as see-through cubes (their outline is a
+  whole block), and a tile naming block ids the store had never written:
+  `PreviewStore` did not persist the key tables before writing, so after
+  a restart new keys took other ids and a tile could name the wrong
+  blocks.
+- **Decision**: blocks that grow as plants (bushes, sugar cane, and
+  `GrowingPlantBlock`) without collision are plants, double plants
+  included when at least half a block tall (before the full-block test);
+  flat ones (pink petals, clover) stay low covers. The preview keeps out
+  of its tiles what LODs never draw (class air: torches, rails) and what
+  grows under the sea (the tile's water covers it). The preview store
+  persists the key tables before each tile, as the section store does.
+  Tile format 12, protocol 7.
+- **Result**: dev tile over `biomesoplenty:overgrown_greens`: high grass
+  30 plants per chunk on average, tall grass counted as plants, no grass
+  left in the feature voxels; the redwood forest tile 60 to 27 KB; the
+  dev world's key file holds every id its tiles name. Unit test
+  `PreviewTest.theStorePersistsTheKeysATileNamesBeforeWritingIt`. Real
+  LODs of double plants and vines change look (crossed quads); not seen
+  in a client yet.

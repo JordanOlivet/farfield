@@ -31,6 +31,7 @@ public final class PreviewStore {
     private static final int CACHED_TILES = 64;
 
     private final Path dir;
+    private final io.lakio.farfield.core.storage.SectionStore.BeforeWrite beforeWrite;
     private final Map<Long, PreviewTile.Summary> summaries = new ConcurrentHashMap<>();
     private final Map<Long, PreviewTile> cache = new LinkedHashMap<>(CACHED_TILES, 0.75f, true) {
         @Override
@@ -42,7 +43,21 @@ public final class PreviewStore {
 
     /** Opens the store, reading the summary of every tile already there. */
     public PreviewStore(Path dir) throws IOException {
+        this(dir, () -> {
+        });
+    }
+
+    /**
+     * Like {@link #PreviewStore(Path)}; {@code beforeWrite} runs before a
+     * tile is written, to persist the key tables its material and biome ids
+     * refer to (ADR-080: tiles grown with the world's features name blocks
+     * no section of the store had written yet, and those ids were lost at
+     * the next start).
+     */
+    public PreviewStore(Path dir, io.lakio.farfield.core.storage.SectionStore.BeforeWrite beforeWrite)
+            throws IOException {
         this.dir = dir;
+        this.beforeWrite = beforeWrite;
         Files.createDirectories(dir);
         try (Stream<Path> files = Files.list(dir)) {
             for (Path f : (Iterable<Path>) files::iterator) {
@@ -107,6 +122,7 @@ public final class PreviewStore {
 
     /** Writes a tile through a temporary file, then tells the listeners. */
     public void write(int tileX, int tileZ, PreviewTile tile) throws IOException {
+        beforeWrite.run();
         ByteWriter raw = new ByteWriter(64 * 1024);
         tile.encode(raw);
         ZstdCompressor compressor = new ZstdCompressor();

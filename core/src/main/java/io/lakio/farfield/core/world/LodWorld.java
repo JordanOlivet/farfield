@@ -113,7 +113,10 @@ public final class LodWorld implements AutoCloseable {
             blockStateKeys.persist();
             biomeKeys.persist();
         });
-        preview = new PreviewStore(dir.resolve("preview"));
+        preview = new PreviewStore(dir.resolve("preview"), () -> {
+            blockStateKeys.persist();
+            biomeKeys.persist();
+        });
         for (int i = 0; i < LOCK_STRIPES; i++) {
             locks[i] = new Object();
         }

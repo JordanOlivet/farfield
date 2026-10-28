@@ -25,9 +25,10 @@ public final class StreamProtocol {
      * Raised when the messages change shape; peers with another version do
      * not stream (2: preview tiles; 3: the welcome tells the table sizes;
      * 4: change notices for regions; 5: pushed sections and the client's hint;
-     * 6: preview tiles of format 11, the world's own features, ADR-079).
+     * 6: preview tiles of format 11, the world's own features, ADR-079;
+     * 7: tiles of format 12, ADR-080).
      */
-    public static final int VERSION = 6;
+    public static final int VERSION = 7;
     /** Largest body of one message, under the game's custom payload limits. */
     public static final int MAX_PAYLOAD = 30_000;
 

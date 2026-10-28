@@ -19,7 +19,6 @@ import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Climate;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.PalettedContainer;
@@ -333,11 +332,15 @@ final class PreviewFeatures {
                     || z >= z0 + PreviewTile.BLOCKS + margin || y < ground(x, z) || bare.test(x, z)) {
                 continue;
             }
-            if (y < seaLevel && (state.getBlock() instanceof LiquidBlock || state.is(Blocks.ICE))) {
-                continue; // the tile's sea, and its ice where it freezes
+            if (y < seaLevel && (!state.getFluidState().isEmpty() || state.is(Blocks.ICE))) {
+                continue; // the tile's sea, its ice, and what grows in it (the tile's water covers them)
+            }
+            int meshClass = BlockKeys.meshClass(state);
+            if (meshClass == io.lakio.farfield.core.mesh.MaterialClassifier.AIR) {
+                continue; // LODs never draw it (torches, rails): no room in the tile for it
             }
             int material = world.blockStates().id(BlockKeys.key(state));
-            if (BlockKeys.isPlant(state)) {
+            if (meshClass == io.lakio.farfield.core.mesh.MaterialClassifier.PLANT) {
                 if (x >= x0 && z >= z0 && x < x0 + PreviewTile.BLOCKS && z < z0 + PreviewTile.BLOCKS) {
                     int c = ((z - z0) >> 4) * PreviewTile.CHUNKS + ((x - x0) >> 4);
                     if (plants[c] == null) {

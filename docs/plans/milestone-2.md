@@ -141,13 +141,12 @@ Items:
   guessed from the biome: Biomes O' Plenty's white sand, Terralith's
   surfaces), with the same stand-in world.
 - [ ] D.3 A client toggle per kind of feature (trees, plants, rocks).
-- [ ] D.4 Vegetation without collision that grows like kelp or vines
-  (`GrowingPlantBlock`: Biomes O' Plenty's `high_grass`) is drawn as
-  nothing, in real LODs and in the preview, where it also fills the
-  feature voxels (15,770 runs in one tile of the user's pack): class it
-  as a plant; leave out of the tiles what LODs never draw and the plants
-  under the sea; tile format 12, protocol 7. Proposed 2026-10-28, waiting
-  for the user's go.
+- [~] D.4 Vegetation without collision that grows like kelp or vines
+  (`GrowingPlantBlock`: Biomes O' Plenty's `high_grass`) was drawn as
+  nothing, in real LODs and in the preview. ADR-080: classed as plants,
+  double plants too; the tiles keep out what LODs never draw and the
+  plants under the sea; the preview store persists its key tables before
+  each tile. Dev tile checked; remains: a look in the pack.
 
 ## M2.E — Distance up to 16,384 blocks
 
