@@ -52,8 +52,8 @@ class RenderConfigTest {
         // Auto: one thread per four logical processors, 1 to 4.
         assertEquals(1, RenderConfig.threads(RenderConfig.AUTO, 2));
         assertEquals(2, RenderConfig.threads(RenderConfig.AUTO, 8));
-        assertEquals(4, RenderConfig.threads(RenderConfig.AUTO, 16));
-        assertEquals(4, RenderConfig.threads(RenderConfig.AUTO, 64));
+        assertEquals(5, RenderConfig.threads(RenderConfig.AUTO, 16));
+        assertEquals(6, RenderConfig.threads(RenderConfig.AUTO, 64));
         assertEquals(6, RenderConfig.threads(6, 4));
     }
 

@@ -10,7 +10,6 @@ import io.lakio.farfield.core.preview.PreviewVoxels;
 import io.lakio.farfield.core.select.LodSelector;
 import io.lakio.farfield.core.world.LodWorld;
 import it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap;
-import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -71,7 +70,14 @@ final class PreviewLayer {
     private static final long HOLD_NANOS = 2_000_000_000L;
     /** Tiles whose sections must be meshed again: written again, or their real data changed. */
     private final ConcurrentLinkedQueue<Long> changedTiles = new ConcurrentLinkedQueue<>();
-    private final LongConsumer tileListener = changedTiles::add;
+    /**
+     * Per changed tile, its chunks whose preview sections must be meshed
+     * again (32 rows of bits), or null for all of them: a mask change only
+     * reaches the chunks it changed and those beside them (ADR-077).
+     */
+    private final Map<Long, int[]> changedChunks = new ConcurrentHashMap<>();
+    private static final int[] ALL_CHUNKS = filledRows();
+    private final LongConsumer tileListener = tile -> changed(tile, ALL_CHUNKS);
     private volatile boolean masksChanged;
     private volatile LodWorld world;
     private volatile int minY;
@@ -113,6 +119,7 @@ final class PreviewLayer {
         heldMasks.clear();
         heldSince.clear();
         changedTiles.clear();
+        changedChunks.clear();
         if (next != null) {
             next.preview().addListener(tileListener);
         }
@@ -172,12 +179,20 @@ final class PreviewLayer {
      * The tiles whose resident preview sections must be meshed again, since
      * the last call; also tells whether the selection must run again. Render thread.
      */
-    boolean drainChanges(LongOpenHashSet tiles) {
+    boolean drainChanges(Map<Long, int[]> tiles) {
         boolean changed = masksChanged;
         masksChanged = false;
         Long tile;
         while ((tile = changedTiles.poll()) != null) {
-            tiles.add(tile.longValue());
+            int[] rows = changedChunks.remove(tile);
+            if (rows != null) {
+                tiles.merge(tile, rows, (a, b) -> {
+                    for (int z = 0; z < a.length; z++) {
+                        a[z] |= b[z];
+                    }
+                    return a;
+                });
+            }
             changed = true;
         }
         if (changed) {
@@ -194,11 +209,15 @@ final class PreviewLayer {
             return "mask of its tile not built";
         }
         int c = chunk(chunkX, chunkZ);
+        int[] held = heldMasks.get(tile);
+        String hold = held == null ? ""
+                : (held[Math.floorMod(chunkZ, PreviewTile.CHUNKS)] >>> Math.floorMod(chunkX, PreviewTile.CHUNKS) & 1) != 0
+                ? "; a held mask hides it once the real terrain is drawn" : "; a held mask for its tile";
         if ((mask[Math.floorMod(chunkZ, PreviewTile.CHUNKS)] >>> Math.floorMod(chunkX, PreviewTile.CHUNKS) & 1) == 0) {
-            return "shown (no real data at level " + TOP_LEVEL + ")";
+            return "shown (no real data at level " + TOP_LEVEL + ")" + hold;
         }
         return "hidden for real terrain (level " + TOP_LEVEL + " ground at " + mask[GROUND + c] + ", fluid top "
-                + mask[FLUID + c] + ")";
+                + mask[FLUID + c] + ")" + hold;
     }
 
     /** The tile a preview key's section lies in. */
@@ -291,7 +310,7 @@ final class PreviewLayer {
                     if (old == null || !Arrays.equals(old, fresh)) {
                         masksChanged = true;
                         if (old != null) {
-                            changedTiles.add(tile);
+                            changed(tile, changedChunks(old, fresh));
                         }
                     }
                 } while (maskDirty.contains(tile) && world == w);
@@ -305,6 +324,76 @@ final class PreviewLayer {
                 requestMask(w, tile);
             }
         });
+    }
+
+    private static int[] filledRows() {
+        int[] rows = new int[PreviewTile.CHUNKS];
+        Arrays.fill(rows, -1);
+        return rows;
+    }
+
+    /** Records chunks of a tile to mesh again; any thread. */
+    private void changed(long tile, int[] rows) {
+        changedChunks.merge(tile, rows.clone(), (a, b) -> {
+            for (int z = 0; z < a.length; z++) {
+                a[z] |= b[z];
+            }
+            return a;
+        });
+        changedTiles.add(tile);
+    }
+
+    /**
+     * The chunks two masks of a tile differ on (real or not, ground, fluid
+     * top), and the chunks beside them: preview columns go down to the
+     * ground of the real chunks around.
+     */
+    private static int[] changedChunks(int[] old, int[] fresh) {
+        if (old == null) {
+            return ALL_CHUNKS;
+        }
+        int n = PreviewTile.CHUNKS;
+        int[] rows = new int[n];
+        for (int z = 0; z < n; z++) {
+            int differ = old[z] ^ fresh[z];
+            for (int x = 0; x < n; x++) {
+                int c = z * n + x;
+                if (old[GROUND + c] != fresh[GROUND + c] || old[FLUID + c] != fresh[FLUID + c]) {
+                    differ |= 1 << x;
+                }
+            }
+            rows[z] = differ;
+        }
+        int[] grown = new int[n];
+        for (int z = 0; z < n; z++) {
+            int row = rows[z] | rows[z] << 1 | rows[z] >>> 1;
+            grown[z] |= row;
+            if (z > 0) {
+                grown[z - 1] |= row;
+            }
+            if (z + 1 < n) {
+                grown[z + 1] |= row;
+            }
+        }
+        return grown;
+    }
+
+    /**
+     * Whether a preview section's footprint meets the chunks of its tile
+     * marked in {@code rows}.
+     */
+    static boolean meets(long key, int[] rows) {
+        int level = drawLevel(key);
+        int chunks = 2 << level;
+        int x0 = Math.floorMod(LodKey.x(key) * chunks, PreviewTile.CHUNKS);
+        int z0 = Math.floorMod(LodKey.z(key) * chunks, PreviewTile.CHUNKS);
+        int bits = chunks >= 32 ? -1 : ((1 << chunks) - 1) << x0;
+        for (int z = z0; z < z0 + chunks; z++) {
+            if ((rows[z] & bits) != 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Whether {@code fresh} marks a chunk real that {@code old} did not. */
@@ -354,7 +443,7 @@ final class PreviewLayer {
                 heldSince.remove(tile);
                 masks.put(tile, fresh);
                 masksChanged = true;
-                changedTiles.add(tile);
+                changed(tile, changedChunks(old, fresh));
             }
         }
     }

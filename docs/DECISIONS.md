@@ -2059,3 +2059,38 @@ in) and ADR-039 (the preview's mask).
   `gradlew build` passes. Not checked in game yet.
 - **Cost**: the preview and the real terrain can both draw a chunk for a
   frame or two.
+
+
+## ADR-077 — Holes detected in the client; meshing follows what changed
+
+Status: accepted, 2026-10-28. Amends ADR-076 (the preview's held masks)
+and ADR-040's auto thread count.
+
+- **Context**: after ADR-076 the user still saw portions vanish for a
+  moment. 11 `debug here` reports came after the fact (the holes last a
+  fraction of a second): every section held and current. The client's
+  mesher ran at its limit: up to 31,444 meshes per 10 s at about 1 ms on 4
+  threads (64 in flight, the cap) for 2,000 to 4,800 sections received,
+  since a rewrite meshed its six neighbors and a mask change every
+  preview section of its tile.
+- **Decision**:
+  - Each mesh records the chunk columns its quads draw in
+    (`Quad.markColumns`). A hole detector scans the chunk columns within
+    32 chunks of the camera, beyond the game's render distance, every
+    250 ms: a column where no drawn section, real or preview, has a quad
+    is a hole. The renderer logs how many, how long they lasted, and the
+    first three new ones per 10 s with what every level knows there.
+  - A held preview mask goes in once the real sections drawn over each
+    new chunk have quads in that chunk column (not only cover it).
+  - A section rewritten while resident meshes its neighbors again only
+    when its new mesh shows that what a neighbor reads of it changed (a
+    hash of each border layer: light, solid voxels, empty columns), or
+    when it had no data before.
+  - A changed preview mask meshes again only the preview sections over the
+    chunks it changed and those beside them.
+  - Auto thread count: one per three logical processors, 1 to 6 (16: 5).
+- **Result**: unit tests (`QuadTest`, `RenderConfigTest`); `gradlew build`
+  passes. Not checked in game.
+- **Rejected for now**: masking the preview in the shader by a coverage
+  buffer: holding the mask until the drawn geometry is there gives the
+  same guarantee with the meshes as they are.

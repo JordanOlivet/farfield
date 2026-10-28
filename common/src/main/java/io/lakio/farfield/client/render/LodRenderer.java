@@ -50,6 +50,7 @@ import org.lwjgl.system.MemoryUtil;
 
 import java.io.IOException;
 import java.nio.IntBuffer;
+import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -363,15 +364,32 @@ public final class LodRenderer {
     /** The noise preview setting the last selection ran with. */
     private boolean selectedPreview;
     private final PreviewLayer previewLayer = new PreviewLayer(meshers);
-    private final LongOpenHashSet changedTiles = new LongOpenHashSet();
+    /** Preview tiles changed since the last frame, with the chunks whose sections must be meshed again. */
+    private final Map<Long, int[]> changedTiles = new java.util.HashMap<>();
     /** Most sections a selection drew coarser than wanted since the last stat line. */
     private int maxFallbacks;
     /** Most sections a selection drew from a copy older than the server's since the last stat line. */
     private int maxOutdatedDrawn;
     /** Most sections a selection drew as their children, waiting for their own mesh. */
     private int maxFinerFallbacks;
-    /** The real sections the last selection draws, and the build height it ran with. */
-    private final LongOpenHashSet drawnReal = new LongOpenHashSet();
+    /**
+     * The hole detector (ADR-077): chunk columns near the camera, beyond the
+     * game's own render distance, where no drawn section has a quad, and
+     * since when; scanned every {@link #HOLE_SCAN_NANOS}.
+     */
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap holeSince =
+            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+    private static final long HOLE_SCAN_NANOS = 250_000_000L;
+    private static final int HOLE_RADIUS_CHUNKS = 32;
+    private static final int HOLE_EXAMPLES = 3;
+    private long nextHoleScan;
+    private int maxHoles;
+    private int holesClosed;
+    private long holeNanos;
+    private long holeMaxNanos;
+    private int holeExamples;
+    /** The sections the last selection draws, real and preview, and the build height it ran with. */
+    private final LongOpenHashSet drawn = new LongOpenHashSet();
     private int selectedMinY;
     private int selectedMaxY;
     private double loggedDetail = 1e-9;
@@ -496,6 +514,10 @@ public final class LodRenderer {
         int borderFaces;
         /** The octants its quads draw in: a parent showing a new child's octant covers it until it is meshed. */
         int octants;
+        /** The chunk columns its quads draw in ({@link Quad#markColumns}); null without quads. */
+        long[] columns;
+        /** Per direction, a hash of its layer a neighbor there reads; null before its first mesh. */
+        long[] borders;
 
         Resident(int slot) {
             this.slot = slot;
@@ -507,7 +529,7 @@ public final class LodRenderer {
     /** {@code octants}: the octants its quads draw in ({@link Quad#octants}). */
     private record MeshResult(int generation, long key, long[] quads, int[] groups, boolean cutout,
                               boolean provisional, int[] occupancy, int[] biomeColumns,
-                              int maxMaterial, int borderFaces, int octants) {
+                              int maxMaterial, int borderFaces, int octants, long[] columns, long[] borders) {
     }
 
     private static final int[] NO_GROUPS = new int[GROUPS + 1];
@@ -869,6 +891,10 @@ public final class LodRenderer {
             select(level, cam, look, frameStart);
         }
         requestWanted();
+        if (RenderSettings.performanceLogs() && frameStart > nextHoleScan) {
+            nextHoleScan = frameStart + HOLE_SCAN_NANOS;
+            scanHoles(frameStart, mc.options.getEffectiveRenderDistance());
+        }
         logFill(frameStart, false);
         for (int l = 0; l < commands.length; l++) {
             commands[l].clear();
@@ -1127,7 +1153,7 @@ public final class LodRenderer {
                     lastSelectionDistance, sections::ready, drawSink, wantSink);
         }
         int outdatedDrawn = 0;
-        drawnReal.clear();
+        drawn.clear();
         selectedMinY = level.getMinBuildHeight();
         selectedMaxY = level.getMaxBuildHeight();
         for (int i = 0, n = drawList.size(); i < n; i++) {
@@ -1136,9 +1162,7 @@ public final class LodRenderer {
             if (r != null) {
                 r.lastUsed = now;
             }
-            if (!PreviewLayer.isPreview(key)) {
-                drawnReal.add(key);
-            }
+            drawn.add(key);
             // A drawn copy older than the server's: fetched with the meshes this selection wants, not
             // after the whole background queue; the preview already hides itself for the newer data,
             // so the old copy can leave a hole where the new chunks are (ADR-074).
@@ -1248,9 +1272,10 @@ public final class LodRenderer {
 
     /**
      * Whether the real terrain the last selection draws over a chunk column
-     * is meshed from its current data: some drawn real section covers it,
-     * and none covering it waits for a new mesh. The preview hides itself
-     * over new real chunks only then (ADR-076).
+     * is meshed from its current data and draws something there: some drawn
+     * real section has quads in that column, and none covering it waits for
+     * a new mesh. The preview hides itself over new real chunks only then
+     * (ADR-076, ADR-077).
      */
     private boolean realReady(int chunkX, int chunkZ) {
         boolean covered = false;
@@ -1260,15 +1285,150 @@ public final class LodRenderer {
             int z = chunkZ >> (level + 1);
             for (int y = Math.floorDiv(selectedMinY, size); y <= Math.floorDiv(selectedMaxY - 1, size); y++) {
                 long key = LodKey.pack(level, x, y, z);
-                if (drawnReal.contains(key)) {
+                if (drawn.contains(key)) {
                     if (stale.contains(key) || requested.contains(key)) {
                         return false;
                     }
-                    covered = true;
+                    covered |= drawsColumn(resident.get(key), level, chunkX, chunkZ);
                 }
             }
         }
         return covered;
+    }
+
+    /**
+     * Counts the holes around the last selection's camera, times how long
+     * each lasted, and logs a few new ones with what every level knows there.
+     */
+    private void scanHoles(long now, int renderDistance) {
+        int cx0 = (int) Math.floor(selectedX) >> 4;
+        int cz0 = (int) Math.floor(selectedZ) >> 4;
+        int r = HOLE_RADIUS_CHUNKS;
+        int count = 0;
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet seen = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+        for (int dz = -r; dz <= r; dz++) {
+            for (int dx = -r; dx <= r; dx++) {
+                int d2 = dx * dx + dz * dz;
+                if (d2 > r * r || Math.max(Math.abs(dx), Math.abs(dz)) <= renderDistance) {
+                    continue; // the game's own chunks: its renderer draws them
+                }
+                int cx = cx0 + dx;
+                int cz = cz0 + dz;
+                if (columnDrawn(cx, cz)) {
+                    continue;
+                }
+                long chunk = (long) cx << 32 | (cz & 0xFFFFFFFFL);
+                seen.add(chunk);
+                count++;
+                if (!holeSince.containsKey(chunk)) {
+                    holeSince.put(chunk, now);
+                    if (holeExamples < HOLE_EXAMPLES) {
+                        holeExamples++;
+                        Farfield.LOG.info("LOD hole at chunk {} {} ({} blocks away), nothing drawn there:\n{}", cx, cz,
+                                (int) Math.sqrt(d2) * 16, describeColumn(cx, cz));
+                    }
+                }
+            }
+        }
+        var it = holeSince.long2LongEntrySet().iterator();
+        while (it.hasNext()) {
+            var e = it.next();
+            long chunk = e.getLongKey();
+            if (seen.contains(chunk)) {
+                continue;
+            }
+            int dx = (int) (chunk >> 32) - cx0;
+            int dz = (int) chunk - cz0;
+            if (dx * dx + dz * dz <= r * r && Math.max(Math.abs(dx), Math.abs(dz)) > renderDistance) {
+                // Filled in where it was looked for; one the camera left behind is not timed.
+                long lasted = now - e.getLongValue();
+                holesClosed++;
+                holeNanos += lasted;
+                holeMaxNanos = Math.max(holeMaxNanos, lasted);
+            }
+            it.remove();
+        }
+        maxHoles = Math.max(maxHoles, count);
+    }
+
+    /** What every level, real and preview, knows of a chunk column, for the hole detector. */
+    private String describeColumn(int chunkX, int chunkZ) {
+        StringBuilder out = new StringBuilder();
+        for (int level = 0; level < LodWorld.LEVELS; level++) {
+            int size = LodSection.SIZE << level;
+            int x = chunkX >> (level + 1);
+            int z = chunkZ >> (level + 1);
+            out.append("  level ").append(level).append(':');
+            boolean any = false;
+            for (int y = Math.floorDiv(selectedMinY, size); y <= Math.floorDiv(selectedMaxY - 1, size); y++) {
+                long key = LodKey.pack(level, x, y, z);
+                long preview = PreviewLayer.toPreview(key);
+                boolean exists = stream != null ? stream.exists(key) : sectionExists(key);
+                if (!exists && !resident.containsKey(key) && !resident.containsKey(preview) && !drawn.contains(preview)) {
+                    continue;
+                }
+                any = true;
+                out.append(" [y ").append(y).append(exists ? " real" : " no real");
+                appendState(out, key, level, chunkX, chunkZ);
+                if (resident.containsKey(preview) || drawn.contains(preview)) {
+                    out.append("; preview");
+                    appendState(out, preview, level, chunkX, chunkZ);
+                }
+                if (stream != null && exists) {
+                    out.append("; ").append(stream.describe(key));
+                }
+                out.append(']');
+            }
+            out.append(any ? "" : " nothing").append('\n');
+        }
+        out.append("  preview chunk: ").append(previewLayer.describeChunk(chunkX, chunkZ));
+        return out.toString();
+    }
+
+    private void appendState(StringBuilder out, long key, int level, int chunkX, int chunkZ) {
+        Resident r = resident.get(key);
+        out.append(drawn.contains(key) ? ", drawn" : "");
+        if (r == null) {
+            out.append(", not meshed");
+        } else {
+            out.append(", ").append(r.quadCount).append(" quads")
+                    .append(drawsColumn(r, level, chunkX, chunkZ) ? ", some here" : ", none here");
+        }
+        out.append(stale.contains(key) ? ", stale" : "").append(requested.contains(key) ? ", meshing" : "");
+    }
+
+    /** Whether a resident section of draw level {@code level} has quads in a chunk column. */
+    private static boolean drawsColumn(Resident r, int level, int chunkX, int chunkZ) {
+        if (r == null || r.columns == null) {
+            return false;
+        }
+        int side = 2 << level;
+        int bit = (chunkZ & (side - 1)) * side + (chunkX & (side - 1));
+        return (r.columns[bit >> 6] >>> bit & 1) != 0;
+    }
+
+    /**
+     * Whether any section the last selection draws, real or preview, has
+     * quads in a chunk column: one without is a hole, the sky through the
+     * terrain.
+     */
+    private boolean columnDrawn(int chunkX, int chunkZ) {
+        for (int level = 0; level < LodWorld.LEVELS; level++) {
+            int size = LodSection.SIZE << level;
+            int x = chunkX >> (level + 1);
+            int z = chunkZ >> (level + 1);
+            for (int y = Math.floorDiv(selectedMinY, size); y <= Math.floorDiv(selectedMaxY - 1, size); y++) {
+                long key = LodKey.pack(level, x, y, z);
+                if (drawn.contains(key) && drawsColumn(resident.get(key), level, chunkX, chunkZ)) {
+                    return true;
+                }
+                long preview = PreviewLayer.toPreview(key);
+                if (drawn.contains(preview) && drawsColumn(resident.get(preview), level, chunkX, chunkZ)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** The level a section is drawn at (preview keys carry an offset). */
@@ -1328,6 +1488,17 @@ public final class LodRenderer {
                     discardSections / Math.max(1, timedFrames), leftToGame / Math.max(1, timedFrames), timedFrames,
                     String.format("%.1f", selector.detail()), maxFallbacks, maxFinerFallbacks, maxOutdatedDrawn);
         }
+        if (RenderSettings.performanceLogs()) {
+            Farfield.LOG.info("LOD holes: at most {} chunk columns without anything drawn within {} chunks;"
+                            + " {} closed in 10 s, {} ms on average, {} ms at most; {} open now", maxHoles,
+                    HOLE_RADIUS_CHUNKS, holesClosed, holesClosed == 0 ? 0 : holeNanos / holesClosed / 1_000_000,
+                    holeMaxNanos / 1_000_000, holeSince.size());
+        }
+        maxHoles = 0;
+        holesClosed = 0;
+        holeNanos = 0;
+        holeMaxNanos = 0;
+        holeExamples = 0;
         maxFallbacks = 0;
         maxFinerFallbacks = 0;
         maxOutdatedDrawn = 0;
@@ -1394,11 +1565,11 @@ public final class LodRenderer {
             try {
                 LodSection section = PreviewLayer.isPreview(key) ? previewLayer.build(w, key) : readSection(w, key);
                 result = section == null
-                        ? new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null, -1, 0, 0)
+                        ? new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null, -1, 0, 0, null, null)
                         : mesh(w, gen, key, section);
             } catch (IOException | RuntimeException e) {
                 Farfield.LOG.debug("LOD mesh of {} failed", LodKey.toString(key), e);
-                result = new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null, -1, 0, 0);
+                result = new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null, -1, 0, 0, null, null);
             }
             meshNanos.addAndGet(System.nanoTime() - start);
             meshJobs.incrementAndGet();
@@ -1509,14 +1680,18 @@ public final class LodRenderer {
         }
         int maxMaterial = -1;
         int octants = 0;
+        int level = drawLevel(key);
+        long[] drawnColumns = all.length == 0 ? null : new long[Math.max(1, (4 << (2 * level)) >> 6)];
         for (long q : all) {
             maxMaterial = Math.max(maxMaterial, Quad.material(q));
             if (octants != 0xFF) {
                 octants |= Quad.octants(q);
             }
+            Quad.markColumns(q, 4 - level, drawnColumns);
         }
+        long[] borders = PreviewLayer.isPreview(key) ? null : borderHashes(section, classes, level);
         return new MeshResult(gen, key, all, groups, cutout, provisional, occupied, packed, maxMaterial,
-                mesher.get().borderFaces(), octants);
+                mesher.get().borderFaces(), octants, drawnColumns, borders);
     }
 
     /** @param list a face direction, or {@link MeshBuffer#PLANTS} */
@@ -1574,6 +1749,57 @@ public final class LodRenderer {
         }
     }
 
+    /**
+     * Per direction d, a hash of what the neighbor in that direction reads of
+     * this section ({@link #readNeighbors}: the touching layer's light, its
+     * solid voxels and its empty columns), so a rewrite meshes a neighbor
+     * again only when that changed. Mesher threads.
+     */
+    private long[] borderHashes(LodSection section, MaterialClassifier classes, int level) {
+        long[] hashes = new long[6];
+        int[] plane = new int[LodSection.SIZE];
+        byte[] light = new byte[LodSection.SIZE * LodSection.SIZE];
+        for (int d = 0; d < 6; d++) {
+            // The neighbor in direction d reads this section across the opposite direction.
+            int seen = d ^ 1;
+            BinaryGreedyMesher.borderLight(section, seen, light, classes, 1 << level);
+            BinaryGreedyMesher.borderPlane(section, seen, classes, true, plane);
+            BinaryGreedyMesher.addEmptyColumns(section, seen, classes, plane);
+            long h = 0x9E3779B97F4A7C15L;
+            for (int row : plane) {
+                h = (h ^ row) * 0x100000001B3L;
+            }
+            for (byte b : light) {
+                h = (h ^ b) * 0x100000001B3L;
+            }
+            hashes[d] = h;
+        }
+        return hashes;
+    }
+
+    /**
+     * Marks the resident neighbors whose view of {@code key} changed between
+     * two meshes of it; {@code before} null when the earlier mesh had no data.
+     */
+    private void restaleNeighbors(long key, long[] before, long[] after) {
+        for (int d = 0; d < 6; d++) {
+            if (before != null && before[d] == after[d]) {
+                continue;
+            }
+            int y = LodKey.y(key) + STEP[d][1];
+            if (y < LodKey.Y_MIN || y > LodKey.Y_MAX) {
+                continue;
+            }
+            long neighbor = LodKey.pack(LodKey.level(key), LodKey.x(key) + STEP[d][0], y, LodKey.z(key) + STEP[d][2]);
+            Resident r = resident.get(neighbor);
+            // The neighbor sees this section in the opposite direction.
+            if (r != null && (r.groups[PLANT_GROUP] > r.opaqueCount || (r.borderFaces >> (d ^ 1) & 1) != 0)) {
+                stale.add(neighbor);
+                selectionDirty = true;
+            }
+        }
+    }
+
     /** A neighbor layer solid everywhere (read only). */
     private static final int[] FULL_PLANE = filledPlane();
 
@@ -1598,6 +1824,10 @@ public final class LodRenderer {
             }
             if (resident.containsKey(key.longValue())) {
                 stale.add(key.longValue());
+                previewLayer.realWritten(key);
+                // Its neighbors are meshed again once its own new mesh shows its borders changed
+                // (restaleNeighbors): most rewrites at the generation front leave them as they were.
+                continue;
             }
             previewLayer.realWritten(key);
             // Translucent faces of the neighbors were culled against the old data, and faces on
@@ -1625,7 +1855,8 @@ public final class LodRenderer {
             LongIterator keys = resident.keySet().iterator();
             while (keys.hasNext()) {
                 long k = keys.nextLong();
-                if (PreviewLayer.isPreview(k) && changedTiles.contains(PreviewLayer.tileOf(k))) {
+                int[] rows = PreviewLayer.isPreview(k) ? changedTiles.get(PreviewLayer.tileOf(k)) : null;
+                if (rows != null && PreviewLayer.meets(k, rows)) {
                     stale.add(k);
                 }
             }
@@ -1661,6 +1892,7 @@ public final class LodRenderer {
                 }
             }
             Resident r = resident.get(m.key);
+            boolean fresh = r == null;
             if (r == null) {
                 r = new Resident(allocateSlot());
                 r.lastUsed = System.nanoTime();
@@ -1675,6 +1907,14 @@ public final class LodRenderer {
             r.cutout = m.cutout;
             r.borderFaces = m.borderFaces;
             r.octants = m.octants;
+            r.columns = m.columns;
+            long[] oldBorders = r.borders;
+            r.borders = m.borders;
+            if (!fresh && m.borders != null) {
+                // Its new data changed what a neighbor reads there (or it had none before): that
+                // neighbor is meshed again.
+                restaleNeighbors(m.key, oldBorders, m.borders);
+            }
             r.maxMaterial = m.maxMaterial;
             if (m.provisional) {
                 provisional.add(m.key);

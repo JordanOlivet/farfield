@@ -175,6 +175,39 @@ public final class Quad {
         return mask;
     }
 
+    /**
+     * Marks the columns of cells its voxels cover in {@code bits}: cells of
+     * {@code 1 << cellShift} voxels a side in X and Z, {@code 32 >> cellShift}
+     * a side, bit {@code z * side + x}. A section of level L has chunk columns
+     * of {@code 16 >> L} voxels: {@code cellShift = 4 - L}.
+     */
+    public static void markColumns(long q, int cellShift, long[] bits) {
+        int x0 = x(q);
+        int z0 = z(q);
+        int x1 = x0;
+        int z1 = z0;
+        int d = direction(q);
+        if (d < DIRECTIONS) {
+            int u = sizeU(q) - 1;
+            int v = sizeV(q) - 1;
+            switch (axis(d)) {
+                case 0 -> z1 += v; // (U, V) = (Y, Z)
+                case 1 -> {        // (Z, X)
+                    z1 += u;
+                    x1 += v;
+                }
+                default -> x1 += u; // (X, Y)
+            }
+        }
+        int side = 32 >> cellShift;
+        for (int cz = z0 >> cellShift; cz <= z1 >> cellShift; cz++) {
+            for (int cx = x0 >> cellShift; cx <= x1 >> cellShift; cx++) {
+                int bit = cz * side + cx;
+                bits[bit >> 6] |= 1L << bit;
+            }
+        }
+    }
+
     /** Axis of a direction: 0 X, 1 Y, 2 Z. */
     public static int axis(int direction) {
         return direction >> 1;

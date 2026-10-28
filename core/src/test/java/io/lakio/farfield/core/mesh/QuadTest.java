@@ -24,4 +24,22 @@ class QuadTest {
         // A plant is one voxel.
         assertEquals(octant(1, 1, 1), Quad.octants(Quad.pack(31, 31, 31, 1, 1, Quad.DIAGONAL_A, 1)));
     }
+
+    @Test
+    void aQuadMarksTheColumnsItCovers() {
+        // Level 0: chunk columns of 16 voxels, 2 a side. A top face from x 10 over 10, z 3 over 1
+        // (Y faces span (Z, X)): columns x 0 and 1 of row z 0.
+        long[] bits = new long[1];
+        Quad.markColumns(Quad.pack(10, 40 & 31, 3, 1, 10, Quad.POS_Y, 1), 4, bits);
+        assertEquals(0b11L, bits[0]);
+        // Level 4: one voxel per chunk, 32 a side (1,024 bits). An X face at x 5 spans (Y, Z):
+        // z 30 over 2 voxels, rows 30 and 31 of column 5.
+        long[] wide = new long[16];
+        Quad.markColumns(Quad.pack(5, 0, 30, 4, 2, Quad.NEG_X, 1), 0, wide);
+        int a = 30 * 32 + 5;
+        int b = 31 * 32 + 5;
+        assertEquals(1L << (a & 63), wide[a >> 6] & (1L << (a & 63)));
+        assertEquals(1L << (b & 63), wide[b >> 6] & (1L << (b & 63)));
+        assertEquals(2, java.util.Arrays.stream(wide).map(Long::bitCount).sum());
+    }
 }

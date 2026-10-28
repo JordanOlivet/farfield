@@ -107,11 +107,13 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
 
     /**
      * The threads a setting stands for: itself, or for {@link #AUTO} one per
-     * four logical processors, 1 to 4 (8 logical processors: 2, the count
-     * before this setting; 16: 4). The game's own threads keep the rest.
+     * three logical processors, 1 to 6 (8 logical processors: 2; 16: 5). A
+     * streamed client meshes every section the server pushes (ADR-077): 4 of
+     * 16 ran at their limit at the generation front. The game's own threads
+     * keep the rest.
      */
     public static int threads(int setting, int processors) {
-        return setting == AUTO ? Math.max(1, Math.min(4, processors / 4)) : setting;
+        return setting == AUTO ? Math.max(1, Math.min(6, processors / 3)) : setting;
     }
 
     public static float clampVoxelPixels(float pixels) {
