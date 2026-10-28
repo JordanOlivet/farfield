@@ -891,7 +891,10 @@ public final class LodRenderer {
             select(level, cam, look, frameStart);
         }
         requestWanted();
-        if (RenderSettings.performanceLogs() && frameStart > nextHoleScan) {
+        // The hole detector is a diagnostic: it runs only with the performance logs on.
+        if (!RenderSettings.performanceLogs()) {
+            holeSince.clear(); // turned on again later, old holes would be timed from back then
+        } else if (frameStart > nextHoleScan) {
             nextHoleScan = frameStart + HOLE_SCAN_NANOS;
             scanHoles(frameStart, mc.options.getEffectiveRenderDistance());
         }
