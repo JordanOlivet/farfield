@@ -210,6 +210,22 @@ public final class LodWorld implements AutoCloseable {
         return out;
     }
 
+    /**
+     * Drops what a rebuild still has to build ({@code /farfield rebuild
+     * cancel}) and returns how many sections that was. What is built stays;
+     * the store is not marked as built with the current rules, so a rebuild
+     * a rule change started comes back at the next open.
+     */
+    public synchronized int cancelRebuild() {
+        int dropped = 0;
+        for (Set<Long> r : rebuild) {
+            dropped += r.size();
+            r.clear();
+        }
+        mipsToUpgrade = 0;
+        return dropped;
+    }
+
     /** Whether a rebuild of the coarse levels is under way. */
     public boolean rebuilding() {
         for (Set<Long> r : rebuild) {

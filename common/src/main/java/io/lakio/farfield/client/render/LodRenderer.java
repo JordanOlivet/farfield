@@ -293,6 +293,8 @@ public final class LodRenderer {
     private final Long2ObjectOpenHashMap<Resident> resident = new Long2ObjectOpenHashMap<>();
     private final LongOpenHashSet requested = new LongOpenHashSet();
     private final LongOpenHashSet stale = new LongOpenHashSet();
+    /** Sections written while their first mesh was being built: meshed again once it lands. */
+    private final LongOpenHashSet rewrittenWhileMeshing = new LongOpenHashSet();
     /** Sections meshed before the looks of their materials were built: meshed again once they are. */
     private final LongOpenHashSet provisional = new LongOpenHashSet();
     private final Long2ByteOpenHashMap existence = new Long2ByteOpenHashMap();
@@ -1577,6 +1579,7 @@ public final class LodRenderer {
         }
         resident.clear();
         requested.clear();
+        rewrittenWhileMeshing.clear();
         stale.clear();
         provisional.clear();
         existence.clear();
@@ -1891,6 +1894,13 @@ public final class LodRenderer {
                 // (restaleNeighbors): most rewrites at the generation front leave them as they were.
                 continue;
             }
+            if (requested.contains(key.longValue())) {
+                // Its first mesh is being built and may have read the mirror before this write: a
+                // pushed section's version is known before the mirror's writer stores it, so the
+                // renderer meshed it empty and kept that mesh as current (holes, treeless land in
+                // new terrain, ADR-085).
+                rewrittenWhileMeshing.add(key.longValue());
+            }
             previewLayer.realWritten(key);
             // Translucent faces of the neighbors were culled against the old data, and faces on
             // the shared border took their light from it, or full light while it was missing
@@ -1934,6 +1944,8 @@ public final class LodRenderer {
         MeshResult m;
         while (budget > 0 && (m = done.poll()) != null) {
             requested.remove(m.key);
+            // Written while its first mesh was being built: that mesh may hold the old data.
+            boolean rewrittenMeanwhile = rewrittenWhileMeshing.remove(m.key);
             if (m.generation != generation.get()) {
                 continue;
             }
@@ -1955,6 +1967,10 @@ public final class LodRenderer {
             }
             Resident r = resident.get(m.key);
             boolean fresh = r == null;
+            if (rewrittenMeanwhile) {
+                stale.add(m.key);
+                selectionDirty = true;
+            }
             if (r == null) {
                 r = new Resident(allocateSlot());
                 r.lastUsed = System.nanoTime();

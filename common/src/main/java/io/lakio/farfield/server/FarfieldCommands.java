@@ -44,7 +44,8 @@ public final class FarfieldCommands {
                         .then(Commands.literal("status").executes(FarfieldCommands::status)))
                 .then(Commands.literal("rebuild")
                         .executes(FarfieldCommands::rebuild)
-                        .then(Commands.literal("status").executes(FarfieldCommands::rebuildStatus)))
+                        .then(Commands.literal("status").executes(FarfieldCommands::rebuildStatus))
+                        .then(Commands.literal("cancel").executes(FarfieldCommands::rebuildCancel)))
                 .then(Commands.literal("spike")
                         .then(Commands.literal("generation")
                                 .executes(c -> generationSpike(c, 16))
@@ -155,6 +156,23 @@ public final class FarfieldCommands {
         }, "farfield-rebuild");
         t.setDaemon(true);
         t.start();
+        return 1;
+    }
+
+    /** Stops the rebuild of the player's dimension, of every dimension from the console. */
+    private static int rebuildCancel(CommandContext<CommandSourceStack> c) {
+        CommandSourceStack source = c.getSource();
+        ResourceKey<Level> dimension = source.getEntity() instanceof ServerPlayer p ? p.level().dimension() : null;
+        List<String> lines = LodServer.cancelRebuild(dimension);
+        if (lines.isEmpty()) {
+            source.sendFailure(Component.literal("No LOD store is open"
+                    + (dimension == null ? "." : " in " + dimension.location() + ".")));
+            return 0;
+        }
+        for (String line : lines) {
+            Farfield.LOG.info("LOD rebuild of {}", line);
+            source.sendSuccess(() -> Component.literal("LOD store of " + line), true);
+        }
         return 1;
     }
 

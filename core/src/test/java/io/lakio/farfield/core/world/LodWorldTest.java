@@ -199,6 +199,25 @@ class LodWorldTest {
     }
 
     @Test
+    void aCancelledRebuildLeavesNothingToBuild() throws IOException {
+        try (LodWorld world = LodWorld.open(dir, MaterialTable.SIMPLE)) {
+            world.ingest(chunk(world, 0, 0));
+            world.flush(0);
+            world.buildMips();
+            int queued = world.rebuildCoarseLevels();
+            assertTrue(queued > 0);
+            int total = 0;
+            for (int n : world.coarseLevelsPending()) {
+                total += n;
+            }
+            assertEquals(total, world.cancelRebuild());
+            assertTrue(!world.rebuilding());
+            assertEquals(0, world.mipsToUpgrade());
+            assertEquals(0, world.cancelRebuild(), "nothing left to cancel");
+        }
+    }
+
+    @Test
     void aMirrorNeverRebuildsItsCoarseLevels() throws IOException {
         try (LodWorld world = LodWorld.open(dir, MaterialTable.SIMPLE)) {
             world.ingest(chunk(world, 0, 0));

@@ -121,6 +121,26 @@ public final class LodServer {
         return lines;
     }
 
+    /**
+     * {@code /farfield rebuild cancel}: stops the rebuilds of {@code dimension}
+     * (null: every dimension); one line per store, or none without a server.
+     */
+    static List<String> cancelRebuild(ResourceKey<Level> dimension) {
+        LodServer s = instance;
+        List<String> lines = new ArrayList<>();
+        if (s == null) {
+            return lines;
+        }
+        for (LodLevel lod : s.pipeline.levels()) {
+            if (dimension == null || lod.dimension() == dimension) {
+                int dropped = lod.world().cancelRebuild();
+                lines.add(lod.name() + ": " + (dropped == 0 ? "no rebuild under way"
+                        : "rebuild cancelled, " + dropped + " sections left unbuilt"));
+            }
+        }
+        return lines;
+    }
+
     /** {@code /farfield rebuild status}: per open store, the coarse sections left to build per level. */
     static List<String> coarseLevelsPending() {
         LodServer s = instance;

@@ -2306,3 +2306,31 @@ timing) and ADR-079 (the preview's cost).
   most). While chunks wait for their snapshot or are ingested, and 5 s
   after, the noise preview keeps one thread.
 - **Result**: `gradlew build` passes. Not run on the server yet.
+
+## ADR-085 — A section written during its first mesh is meshed again; `/farfield rebuild cancel`
+
+Status: accepted, 2026-10-28. Amends ADR-075 (push streaming, client
+side) and ADR-082 (the rebuild command).
+
+- **Context**: after ADR-084 the user still saw the preview vanish over
+  new terrain with no LOD in its place for a while, and trees missing
+  from some LOD areas. The five "debug here" reports all named a level-0
+  section "held, current; renderer: meshed, 0 quads, drawn" while it held
+  terrain voxels (gravel, dirt, snow, spruce logs). `StreamClient` marks a
+  pushed section's version as held when it arrives; the mirror's writer
+  thread stores it a moment later. A renderer that asked for the
+  section's first mesh in between read the mirror before the write and
+  got an empty mesh. The write's notice then found the key not resident
+  yet (its mesh in flight), so it only touched the neighbors, and the
+  empty mesh stayed as current until the section changed again. The same
+  race explains both symptoms: an empty top section is a hole under the
+  vanished preview, an empty crown section a treeless patch. Deduced from
+  the reports and the code, not reproduced.
+- **Decision**: the renderer remembers the keys written while their first
+  mesh is being built and marks them stale as soon as that mesh lands, so
+  they are meshed again from the stored data. `/farfield rebuild cancel`
+  drops what a rebuild still has to build (the player's dimension, every
+  dimension from the console); what is built stays, and a rebuild started
+  by a rule change comes back at the next open.
+- **Result**: `gradlew build` passes, `LodWorldTest` 7. Not run in game
+  yet.
