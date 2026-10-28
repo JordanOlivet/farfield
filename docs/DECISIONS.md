@@ -2410,3 +2410,24 @@ Status: accepted, 2026-10-28. Amends ADR-087 and ADR-076.
   preview left after a hold, how long on average and at most, and how
   many at the 2 s limit.
 - **Result**: `gradlew build` passes. Not run in game yet.
+
+## ADR-089 — The preview learns new real chunks from level 0
+
+Status: accepted, 2026-10-28. Amends ADR-039's masks and ADR-088.
+
+- **Context**: ADR-088 changed nothing for the user ("exactement pareil",
+  Cold Desert and frozen sea). Its new log line answered why: the preview
+  left new real chunks 5 to 9 ms after a hold, so holds were not the
+  overlap. The mask that hides the preview over real chunks is read from
+  the real level 4 only, and the server builds and pushes level 4 after
+  level 0, in its next maintenance pass; meanwhile the real level 0 was
+  drawn and the preview too, over each chunk of a generation front.
+- **Decision**: a real level-0 write marks its four chunks real in their
+  tile's mask at once: their sections column is read in the background
+  (real where any voxel is, ground at the lowest column top of solid
+  voxels, fluid top the highest translucent top above), merged into the
+  masks read from level 4 until level 4 has the chunk. The hold before a
+  chunk goes in is unchanged. The holes line now gives the time from a
+  chunk's first level-0 write to its mask hiding it (the preview's
+  sections are then meshed again), beside the holds.
+- **Result**: `gradlew build` passes. Not run in game yet.

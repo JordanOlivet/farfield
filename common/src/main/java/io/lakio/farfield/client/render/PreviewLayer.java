@@ -118,6 +118,10 @@ final class PreviewLayer {
         maskDirty.clear();
         heldMasks.clear();
         heldSince.clear();
+        fineMasks.clear();
+        finePending.clear();
+        fineDirty.clear();
+        fineSince.clear();
         changedTiles.clear();
         changedChunks.clear();
         if (next != null) {
@@ -163,14 +167,204 @@ final class PreviewLayer {
         }, plain -> draw.accept(toPreview(plain)), plain -> want.accept(toPreview(plain)));
     }
 
-    /** A real section was written: a level-4 one may change its tile's mask. Render thread. */
+    /**
+     * A real section was written: a level-4 one may change its tile's mask,
+     * a level-0 one shows its chunks real before level 4 does (ADR-089).
+     * Render thread.
+     */
     void realWritten(long key) {
         LodWorld w = world;
-        if (w != null && LodKey.level(key) == TOP_LEVEL) {
+        if (w == null) {
+            return;
+        }
+        if (LodKey.level(key) == TOP_LEVEL) {
             long tile = PreviewStore.key(LodKey.x(key), LodKey.z(key));
             if (masks.containsKey(tile)) {
                 maskDirty.add(tile);
                 requestMask(w, tile);
+            }
+        } else if (LodKey.level(key) == 0) {
+            int sx = LodKey.x(key);
+            int sz = LodKey.z(key);
+            long tile = PreviewStore.key(Math.floorDiv(sx, SECTIONS_PER_TILE), Math.floorDiv(sz, SECTIONS_PER_TILE));
+            int[] mask = masks.get(tile);
+            if (mask == null) {
+                return; // read whole with the tile's mask
+            }
+            long now = System.nanoTime();
+            for (int q = 0; q < 4; q++) {
+                int chunkX = sx * 2 + (q & 1);
+                int chunkZ = sz * 2 + (q >> 1);
+                if ((mask[Math.floorMod(chunkZ, PreviewTile.CHUNKS)] >>> Math.floorMod(chunkX, PreviewTile.CHUNKS) & 1) == 0) {
+                    fineSince.putIfAbsent((long) chunkX << 32 | (chunkZ & 0xFFFFFFFFL), now);
+                }
+            }
+            long column = LodKey.pack(0, sx, 0, sz);
+            fineDirty.add(column);
+            requestFine(w, column, tile);
+        }
+    }
+
+    /** Level-0 sections a side of a tile. */
+    private static final int SECTIONS_PER_TILE = PreviewTile.BLOCKS / LodSection.SIZE;
+
+    /** Reads the chunks of a level-0 section column in the background, then the tile's mask again. */
+    private void requestFine(LodWorld w, long column, long tile) {
+        if (!finePending.add(column)) {
+            return;
+        }
+        executor.execute(() -> {
+            try {
+                do {
+                    fineDirty.remove(column);
+                    readFine(w, LodKey.x(column), LodKey.z(column), tile);
+                } while (fineDirty.contains(column) && world == w);
+                maskDirty.add(tile);
+                requestMask(w, tile);
+            } catch (IOException | RuntimeException e) {
+                // Level 4 shows these chunks later anyway.
+            } finally {
+                finePending.remove(column);
+            }
+            if (fineDirty.contains(column) && world == w) {
+                requestFine(w, column, tile);
+            }
+        });
+    }
+
+    /**
+     * The four chunks of a level-0 section column, from all its sections:
+     * real where any voxel is, their ground the lowest column top of solid
+     * voxels (preview columns beside go down to it), their fluid top the
+     * highest translucent top above the ground. Into {@link #fineMasks}.
+     */
+    private void readFine(LodWorld w, int sx, int sz, long tile) throws IOException {
+        int n = LodSection.SIZE;
+        int[] ground = new int[n * n];
+        int[] fluid = new int[n * n];
+        Arrays.fill(ground, Integer.MIN_VALUE);
+        Arrays.fill(fluid, Integer.MIN_VALUE);
+        int air = w.air();
+        MaterialClassifier classes = w.materials();
+        for (int y = Math.floorDiv(maxY - 1, n); y >= Math.floorDiv(minY, n); y--) {
+            long key = LodKey.pack(0, sx, y, sz);
+            LodSection real = w.exists(key) ? w.read(key) : null;
+            if (real == null) {
+                continue;
+            }
+            for (int z = 0; z < n; z++) {
+                for (int x = 0; x < n; x++) {
+                    int c = z * n + x;
+                    if (ground[c] != Integer.MIN_VALUE) {
+                        continue;
+                    }
+                    for (int cy = n - 1; cy >= 0; cy--) {
+                        int material = real.material(x, cy, z);
+                        if (material == air) {
+                            continue;
+                        }
+                        int top = y * n + cy + 1;
+                        if (classes.classOf(material) == MaterialClassifier.TRANSLUCENT) {
+                            if (fluid[c] == Integer.MIN_VALUE) {
+                                fluid[c] = top;
+                            }
+                        } else {
+                            ground[c] = top;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        int[] fine = fineMasks.computeIfAbsent(tile, t -> {
+            int[] m = new int[MASK_INTS];
+            Arrays.fill(m, GROUND, MASK_INTS, Integer.MIN_VALUE);
+            return m;
+        });
+        for (int q = 0; q < 4; q++) {
+            int qx = (q & 1) * 16;
+            int qz = (q >> 1) * 16;
+            boolean any = false;
+            int low = Integer.MAX_VALUE;
+            int high = Integer.MIN_VALUE;
+            for (int z = qz; z < qz + 16; z++) {
+                for (int x = qx; x < qx + 16; x++) {
+                    int c = z * n + x;
+                    if (ground[c] != Integer.MIN_VALUE) {
+                        any = true;
+                        low = Math.min(low, ground[c]);
+                    }
+                    if (fluid[c] != Integer.MIN_VALUE) {
+                        any = true;
+                        high = Math.max(high, fluid[c]);
+                    }
+                }
+            }
+            if (!any) {
+                continue;
+            }
+            int g = low == Integer.MAX_VALUE ? minY : low;
+            int cx = Math.floorMod(sx * 2 + (q & 1), PreviewTile.CHUNKS);
+            int cz = Math.floorMod(sz * 2 + (q >> 1), PreviewTile.CHUNKS);
+            int c = cz * PreviewTile.CHUNKS + cx;
+            synchronized (fine) {
+                fine[cz] |= 1 << cx;
+                fine[GROUND + c] = g;
+                fine[FLUID + c] = Math.max(g, high);
+            }
+        }
+    }
+
+    /**
+     * Adds to a mask read from level 4 the chunks only level 0 shows real
+     * yet, and forgets those level 4 has caught up with.
+     */
+    private void mergeFine(long tile, int[] mask) {
+        int[] fine = fineMasks.get(tile);
+        if (fine == null) {
+            return;
+        }
+        synchronized (fine) {
+            boolean left = false;
+            for (int z = 0; z < PreviewTile.CHUNKS; z++) {
+                int only = fine[z] & ~mask[z];
+                fine[z] &= ~mask[z];
+                left |= fine[z] != 0;
+                while (only != 0) {
+                    int x = Integer.numberOfTrailingZeros(only);
+                    only &= only - 1;
+                    int c = z * PreviewTile.CHUNKS + x;
+                    mask[z] |= 1 << x;
+                    mask[GROUND + c] = fine[GROUND + c];
+                    mask[FLUID + c] = fine[FLUID + c];
+                }
+            }
+            if (!left) {
+                fineMasks.remove(tile, fine);
+            }
+        }
+    }
+
+    /**
+     * Counts the chunks {@code to} hides that {@code from} did not with the
+     * time since their first real level-0 write, for the report. Render
+     * thread or a mask thread.
+     */
+    private synchronized void countHidden(long tile, int[] from, int[] to, long now) {
+        int baseX = PreviewStore.tileX(tile) * PreviewTile.CHUNKS;
+        int baseZ = PreviewStore.tileZ(tile) * PreviewTile.CHUNKS;
+        for (int z = 0; z < PreviewTile.CHUNKS; z++) {
+            int added = to[z] & ~from[z];
+            while (added != 0) {
+                int x = Integer.numberOfTrailingZeros(added);
+                added &= added - 1;
+                Long since = fineSince.remove((long) (baseX + x) << 32 | ((baseZ + z) & 0xFFFFFFFFL));
+                if (since != null) {
+                    long took = now - since;
+                    hiddenChunks++;
+                    hiddenNanos += took;
+                    hiddenMaxNanos = Math.max(hiddenMaxNanos, took);
+                }
             }
         }
     }
@@ -306,6 +500,9 @@ final class PreviewLayer {
                     }
                     heldMasks.remove(tile);
                     heldSince.remove(tile);
+                    if (old != null) {
+                        countHidden(tile, old, fresh, System.nanoTime());
+                    }
                     masks.put(tile, fresh);
                     if (old == null || !Arrays.equals(old, fresh)) {
                         masksChanged = true;
@@ -456,6 +653,7 @@ final class PreviewLayer {
                     heldSince.remove(tile);
                     if (old != null && since != null) {
                         countHeld(old, fresh, now - since, now - since > HOLD_NANOS);
+                        countHidden(tile, old, fresh, now);
                     }
                     masks.put(tile, fresh);
                     masksChanged = true;
@@ -463,12 +661,31 @@ final class PreviewLayer {
                 }
             } else if (!Arrays.equals(partial, old) && heldMasks.get(tile) == fresh) {
                 countHeld(old, partial, now - since, false);
+                countHidden(tile, old, partial, now);
                 masks.put(tile, partial);
                 masksChanged = true;
                 changed(tile, changedChunks(old, partial));
             }
         }
     }
+
+    /**
+     * Per tile, the chunks the real level 0 shows before level 4 does, with
+     * their ground and fluid top (the mask's layout, ints at MIN_VALUE for
+     * none): level 4 is built after level 0, so the preview stayed drawn
+     * over new real chunks until it came (ADR-089). Merged into the masks
+     * read; dropped chunk by chunk once level 4 has them. Lock: the array.
+     */
+    private final Map<Long, int[]> fineMasks = new ConcurrentHashMap<>();
+    /** Level-0 section columns ({@code LodKey.pack(0, x, 0, z)}) whose chunks are read again, and written since. */
+    private final Set<Long> finePending = ConcurrentHashMap.newKeySet();
+    private final Set<Long> fineDirty = ConcurrentHashMap.newKeySet();
+    /** Per chunk ({@code x << 32 | z}), when its first real level-0 write came, for the report. */
+    private final Map<Long, Long> fineSince = new ConcurrentHashMap<>();
+    /** Chunks hidden since the last report with the time from their first level-0 write: count, sum, most. */
+    private long hiddenChunks;
+    private long hiddenNanos;
+    private long hiddenMaxNanos;
 
     /** Chunks the preview left after a hold since the last report, their summed and longest hold, and those timed out. */
     private long heldChunks;
@@ -495,13 +712,23 @@ final class PreviewLayer {
      * How long the preview stayed over new real chunks since the last call,
      * for the renderer's holes line (ADR-087); resets. Render thread.
      */
-    String heldReport() {
-        String out = heldChunks + " chunks left by the preview after " + (heldChunks == 0 ? 0 : heldNanos / heldChunks / 1_000_000)
+    synchronized String heldReport() {
+        String out = hiddenChunks + " new real chunks hidden from the preview "
+                + (hiddenChunks == 0 ? 0 : hiddenNanos / hiddenChunks / 1_000_000) + " ms after their first level-0 write"
+                + " on average, " + hiddenMaxNanos / 1_000_000 + " ms at most (then meshed again); "
+                + heldChunks + " chunks left by the preview after a hold of "
+                + (heldChunks == 0 ? 0 : heldNanos / heldChunks / 1_000_000)
                 + " ms on average, " + heldMaxNanos / 1_000_000 + " ms at most, " + heldTimedOut + " at the 2 s limit";
         heldChunks = 0;
         heldNanos = 0;
         heldMaxNanos = 0;
         heldTimedOut = 0;
+        hiddenChunks = 0;
+        hiddenNanos = 0;
+        hiddenMaxNanos = 0;
+        // Chunks written but never hidden (their tile left the view): forgotten after a minute.
+        long now = System.nanoTime();
+        fineSince.values().removeIf(t -> now - t > 60_000_000_000L);
         return out;
     }
 
@@ -563,6 +790,7 @@ final class PreviewLayer {
                 }
             }
         }
+        mergeFine(tile, mask);
         // Fluid without ground under it in the store: its bottom stands for the ground.
         for (int c = 0; c < PreviewTile.CHUNKS * PreviewTile.CHUNKS; c++) {
             if (mask[GROUND + c] == Integer.MIN_VALUE && mask[FLUID + c] != Integer.MIN_VALUE) {
