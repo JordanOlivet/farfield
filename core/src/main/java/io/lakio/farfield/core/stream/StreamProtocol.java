@@ -10,19 +10,23 @@ import java.nio.charset.StandardCharsets;
 /**
  * Messages of the LOD streaming protocol (ADR-068): a server with Farfield
  * answers the requests of its players' clients. Each message is one payload,
- * its type in the first byte. The client pulls: it asks for the index of a
- * region (which sections exist, at which version), then for the sections it
- * lacks or holds at another version; the server answers each, within its
- * bandwidth budgets. A session is one dimension of one connection.
+ * its type in the first byte. The client pulls what it has never seen: it
+ * asks for the index of a region (which sections exist, at which version),
+ * then for the sections it lacks or holds at another version; the server
+ * answers each, within its bandwidth budgets. The server pushes what changes
+ * (ADR-075): a section written near a player goes to its client as soon as
+ * it is written, as an unasked {@link Section}, within the distance where
+ * the client's {@link Hint} says that level is drawn. A session is one
+ * dimension of one connection.
  */
 public final class StreamProtocol {
 
     /**
      * Raised when the messages change shape; peers with another version do
      * not stream (2: preview tiles; 3: the welcome tells the table sizes;
-     * 4: change notices for regions).
+     * 4: change notices for regions; 5: pushed sections and the client's hint).
      */
-    public static final int VERSION = 4;
+    public static final int VERSION = 5;
     /** Largest body of one message, under the game's custom payload limits. */
     public static final int MAX_PAYLOAD = 30_000;
 
@@ -31,6 +35,8 @@ public final class StreamProtocol {
     public static final int INDEX_REQUEST = 2;
     public static final int FETCH = 3;
     public static final int TILE_FETCH = 4;
+    /** How finely the client draws: the server pushes each level within its distance. */
+    public static final int HINT = 5;
     // Server to client.
     public static final int WELCOME = 10;
     public static final int KEYS = 11;
@@ -417,6 +423,40 @@ public final class StreamProtocol {
                 out[p] = new Tile(session, tile, version, p, parts, java.util.Arrays.copyOfRange(file, from, to));
             }
             return out;
+        }
+    }
+
+    /**
+     * Client: its renderer splits a level-L section ({@code 32 << L} blocks)
+     * closer than {@code detail} times its size, so level L is drawn within
+     * {@link #drawDistance} of the camera; the server pushes the sections
+     * written there. Sent at the session's start and when the detail moves
+     * (window size, field of view, a spyglass).
+     */
+    public record Hint(int session, double detail) {
+        public byte[] encode() {
+            ByteWriter out = start(HINT);
+            out.writeVarInt(session);
+            out.writeVarInt((int) Math.round(Math.max(0, Math.min(detail, 1_000_000)) * 1000));
+            return out.toByteArray();
+        }
+
+        public static Hint decode(byte[] payload) {
+            ByteReader in = body(payload);
+            return new Hint(in.readVarInt(), in.readVarInt() / 1000.0);
+        }
+
+        /**
+         * How far from the camera a client splitting at {@code detail} draws
+         * level {@code level} (horizontally, to the section's nearest edge):
+         * its parent splits within {@code detail} parent sizes. The top level
+         * is drawn everywhere ({@link Double#POSITIVE_INFINITY}).
+         */
+        public static double drawDistance(int level, int levels, double detail) {
+            if (level >= levels - 1) {
+                return Double.POSITIVE_INFINITY;
+            }
+            return detail * (32L << (level + 1));
         }
     }
 

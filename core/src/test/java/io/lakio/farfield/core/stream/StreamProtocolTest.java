@@ -43,6 +43,16 @@ class StreamProtocolTest {
     }
 
     @Test
+    void hintCarriesTheDetailAndGivesEachLevelItsDrawDistance() {
+        StreamProtocol.Hint hint = new StreamProtocol.Hint(7, 3.25);
+        assertEquals(hint, StreamProtocol.Hint.decode(hint.encode()));
+        // Level 0 is drawn where level 1 (64 blocks) splits: within 3.25 * 64 blocks.
+        assertEquals(208.0, StreamProtocol.Hint.drawDistance(0, 5, 3.25));
+        assertEquals(3.25 * 512, StreamProtocol.Hint.drawDistance(3, 5, 3.25));
+        assertEquals(Double.POSITIVE_INFINITY, StreamProtocol.Hint.drawDistance(4, 5, 3.25));
+    }
+
+    @Test
     void indexEntriesKeepTheirKeysInsideTheRegion() {
         // Region (-1, 2) of level 1: columns x -32..-1, z 64..95.
         long[] keys = {LodKey.pack(1, -32, -4, 64), LodKey.pack(1, -1, 7, 95), LodKey.pack(1, -17, 0, 80)};

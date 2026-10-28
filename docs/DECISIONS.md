@@ -1979,3 +1979,57 @@ mirror).
   the preview there; the holes come from the levels disagreeing on the
   client, not from incomplete sections. Announcing near regions without
   the quiet time (push) waits for the measures.
+
+
+## ADR-075 — The server pushes what it writes
+
+Status: accepted, 2026-10-28. Amends ADR-068 (the client pulls) and
+ADR-074 (its delay figures).
+
+- **Context**: ADR-074's figures from the user's pack: an outdated
+  section landed 0.1 to 2.3 s after the client read its index, but a
+  written region waited 3 to 21 s for its notice, most at the 20 s cap
+  (regions at the generation front never stay quiet for 3 s). On top, the
+  pipeline wrote a section only once untouched for 3 s, checked every
+  second. The holes left were levels out of step: a coarse index read
+  before the finer ones (each region announced on its own clock), the
+  renderer splitting a new parent over children it did not know yet. The
+  user: "le but est que le client ait rapidement le rendu, sinon c'est pas
+  du streaming". Neo-Voxy (ours) pushed every dirty section at once to the
+  players in range, with a fallback queue, a shared serialized copy per
+  version, and the client's radius as a hint.
+- **Decision**:
+  - The server pushes: every section written where a player's client
+    draws its level is queued for that player at once, in write order
+    (level 0, then the mips, so a parent never arrives before its
+    children), and read as a plain `SECTION` when the player's send queue
+    runs low; a section written again while queued goes once, at its
+    latest version. Records read for a push are shared by the players
+    (a small cache per version).
+  - The client tells its split detail (`HINT`, protocol 5); level L is
+    pushed within `detail * (32 << (L + 1))` blocks of the player, with a
+    25 % margin plus one section, level 4 in the whole radius (the
+    preview's mask). Pushed level-0 sections keep ADR-013's surface rule
+    (`SurfaceIndex.hidden(key, floors)`: the floors of the nine columns
+    around, cached per column and dropped when the column is written).
+  - The pipeline writes a section untouched for 250 ms and runs every
+    250 ms (was 3 s and 1 s): the idle time only gathers the chunks of a
+    section generated together.
+  - Safety net: when a refreshed coarse index moves a section, the client
+    asks the finer region's index again at once.
+  - The pull stays for what the client has never seen (joining, flying
+    into new areas); region notices stay for what is not pushed.
+  - Measures: server line, sections pushed and their delay from write to
+    queue; client line, sections pushed and finer indexes asked again.
+- **Result**: unit tests (`StreamProtocolTest` hint, `SurfaceIndexTest`
+  single section); `gradlew build` passes. Not run in a dev session nor in
+  the pack yet.
+- **Next if still slow**: push from memory (a content hash as the
+  section's version instead of its place in the log, mips built from the
+  sections waiting to be written), which removes the 250 ms and the
+  maintenance tick. It replaces the trigger and the version, and keeps
+  everything above.
+- **Rejected**: Neo-Voxy's server-side ring scan and per-player record of
+  versions sent: the client already knows its versions and asks for what
+  its renderer draws, nearest and in view first, which is cheaper over a
+  4,096-block radius than walking every level around the player.

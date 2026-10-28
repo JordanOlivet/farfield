@@ -165,4 +165,17 @@ class SurfaceIndexTest {
         }
         assertTrue(hidden.contains(LodKey.pack(0, 4, -1, 4)));
     }
+
+    @Test
+    void oneSectionIsCheckedFromTheFloorsAroundIt() {
+        // Floors at voxel 64 (y 64) around column (5, 5): a section topping at 63 hides, one at 95 stays.
+        java.util.function.LongToIntFunction floors = column -> 64;
+        assertTrue(SurfaceIndex.hidden(LodKey.pack(0, 5, 1, 5), floors));
+        assertTrue(!SurfaceIndex.hidden(LodKey.pack(0, 5, 2, 5), floors));
+        // A column around without a floor, the region's edge, a coarse level: it stays.
+        assertTrue(!SurfaceIndex.hidden(LodKey.pack(0, 5, 1, 5),
+                column -> LodKey.x(column) == 6 && LodKey.z(column) == 6 ? Integer.MIN_VALUE : 64));
+        assertTrue(!SurfaceIndex.hidden(LodKey.pack(0, 0, 1, 5), floors));
+        assertTrue(!SurfaceIndex.hidden(LodKey.pack(1, 5, 0, 5), floors));
+    }
 }

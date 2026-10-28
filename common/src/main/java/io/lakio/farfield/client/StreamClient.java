@@ -16,6 +16,7 @@ import io.lakio.farfield.lod.RenderSettings;
 import io.lakio.farfield.platform.Services;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.client.Minecraft;
@@ -151,6 +152,13 @@ public final class StreamClient {
     private int refreshed;
     private long refreshSum;
     private long refreshMax;
+    /** Sections the server pushed (ADR-075), unasked, since the stat line. */
+    private int pushedReceived;
+    /** Finer region indexes asked again because a coarser index moved, since the stat line. */
+    private int cascaded;
+    /** The renderer's split detail, and the one last told the server (-1: not yet this session). */
+    private double detail = 4.0;
+    private double hintSent = -1;
 
     private StreamClient(ResourceKey<Level> dimension, Path dir) {
         this.dimension = dimension;
@@ -408,6 +416,10 @@ public final class StreamClient {
         if (session < 0) {
             return;
         }
+        if (hintSent < 0 || Math.abs(detail - hintSent) > hintSent * 0.05) {
+            hintSent = detail;
+            send(new StreamProtocol.Hint(session, detail).encode());
+        }
         dropLost();
         // Requests the server never answered (it dropped them): asked again later.
         if (inFlight.long2LongEntrySet().removeIf(e -> now - e.getLongValue() > REQUEST_TIMEOUT_NANOS)) {
@@ -445,11 +457,13 @@ public final class StreamClient {
         if (now > nextStats) {
             nextStats = now + STATS_NANOS;
             if (RenderSettings.performanceLogs() && (received > 0 || !inFlight.isEmpty())) {
-                Farfield.LOG.info("LOD streaming: {} KB received in 10 s ({} sections, {} unchanged, {} preview tiles,"
-                                + " {} regions changed, {} outdated, {} translated), {} in flight of {}, {} tiles of {},"
+                Farfield.LOG.info("LOD streaming: {} KB received in 10 s ({} sections, {} of them pushed, {} unchanged,"
+                                + " {} preview tiles, {} regions changed, {} finer indexes asked again, {} outdated,"
+                                + " {} translated), {} in flight of {}, {} tiles of {},"
                                 + " {} wanted, {} known regions, {} sections and {} tiles held; {} outdated sections"
                                 + " refreshed {} ms after their index on average, {} ms at most, {} waiting",
-                        received >> 10, sectionsReceived, unchangedReceived, tilesReceived, regionsChanged, outdated,
+                        received >> 10, sectionsReceived, pushedReceived, unchangedReceived, tilesReceived,
+                        regionsChanged, cascaded, outdated,
                         translated.getAndSet(0), inFlight.size(), window.size(), tilesInFlight.size(),
                         tileWindow.size(), wishes.size(), knownRegions.size(), local.size(), localTiles.size(),
                         refreshed, refreshed == 0 ? 0 : refreshSum / refreshed / 1_000_000, refreshMax / 1_000_000,
@@ -458,6 +472,8 @@ public final class StreamClient {
             refreshed = 0;
             refreshSum = 0;
             refreshMax = 0;
+            pushedReceived = 0;
+            cascaded = 0;
             received = 0;
             sectionsReceived = 0;
             unchangedReceived = 0;
@@ -569,6 +585,14 @@ public final class StreamClient {
                 + (wishes.contains(key) ? ", wished" : "") + (background.contains(key) ? ", queued in background" : "");
     }
 
+    /**
+     * The renderer's split detail ({@link StreamProtocol.Hint}): told the
+     * server when it moves, so it pushes each level where it is drawn.
+     */
+    public void setDetail(double detail) {
+        this.detail = detail;
+    }
+
     /** The renderer wants {@code key}; the latest selection's order comes first. */
     public void want(long key) {
         if (!inFlight.containsKey(key)) {
@@ -660,6 +684,7 @@ public final class StreamClient {
         }
         session = welcome.session();
         hellos = 0;
+        hintSent = -1;
         radius = welcome.radiusBlocks();
         blockStatesExpected = welcome.blockStates();
         biomesExpected = welcome.biomes();
@@ -706,9 +731,21 @@ public final class StreamClient {
             return;
         }
         long region = LodKey.pack(index.level(), index.rx(), 0, index.rz());
+        LongOpenHashSet finer = null;
+        // A region read for the first time moves nothing the renderer relied on.
+        boolean refresh = knownRegions.contains(region);
         for (int i = 0; i < index.keys().length; i++) {
             long key = index.keys()[i];
-            remote.put(key, index.versions()[i]);
+            long before = remote.put(key, index.versions()[i]);
+            if (refresh && before != index.versions()[i] && index.level() > 0) {
+                // A coarse section moved: its children did first. Their region's index is asked
+                // again now, or the renderer would split the new parent over children it does not
+                // know yet and draw nothing there (regions are announced each on its own clock).
+                if (finer == null) {
+                    finer = new LongOpenHashSet();
+                }
+                finer.add(regionOf(LodKey.pack(index.level() - 1, LodKey.x(key) * 2, 0, LodKey.z(key) * 2)));
+            }
             long held = local.get(key);
             if (held != index.versions()[i] && (held >= 0 || index.level() == LodWorld.LEVELS - 1)) {
                 background.add(key);
@@ -722,6 +759,17 @@ public final class StreamClient {
             knownRegions.add(region);
             askedRegions.remove(region);
             generation++;
+        }
+        if (finer != null) {
+            LongIterator it = finer.iterator();
+            while (it.hasNext()) {
+                long r = it.nextLong();
+                if (knownRegions.contains(r) && !askedRegions.containsKey(r)) {
+                    askedRegions.put(r, System.nanoTime());
+                    send(new StreamProtocol.IndexRequest(session, LodKey.level(r), LodKey.x(r), LodKey.z(r)).encode());
+                    cascaded++;
+                }
+            }
         }
     }
 
@@ -772,6 +820,9 @@ public final class StreamClient {
                 System.arraycopy(b, 0, record, at, b.length);
                 at += b.length;
             }
+        }
+        if (!inFlight.containsKey(part.key())) {
+            pushedReceived++; // unasked: the server pushed it (ADR-075)
         }
         local.put(part.key(), part.version());
         remote.put(part.key(), part.version());

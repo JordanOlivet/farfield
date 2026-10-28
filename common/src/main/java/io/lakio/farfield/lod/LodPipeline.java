@@ -43,8 +43,11 @@ import java.util.function.Predicate;
  *       load event.</li>
  *   <li>Low-priority workers convert snapshots and ingest them into the
  *       level's {@link LodWorld}.</li>
- *   <li>A maintenance thread writes sections idle for 3 s and rebuilds the
- *       mips every second, and syncs every 30 s.</li>
+ *   <li>A maintenance thread writes sections idle for 250 ms and rebuilds
+ *       the mips every 250 ms, and syncs every 30 s: a server pushes what
+ *       it writes to its players' clients (ADR-075), so a chunk generated
+ *       near a player reaches its LODs within half a second. The idle time
+ *       only gathers the chunks of a section generated together.</li>
  * </ul>
  *
  * <p>The client closes a level when the player changes dimension or leaves
@@ -79,6 +82,8 @@ public final class LodPipeline {
     private final Map<Level, LodLevel> levels = new ConcurrentHashMap<>();
     private final ExecutorService workers;
     private final ScheduledExecutorService maintenance;
+    /** Maintenance period, and how long a section stays untouched before it is written. */
+    private static final long MAINTENANCE_MILLIS = 250;
     private final ThreadLocal<ChunkSnapshot.Scratch> scratch = ThreadLocal.withInitial(ChunkSnapshot.Scratch::new);
     private final AtomicInteger inFlight = new AtomicInteger();
     private volatile boolean stopping;
@@ -101,7 +106,7 @@ public final class LodPipeline {
         int threads = Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() / 4));
         this.workers = Executors.newFixedThreadPool(threads, daemon("farfield-" + name + "-worker"));
         this.maintenance = Executors.newSingleThreadScheduledExecutor(daemon("farfield-" + name + "-maintenance"));
-        maintenance.scheduleWithFixedDelay(this::maintain, 1, 1, TimeUnit.SECONDS);
+        maintenance.scheduleWithFixedDelay(this::maintain, MAINTENANCE_MILLIS, MAINTENANCE_MILLIS, TimeUnit.MILLISECONDS);
         ACTIVE.add(this);
         Farfield.LOG.info("LOD pipeline ({}) started with {} worker threads", name, threads);
     }
@@ -341,7 +346,7 @@ public final class LodPipeline {
                 report(lod);
             }
             try {
-                lod.world().flush(TimeUnit.SECONDS.toNanos(3));
+                lod.world().flush(TimeUnit.MILLISECONDS.toNanos(MAINTENANCE_MILLIS));
                 if (lod.world().hasDirtyMips()) {
                     boolean upgrading = lod.world().mipsToUpgrade() > 0;
                     int written = lod.world().buildMips(workers);

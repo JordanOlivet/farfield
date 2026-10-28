@@ -1157,6 +1157,7 @@ public final class LodRenderer {
         wantOrder.sort();
         if (stream != null) {
             stream.newSelection();
+            stream.setDetail(selector.detail()); // the server pushes each level where it is drawn
         }
         wantCursor = 0;
         if (fillStart != 0) {

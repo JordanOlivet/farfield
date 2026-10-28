@@ -11,6 +11,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.IntPredicate;
+import java.util.function.LongToIntFunction;
 
 /**
  * Which sections of a region lie entirely under the surface (ADR-013,
@@ -77,34 +78,60 @@ public final class SurfaceIndex {
             column.getValue().sort((a, b) -> Integer.compare(LodKey.y(b), LodKey.y(a)));
             floors.put(column.getKey(), floor(column.getValue(), sections, classes, seeThrough));
         }
-        int last = (1 << SectionStore.REGION_SHIFT) - 1;
         List<Long> hidden = new ArrayList<>();
-        for (Map.Entry<Long, List<Long>> column : columns.entrySet()) {
-            int x = LodKey.x(column.getKey());
-            int z = LodKey.z(column.getKey());
-            int lx = x & last;
-            int lz = z & last;
-            if (lx == 0 || lz == 0 || lx == last || lz == last) {
-                continue;
-            }
-            int floor = Integer.MAX_VALUE;
-            for (int dz = -1; dz <= 1; dz++) {
-                for (int dx = -1; dx <= 1; dx++) {
-                    // A column without any section is not known here: everything around stays.
-                    floor = Math.min(floor, floors.getOrDefault(LodKey.pack(0, x + dx, 0, z + dz), Integer.MIN_VALUE));
-                }
-            }
-            if (floor == Integer.MIN_VALUE) {
-                continue;
-            }
-            for (long key : column.getValue()) {
-                int top = LodKey.y(key) * LodSection.SIZE + LodSection.SIZE - 1;
-                if (top < floor) {
+        // A column without any section is not known here: everything around stays.
+        LongToIntFunction floorOf = column -> floors.getOrDefault(column, Integer.MIN_VALUE);
+        for (List<Long> column : columns.values()) {
+            for (long key : column) {
+                if (hidden(key, floorOf)) {
                     hidden.add(key);
                 }
             }
         }
         return hidden;
+    }
+
+    /**
+     * Whether one section lies under the surface by the rule of
+     * {@link #hidden(long[], Sections, MaterialClassifier, IntPredicate)}:
+     * a level-0 section, not on its region's edge, whose top lies under the
+     * floors of its column and of the eight around. {@code floorOf} takes a
+     * column ({@code LodKey.pack(0, x, 0, z)}) and gives its floor
+     * ({@link #floor}), {@link Integer#MIN_VALUE} for a column without
+     * sections or without a floor. Lets a server check a section it pushes
+     * without reading its whole region.
+     */
+    public static boolean hidden(long key, LongToIntFunction floorOf) {
+        if (LodKey.level(key) != 0) {
+            return false;
+        }
+        int last = (1 << SectionStore.REGION_SHIFT) - 1;
+        int x = LodKey.x(key);
+        int z = LodKey.z(key);
+        int lx = x & last;
+        int lz = z & last;
+        if (lx == 0 || lz == 0 || lx == last || lz == last) {
+            return false;
+        }
+        int floor = Integer.MAX_VALUE;
+        for (int dz = -1; dz <= 1; dz++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                floor = Math.min(floor, floorOf.applyAsInt(LodKey.pack(0, x + dx, 0, z + dz)));
+            }
+        }
+        if (floor == Integer.MIN_VALUE) {
+            return false;
+        }
+        return LodKey.y(key) * LodSection.SIZE + LodSection.SIZE - 1 < floor;
+    }
+
+    /**
+     * The floor of one section column of level 0, from its sections listed
+     * top down ({@link #floor(List, Sections, MaterialClassifier, IntPredicate)}).
+     */
+    public static int columnFloor(List<Long> topDown, Sections sections, MaterialClassifier classes,
+                                  IntPredicate seeThrough) throws IOException {
+        return floor(topDown, sections, classes, seeThrough);
     }
 
     /**

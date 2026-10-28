@@ -37,12 +37,16 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Serves the LODs of this server's stores to the players whose client has
- * Farfield (ADR-068). The client pulls: it opens a session per dimension
- * ({@link StreamProtocol.Hello}), asks for region indexes and for sections;
- * a small pool reads them from the store, and the server tick sends the
- * answers within each player's budget and the budget shared by all, so the
- * game's own packets never wait behind a burst. Requests beyond the radius
- * around the player are refused. Thread-safe; one instance per server.
+ * Farfield (ADR-068). The client pulls what it has never seen: it opens a
+ * session per dimension ({@link StreamProtocol.Hello}), asks for region
+ * indexes and for sections; a small pool reads them from the store, and the
+ * server tick sends the answers within each player's budget and the budget
+ * shared by all, so the game's own packets never wait behind a burst.
+ * Requests beyond the radius around the player are refused. The server
+ * pushes what changes (ADR-075): every section written where a player's
+ * client draws its level is queued for it at once, in write order, and read
+ * when the player's queue runs low, so a section written again meanwhile
+ * goes once. Thread-safe; one instance per server.
  */
 public final class StreamServer {
 
@@ -52,6 +56,18 @@ public final class StreamServer {
     private static final long NOTICE_NANOS = 1_000_000_000L;
     private static final long NOTICE_QUIET_NANOS = 3_000_000_000L;
     private static final long NOTICE_MAX_WAIT_NANOS = 20_000_000_000L;
+    /** Pushed sections read per task. */
+    private static final int PUSH_BATCH = 32;
+    /**
+     * Pushes are read while fewer messages wait than this: a section written
+     * again while it waits in the push queue goes once, at its latest version.
+     */
+    private static final int PUSH_QUEUE_LOW = 64;
+    /** Beyond the client's draw distance of a level: the player moves on before its client asks again. */
+    private static final double PUSH_MARGIN = 1.25;
+    /** A client's detail before its first hint (the renderer's usual 3 to 4). */
+    private static final double DEFAULT_DETAIL = 4.0;
+    private static final int RECORD_CACHE = 512;
 
     private static volatile StreamServer instance;
     /** The settings turned streaming off: hellos get a refusal, so clients build their own LODs. */
@@ -84,6 +100,21 @@ public final class StreamServer {
 
     private record Hidden(long fingerprint, java.util.Set<Long> keys) {
     }
+    /**
+     * The floor of each level-0 section column a push checked (ADR-013's
+     * surface), per world; a write in the column drops it.
+     */
+    private final Map<LodWorld, Map<Long, Integer>> floors = new ConcurrentHashMap<>();
+    /** Records read lately, per world: a section pushed to several players is read once per version. */
+    private final Map<LodWorld, Map<Long, Record>> records = new ConcurrentHashMap<>();
+
+    private record Record(long version, byte[] data) {
+    }
+
+    private final AtomicLong pushed = new AtomicLong();
+    private final AtomicLong pushesHidden = new AtomicLong();
+    private final AtomicLong pushWaitSum = new AtomicLong();
+    private final AtomicLong pushWaitMax = new AtomicLong();
     private long bytes;
 
     /** One player's streaming: its current session (one dimension) and its queue of messages. */
@@ -97,6 +128,16 @@ public final class StreamServer {
         /** Keys of each table the client holds; guarded by this. */
         int blockStatesSent;
         int biomesSent;
+        /**
+         * Sections written within the player's push distance since they were
+         * last pushed, in write order (children before their parents), with
+         * their first write's time; guarded by itself.
+         */
+        final java.util.LinkedHashMap<Long, Long> pushes = new java.util.LinkedHashMap<>();
+        /** A task reads the next pushes. */
+        volatile boolean pushing;
+        /** The client's split detail ({@link StreamProtocol.Hint}). */
+        volatile double detail = DEFAULT_DETAIL;
 
         Player(ServerPlayer player, long now) {
             this.player = player;
@@ -179,6 +220,7 @@ public final class StreamServer {
                 case StreamProtocol.INDEX_REQUEST -> s.index(player, StreamProtocol.IndexRequest.decode(message));
                 case StreamProtocol.FETCH -> s.fetch(player, StreamProtocol.Fetch.decode(message));
                 case StreamProtocol.TILE_FETCH -> s.tileFetch(player, StreamProtocol.TileFetch.decode(message));
+                case StreamProtocol.HINT -> s.hint(player, StreamProtocol.Hint.decode(message));
                 default -> {
                 }
             }
@@ -216,6 +258,9 @@ public final class StreamServer {
         Player p = players.compute(sp.getUUID(),
                 (id, old) -> old != null && old.player == sp ? old : new Player(sp, System.nanoTime()));
         int session = sessions.incrementAndGet();
+        synchronized (p.pushes) {
+            p.pushes.clear();
+        }
         synchronized (p) {
             p.out.clear();
             p.dimension = dimension;
@@ -232,7 +277,11 @@ public final class StreamServer {
         }
         changes.computeIfAbsent(world, w -> {
             RegionChanges c = new RegionChanges(NOTICE_QUIET_NANOS, NOTICE_MAX_WAIT_NANOS);
-            java.util.function.LongConsumer listener = key -> c.written(key, System.nanoTime());
+            java.util.function.LongConsumer listener = key -> {
+                long now = System.nanoTime();
+                c.written(key, now);
+                written(w, key, now);
+            };
             sectionListeners.put(w, listener);
             w.addListener(listener);
             return c;
@@ -567,6 +616,216 @@ public final class StreamServer {
         }
     }
 
+    // ---------------------------------------------------------------- pushing (ADR-075)
+
+    private void hint(ServerPlayer sp, StreamProtocol.Hint hint) {
+        Player p = current(sp, hint.session());
+        if (p != null) {
+            p.detail = Math.max(1, hint.detail());
+        }
+    }
+
+    /**
+     * A section of {@code world} was written: queued for the players whose
+     * client draws its level there. Any thread (the store's writers).
+     */
+    private void written(LodWorld world, long key, long now) {
+        if (LodKey.level(key) == 0) {
+            Map<Long, Integer> f = floors.get(world);
+            if (f != null) {
+                f.remove(LodKey.pack(0, LodKey.x(key), 0, LodKey.z(key)));
+            }
+        }
+        for (Player p : players.values()) {
+            if (p.session >= 0 && p.world == world && pushRange(p, key)) {
+                synchronized (p.pushes) {
+                    p.pushes.putIfAbsent(key, now);
+                }
+            }
+        }
+    }
+
+    /**
+     * Whether a section lies where the player's client draws its level
+     * ({@link StreamProtocol.Hint#drawDistance}, with a margin), within the
+     * radius; the top level everywhere in the radius (the preview hides
+     * itself from it).
+     */
+    private boolean pushRange(Player p, long key) {
+        int level = LodKey.level(key);
+        int size = LodSection.SIZE << level;
+        double x0 = (double) LodKey.x(key) * size;
+        double z0 = (double) LodKey.z(key) * size;
+        double px = p.player.getX();
+        double pz = p.player.getZ();
+        double dx = Math.max(0, Math.max(x0 - px, px - (x0 + size)));
+        double dz = Math.max(0, Math.max(z0 - pz, pz - (z0 + size)));
+        double r = Math.min(config.radiusBlocks(),
+                StreamProtocol.Hint.drawDistance(level, LodWorld.LEVELS, p.detail) * PUSH_MARGIN + size);
+        return dx * dx + dz * dz <= r * r;
+    }
+
+    /** Starts reading a player's next pushes when its queue runs low. Server thread. */
+    private void startPush(Player p) {
+        if (p.pushing || p.out.size() >= PUSH_QUEUE_LOW || p.session < 0) {
+            return;
+        }
+        synchronized (p.pushes) {
+            if (p.pushes.isEmpty()) {
+                return;
+            }
+        }
+        p.pushing = true;
+        int session = p.session;
+        try {
+            readers.execute(() -> push(p, session));
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            p.pushing = false; // stopping
+        }
+    }
+
+    /** Reads up to {@link #PUSH_BATCH} pushes of a player and queues them as sections. Reader thread. */
+    private void push(Player p, int session) {
+        try {
+            long[] keys = new long[PUSH_BATCH];
+            long[] since = new long[PUSH_BATCH];
+            int n = 0;
+            synchronized (p.pushes) {
+                Iterator<Map.Entry<Long, Long>> it = p.pushes.entrySet().iterator();
+                while (n < PUSH_BATCH && it.hasNext()) {
+                    Map.Entry<Long, Long> e = it.next();
+                    keys[n] = e.getKey();
+                    since[n++] = e.getValue();
+                    it.remove();
+                }
+            }
+            LodWorld world = p.world;
+            for (int i = 0; i < n; i++) {
+                long key = keys[i];
+                if (p.session != session || p.world != world) {
+                    return;
+                }
+                if (!pushRange(p, key)) {
+                    continue; // the player moved away meanwhile
+                }
+                if (!config.fullData() && hiddenForPush(p, world, key)) {
+                    pushesHidden.incrementAndGet();
+                    continue;
+                }
+                Record record = record(world, key);
+                if (record == null) {
+                    continue;
+                }
+                synchronized (p) {
+                    if (p.session != session) {
+                        return;
+                    }
+                    // The keys the record uses go first: the client maps its ids with them.
+                    sendKeys(p, session);
+                    for (StreamProtocol.Section part : StreamProtocol.Section.split(session, key, record.version(),
+                            record.data())) {
+                        p.out.add(part.encode());
+                    }
+                }
+                long wait = System.nanoTime() - since[i];
+                pushed.incrementAndGet();
+                pushWaitSum.addAndGet(wait);
+                pushWaitMax.accumulateAndGet(wait, Math::max);
+            }
+        } catch (IOException | RuntimeException e) {
+            Farfield.LOG.warn("LOD streaming: pushing to {} failed", p.player.getGameProfile().getName(), e);
+        } finally {
+            p.pushing = false;
+        }
+    }
+
+    /**
+     * A section's record and the version it was read at, through a small
+     * cache shared by the players; null if absent. A write between reading
+     * the version and the record reads again.
+     */
+    private Record record(LodWorld world, long key) throws IOException {
+        Map<Long, Record> cache = records.computeIfAbsent(world, w -> java.util.Collections.synchronizedMap(
+                new java.util.LinkedHashMap<>(RECORD_CACHE, 0.75f, true) {
+                    @Override
+                    protected boolean removeEldestEntry(Map.Entry<Long, Record> eldest) {
+                        return size() > RECORD_CACHE;
+                    }
+                }));
+        for (int attempt = 0; attempt < 3; attempt++) {
+            long version = world.version(key);
+            if (version < 0) {
+                return null;
+            }
+            Record cached = cache.get(key);
+            if (cached != null && cached.version() == version) {
+                return cached;
+            }
+            byte[] data = world.readRecord(key);
+            if (data == null) {
+                return null;
+            }
+            if (world.version(key) == version) {
+                Record read = new Record(version, data);
+                cache.put(key, read);
+                return read;
+            }
+        }
+        return null; // written over and over: its next write pushes it again
+    }
+
+    /**
+     * Whether a level-0 section lies under the surface (the index's rule,
+     * {@link SurfaceIndex#hidden(long, java.util.function.LongToIntFunction)}),
+     * from the floors of its column and of the eight around, without reading
+     * the whole region.
+     */
+    private boolean hiddenForPush(Player p, LodWorld world, long key) throws IOException {
+        if (LodKey.level(key) != 0) {
+            return false;
+        }
+        Map<Long, Integer> f = floors.computeIfAbsent(world, w -> new ConcurrentHashMap<>());
+        if (f.size() > 1 << 18) {
+            f.clear(); // a long flight: read again on demand
+        }
+        Level level = p.player.level();
+        int y0 = Math.floorDiv(level.getMinBuildHeight(), LodSection.SIZE);
+        int y1 = Math.floorDiv(level.getMaxBuildHeight() - 1, LodSection.SIZE);
+        IOException[] failed = new IOException[1];
+        boolean hidden = SurfaceIndex.hidden(key, column -> {
+            Integer known = f.get(column);
+            if (known != null) {
+                return known;
+            }
+            try {
+                int floor = columnFloor(world, column, y0, y1);
+                f.put(column, floor);
+                return floor;
+            } catch (IOException e) {
+                failed[0] = e;
+                return Integer.MIN_VALUE;
+            }
+        });
+        if (failed[0] != null) {
+            throw failed[0];
+        }
+        return hidden;
+    }
+
+    private static int columnFloor(LodWorld world, long column, int y0, int y1) throws IOException {
+        List<Long> topDown = new ArrayList<>();
+        for (int y = y1; y >= y0; y--) {
+            long key = LodKey.pack(0, LodKey.x(column), y, LodKey.z(column));
+            if (world.exists(key)) {
+                topDown.add(key);
+            }
+        }
+        if (topDown.isEmpty()) {
+            return Integer.MIN_VALUE;
+        }
+        return SurfaceIndex.columnFloor(topDown, world::read, world.materials(), m -> leaves(world, m));
+    }
+
     // ---------------------------------------------------------------- sending (server tick)
 
     /** End of every server tick: sends what each player's budget allows, drops players who left. */
@@ -592,6 +851,9 @@ public final class StreamServer {
                 p.session = -1; // the client says hello for the new dimension
                 p.dimension = null;
                 p.out.clear();
+                synchronized (p.pushes) {
+                    p.pushes.clear();
+                }
                 continue;
             }
             byte[] next;
@@ -600,6 +862,7 @@ public final class StreamServer {
                 Services.NETWORK.sendToPlayer(live, next);
                 bytes += next.length;
             }
+            startPush(p);
         }
         if (now > nextNotice) {
             nextNotice = now + NOTICE_NANOS;
@@ -624,6 +887,10 @@ public final class StreamServer {
                 waitSum += w[1];
                 waitMax = Math.max(waitMax, w[2]);
             }
+            long pushes = pushed.getAndSet(0);
+            long pushHidden = pushesHidden.getAndSet(0);
+            long pushSum = pushWaitSum.getAndSet(0);
+            long pushMax = pushWaitMax.getAndSet(0);
             if (RenderSettings.performanceLogs() && (bytes > 0 || i > 0)) {
                 // The game's ping of the streamed players: the streaming must not make it wait.
                 int ping = 0;
@@ -635,9 +902,11 @@ public final class StreamServer {
                 Farfield.LOG.info("LOD streaming: {} players, {} KB sent in 10 s ({} sections, {} unchanged, {} indexes,"
                         + " {} sections under the surface left out, {} preview tiles, {} regions changed),"
                         + " highest ping {} ms, longest queue {} messages; {} written regions announced {} ms after"
-                        + " their first write on average, {} ms at most", players.size(), bytes >> 10, s, u, i, h, t,
-                        c, ping, queued, announced, announced == 0 ? 0 : waitSum / announced / 1_000_000,
-                        waitMax / 1_000_000);
+                        + " their first write on average, {} ms at most; {} sections pushed {} ms after their write on"
+                        + " average, {} ms at most ({} under the surface left out)", players.size(), bytes >> 10, s, u,
+                        i, h, t, c, ping, queued, announced, announced == 0 ? 0 : waitSum / announced / 1_000_000,
+                        waitMax / 1_000_000, pushes, pushes == 0 ? 0 : pushSum / pushes / 1_000_000,
+                        pushMax / 1_000_000, pushHidden);
             }
             bytes = 0;
         }
