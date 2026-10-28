@@ -2471,3 +2471,26 @@ Status: accepted, 2026-10-28. Amends ADR-090 and ADR-076.
   corners and center); still 2 s at most. A level-0 read also leaves out
   a chunk where water has nothing under it in the store.
 - **Result**: `gradlew build` passes. Not run in game yet.
+
+## ADR-092 — A mask change swaps the preview's new meshes in one frame
+
+Status: accepted, 2026-10-28. Replaces ADR-091's hold rule.
+
+- **Context**: ADR-091 changed nothing ("ça fait pareil"); its holes line
+  gave holds of 23 to 125 ms on average, none at the 2 s limit, so the
+  preview did not leave too early. The user's A/B with the preview off:
+  no bands; and the bands last "1 ou 2 frames". A mask change marks the
+  preview sections around a new real chunk stale (its own, and those
+  beside, whose columns go down to the real ground); their new meshes end
+  on different mesher threads and go in under a per-frame upload budget,
+  so for a frame or two a preview column had its new sea top without its
+  new floor (lighter bands) or the other way round (a dark strip).
+- **Decision**: the drawn preview sections one mask change marks stale
+  form a swap; their new meshes wait until all of them are meshed and go
+  in in the same frame (250 ms at most: a section of it may leave the
+  view or not be meshed again). A mesh begun before its section went
+  stale goes in as before. The holes line counts the swaps, those at the
+  limit and the longest wait. ADR-091's hold rule (surface and sea floor
+  reached) is taken out, being no cause; its level-0 check of water
+  without a floor stays, as ADR-090's.
+- **Result**: `gradlew build` passes. Not run in game yet.

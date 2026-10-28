@@ -1316,10 +1316,8 @@ public final class LodRenderer {
      * one that gets this chunk's terrain). The preview hides itself over new real chunks only then
      * (ADR-076, ADR-077).
      */
-    private boolean realReady(int chunkX, int chunkZ, int floorBlock, int topFree) {
+    private boolean realReady(int chunkX, int chunkZ) {
         boolean covered = false;
-        int lowest = Integer.MAX_VALUE;
-        int highest = Integer.MIN_VALUE;
         for (int level = 0; level < LodWorld.LEVELS; level++) {
             int size = LodSection.SIZE << level;
             int x = chunkX >> (level + 1);
@@ -1335,18 +1333,11 @@ public final class LodRenderer {
                     if (!draws && (stale.contains(key) || requested.contains(key))) {
                         return false;
                     }
-                    if (draws) {
-                        covered = true;
-                        lowest = Math.min(lowest, y * size);
-                        highest = Math.max(highest, (y + 1) * size);
-                    }
+                    covered |= draws;
                 }
             }
         }
-        // The real chunk's sections come one by one: it must reach the preview's surface, and a sea's
-        // floor, or it shows a floor without water or water without a floor meanwhile (ADR-091).
-        return covered && (topFree == Integer.MIN_VALUE || highest >= topFree)
-                && (floorBlock == Integer.MIN_VALUE || lowest <= floorBlock);
+        return covered;
     }
 
     /**
@@ -1565,11 +1556,16 @@ public final class LodRenderer {
             Farfield.LOG.info("LOD holes: at most {} chunk columns without anything drawn within {} chunks;"
                             + " {} closed in 10 s, {} ms on average, {} ms at most; {} open now; {}", maxHoles,
                     HOLE_RADIUS_CHUNKS, holesClosed, holesClosed == 0 ? 0 : holeNanos / holesClosed / 1_000_000,
-                    holeMaxNanos / 1_000_000, holeSince.size(), previewLayer.heldReport());
+                    holeMaxNanos / 1_000_000, holeSince.size(), previewLayer.heldReport()
+                            + "; " + swapsDone + " preview swaps put in whole, " + swapsTimedOut + " at the "
+                            + SWAP_TIMEOUT_NANOS / 1_000_000 + " ms limit, " + swapMaxNanos / 1_000_000 + " ms at most");
         } else {
             previewLayer.heldReport();
         }
         maxHoles = 0;
+        swapsDone = 0;
+        swapsTimedOut = 0;
+        swapMaxNanos = 0;
         holesClosed = 0;
         holeNanos = 0;
         holeMaxNanos = 0;
@@ -1605,6 +1601,8 @@ public final class LodRenderer {
         requested.clear();
         rewrittenWhileMeshing.clear();
         waitingStore.clear();
+        swaps.clear();
+        swapOf.clear();
         stale.clear();
         provisional.clear();
         existence.clear();
@@ -1959,12 +1957,17 @@ public final class LodRenderer {
             selectionDirty = true;
         }
         if (!changedTiles.isEmpty()) {
+            long swap = swapSeq++;
+            long now = System.nanoTime();
             LongIterator keys = resident.keySet().iterator();
             while (keys.hasNext()) {
                 long k = keys.nextLong();
                 int[] rows = PreviewLayer.isPreview(k) ? changedTiles.get(PreviewLayer.tileOf(k)) : null;
                 if (rows != null && PreviewLayer.meets(k, rows)) {
                     stale.add(k);
+                    if (drawn.contains(k)) {
+                        joinSwap(swap, k, now); // their new meshes go in together (ADR-092)
+                    }
                 }
             }
             changedTiles.clear();
@@ -1974,92 +1977,196 @@ public final class LodRenderer {
         }
     }
 
+    /**
+     * Preview sections meshed again for one mask change, drawn when it
+     * came: their new meshes go in together, in one frame. Put in one by
+     * one as their jobs ended, a preview column showed for a frame or two
+     * its new sea top without its new floor (lighter bands on the sea) or
+     * the other way round (a dark strip) (ADR-092). Render thread.
+     */
+    private static final class Swap {
+        final LongOpenHashSet waiting = new LongOpenHashSet();
+        final java.util.List<MeshResult> ready = new java.util.ArrayList<>();
+        final long since;
+
+        Swap(long since) {
+            this.since = since;
+        }
+    }
+
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<Swap> swaps =
+            new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap swapOf = newSwapOf();
+    private long swapSeq;
+    /** A swap goes in after this long anyway: a section of it left the view or was not meshed again. */
+    private static final long SWAP_TIMEOUT_NANOS = 250_000_000L;
+    /** Swaps put in since the last report, those at the time limit, and the longest wait. */
+    private long swapsDone;
+    private long swapsTimedOut;
+    private long swapMaxNanos;
+
+    private static it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap newSwapOf() {
+        it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap map = new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+        map.defaultReturnValue(-1);
+        return map;
+    }
+
+    /** Makes a drawn preview section, just marked stale, part of {@code swap}, leaving any older one. */
+    private void joinSwap(long swap, long key, long now) {
+        long old = swapOf.put(key, swap);
+        if (old >= 0 && old != swap) {
+            Swap o = swaps.get(old);
+            if (o != null) {
+                o.waiting.remove(key);
+                o.ready.removeIf(r -> r.key == key); // a newer mesh replaces it
+            }
+        }
+        swaps.computeIfAbsent(swap, b -> new Swap(now)).waiting.add(key);
+    }
+
+    /**
+     * Holds back a mesh that belongs to a swap until the whole swap is
+     * meshed; a mesh begun before its section went stale goes in as usual.
+     */
+    private boolean deferSwap(MeshResult m) {
+        long id = swapOf.get(m.key);
+        if (id < 0 || stale.contains(m.key)) {
+            return false;
+        }
+        swapOf.remove(m.key);
+        Swap swap = swaps.get(id);
+        if (swap == null) {
+            return false;
+        }
+        swap.waiting.remove(m.key);
+        if (m.generation == generation.get()) {
+            swap.ready.add(m);
+        }
+        return true;
+    }
+
+    /** Puts in the swaps whose sections are all meshed, or that waited too long. */
+    private void flushSwaps(long now) {
+        if (swaps.isEmpty()) {
+            return;
+        }
+        var it = swaps.long2ObjectEntrySet().iterator();
+        while (it.hasNext()) {
+            var e = it.next();
+            Swap swap = e.getValue();
+            boolean timedOut = now - swap.since > SWAP_TIMEOUT_NANOS;
+            if (!swap.waiting.isEmpty() && !timedOut) {
+                continue;
+            }
+            for (MeshResult m : swap.ready) {
+                upload(m);
+            }
+            LongIterator keys = swap.waiting.iterator();
+            while (keys.hasNext()) {
+                swapOf.remove(keys.nextLong());
+            }
+            swapsDone++;
+            swapsTimedOut += swap.waiting.isEmpty() ? 0 : 1;
+            swapMaxNanos = Math.max(swapMaxNanos, now - swap.since);
+            it.remove();
+        }
+    }
+
     private void uploadMeshes() {
         long budget = UPLOAD_BUDGET_QUADS;
         MeshResult m;
         while (budget > 0 && (m = done.poll()) != null) {
             requested.remove(m.key);
-            // Written while its first mesh was being built: that mesh may hold the old data.
-            boolean rewrittenMeanwhile = rewrittenWhileMeshing.remove(m.key);
-            if (m.generation != generation.get()) {
+            if (deferSwap(m)) {
                 continue;
             }
-            if (stale.contains(m.key)) {
-                selectionDirty = true; // changed while in flight: ordered again with the others
-            }
-            fillMeshes++;
-            // Room for the quads first: a section kept empty for want of room was taken
-            // as ready and never meshed again (holes for minutes after a spyglass).
-            long start = 0;
-            if (m.quads.length > 0) {
-                start = allocateQuads(m.quads.length);
-                if (start < 0) {
-                    if (resident.containsKey(m.key)) {
-                        stale.add(m.key); // keeps its old mesh, meshed again later
-                    }
-                    continue;
-                }
-            }
-            Resident r = resident.get(m.key);
-            boolean fresh = r == null;
-            if (rewrittenMeanwhile) {
-                stale.add(m.key);
-                selectionDirty = true;
-            }
-            if (r == null) {
-                r = new Resident(allocateSlot());
-                r.lastUsed = System.nanoTime();
-                resident.put(m.key, r);
-                selectionDirty = true; // a parent may now descend
-            } else if (r.quadCount > 0) {
-                arena.release(r.start, r.quadCount);
-            }
-            r.quadCount = m.quads.length;
-            r.opaqueCount = m.groups[Quad.DIRECTIONS];
-            r.groups = m.groups;
-            r.cutout = m.cutout;
-            r.borderFaces = m.borderFaces;
-            r.octants = m.octants;
-            r.columns = m.columns;
-            long[] oldBorders = r.borders;
-            r.borders = m.borders;
-            if (!fresh && m.borders != null) {
-                // Its new data changed what a neighbor reads there (or it had none before): that
-                // neighbor is meshed again.
-                restaleNeighbors(m.key, oldBorders, m.borders);
-            }
-            r.maxMaterial = m.maxMaterial;
-            r.materials = m.materials;
-            r.looksVersion = -1;
-            if (m.provisional) {
-                provisional.add(m.key);
-            } else {
-                provisional.remove(m.key);
-            }
-            r.occluders = m.occupancy != null;
-            if (r.occluders) {
-                long needed = (long) (r.slot + 1) * OCCUPANCY_INTS * 4;
-                if (needed > occupancy.size()) {
-                    occupancy.grow(Math.max(needed, occupancy.size() * 2), occupancy.size());
-                }
-                occupancy.upload((long) r.slot * OCCUPANCY_INTS * 4, m.occupancy);
-            }
-            if (m.biomeColumns != null) {
-                long needed = (long) (r.slot + 1) * BIOME_COLUMN_INTS * 4;
-                if (needed > biomeColumns.size()) {
-                    biomeColumns.grow(Math.max(needed, biomeColumns.size() * 2), biomeColumns.size());
-                }
-                biomeColumns.upload((long) r.slot * BIOME_COLUMN_INTS * 4, m.biomeColumns);
-            }
-            meshesUploaded++;
-            if (r.quadCount > 0) {
-                r.start = start;
-                quads.upload(start * 8, m.quads, m.quads.length);
-                budget -= m.quads.length;
-            }
-            writeSection(m.key, r);
-            linkNeighbors(m.key, r);
+            budget -= upload(m);
         }
+        flushSwaps(System.nanoTime());
+    }
+
+    /** Uploads one mesh; returns the quads it uploaded. Render thread. */
+    private long upload(MeshResult m) {
+        // Written while its first mesh was being built: that mesh may hold the old data.
+        boolean rewrittenMeanwhile = rewrittenWhileMeshing.remove(m.key);
+        if (m.generation != generation.get()) {
+            return 0;
+        }
+        if (stale.contains(m.key)) {
+            selectionDirty = true; // changed while in flight: ordered again with the others
+        }
+        fillMeshes++;
+        // Room for the quads first: a section kept empty for want of room was taken
+        // as ready and never meshed again (holes for minutes after a spyglass).
+        long start = 0;
+        if (m.quads.length > 0) {
+            start = allocateQuads(m.quads.length);
+            if (start < 0) {
+                if (resident.containsKey(m.key)) {
+                    stale.add(m.key); // keeps its old mesh, meshed again later
+                }
+                return 0;
+            }
+        }
+        Resident r = resident.get(m.key);
+        boolean fresh = r == null;
+        if (rewrittenMeanwhile) {
+            stale.add(m.key);
+            selectionDirty = true;
+        }
+        if (r == null) {
+            r = new Resident(allocateSlot());
+            r.lastUsed = System.nanoTime();
+            resident.put(m.key, r);
+            selectionDirty = true; // a parent may now descend
+        } else if (r.quadCount > 0) {
+            arena.release(r.start, r.quadCount);
+        }
+        r.quadCount = m.quads.length;
+        r.opaqueCount = m.groups[Quad.DIRECTIONS];
+        r.groups = m.groups;
+        r.cutout = m.cutout;
+        r.borderFaces = m.borderFaces;
+        r.octants = m.octants;
+        r.columns = m.columns;
+        long[] oldBorders = r.borders;
+        r.borders = m.borders;
+        if (!fresh && m.borders != null) {
+            // Its new data changed what a neighbor reads there (or it had none before): that
+            // neighbor is meshed again.
+            restaleNeighbors(m.key, oldBorders, m.borders);
+        }
+        r.maxMaterial = m.maxMaterial;
+        r.materials = m.materials;
+        r.looksVersion = -1;
+        if (m.provisional) {
+            provisional.add(m.key);
+        } else {
+            provisional.remove(m.key);
+        }
+        r.occluders = m.occupancy != null;
+        if (r.occluders) {
+            long needed = (long) (r.slot + 1) * OCCUPANCY_INTS * 4;
+            if (needed > occupancy.size()) {
+                occupancy.grow(Math.max(needed, occupancy.size() * 2), occupancy.size());
+            }
+            occupancy.upload((long) r.slot * OCCUPANCY_INTS * 4, m.occupancy);
+        }
+        if (m.biomeColumns != null) {
+            long needed = (long) (r.slot + 1) * BIOME_COLUMN_INTS * 4;
+            if (needed > biomeColumns.size()) {
+                biomeColumns.grow(Math.max(needed, biomeColumns.size() * 2), biomeColumns.size());
+            }
+            biomeColumns.upload((long) r.slot * BIOME_COLUMN_INTS * 4, m.biomeColumns);
+        }
+        meshesUploaded++;
+        if (r.quadCount > 0) {
+            r.start = start;
+            quads.upload(start * 8, m.quads, m.quads.length);
+        }
+        writeSection(m.key, r);
+        linkNeighbors(m.key, r);
+        return r.quadCount;
     }
 
     /**
