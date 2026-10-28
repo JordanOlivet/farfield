@@ -41,8 +41,18 @@ public final class LodLevel {
      * loaded chunk becomes a border chunk that {@code getChunkNow} no longer
      * returns, though it stays in memory until it unloads.
      */
-    record Due(long tick, LevelChunk chunk) {
+    record Due(long tick, LevelChunk chunk, long since, boolean load) {
+
+        /** A changed chunk: no load time to measure. */
+        Due(long tick, LevelChunk chunk) {
+            this(tick, chunk, 0, false);
+        }
     }
+
+    /** Loaded chunks ingested since the last report, and their summed and longest time since loading (ADR-084). */
+    final AtomicLong loadedIngested = new AtomicLong();
+    final AtomicLong loadNanos = new AtomicLong();
+    final AtomicLong loadNanosMax = new AtomicLong();
 
     /** Chunk position -> when and what to snapshot. */
     final Map<Long, Due> due = new ConcurrentHashMap<>();

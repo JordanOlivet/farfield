@@ -60,7 +60,12 @@ import java.util.function.Predicate;
  */
 public final class LodPipeline {
 
-    private static final long LOAD_DELAY_TICKS = 40;
+    /**
+     * Ticks between a chunk's load and its snapshot (its light must be
+     * correct too): a quarter of a second since the server pushes what it
+     * writes (ADR-084; was 2 s, unseen behind the 20 s notices of old).
+     */
+    private static final long LOAD_DELAY_TICKS = 5;
     private static final long CHANGE_DELAY_TICKS = 100;
     /** Past its due tick, a chunk whose light is still not correct is taken anyway. */
     private static final long LIGHT_WAIT_TICKS = 200;
@@ -108,7 +113,8 @@ public final class LodPipeline {
         int threads = Math.max(1, Math.min(4, Runtime.getRuntime().availableProcessors() / 4));
         this.workers = Executors.newFixedThreadPool(threads, daemon("farfield-" + name + "-worker"));
         this.maintenance = Executors.newSingleThreadScheduledExecutor(daemon("farfield-" + name + "-maintenance"));
-        maintenance.scheduleWithFixedDelay(this::maintain, MAINTENANCE_MILLIS, MAINTENANCE_MILLIS, TimeUnit.MILLISECONDS);
+        maintenance.scheduleWithFixedDelay(this::maintain, MAINTENANCE_MILLIS, MAINTENANCE_MILLIS,
+                TimeUnit.MILLISECONDS);
         ACTIVE.add(this);
         Farfield.LOG.info("LOD pipeline ({}) started with {} worker threads", name, threads);
     }
@@ -142,7 +148,7 @@ public final class LodPipeline {
         if (lod != null) {
             long pos = chunk.getPos().toLong();
             lod.loaded.add(pos);
-            lod.due.put(pos, new LodLevel.Due(level.getGameTime() + LOAD_DELAY_TICKS, chunk));
+            lod.due.put(pos, new LodLevel.Due(level.getGameTime() + LOAD_DELAY_TICKS, chunk, System.nanoTime(), true));
         }
     }
 
@@ -168,7 +174,10 @@ public final class LodPipeline {
     private void onBlockChanged(Level level, LevelChunk chunk) {
         LodLevel lod = levels.get(level);
         if (!stopping && lod != null) {
-            lod.due.put(chunk.getPos().toLong(), new LodLevel.Due(level.getGameTime() + CHANGE_DELAY_TICKS, chunk));
+            // A chunk still waiting for its first snapshot keeps its time: the block updates of a
+            // chunk just generated (fluids, plants) put it off by 5 s, again and again (ADR-084).
+            lod.due.merge(chunk.getPos().toLong(), new LodLevel.Due(level.getGameTime() + CHANGE_DELAY_TICKS, chunk),
+                    (old, change) -> old.load() ? old : change);
             lod.blockChanges.incrementAndGet();
         }
     }
@@ -202,7 +211,7 @@ public final class LodPipeline {
                     lod.snapshotsOfBorderChunks.incrementAndGet();
                 }
                 it.remove();
-                submit(lod, ChunkSnapshot.take(lod.level, chunk));
+                submit(lod, ChunkSnapshot.take(lod.level, chunk), d.load() ? d.since() : 0);
                 taken++;
             }
         }
@@ -245,6 +254,23 @@ public final class LodPipeline {
         }
     }
 
+    /**
+     * Whether new chunks are on their way into the stores: some wait for
+     * their snapshot or are being ingested. The noise preview gives way then
+     * (ADR-084).
+     */
+    public boolean ingesting() {
+        if (inFlight.get() > 0) {
+            return true;
+        }
+        for (LodLevel lod : levels.values()) {
+            if (!lod.due.isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** The open levels and their LOD stores. */
     public java.util.Collection<LodLevel> levels() {
         return levels.values();
@@ -268,12 +294,23 @@ public final class LodPipeline {
     }
 
     private void submit(LodLevel lod, ChunkSnapshot snapshot) {
+        submit(lod, snapshot, 0);
+    }
+
+    /** {@code loadedAt}: when the chunk loaded, to time it into the store; 0 for a change. */
+    private void submit(LodLevel lod, ChunkSnapshot snapshot, long loadedAt) {
         inFlight.incrementAndGet();
         lod.pending.incrementAndGet();
         lod.snapshots.incrementAndGet();
         workers.execute(() -> {
             try {
                 lod.world().ingest(snapshot.fill(lod, scratch.get()));
+                if (loadedAt != 0) {
+                    long took = System.nanoTime() - loadedAt;
+                    lod.loadedIngested.incrementAndGet();
+                    lod.loadNanos.addAndGet(took);
+                    lod.loadNanosMax.accumulateAndGet(took, Math::max);
+                }
             } catch (Throwable t) {
                 Farfield.LOG.error("LOD ingest of chunk {}, {} in {} failed", snapshot.chunkX, snapshot.chunkZ,
                         lod.name(), t);
@@ -388,11 +425,18 @@ public final class LodPipeline {
         if (snapshots == lod.loggedSnapshots) {
             return;
         }
+        long loaded = lod.loadedIngested.getAndSet(0);
+        long loadSum = lod.loadNanos.getAndSet(0);
+        long loadMax = lod.loadNanosMax.getAndSet(0);
         if (RenderSettings.performanceLogs()) {
+            // From a chunk's load to its blocks in the store's cache (then written within a
+            // quarter of a second, and pushed): what decides how soon new terrain shows (ADR-084).
             Farfield.LOG.info("LOD pipeline ({}) {}: {} snapshots in the last minute; in total {} at unload, {} of border"
-                            + " chunks, {} without complete light; {} waiting, {} chunks loaded", name, lod.name(),
+                            + " chunks, {} without complete light; {} waiting, {} chunks loaded; {} loaded chunks"
+                            + " ingested {} ms after their load on average, {} ms at most", name, lod.name(),
                     snapshots - lod.loggedSnapshots, lod.snapshotsAtUnload.get(), lod.snapshotsOfBorderChunks.get(),
-                    lod.snapshotsWithoutLight.get(), lod.due.size(), lod.loaded.size());
+                    lod.snapshotsWithoutLight.get(), lod.due.size(), lod.loaded.size(), loaded,
+                    loaded == 0 ? 0 : loadSum / loaded / 1_000_000, loadMax / 1_000_000);
         }
         lod.loggedSnapshots = snapshots;
     }

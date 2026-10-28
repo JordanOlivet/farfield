@@ -2282,3 +2282,27 @@ Status: accepted, 2026-10-28. Amends ADR-082.
 - **Result**: unit tests (`LodWorldTest`: the rebuild apart from live
   work, slices until done, the same data; a mirror does not rebuild);
   `gradlew build` passes. Not run on the server yet.
+
+
+## ADR-084 — New chunks reach the store sooner; the preview gives way
+
+Status: accepted, 2026-10-28. Amends ADR-005's server mode (snapshot
+timing) and ADR-079 (the preview's cost).
+
+- **Context**: after ADR-083 the user still saw LODs of chunks just
+  generated show late ("des chunks de LOD en retard"); the preview at
+  4,096 blocks may wait, not the terrain under the player. Pushes left the
+  server 26 to 40 ms after a write, but the way from a chunk's load to the
+  store was not measured: a fixed 2 s wait (from before the push, when 20
+  s notices hid it), up to 10 s more for the light, and every block
+  update of a chunk just generated put its first snapshot off by the 5 s
+  change delay, again and again. Meanwhile the preview took about 4.3 of
+  the server's 16 cores (255 s a minute on 5 threads, its tiles 6 to 7 s
+  each with features); Linux ignores Java's thread priorities.
+- **Decision**: a chunk is snapshotted 5 ticks after its load (once its
+  light is correct, as before); a chunk still waiting for its first
+  snapshot keeps that time through block changes. The pipeline's minute
+  line gives the time from a chunk's load to its ingest (average and
+  most). While chunks wait for their snapshot or are ingested, and 5 s
+  after, the noise preview keeps one thread.
+- **Result**: `gradlew build` passes. Not run on the server yet.
