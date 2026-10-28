@@ -2494,3 +2494,28 @@ Status: accepted, 2026-10-28. Replaces ADR-091's hold rule.
   reached) is taken out, being no cause; its level-0 check of water
   without a floor stays, as ADR-090's.
 - **Result**: `gradlew build` passes. Not run in game yet.
+
+## ADR-093 — An unmeshed section with ready children lets the descent through
+
+Status: accepted, 2026-10-28. Amends ADR-074 and ADR-076 (LodSelector).
+
+- **Context**: ADR-092 changed nothing either. The user recorded the
+  flight with `debug levels` and annotated 18 of the first 350 frames.
+  The bands are lighter water lasting one or two frames at a fixed
+  distance; frames 286 and 294 show it plainly: a level-2 area (yellow)
+  drawn for one frame amid level 0 (red), near the player, the frames
+  around it all level 0. The renderer's line counted 14 and 36 coarse
+  fallbacks per selection during the recording, 0 in the rest of the
+  session. So it is not the preview leaving (ADR-089 to ADR-092 aimed
+  there) but the selector drawing a coarse parent for a frame. A parent
+  splits only when its existing children are ready (meshed); a child can
+  be an intermediate section never meshed, the view having drawn its own
+  children instead, or a new one.
+- **Decision**: a child not meshed whose existing children all are no
+  longer keeps its parent from splitting: the descent goes through it and
+  its children draw (finer than wanted at worst). The selector keeps a
+  few reasons per selection (the section drawn coarse, its first child not
+  meshed, whether it split before) and the renderer logs up to six per 10
+  s with the performance logs, as `LOD coarse fallbacks, a few`.
+- **Result**: `gradlew build` passes, `LodSelectorTest` covers both cases.
+  Not run in game yet.

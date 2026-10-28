@@ -382,6 +382,9 @@ public final class LodRenderer {
     private final Map<Long, int[]> changedTiles = new java.util.HashMap<>();
     /** Most sections a selection drew coarser than wanted since the last stat line. */
     private int maxFallbacks;
+    /** A few of those sections since the last stat line, with why (ADR-093). */
+    private final java.util.List<String> fallbackReasons = new java.util.ArrayList<>();
+    private static final int FALLBACK_REASONS = 6;
     /** Most sections a selection drew from a copy older than the server's since the last stat line. */
     private int maxOutdatedDrawn;
     /** Most sections a selection drew as their children, waiting for their own mesh. */
@@ -1177,6 +1180,11 @@ public final class LodRenderer {
         selector.select(cam.x, cam.y, cam.z, level.getMinBuildHeight(), level.getMaxBuildHeight(), lastSelectionDistance,
                 sections, drawSink, wantSink);
         maxFallbacks = Math.max(maxFallbacks, selector.fallbacks());
+        for (String reason : selector.fallbackReasons()) {
+            if (fallbackReasons.size() < FALLBACK_REASONS) {
+                fallbackReasons.add(reason);
+            }
+        }
         maxFinerFallbacks = Math.max(maxFinerFallbacks, selector.finerFallbacks());
         // The preview stays under a level lock, locked the same way: on a server most of the
         // far view is preview, and without it the lock left only the stored terrain nearby.
@@ -1570,6 +1578,10 @@ public final class LodRenderer {
         holeNanos = 0;
         holeMaxNanos = 0;
         holeExamples = 0;
+        if (RenderSettings.performanceLogs() && !fallbackReasons.isEmpty()) {
+            Farfield.LOG.info("LOD coarse fallbacks, a few: {}", String.join("; ", fallbackReasons));
+        }
+        fallbackReasons.clear();
         maxFallbacks = 0;
         maxFinerFallbacks = 0;
         maxOutdatedDrawn = 0;

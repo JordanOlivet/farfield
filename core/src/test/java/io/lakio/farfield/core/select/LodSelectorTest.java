@@ -108,6 +108,29 @@ class LodSelectorTest {
     }
 
     @Test
+    void anUnmeshedSectionWhoseChildrenAreReadyDoesNotHoldItsParentCoarse() {
+        // A level-1 section never meshed (the view drew level 0 there), its level-0 children ready:
+        // the level-2 parent splits through it instead of flashing coarse (ADR-093).
+        LodSelector selector = new LodSelector(5, 2.0);
+        long middle = LodKey.pack(1, 0, -1, 0);
+        List<Long> draw = new ArrayList<>();
+        List<Long> want = new ArrayList<>();
+        selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of(middle)), draw::add, want::add);
+        assertTrue(draw.contains(LodKey.pack(0, 0, -1, 0)));
+        assertTrue(!draw.contains(LodKey.parent(middle)));
+        assertTrue(want.contains(middle));
+        assertEquals(0, selector.fallbacks());
+        assertTrue(selector.fallbackReasons().isEmpty());
+        // Its children not ready either, in a fresh view: the parent covers them, with the reason.
+        LodSelector fresh = new LodSelector(5, 2.0);
+        draw.clear();
+        fresh.select(0, 70, 0, -64, 320, 4000, terrain(Set.of(middle, LodKey.pack(0, 0, -1, 0))), draw::add,
+                want::add);
+        assertTrue(draw.contains(LodKey.parent(middle)));
+        assertEquals(1, fresh.fallbackReasons().size());
+    }
+
+    @Test
     void descendingParentKeepsDescendingWhenAChildIsNotReady() {
         LodSelector selector = new LodSelector(5, 2.0);
         long child = LodKey.pack(0, 0, -1, 0);

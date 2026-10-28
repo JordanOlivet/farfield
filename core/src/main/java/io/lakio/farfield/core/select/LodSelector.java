@@ -32,6 +32,28 @@ import java.util.function.LongPredicate;
  */
 public final class LodSelector {
 
+    /** Whether a section above level 0 has children and all its existing children are ready. */
+    private static boolean childrenReady(long key, Sections sections) {
+        int level = LodKey.level(key);
+        if (level == 0) {
+            return false;
+        }
+        int x = LodKey.x(key) * 2;
+        int y = LodKey.y(key) * 2;
+        int z = LodKey.z(key) * 2;
+        boolean any = false;
+        for (int i = 0; i < 8; i++) {
+            long child = LodKey.pack(level - 1, x + (i & 1), y + (i >> 2), z + ((i >> 1) & 1));
+            if (sections.exists(child)) {
+                if (!sections.ready(child)) {
+                    return false;
+                }
+                any = true;
+            }
+        }
+        return any;
+    }
+
     private final int levels;
     private double detail;
     /** Sections outside the view split at {@link #outsideDetail} at most; null: every section at {@link #detail}. */
@@ -39,6 +61,9 @@ public final class LodSelector {
     private double outsideDetail = Double.MAX_VALUE;
     private int fallbacks;
     private int finerFallbacks;
+    /** Why sections were drawn coarser than wanted in the last selection, a few of them (ADR-093). */
+    private final java.util.List<String> fallbackReasons = new java.util.ArrayList<>();
+    private static final int FALLBACK_REASONS = 4;
     /** A diagnostic lock: no section drawn finer than this level, or -1 for the usual split. */
     private int forcedLevel = -1;
     /** Sections that descended in the previous selection, and in the current one. */
@@ -90,6 +115,14 @@ public final class LodSelector {
     }
 
     /** Sections the last selection drew coarser than wanted, waiting for a child mesh. */
+    /**
+     * A few sections the last selection drew coarser than wanted, each with
+     * the children that kept it from splitting and why.
+     */
+    public java.util.List<String> fallbackReasons() {
+        return fallbackReasons;
+    }
+
     public int fallbacks() {
         return fallbacks;
     }
@@ -127,6 +160,7 @@ public final class LodSelector {
                        Sections sections, LongConsumer draw, LongConsumer want) {
         fallbacks = 0;
         finerFallbacks = 0;
+        fallbackReasons.clear();
         descending.clear();
         int top = levels - 1;
         int size = LodSection.SIZE << top;
@@ -167,16 +201,24 @@ public final class LodSelector {
         double dy = Math.max(0, Math.max(minY - camY, camY - (minY + size)));
         double distance = Math.sqrt(horizontal * horizontal + dy * dy);
         double split = inView != null && outsideDetail < detail && !inView.test(key) ? outsideDetail : detail;
+        int notReady = 0;
+        long firstNotReady = 0;
         if (level > Math.max(0, forcedLevel) && distance < split * size) {
-            int notReady = 0;
             int x = LodKey.x(key) * 2;
             int y = LodKey.y(key) * 2;
             int z = LodKey.z(key) * 2;
             for (int i = 0; i < 8; i++) {
                 long child = LodKey.pack(level - 1, x + (i & 1), y + (i >> 2), z + ((i >> 1) & 1));
                 if (sections.exists(child) && !sections.ready(child)) {
-                    notReady |= 1 << i;
                     want.accept(child);
+                    // A child not meshed whose own children all are lets the descent through: they
+                    // draw for it, finer, instead of this whole section flashing coarse (ADR-093).
+                    if (!childrenReady(child, sections)) {
+                        if (notReady == 0) {
+                            firstNotReady = child;
+                        }
+                        notReady |= 1 << i;
+                    }
                 }
             }
             // A parent not ready draws nothing anywhere: its ready children are better than a hole.
@@ -193,6 +235,12 @@ public final class LodSelector {
         if (sections.ready(key)) {
             if (level > 0 && distance < split * size) {
                 fallbacks++;
+                if (fallbackReasons.size() < FALLBACK_REASONS && notReady != 0) {
+                    fallbackReasons.add(LodKey.toString(key) + " for " + Integer.bitCount(notReady)
+                            + " children not meshed (" + LodKey.toString(firstNotReady) + (Integer.bitCount(notReady) > 1
+                            ? ", ..." : "") + "), " + (descended.contains(key)
+                            ? "split before, its mesh draws their octants" : "not split in the last selection"));
+                }
             }
             draw.accept(key);
             return;
