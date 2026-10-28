@@ -18,4 +18,10 @@ public interface IPlatform {
     Path getConfigDir();
 
     Path getGameDir();
+
+    /**
+     * Every loaded mod as {@code id@version}, sorted: what the block looks
+     * cache is valid for (ADR-078).
+     */
+    java.util.List<String> modVersions();
 }

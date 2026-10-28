@@ -38,4 +38,9 @@ public final class NeoForgePlatform implements IPlatform {
     public Path getGameDir() {
         return FMLPaths.GAMEDIR.get();
     }
+
+    @Override
+    public java.util.List<String> modVersions() {
+        return ModList.get().getMods().stream().map(m -> m.getModId() + "@" + m.getVersion()).sorted().toList();
+    }
 }

@@ -85,7 +85,38 @@ final class FaceTextures {
      * @return the tile index, or -1 when the atlas is full
      */
     int add(float[] rgb, float[] alpha) {
-        byte[] base = encode(rgb, alpha, TILE);
+        return add(encode(rgb, alpha, TILE), rgb, alpha);
+    }
+
+    /**
+     * Adds a tile from its RGBA8 bytes ({@link #tile}), as a cache of looks
+     * holds it (ADR-078), or finds the same one; -1 when the atlas is full.
+     */
+    int addEncoded(byte[] base) {
+        float[] rgb = new float[TILE * TILE * 3];
+        float[] alpha = new float[TILE * TILE];
+        for (int i = 0; i < TILE * TILE; i++) {
+            rgb[i * 3] = linear(base[i * 4]);
+            rgb[i * 3 + 1] = linear(base[i * 4 + 1]);
+            rgb[i * 3 + 2] = linear(base[i * 4 + 2]);
+            alpha[i] = (base[i * 4 + 3] & 0xFF) / 255f;
+        }
+        return add(base, rgb, alpha);
+    }
+
+    /** The RGBA8 bytes of a tile ({@code TILE * TILE * 4}), as {@link #addEncoded} takes them. */
+    byte[] tile(int index) {
+        byte[] out = new byte[TILE * TILE * 4];
+        int row = index / TILES_PER_ROW;
+        int column = index % TILES_PER_ROW;
+        int stride = WIDTH * 4;
+        for (int ty = 0; ty < TILE; ty++) {
+            System.arraycopy(levels[0], (row * TILE + ty) * stride + column * TILE * 4, out, ty * TILE * 4, TILE * 4);
+        }
+        return out;
+    }
+
+    private int add(byte[] base, float[] rgb, float[] alpha) {
         Key key = new Key(base);
         Integer known = tiles.get(key);
         if (known != null) {

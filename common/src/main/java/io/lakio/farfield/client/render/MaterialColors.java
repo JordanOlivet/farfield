@@ -7,6 +7,7 @@ import io.lakio.farfield.core.mesh.MaterialClassifier;
 import io.lakio.farfield.core.world.CoveredKey;
 import io.lakio.farfield.core.mesh.ShapeBoxes;
 import io.lakio.farfield.core.preview.PreviewVoxels;
+import io.lakio.farfield.core.storage.LooksCache;
 import io.lakio.farfield.lod.BlockKeys;
 import io.lakio.farfield.mixin.client.SpriteContentsAccessor;
 import net.minecraft.client.Minecraft;
@@ -67,12 +68,19 @@ import java.util.Map;
  *
  * <p>Built on the render thread under a time budget per frame, which the
  * renderer raises while many are waiting (ADR-062); materials not built
- * yet read as tinted for the mesher threads ({@link #tinted}). Ids are
- * built in order: a material is built once its id is below {@link #count}.
+ * yet read as tinted for the mesher threads ({@link #tinted}). The ids the
+ * mesher met unbuilt go first ({@link #want}), then the others in id order
+ * (ADR-078); a look found in the {@link LooksCache} is taken from it
+ * instead of baked, and a baked one goes into it.
  */
 final class MaterialColors {
 
     static final int STRIDE = 27;
+    /**
+     * Raised whenever a look is baked differently ({@link #build}): looks
+     * cached by an older bake are dropped ({@link LooksCache}, ADR-078).
+     */
+    static final int BAKE_VERSION = 1;
     /**
      * Top bit of a face's tinted color word (its alpha byte holds the tint
      * kind, below 8): the face's texture has texels under half coverage, which
@@ -97,11 +105,24 @@ final class MaterialColors {
             Direction.WEST, Direction.EAST, Direction.DOWN, Direction.UP, Direction.NORTH, Direction.SOUTH};
 
     private int[] colors = new int[0];
+    /** Looks built, and the next id the in-order pass looks at. */
     private int count;
+    private int next;
+    /** Changes whenever a look is built. */
+    private int version;
     /** Published to the mesher threads; replaced, never modified. */
     private volatile boolean[] tinted = new boolean[0];
     /** Per id: a face has {@link #CUTOUT}; read by the mesher threads as {@link #tinted}. */
     private volatile boolean[] cutout = new boolean[0];
+    /** Per id: its look is built; read by the mesher threads as {@link #tinted}. */
+    private volatile boolean[] built = new boolean[0];
+    /** Ids the mesher met without a look: built first. */
+    private final java.util.concurrent.ConcurrentLinkedQueue<Integer> wanted =
+            new java.util.concurrent.ConcurrentLinkedQueue<>();
+    /** Ids built since {@link #drainBuilt}, for the upload. */
+    private final it.unimi.dsi.fastutil.ints.IntArrayList justBuilt = new it.unimi.dsi.fastutil.ints.IntArrayList();
+    private LooksCache cache;
+    private int fromCache;
 
     private final FaceTextures textures;
     private final Map<TextureAtlasSprite, Sprite> sprites = new IdentityHashMap<>();
@@ -138,6 +159,7 @@ final class MaterialColors {
                long budgetNanos) {
         int size = registry.size();
         if (size == count) {
+            wanted.clear();
             return -1;
         }
         if (colors.length < size * STRIDE) {
@@ -145,31 +167,141 @@ final class MaterialColors {
         }
         boolean[] flags = Arrays.copyOf(tinted, size);
         boolean[] holes = Arrays.copyOf(cutout, size);
+        boolean[] done = Arrays.copyOf(built, size);
         long deadline = System.nanoTime() + budgetNanos;
-        int first = count;
-        int id = count;
-        while (id < size) {
-            // Kelp's material is its crossed quads; its water's faces take the water's (ADR-065).
-            int meshClass = classes.hasPlant(id) ? MaterialClassifier.PLANT : classes.classOf(id);
-            String key = registry.key(id);
-            flags[id] = build(key, id * STRIDE, meshClass, tints, probeBiome);
-            for (int d = 0; d < 6; d++) {
-                holes[id] |= (colors[id * STRIDE + d * 3 + 1] & CUTOUT) != 0;
+        int before = count;
+        while (count < size && System.nanoTime() <= deadline) {
+            // What the mesher met first (the sections it meshes, nearest first), then in id order.
+            int id = -1;
+            Integer w;
+            while ((w = wanted.poll()) != null) {
+                if (w >= 0 && w < size && !done[w]) {
+                    id = w;
+                    break;
+                }
             }
-            colors[id * STRIDE + HEIGHT] = Float.floatToIntBits(height(key, meshClass));
-            int boxes = Math.min(classes.boxCount(id), BOX_COUNT);
-            for (int b = 0; b < BOX_COUNT; b++) {
-                colors[id * STRIDE + BOXES + b] = b < boxes ? classes.box(id, b) : 0;
+            if (id < 0) {
+                while (next < size && done[next]) {
+                    next++;
+                }
+                if (next >= size) {
+                    break;
+                }
+                id = next;
             }
-            id++;
-            if (System.nanoTime() > deadline) {
-                break;
+            buildOne(registry, classes, tints, probeBiome, id, flags, holes);
+            done[id] = true;
+            count++;
+            justBuilt.add(id);
+        }
+        if (count == before) {
+            return -1;
+        }
+        version++;
+        tinted = flags;
+        cutout = holes;
+        built = done;
+        return before;
+    }
+
+    private void buildOne(KeyRegistry registry, MaterialClassifier classes, BiomeTints tints, Biome probeBiome, int id,
+                          boolean[] flags, boolean[] holes) {
+        // Kelp's material is its crossed quads; its water's faces take the water's (ADR-065).
+        int meshClass = classes.hasPlant(id) ? MaterialClassifier.PLANT : classes.classOf(id);
+        String key = registry.key(id);
+        int off = id * STRIDE;
+        LooksCache.Look look = cache == null ? null : cache.get(key);
+        if (look != null && apply(look, off)) {
+            flags[id] = look.tinted();
+            fromCache++;
+        } else {
+            flags[id] = build(key, off, meshClass, tints, probeBiome);
+            if (cache != null) {
+                cache.put(key, capture(off, flags[id]));
             }
         }
-        count = id;
-        tinted = Arrays.copyOf(flags, id);
-        cutout = Arrays.copyOf(holes, id);
-        return first;
+        for (int d = 0; d < 6; d++) {
+            holes[id] |= (colors[off + d * 3 + 1] & CUTOUT) != 0;
+        }
+        colors[off + HEIGHT] = Float.floatToIntBits(height(key, meshClass));
+        int boxes = Math.min(classes.boxCount(id), BOX_COUNT);
+        for (int b = 0; b < BOX_COUNT; b++) {
+            colors[off + BOXES + b] = b < boxes ? classes.box(id, b) : 0;
+        }
+    }
+
+    /** A baked look as the cache keeps it: its face words, with the tiles' bytes in place of their indices. */
+    private LooksCache.Look capture(int off, boolean isTinted) {
+        int[] words = Arrays.copyOfRange(colors, off, off + LooksCache.WORDS);
+        byte[][] tiles = new byte[12][];
+        for (int d = 0; d < 6; d++) {
+            int w = words[d * 3 + 2];
+            int untintedTile = (w & 0xFFFF) - 1;
+            int tintedTile = (w >>> 16) - 1;
+            tiles[d * 2] = untintedTile < 0 ? null : textures.tile(untintedTile);
+            tiles[d * 2 + 1] = tintedTile < 0 ? null : textures.tile(tintedTile);
+        }
+        return new LooksCache.Look(isTinted, words, tiles);
+    }
+
+    /** Puts a cached look at {@code off}, its tiles into the atlas; false when the atlas is full. */
+    private boolean apply(LooksCache.Look look, int off) {
+        int[] words = look.words().clone();
+        for (int d = 0; d < 6; d++) {
+            int untintedTile = 0;
+            int tintedTile = 0;
+            if (look.tiles()[d * 2] != null) {
+                untintedTile = textures.addEncoded(look.tiles()[d * 2]) + 1;
+                if (untintedTile == 0) {
+                    return false;
+                }
+            }
+            if (look.tiles()[d * 2 + 1] != null) {
+                tintedTile = textures.addEncoded(look.tiles()[d * 2 + 1]) + 1;
+                if (tintedTile == 0) {
+                    return false;
+                }
+            }
+            words[d * 3 + 2] = untintedTile | tintedTile << 16;
+        }
+        System.arraycopy(words, 0, colors, off, words.length);
+        return true;
+    }
+
+    /** The mesher met a material without its look: built before the others. Any thread. */
+    void want(int material) {
+        if (!built(material)) {
+            wanted.add(material);
+        }
+    }
+
+    /** The ids built since the last call, sorted. Render thread. */
+    int[] drainBuilt() {
+        int[] ids = justBuilt.toIntArray();
+        justBuilt.clear();
+        Arrays.sort(ids);
+        return ids;
+    }
+
+    /** Changes whenever a look is built. */
+    int version() {
+        return version;
+    }
+
+    /** The cache looks are taken from and put into; null for none. Render thread. */
+    void setCache(LooksCache cache) {
+        this.cache = cache;
+    }
+
+    LooksCache cache() {
+        return cache;
+    }
+
+    /** Looks taken from the cache since the last call. */
+    int takeFromCache() {
+        int n = fromCache;
+        fromCache = 0;
+        return n;
     }
 
     /**
@@ -194,27 +326,33 @@ final class MaterialColors {
     /** Forgets every look (resource reload, other world): they are built again. */
     void reset() {
         count = 0;
+        next = 0;
+        version++;
         sprites.clear();
         textures.reset();
         tinted = new boolean[0];
         cutout = new boolean[0];
+        built = new boolean[0];
+        wanted.clear();
+        justBuilt.clear();
     }
 
     /** Whether a material's quads must carry their biome; true for materials not built yet. Any thread. */
     boolean tinted(int material) {
         boolean[] t = tinted;
-        return material >= t.length || t[material];
+        return !built(material) || material >= t.length || t[material];
     }
 
     /** Whether a material's faces may have holes to cut out ({@link #CUTOUT}); true for materials not built yet. Any thread. */
     boolean cutout(int material) {
         boolean[] c = cutout;
-        return material >= c.length || c[material];
+        return !built(material) || material >= c.length || c[material];
     }
 
     /** Whether a material's look is built (its {@link #cutout} flag is final). Any thread. */
     boolean built(int material) {
-        return material < cutout.length;
+        boolean[] b = built;
+        return material < b.length && b[material];
     }
 
     int[] colors() {

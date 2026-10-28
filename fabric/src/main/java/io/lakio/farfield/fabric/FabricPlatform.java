@@ -37,4 +37,11 @@ public final class FabricPlatform implements IPlatform {
     public Path getGameDir() {
         return FabricLoader.getInstance().getGameDir();
     }
+
+    @Override
+    public java.util.List<String> modVersions() {
+        return FabricLoader.getInstance().getAllMods().stream()
+                .map(m -> m.getMetadata().getId() + "@" + m.getMetadata().getVersion().getFriendlyString())
+                .sorted().toList();
+    }
 }

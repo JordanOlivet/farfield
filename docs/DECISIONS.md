@@ -2094,3 +2094,38 @@ and ADR-040's auto thread count.
 - **Rejected for now**: masking the preview in the shader by a coverage
   buffer: holding the mask until the drawn geometry is there gives the
   same guarantee with the meshes as they are.
+
+
+## ADR-078 — Block looks cached across sessions and built by need
+
+Status: accepted, 2026-10-28. Amends ADR-062 (looks built under a frame
+budget).
+
+- **Context**: joining the user's server, nothing was drawn for about
+  10 s and the view settled at 16.6 s, though the mirror held 181,649
+  sections: `LOD looks: 32146 built in 22562 ms`. Every join baked the
+  look (colors, face textures) of each of the 32,146 block states the
+  server had seen, in id order, and a section was drawn only once the
+  look of its highest material was built, so most of the table had to be
+  baked first. Mesh jobs also took 23 ms each in those seconds (1 to
+  3.5 ms later) while the pack joined its world.
+- **Decision**:
+  - Baked looks are kept in `<game dir>/farfield/looks.bin`
+    (`LooksCache`, core): per block state key, its face words and the
+    bytes of its face tiles, valid for one fingerprint (the bake's version
+    `MaterialColors.BAKE_VERSION`, every loaded mod and its version, the
+    resource packs in order). A look found there is put in the atlas
+    instead of baked; the file is written again, on a thread of its own,
+    once every look of the world is built and some were baked.
+  - Looks are built by need: the mesher asks for the materials of what it
+    meshes (nearest and in view first), built before the others; a
+    section is drawn once every material of its quads has its look, not
+    once every lower id has. A section meshed with guessed flags is
+    meshed again once its own looks are built.
+  - The meshing line gives each job's processor time and its wait before
+    starting, to tell a starved mesher from a slow one.
+- **Result**: unit test (`LooksCacheTest`); `gradlew build` passes. Not
+  checked in game.
+- **Cost**: the file holds every look met with these mods (about 20 MB
+  for the user's pack); another mod list or resource pack bakes again.
+  `BAKE_VERSION` must be raised with any change to how looks are baked.

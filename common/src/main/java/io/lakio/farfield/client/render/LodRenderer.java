@@ -7,6 +7,8 @@ import com.mojang.blaze3d.vertex.BufferUploader;
 import io.lakio.farfield.Farfield;
 import io.lakio.farfield.client.LodWorldProvider;
 import io.lakio.farfield.client.StreamClient;
+import io.lakio.farfield.core.storage.LooksCache;
+import io.lakio.farfield.platform.Services;
 import io.lakio.farfield.core.LodKey;
 import io.lakio.farfield.core.config.RenderConfig;
 import io.lakio.farfield.core.lod.LodSection;
@@ -306,6 +308,14 @@ public final class LodRenderer {
     private final java.util.concurrent.atomic.AtomicLong meshNanos = new java.util.concurrent.atomic.AtomicLong();
     private final java.util.concurrent.atomic.AtomicLong meshReadNanos = new java.util.concurrent.atomic.AtomicLong();
     private final java.util.concurrent.atomic.AtomicInteger meshJobs = new java.util.concurrent.atomic.AtomicInteger();
+    /**
+     * Mesh jobs' processor time and their wait between request and start:
+     * a job far longer than its processor time ran on a starved thread
+     * (ADR-078, seen at 23 ms a job while a pack joins its world).
+     */
+    private final java.util.concurrent.atomic.AtomicLong meshCpuNanos = new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicLong meshWaitNanos = new java.util.concurrent.atomic.AtomicLong();
+    private static final java.lang.management.ThreadMXBean THREADS = java.lang.management.ManagementFactory.getThreadMXBean();
     private final java.util.concurrent.ThreadPoolExecutor meshers =
             (java.util.concurrent.ThreadPoolExecutor) Executors.newFixedThreadPool(2, r -> {
                 Thread t = new Thread(r, "farfield-mesher");
@@ -411,6 +421,7 @@ public final class LodRenderer {
     private long lastLooksNanos;
     /** Start of the current backlog of looks (0: none) and its size, for its log line. */
     private long looksBacklogStart;
+    private int looksFromCache;
     private int looksBacklog;
     /** Fill line: when the join or teleport happened (0: none being timed), and what it was. */
     private long fillStart;
@@ -504,8 +515,13 @@ public final class LodRenderer {
         int[] groups = new int[GROUPS + 1];
         /** Some opaque faces have holes to cut out (or were meshed before their colors were built). */
         boolean cutout;
-        /** Highest material of its quads (-1 for none): drawn once its look is built. */
+        /** Highest material of its quads (-1 for none). */
         int maxMaterial = -1;
+        /** The materials of its quads: drawn once all their looks are built (ADR-078). */
+        int[] materials = new int[0];
+        /** {@link MaterialColors#version} {@link #looksReady} was found at. */
+        int looksVersion = -1;
+        boolean looksReady;
         /** Its opaque voxels are in the occupancy buffer (ambient occlusion). */
         boolean occluders;
         /** Last time the selection used it: drawn, or relied on to descend to its children. */
@@ -529,10 +545,17 @@ public final class LodRenderer {
     /** {@code octants}: the octants its quads draw in ({@link Quad#octants}). */
     private record MeshResult(int generation, long key, long[] quads, int[] groups, boolean cutout,
                               boolean provisional, int[] occupancy, int[] biomeColumns,
-                              int maxMaterial, int borderFaces, int octants, long[] columns, long[] borders) {
+                              int maxMaterial, int[] materials, int borderFaces, int octants, long[] columns,
+                              long[] borders) {
     }
 
     private static final int[] NO_GROUPS = new int[GROUPS + 1];
+    private static final int[] NO_MATERIALS = new int[0];
+
+    private static MeshResult emptyMesh(int generation, long key) {
+        return new MeshResult(generation, key, new long[0], NO_GROUPS, false, false, null, null, -1, NO_MATERIALS, 0, 0,
+                null, null);
+    }
 
     private LodRenderer() {
     }
@@ -912,8 +935,8 @@ public final class LodRenderer {
             if (r == null || r.quadCount == 0) {
                 continue;
             }
-            if (r.maxMaterial >= colors.count()) {
-                continue; // a material without its look yet: drawn once it has one (ADR-062)
+            if (!looksReady(r)) {
+                continue; // a material without its look yet: drawn once all have one (ADR-062, ADR-078)
             }
             int faces = visibleFaces(key, cam);
             if (faces == 0) {
@@ -1400,9 +1423,26 @@ public final class LodRenderer {
         out.append(stale.contains(key) ? ", stale" : "").append(requested.contains(key) ? ", meshing" : "");
     }
 
-    /** Whether a resident section of draw level {@code level} has quads in a chunk column. */
-    private static boolean drawsColumn(Resident r, int level, int chunkX, int chunkZ) {
-        if (r == null || r.columns == null) {
+    /** Whether every material of a resident section has its look, so it is drawn. */
+    private boolean looksReady(Resident r) {
+        int version = colors.version();
+        if (r.looksVersion != version) {
+            r.looksVersion = version;
+            boolean ready = true;
+            for (int m : r.materials) {
+                if (!colors.built(m)) {
+                    ready = false;
+                    break;
+                }
+            }
+            r.looksReady = ready;
+        }
+        return r.looksReady;
+    }
+
+    /** Whether a resident section of draw level {@code level} has quads in a chunk column it draws. */
+    private boolean drawsColumn(Resident r, int level, int chunkX, int chunkZ) {
+        if (r == null || r.columns == null || !looksReady(r)) {
             return false;
         }
         int side = 2 << level;
@@ -1462,12 +1502,15 @@ public final class LodRenderer {
         int jobs = meshJobs.getAndSet(0);
         long jobNanos = meshNanos.getAndSet(0);
         long readNanos = meshReadNanos.getAndSet(0);
+        long cpuNanos = meshCpuNanos.getAndSet(0);
+        long waitNanos = meshWaitNanos.getAndSet(0);
         long[] cacheCounts = sectionCache.takeCounts();
         if (jobs > 0) {
             if (RenderSettings.performanceLogs()) {
-                Farfield.LOG.info("LOD meshing: {} jobs on {} threads, {} us per job, {} us of it reading sections, {} %"
-                                + " of {} section reads from the cache", jobs, meshers.getCorePoolSize(),
-                        jobNanos / 1000 / jobs, readNanos / 1000 / jobs,
+                Farfield.LOG.info("LOD meshing: {} jobs on {} threads, {} us per job ({} us on the processor), {} us"
+                                + " of it reading sections, {} ms waiting to start on average, {} % of {} section"
+                                + " reads from the cache", jobs, meshers.getCorePoolSize(), jobNanos / 1000 / jobs,
+                        cpuNanos / 1000 / jobs, readNanos / 1000 / jobs, waitNanos / 1_000_000 / jobs,
                         cacheCounts[1] == 0 ? 0 : cacheCounts[0] * 100 / cacheCounts[1], cacheCounts[1]);
             }
         }
@@ -1562,22 +1605,29 @@ public final class LodRenderer {
         }
         LodWorld w = world;
         int gen = generation.get();
+        long queued = System.nanoTime();
         meshers.execute(() -> {
             MeshResult result;
             long start = System.nanoTime();
+            meshWaitNanos.addAndGet(start - queued);
+            long cpuStart = cpuTime();
             try {
                 LodSection section = PreviewLayer.isPreview(key) ? previewLayer.build(w, key) : readSection(w, key);
-                result = section == null
-                        ? new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null, -1, 0, 0, null, null)
-                        : mesh(w, gen, key, section);
+                result = section == null ? emptyMesh(gen, key) : mesh(w, gen, key, section);
             } catch (IOException | RuntimeException e) {
                 Farfield.LOG.debug("LOD mesh of {} failed", LodKey.toString(key), e);
-                result = new MeshResult(gen, key, new long[0], NO_GROUPS, false, false, null, null, -1, 0, 0, null, null);
+                result = emptyMesh(gen, key);
             }
             meshNanos.addAndGet(System.nanoTime() - start);
+            meshCpuNanos.addAndGet(cpuTime() - cpuStart);
             meshJobs.incrementAndGet();
             done.add(result);
         });
+    }
+
+    /** The calling thread's processor time in nanoseconds, 0 when the JVM does not measure it. */
+    private static long cpuTime() {
+        return THREADS.isCurrentThreadCpuTimeSupported() ? THREADS.getCurrentThreadCpuTime() : 0;
     }
 
     /** A stored section through {@link #sectionCache}, timed for the stat line; null when not stored. */
@@ -1682,19 +1732,25 @@ public final class LodRenderer {
             packed[i] = columns[2 * i] | columns[2 * i + 1] << 16;
         }
         int maxMaterial = -1;
+        it.unimi.dsi.fastutil.ints.IntOpenHashSet used = new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
         int octants = 0;
         int level = drawLevel(key);
         long[] drawnColumns = all.length == 0 ? null : new long[Math.max(1, (4 << (2 * level)) >> 6)];
         for (long q : all) {
             maxMaterial = Math.max(maxMaterial, Quad.material(q));
+            used.add(Quad.material(q));
             if (octants != 0xFF) {
                 octants |= Quad.octants(q);
             }
             Quad.markColumns(q, 4 - level, drawnColumns);
         }
         long[] borders = PreviewLayer.isPreview(key) ? null : borderHashes(section, classes, level);
+        int[] usedMaterials = used.toIntArray();
+        for (int m : usedMaterials) {
+            colors.want(m); // the looks of what is meshed, nearest first, go before the others (ADR-078)
+        }
         return new MeshResult(gen, key, all, groups, cutout, provisional, occupied, packed, maxMaterial,
-                mesher.get().borderFaces(), octants, drawnColumns, borders);
+                usedMaterials, mesher.get().borderFaces(), octants, drawnColumns, borders);
     }
 
     /** @param list a face direction, or {@link MeshBuffer#PLANTS} */
@@ -1919,6 +1975,8 @@ public final class LodRenderer {
                 restaleNeighbors(m.key, oldBorders, m.borders);
             }
             r.maxMaterial = m.maxMaterial;
+            r.materials = m.materials;
+            r.looksVersion = -1;
             if (m.provisional) {
                 provisional.add(m.key);
             } else {
@@ -2138,6 +2196,7 @@ public final class LodRenderer {
             colorLevel = level;
             colors.reset();
             tints.reset();
+            colors.setCache(openLooksCache(mc));
         }
         Registry<Biome> biomes = level.registryAccess().registryOrThrow(Registries.BIOME);
         Biome plains = biomes.get(Biomes.PLAINS);
@@ -2155,27 +2214,57 @@ public final class LodRenderer {
         long looksStart = System.nanoTime();
         int first = colors.update(world.blockStates(), world.materials(), tints, plains, budget);
         lastLooksNanos = System.nanoTime() - looksStart;
-        if (looksBacklogStart != 0 && colors.count() == world.blockStates().size()) {
+        looksFromCache += colors.takeFromCache();
+        boolean allBuilt = colors.count() == world.blockStates().size();
+        if (looksBacklogStart != 0 && allBuilt) {
             if (RenderSettings.performanceLogs()) {
-                Farfield.LOG.info("LOD looks: {} built in {} ms", looksBacklog,
-                        (System.nanoTime() - looksBacklogStart) / 1_000_000);
+                Farfield.LOG.info("LOD looks: {} built in {} ms, {} of them from the cache", looksBacklog,
+                        (System.nanoTime() - looksBacklogStart) / 1_000_000, looksFromCache);
             }
             looksBacklogStart = 0;
+            looksFromCache = 0;
         }
-        if (!provisional.isEmpty() && colors.count() == world.blockStates().size()) {
-            stale.addAll(provisional);
-            provisional.clear();
-            selectionDirty = true;
+        if (allBuilt && colors.cache() != null) {
+            LooksCache cache = colors.cache();
+            cache.saveIfChanged(failure -> {
+                if (failure != null) {
+                    Farfield.LOG.warn("LOD looks cache not written", failure);
+                } else {
+                    Farfield.LOG.info("LOD looks cache written: {} looks", cache.size());
+                }
+            });
+        }
+        if (first >= 0 && !provisional.isEmpty()) {
+            // Meshed with guessed flags for materials without their look: meshed again once they have one.
+            LongIterator it = provisional.iterator();
+            while (it.hasNext()) {
+                long k = it.nextLong();
+                Resident r = resident.get(k);
+                if (r == null || looksReady(r)) {
+                    if (r != null) {
+                        stale.add(k);
+                    }
+                    it.remove();
+                    selectionDirty = true;
+                }
+            }
         }
         if (first >= 0) {
             int stride = MaterialColors.STRIDE;
-            int end = colors.count();
-            long needed = (long) end * stride * 4;
+            int[] ids = colors.drainBuilt();
+            long needed = (long) world.blockStates().size() * stride * 4;
             if (needed > colorBuffer.size()) {
-                colorBuffer.grow(Math.max(needed, colorBuffer.size() * 2), (long) first * stride * 4);
+                colorBuffer.grow(Math.max(needed, colorBuffer.size() * 2), colorBuffer.size());
             }
-            colorBuffer.upload((long) first * stride * 4,
-                    java.util.Arrays.copyOfRange(colors.colors(), first * stride, end * stride));
+            int[] all = colors.colors();
+            for (int i = 0; i < ids.length; ) {
+                int from = ids[i];
+                int to = from + 1;
+                while (++i < ids.length && ids[i] == to) {
+                    to++;
+                }
+                colorBuffer.upload((long) from * stride * 4, java.util.Arrays.copyOfRange(all, from * stride, to * stride));
+            }
         }
         atlas = faceTextures.upload();
         if (tints.update(world.biomes(), biomes, plains)) {
@@ -2185,6 +2274,27 @@ public final class LodRenderer {
             }
             biomeBuffer.upload(0, java.util.Arrays.copyOf(tints.table(), tints.length()));
         }
+    }
+
+    /**
+     * The looks cache for the loaded mods and the resource packs in use
+     * ({@link LooksCache}), read on the render thread once per world or
+     * resource reload.
+     */
+    private static LooksCache openLooksCache(Minecraft mc) {
+        long start = System.nanoTime();
+        long fingerprint = LooksCache.fingerprint(MaterialColors.BAKE_VERSION, Services.PLATFORM.modVersions(),
+                java.util.List.copyOf(mc.getResourcePackRepository().getSelectedIds()));
+        java.nio.file.Path file = Services.PLATFORM.getGameDir().resolve("farfield").resolve("looks.bin");
+        LooksCache cache = LooksCache.open(file, fingerprint);
+        Farfield.LOG.info("LOD looks cache {}: {} looks and {} tiles ({}) in {} ms", file, cache.size(),
+                cache.tilesRead(), switch (cache.status()) {
+                    case READ -> "read";
+                    case MISSING -> "none yet";
+                    case OTHER_FINGERPRINT -> "for other mods or resource packs, baked again";
+                    case UNREADABLE -> "unreadable, baked again";
+                }, (System.nanoTime() - start) / 1_000_000);
+        return cache;
     }
 
     private void updateFrustum(Matrix4f viewRotation, Matrix4f projection) {

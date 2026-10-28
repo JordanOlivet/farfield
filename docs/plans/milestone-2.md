@@ -124,3 +124,13 @@ Items:
   NeoForge): what the LODs need to show under a shader pack (G-buffer
   passes, shadow pass, depth), how Distant Horizons and Voxy do it, then
   an ADR.
+
+## M2.D — Mod features in the noise preview
+
+- [ ] D.1 Features that come from mods in the preview. The user
+  (2026-10-28): plains in the preview turned out, flown over, to be full
+  of giant trees from a mod; the same for vegetation. The preview places
+  vanilla features only (`PreviewTrees`, `PreviewVillages`). To do once
+  the streaming and rendering polish is done (the user's order): find
+  how mods register their trees and plants (placed features per biome),
+  then an ADR on what the preview can draw from them.
