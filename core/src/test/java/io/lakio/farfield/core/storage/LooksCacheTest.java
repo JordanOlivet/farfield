@@ -10,11 +10,15 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LooksCacheTest {
+
+    private static final long FINGERPRINT =
+            LooksCache.fingerprint(1, List.of("farfield@0.1.0", "minecraft@1.21.1"), List.of("vanilla"));
 
     private static byte[] tile(int seed) {
         byte[] t = new byte[LooksCache.TILE_BYTES];
@@ -24,48 +28,85 @@ class LooksCacheTest {
         return t;
     }
 
-    @Test
-    void looksComeBackWithTheirTilesForTheSameFingerprintOnly(@TempDir Path dir) throws IOException {
-        Path file = dir.resolve("farfield").resolve("looks.bin");
-        long fingerprint = LooksCache.fingerprint(1, List.of("farfield@0.1.0", "minecraft@1.21.1"), List.of("vanilla"));
-        LooksCache cache = LooksCache.open(file, fingerprint);
-        assertEquals(LooksCache.Status.MISSING, cache.status());
+    private static LooksCache.Look look(int seed, byte[] top) {
         int[] words = new int[LooksCache.WORDS];
         for (int i = 0; i < words.length; i++) {
-            words[i] = i * 7 - 3;
+            words[i] = seed * 100 + i;
         }
-        byte[] grass = tile(1);
         byte[][] tiles = new byte[12][];
-        tiles[6] = grass; // the top face's untinted tile
-        tiles[7] = tile(2);
-        cache.put("minecraft:grass_block[snowy=false]", new LooksCache.Look(true, words, tiles));
-        byte[][] stoneTiles = new byte[12][];
-        stoneTiles[0] = grass.clone(); // the same pixels: one tile in the file
-        cache.put("minecraft:stone", new LooksCache.Look(false, new int[LooksCache.WORDS], stoneTiles));
-        cache.save();
+        tiles[6] = top;
+        return new LooksCache.Look(seed % 2 == 0, words, tiles);
+    }
 
-        LooksCache read = LooksCache.open(file, fingerprint);
+    @Test
+    void looksAreAppendedAndComeBackForTheSameFingerprintOnly(@TempDir Path dir) throws IOException {
+        Path file = dir.resolve("farfield").resolve("looks.bin");
+        LooksCache cache = LooksCache.open(file, FINGERPRINT);
+        assertEquals(LooksCache.Status.MISSING, cache.status());
+        byte[] grass = tile(1);
+        cache.put("minecraft:grass_block[snowy=false]", look(2, grass));
+        assertTrue(cache.hasPending());
+        cache.save();
+        assertFalse(cache.hasPending());
+        long first = Files.size(file);
+        // A second look sharing the tile: appended, the tile not written again.
+        cache.put("minecraft:stone", look(3, grass.clone()));
+        cache.save();
+        long second = Files.size(file);
+        assertTrue(second - first < LooksCache.TILE_BYTES, (second - first) + " bytes appended");
+
+        LooksCache read = LooksCache.open(file, FINGERPRINT);
         assertEquals(LooksCache.Status.READ, read.status());
         assertEquals(2, read.size());
-        assertEquals(2, read.tilesRead());
+        assertEquals(1, read.tilesRead());
         LooksCache.Look grassLook = read.get("minecraft:grass_block[snowy=false]");
         assertTrue(grassLook.tinted());
-        assertArrayEquals(words, grassLook.words());
+        assertArrayEquals(look(2, grass).words(), grassLook.words());
         assertArrayEquals(grass, grassLook.tiles()[6]);
-        assertArrayEquals(tile(2), grassLook.tiles()[7]);
         assertNull(grassLook.tiles()[0]);
-        assertSame(grassLook.tiles()[6], read.get("minecraft:stone").tiles()[0]);
+        assertSame(grassLook.tiles()[6], read.get("minecraft:stone").tiles()[6]);
 
-        // Another mod list or resource pack: baked again from nothing.
+        // Appending to the file read back keeps what was there.
+        read.put("minecraft:dirt", look(4, tile(5)));
+        read.save();
+        LooksCache again = LooksCache.open(file, FINGERPRINT);
+        assertEquals(3, again.size());
+        assertEquals(2, again.tilesRead());
+
+        // Another mod list or resource pack: empty, and the file starts over at the next append.
         long other = LooksCache.fingerprint(1, List.of("farfield@0.1.1", "minecraft@1.21.1"), List.of("vanilla"));
         LooksCache stale = LooksCache.open(file, other);
         assertEquals(LooksCache.Status.OTHER_FINGERPRINT, stale.status());
         assertEquals(0, stale.size());
+        stale.put("minecraft:sand", look(6, tile(7)));
+        stale.save();
+        assertEquals(1, LooksCache.open(file, other).size());
+        assertEquals(LooksCache.Status.OTHER_FINGERPRINT, LooksCache.open(file, FINGERPRINT).status());
         assertTrue(LooksCache.fingerprint(2, List.of("a"), List.of()) != LooksCache.fingerprint(1, List.of("a"), List.of()));
+    }
 
-        // A file cut short (a crash while it was moved): baked again.
+    @Test
+    void aTailCutShortIsDroppedAndAppendedOver(@TempDir Path dir) throws IOException {
+        Path file = dir.resolve("looks.bin");
+        LooksCache cache = LooksCache.open(file, FINGERPRINT);
+        cache.put("a", look(1, tile(1)));
+        cache.put("b", look(2, tile(2)));
+        cache.save();
+        // A crash in the middle of the last look's record.
         byte[] whole = Files.readAllBytes(file);
-        Files.write(file, java.util.Arrays.copyOf(whole, 30));
-        assertEquals(LooksCache.Status.UNREADABLE, LooksCache.open(file, fingerprint).status());
+        Files.write(file, java.util.Arrays.copyOf(whole, whole.length - 10));
+        LooksCache cut = LooksCache.open(file, FINGERPRINT);
+        assertEquals(LooksCache.Status.READ, cut.status());
+        assertEquals(1, cut.size());
+        assertEquals(1, cut.recordsDropped());
+        cut.put("c", look(3, tile(3)));
+        cut.save();
+        LooksCache healed = LooksCache.open(file, FINGERPRINT);
+        assertEquals(0, healed.recordsDropped());
+        assertEquals(2, healed.size());
+        assertTrue(healed.get("c") != null && healed.get("a") != null);
+
+        Files.writeString(file, "not a cache, longer than its header");
+        assertEquals(LooksCache.Status.UNREADABLE, LooksCache.open(file, FINGERPRINT).status());
     }
 }

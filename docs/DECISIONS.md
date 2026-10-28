@@ -2209,3 +2209,23 @@ and ADR-079.
   `PreviewTest.theStorePersistsTheKeysATileNamesBeforeWritingIt`. Real
   LODs of double plants and vines change look (crossed quads); not seen
   in a client yet.
+
+
+## ADR-081 — The looks cache is appended to, not rewritten
+
+Status: accepted, 2026-10-28. Amends ADR-078.
+
+- **Context**: the user's session after ADR-080 rewrote `looks.bin`
+  (39 MB) 170 times in about 15 min, some 6.6 GB: exploring brings a few
+  new block states at a time, and the file was written again whole each
+  time every look was built and some were new.
+- **Decision**: the file is a header (magic, format 2, fingerprint) then
+  records appended in bake order: a face tile, or a look naming its tiles
+  by their place among the tiles before it. New looks are appended once
+  every look of the world is built, at most every 30 s, and when the game
+  leaves for another world. A record cut short (a crash while appending)
+  is dropped at open and appended over. A file of format 1, or of another
+  fingerprint, starts over at the first append (one full bake).
+- **Result**: unit tests (`LooksCacheTest`: appends, a shared tile written
+  once, reopen and append, another fingerprint, a tail cut short);
+  `gradlew build` passes. Not run in a client yet.

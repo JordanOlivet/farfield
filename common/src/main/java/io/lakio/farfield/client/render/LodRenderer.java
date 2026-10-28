@@ -421,6 +421,9 @@ public final class LodRenderer {
     private long lastLooksNanos;
     /** Start of the current backlog of looks (0: none) and its size, for its log line. */
     private long looksBacklogStart;
+    /** When new looks last went to the cache file. */
+    private long lastLooksAppend;
+    private static final long LOOKS_APPEND_NANOS = 30_000_000_000L;
     private int looksFromCache;
     private int looksBacklog;
     /** Fill line: when the join or teleport happened (0: none being timed), and what it was. */
@@ -2196,6 +2199,9 @@ public final class LodRenderer {
             colorLevel = level;
             colors.reset();
             tints.reset();
+            if (colors.cache() != null) {
+                appendLooks(colors.cache()); // what the last world baked, before its cache goes
+            }
             colors.setCache(openLooksCache(mc));
         }
         Registry<Biome> biomes = level.registryAccess().registryOrThrow(Registries.BIOME);
@@ -2224,15 +2230,13 @@ public final class LodRenderer {
             looksBacklogStart = 0;
             looksFromCache = 0;
         }
-        if (allBuilt && colors.cache() != null) {
-            LooksCache cache = colors.cache();
-            cache.saveIfChanged(failure -> {
-                if (failure != null) {
-                    Farfield.LOG.warn("LOD looks cache not written", failure);
-                } else {
-                    Farfield.LOG.info("LOD looks cache written: {} looks", cache.size());
-                }
-            });
+        // New looks go to the cache file once every look is built, at most every LOOKS_APPEND_NANOS:
+        // exploring brings a few new block states at a time (ADR-081).
+        long now = System.nanoTime();
+        if (allBuilt && colors.cache() != null && colors.cache().hasPending()
+                && now - lastLooksAppend > LOOKS_APPEND_NANOS) {
+            lastLooksAppend = now;
+            appendLooks(colors.cache());
         }
         if (first >= 0 && !provisional.isEmpty()) {
             // Meshed with guessed flags for materials without their look: meshed again once they have one.
@@ -2276,6 +2280,17 @@ public final class LodRenderer {
         }
     }
 
+    /** Appends a cache's new looks to its file, on a thread of its own. */
+    private static void appendLooks(LooksCache cache) {
+        cache.appendPending(outcome -> {
+            if (outcome instanceof Exception e) {
+                Farfield.LOG.warn("LOD looks cache not written", e);
+            } else if (RenderSettings.performanceLogs()) {
+                Farfield.LOG.info("LOD looks cache: {} looks appended, {} in all", outcome, cache.size());
+            }
+        });
+    }
+
     /**
      * The looks cache for the loaded mods and the resource packs in use
      * ({@link LooksCache}), read on the render thread once per world or
@@ -2287,13 +2302,14 @@ public final class LodRenderer {
                 java.util.List.copyOf(mc.getResourcePackRepository().getSelectedIds()));
         java.nio.file.Path file = Services.PLATFORM.getGameDir().resolve("farfield").resolve("looks.bin");
         LooksCache cache = LooksCache.open(file, fingerprint);
-        Farfield.LOG.info("LOD looks cache {}: {} looks and {} tiles ({}) in {} ms", file, cache.size(),
+        Farfield.LOG.info("LOD looks cache {}: {} looks and {} tiles ({}{}) in {} ms", file, cache.size(),
                 cache.tilesRead(), switch (cache.status()) {
                     case READ -> "read";
                     case MISSING -> "none yet";
                     case OTHER_FINGERPRINT -> "for other mods or resource packs, baked again";
-                    case UNREADABLE -> "unreadable, baked again";
-                }, (System.nanoTime() - start) / 1_000_000);
+                    case UNREADABLE -> "unreadable or of an older format, baked again";
+                }, cache.recordsDropped() > 0 ? ", a tail cut short dropped" : "",
+                (System.nanoTime() - start) / 1_000_000);
         return cache;
     }
 
