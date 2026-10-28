@@ -286,6 +286,7 @@ final class PreviewLayer {
             int qx = (q & 1) * 16;
             int qz = (q >> 1) * 16;
             boolean any = false;
+            boolean floorless = false;
             int low = Integer.MAX_VALUE;
             int high = Integer.MIN_VALUE;
             for (int z = qz; z < qz + 16; z++) {
@@ -298,6 +299,8 @@ final class PreviewLayer {
                     if (fluid[c] != Integer.MIN_VALUE) {
                         any = true;
                         high = Math.max(high, fluid[c]);
+                        // Water with nothing under it in the store: its floor's section is not here yet.
+                        floorless |= ground[c] == Integer.MIN_VALUE;
                     }
                 }
             }
@@ -312,7 +315,9 @@ final class PreviewLayer {
             // by one, and the sea floor alone hid the preview over a sea without its top (dark pits
             // with straight walls, ADR-090). Short of it, level 4 shows the chunk real later.
             int realTop = Math.max(high, maxGround(ground, qx, qz));
-            if (previewTile != null && realTop < expectedTop(previewTile, cx * 16, cz * 16) - SURFACE_SLACK) {
+            // Nor a sea without its floor: the surface alone showed the sky through the water (lighter
+            // bands on the sea, ADR-091).
+            if (floorless || previewTile != null && realTop < expectedTop(previewTile, cx * 16, cz * 16) - SURFACE_SLACK) {
                 fineShort.incrementAndGet();
                 continue;
             }
@@ -322,6 +327,37 @@ final class PreviewLayer {
                 fine[FLUID + c] = Math.max(g, high);
             }
         }
+    }
+
+    /** A tile from the store's cache, or null. Render thread. */
+    private PreviewTile previewTile(long tile) {
+        LodWorld w = world;
+        try {
+            return w == null ? null : w.preview().read(PreviewStore.tileX(tile), PreviewStore.tileZ(tile));
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    /**
+     * What the real terrain drawn over a chunk (block {@code bx, bz} of its
+     * tile) must reach before the preview leaves it ({@link RealReady}):
+     * down to a preview sea's floor (its highest block), up to the
+     * preview's surface less {@link #SURFACE_SLACK}. The real chunk's
+     * sections come one by one: a sea floor alone showed a dark floor
+     * without water, a sea top alone the sky through the water (ADR-091).
+     */
+    private static int[] expected(PreviewTile tile, int bx, int bz) {
+        if (tile == null) {
+            return new int[]{Integer.MIN_VALUE, Integer.MIN_VALUE};
+        }
+        int high = Integer.MIN_VALUE;
+        int[][] at = {{0, 0}, {15, 0}, {0, 15}, {15, 15}, {8, 8}};
+        for (int[] p : at) {
+            high = Math.max(high, tile.height(bx + p[0], bz + p[1]));
+        }
+        int floor = tile.water() >= 0 && high <= tile.seaLevel() ? high - 1 : Integer.MIN_VALUE;
+        return new int[]{floor, expectedTop(tile, bx, bz) - SURFACE_SLACK};
     }
 
     /** Blocks a real column may stay under the preview's surface and still count as complete. */
@@ -644,7 +680,13 @@ final class PreviewLayer {
 
     /** Whether the real terrain drawn over a chunk is meshed from its current data. */
     interface RealReady {
-        boolean test(int chunkX, int chunkZ);
+        /**
+         * {@code floorBlock}: a block the drawn real terrain must reach down
+         * to (a preview sea's floor), {@code topFree}: the first free block it
+         * must reach up to (the preview's surface, less a slack); MIN_VALUE
+         * for no such bound.
+         */
+        boolean test(int chunkX, int chunkZ, int floorBlock, int topFree);
     }
 
     /**
@@ -667,6 +709,7 @@ final class PreviewLayer {
             // generation front, where new chunks keep coming (ADR-087).
             int[] partial = null;
             if (!go) {
+                PreviewTile previewTile = previewTile(tile);
                 int baseX = PreviewStore.tileX(tile) * PreviewTile.CHUNKS;
                 int baseZ = PreviewStore.tileZ(tile) * PreviewTile.CHUNKS;
                 for (int z = 0; z < PreviewTile.CHUNKS; z++) {
@@ -674,7 +717,8 @@ final class PreviewLayer {
                     while (added != 0) {
                         int x = Integer.numberOfTrailingZeros(added);
                         added &= added - 1;
-                        if (!ready.test(baseX + x, baseZ + z)) {
+                        int[] expect = expected(previewTile, x * 16, z * 16);
+                        if (!ready.test(baseX + x, baseZ + z, expect[0], expect[1])) {
                             if (partial == null) {
                                 partial = fresh.clone();
                             }
@@ -755,7 +799,7 @@ final class PreviewLayer {
         String out = hiddenChunks + " new real chunks hidden from the preview "
                 + (hiddenChunks == 0 ? 0 : hiddenNanos / hiddenChunks / 1_000_000) + " ms after their first level-0 write"
                 + " on average, " + hiddenMaxNanos / 1_000_000 + " ms at most (then meshed again), " + fineShort.getAndSet(0)
-                + " level-0 reads short of the expected surface; "
+                + " level-0 reads short of the expected surface or of a sea floor; "
                 + heldChunks + " chunks left by the preview after a hold of "
                 + (heldChunks == 0 ? 0 : heldNanos / heldChunks / 1_000_000)
                 + " ms on average, " + heldMaxNanos / 1_000_000 + " ms at most, " + heldTimedOut + " at the 2 s limit";

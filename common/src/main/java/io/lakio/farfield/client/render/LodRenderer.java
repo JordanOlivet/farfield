@@ -1316,8 +1316,10 @@ public final class LodRenderer {
      * one that gets this chunk's terrain). The preview hides itself over new real chunks only then
      * (ADR-076, ADR-077).
      */
-    private boolean realReady(int chunkX, int chunkZ) {
+    private boolean realReady(int chunkX, int chunkZ, int floorBlock, int topFree) {
         boolean covered = false;
+        int lowest = Integer.MAX_VALUE;
+        int highest = Integer.MIN_VALUE;
         for (int level = 0; level < LodWorld.LEVELS; level++) {
             int size = LodSection.SIZE << level;
             int x = chunkX >> (level + 1);
@@ -1333,11 +1335,18 @@ public final class LodRenderer {
                     if (!draws && (stale.contains(key) || requested.contains(key))) {
                         return false;
                     }
-                    covered |= draws;
+                    if (draws) {
+                        covered = true;
+                        lowest = Math.min(lowest, y * size);
+                        highest = Math.max(highest, (y + 1) * size);
+                    }
                 }
             }
         }
-        return covered;
+        // The real chunk's sections come one by one: it must reach the preview's surface, and a sea's
+        // floor, or it shows a floor without water or water without a floor meanwhile (ADR-091).
+        return covered && (topFree == Integer.MIN_VALUE || highest >= topFree)
+                && (floorBlock == Integer.MIN_VALUE || lowest <= floorBlock);
     }
 
     /**

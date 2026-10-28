@@ -2451,3 +2451,23 @@ Status: accepted, 2026-10-28. Amends ADR-089.
   slack; short of it, level 4 shows the chunk real later, as before
   ADR-089. The holes line counts the reads left short.
 - **Result**: `gradlew build` passes. Not run in game yet.
+
+## ADR-091 — The preview leaves a chunk once its real column is whole
+
+Status: accepted, 2026-10-28. Amends ADR-090 and ADR-076.
+
+- **Context**: with ADR-090 the frozen sea was right ("ça a l'air bon
+  maintenant pour la banquise"), but over open sea the user saw lighter
+  bands with straight edges on the water, and once a black strip, both
+  gone as the LODs came in (annotated captures). The black strip, zoomed,
+  is a dark sea floor drawn with no water over it; the bands, water with
+  no floor behind it. A chunk's level-0 sections come one by one, and the
+  preview left it as soon as one drawn section had quads in its column:
+  the floor alone, or the sea's top alone (ADR-090 covered only the first
+  case, and only for the level-0 reads).
+- **Decision**: the preview leaves a new real chunk once the real
+  sections drawn there reach up to its surface less 4 blocks and, over a
+  preview sea, down to the block of its floor (the highest of the chunk's
+  corners and center); still 2 s at most. A level-0 read also leaves out
+  a chunk where water has nothing under it in the store.
+- **Result**: `gradlew build` passes. Not run in game yet.
