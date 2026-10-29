@@ -89,3 +89,16 @@ tasks.register('storeHoles', JavaExec) {
     }
     maxHeapSize = '4g'
 }
+
+// Flash detector over a folder of frames, to tune it on annotated recordings (ADR-099):
+//   gradlew :core:flashScan --args="<frames dir> [--expect 286,294] [--out <dir>] [--change N] ..."
+tasks.register('flashScan', JavaExec) {
+    group = 'verification'
+    description = 'Runs the frame flash detector over a folder of images.'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'io.lakio.farfield.core.debug.FlashScan'
+    javaLauncher = javaToolchains.launcherFor {
+        languageVersion = JavaLanguageVersion.of(java_version)
+    }
+    maxHeapSize = '2g'
+}

@@ -1,5 +1,6 @@
 package io.lakio.farfield.mixin.client;
 
+import io.lakio.farfield.client.render.FrameProbe;
 import io.lakio.farfield.client.render.LodRenderer;
 import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
@@ -13,7 +14,8 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Draws the LODs after the sky and before the first terrain layer.
+ * Draws the LODs after the sky and before the first terrain layer, and
+ * marks the end of the level for the frame probe (ADR-099).
  * Optional, so a mod that rewrites {@code renderLevel} cannot crash the game:
  * without it the "LOD renderer ready" line never appears.
  */
@@ -29,5 +31,12 @@ public abstract class LevelRendererMixin {
                                      GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix,
                                      Matrix4f projectionMatrix, CallbackInfo ci) {
         LodRenderer.render(camera, frustumMatrix, projectionMatrix);
+    }
+
+    @Inject(method = "renderLevel", at = @At("RETURN"), require = 0)
+    private void farfield$endOfLevel(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera,
+                                     GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix,
+                                     Matrix4f projectionMatrix, CallbackInfo ci) {
+        FrameProbe.endOfLevel();
     }
 }

@@ -2678,3 +2678,63 @@ Status: accepted, 2026-10-29. Closes ADR-097's open point.
   256-block jumps east with captures: 26 commands, none failed, both
   `wait stable` settled (39.5 s, 32.5 s), LODs drawn on OpenGL 4.6, closed
   on `quit` after 291 s, `fml.toml` restored.
+
+## ADR-099 — Flights are recorded and replayed; a frame probe writes glitches out
+
+Status: accepted, 2026-10-29. Steps 3 and 4 of `docs/analysis/agent-playtesting.md`.
+
+- **Context**: every fix of 2026-10-28 needed the user to fly again and
+  judge one-frame bands by eye; a pixel pass over a recording missed them
+  (memory `validate-glitch-detectors`). The agent needs the user's exact
+  flight, and a judge that finds a frame-long glitch by itself.
+- **Decision**:
+  - Flights: `/farfieldclient record start [name]` and `record stop` (also
+    agent inbox commands) write the camera of every client tick to
+    `<game dir>/farfield/flights/<name>.flight` (`FlightPath`, text, yaw
+    unwrapped). The inbox's `replay <name> [speed <f>] [every <n>]` flies
+    it again: the camera set at the end of each tick, so frames
+    interpolate; a teleport first when the start is more than 16 blocks
+    away (a remote server refuses a long step); a screenshot every n ticks.
+  - Frame probe (`FrameProbe`), off unless `/farfieldclient debug frames`,
+    the inbox's `frames on` or `-Dfarfield.frames=true`: three captures of
+    the game's image per frame (before the LOD pass, after it, end of the
+    level), halved by 2x2 averages on the GPU to at most 512 pixels wide,
+    read back through pixel buffers and fences a few frames later, and
+    analysed on a thread of its own. Three judges:
+    - `FlashDetector`: an area that differs for one or two frames from
+      the frames on both sides while those agree, judged by its largest
+      connected area;
+    - `ErasedCheck`: LOD pixels that end the frame as they were before
+      the LOD pass (the sky again), the renderer's own ground truth against
+      a later pass (Sodium, Iris or another mod);
+    - `ColumnFlicker`, from the renderer's state, not pixels: per chunk
+      column the hole detector watches, the finest real level, else
+      preview level, else nothing that draws it; a state lasting one or
+      two frames that goes back, or is worse than both sides (a hole
+      between the preview and the real terrain), is reported.
+    Each event is one JSON line in `farfield/frames/<session>/events.jsonl`
+    with the frames around it as PNGs (20 events a minute at most), and a
+    log line; a stat line every 10 s.
+  - `gradlew :core:flashScan` runs the flash detector over a folder of
+    frames, with `--expect` to score it and `--ignore-color` to take out
+    annotation strokes.
+- **Result**: unit tests (`FlightPathTest`, `FlashDetectorTest`,
+  `ErasedCheckTest`, `ColumnFlickerTest`, `FrameRingTest`, and the inbox's);
+  `gradlew build` passes. Tuned on the 2026-10-28 recording with its
+  annotation strokes taken out: 10 of the user's 13 glitches (18 annotated
+  frames) found, 40 other frames flagged in 350, some at the game's render
+  edge (a known separate glitch), the rest not judged; without taking the
+  strokes out, the first try "found" all of them through the strokes alone.
+  In game on both loaders (fresh `farfield-test`, minimized): a 400-tick
+  flight replayed in 19.9 s and recorded back identical (0.0 apart, after
+  a fix for the tick of `record stop`); the probe's first frame shows the
+  sky, the LOD pass and the final image the right way up; 46 and 56
+  events during the flight (almost all one-frame flashes, two column
+  flickers), not judged. The probe costs frames: 1,169 to 1,548 fps without
+  it, 331 to 349 with it at 854x480 (about 2 ms a frame); with the
+  analysis on its own thread and the buffers recycled, its stat line gives
+  0.4 ms a frame on the render thread, so the rest is the GPU and driver
+  side of three blits and readbacks a frame. Compare fps only with it off.
+- **Not covered**: whether the flashes in game are real glitches (they
+  are not judged: this worktree builds tools, not fixes); validation of the
+  in-game judges against a glitch the user sees.

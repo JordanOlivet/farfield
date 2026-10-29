@@ -16,6 +16,9 @@ import java.util.Locale;
  * wait stable [timeout] [hold]   until nothing is wanted in view, meshing or fetched for hold s (default 120, 2)
  * wait ticks &lt;n&gt; | wait seconds &lt;s&gt;
  * window minimize|background|restore   taskbar, behind the others (both unfocused), or in front, focused
+ * record start &lt;name&gt; | record stop      records the camera to farfield/flights/&lt;name&gt;.flight (ADR-099)
+ * replay &lt;name&gt; [speed &lt;f&gt;] [every &lt;n&gt;]  flies that flight again, a screenshot every n ticks
+ * frames on|off                  the frame probe: short glitches written to farfield/frames/
  * quit                           closes the game as its window's close button does
  * </pre>
  */
@@ -63,10 +66,21 @@ public sealed interface AgentCommand {
     record Window(WindowMode mode) implements AgentCommand {
     }
 
+    /** {@code name} null for {@code record stop}. */
+    record Record(String name) implements AgentCommand {
+    }
+
+    /** {@code every} 0: no screenshot. */
+    record Replay(String name, double speed, int every) implements AgentCommand {
+    }
+
+    record Frames(boolean on) implements AgentCommand {
+    }
+
     /** Whether the command needs a player in a world; the others run from any screen. */
     default boolean needsPlayer() {
         return this instanceof Command || this instanceof Teleport || this instanceof Look
-                || this instanceof WaitStable;
+                || this instanceof WaitStable || this instanceof Record r && r.name() != null || this instanceof Replay;
     }
 
     /**
@@ -111,11 +125,7 @@ public sealed interface AgentCommand {
                 if (w.length < 2 || w.length > 3 || w.length == 3 && !w[2].equalsIgnoreCase("hud")) {
                     throw new IllegalArgumentException("screenshot takes <name> [hud]");
                 }
-                if (w[1].length() > MAX_NAME_LENGTH || !w[1].matches("[A-Za-z0-9._-]+") || w[1].startsWith(".")) {
-                    throw new IllegalArgumentException("screenshot name: letters, digits, '.', '-' or '_', at most "
-                            + MAX_NAME_LENGTH + ", not starting with '.'");
-                }
-                yield new Screenshot(w[1], w.length == 3);
+                yield new Screenshot(name(w[1], "screenshot"), w.length == 3);
             }
             case "state" -> {
                 expectWords(w, 1, "state takes no argument");
@@ -131,13 +141,60 @@ public sealed interface AgentCommand {
                     throw new IllegalArgumentException(usage);
                 }
             }
+            case "record" -> {
+                if (w.length == 2 && w[1].equalsIgnoreCase("stop")) {
+                    yield new Record(null);
+                }
+                if (w.length != 3 || !w[1].equalsIgnoreCase("start")) {
+                    throw new IllegalArgumentException("record takes start <name> or stop");
+                }
+                yield new Record(name(w[2], "flight"));
+            }
+            case "replay" -> parseReplay(w);
+            case "frames" -> {
+                if (w.length != 2 || !w[1].equalsIgnoreCase("on") && !w[1].equalsIgnoreCase("off")) {
+                    throw new IllegalArgumentException("frames takes on or off");
+                }
+                yield new Frames(w[1].equalsIgnoreCase("on"));
+            }
             case "quit" -> {
                 expectWords(w, 1, "quit takes no argument");
                 yield new Quit();
             }
             default -> throw new IllegalArgumentException("unknown command '" + w[0]
-                    + "' (command, tp, look, screenshot, state, wait, window, quit)");
+                    + "' (command, tp, look, screenshot, state, wait, window, record, replay, frames, quit)");
         };
+    }
+
+    private static AgentCommand parseReplay(String[] w) {
+        if (w.length < 2 || w.length % 2 != 0) {
+            throw new IllegalArgumentException("replay takes <name> [speed <f>] [every <ticks>]");
+        }
+        double speed = 1;
+        int every = 0;
+        for (int i = 2; i < w.length; i += 2) {
+            switch (w[i].toLowerCase(Locale.ROOT)) {
+                case "speed" -> speed = positive(w[i + 1]);
+                case "every" -> {
+                    double n = positive(w[i + 1]);
+                    if (n != Math.rint(n) || n > 100_000) {
+                        throw new IllegalArgumentException("every takes a whole number of ticks");
+                    }
+                    every = (int) n;
+                }
+                default -> throw new IllegalArgumentException("replay takes <name> [speed <f>] [every <ticks>]");
+            }
+        }
+        return new Replay(name(w[1], "flight"), speed, every);
+    }
+
+    /** A file name: letters, digits, '.', '-' and '_', not starting with '.'. */
+    private static String name(String word, String what) {
+        if (word.length() > MAX_NAME_LENGTH || !word.matches("[A-Za-z0-9._-]+") || word.startsWith(".")) {
+            throw new IllegalArgumentException(what + " name: letters, digits, '.', '-' or '_', at most "
+                    + MAX_NAME_LENGTH + ", not starting with '.'");
+        }
+        return word;
     }
 
     private static AgentCommand parseWait(String[] w) {

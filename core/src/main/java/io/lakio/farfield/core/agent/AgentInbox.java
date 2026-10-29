@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -101,18 +102,15 @@ public final class AgentInbox {
      * {@code ok}, then {@code fields} (strings, numbers, booleans, nested maps).
      */
     public void reply(Entry entry, boolean ok, Map<String, ?> fields) throws IOException {
-        StringBuilder json = new StringBuilder(128).append('{');
-        field(json, "file", entry.file());
-        field(json, "line", entry.line());
-        field(json, "cmd", entry.text());
-        field(json, "ok", ok);
-        for (Map.Entry<String, ?> f : fields.entrySet()) {
-            field(json, f.getKey(), f.getValue());
-        }
-        json.setCharAt(json.length() - 1, '}');
+        Map<String, Object> line = new LinkedHashMap<>();
+        line.put("file", entry.file());
+        line.put("line", entry.line());
+        line.put("cmd", entry.text());
+        line.put("ok", ok);
+        line.putAll(fields);
         try (Writer out = Files.newBufferedWriter(outbox, StandardCharsets.UTF_8, StandardOpenOption.CREATE,
                 StandardOpenOption.APPEND)) {
-            out.write(json.append('\n').toString());
+            out.write(JsonLine.of(line) + "\n");
         }
     }
 
@@ -125,57 +123,5 @@ public final class AgentInbox {
         }
         files.sort(null);
         return files;
-    }
-
-    private static void field(StringBuilder json, String key, Object value) {
-        string(json, key);
-        json.append(':');
-        value(json, value);
-        json.append(',');
-    }
-
-    private static void value(StringBuilder json, Object value) {
-        if (value == null) {
-            json.append("null");
-        } else if (value instanceof Boolean || value instanceof Integer || value instanceof Long) {
-            json.append(value);
-        } else if (value instanceof Number n) {
-            double d = n.doubleValue();
-            json.append(Double.isFinite(d) ? Double.toString(d) : "null");
-        } else if (value instanceof Map<?, ?> map) {
-            if (map.isEmpty()) {
-                json.append("{}");
-                return;
-            }
-            json.append('{');
-            for (Map.Entry<?, ?> e : map.entrySet()) {
-                field(json, String.valueOf(e.getKey()), e.getValue());
-            }
-            json.setCharAt(json.length() - 1, '}');
-        } else {
-            string(json, value.toString());
-        }
-    }
-
-    private static void string(StringBuilder json, String s) {
-        json.append('"');
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            switch (c) {
-                case '"' -> json.append("\\\"");
-                case '\\' -> json.append("\\\\");
-                case '\n' -> json.append("\\n");
-                case '\r' -> json.append("\\r");
-                case '\t' -> json.append("\\t");
-                default -> {
-                    if (c < 0x20) {
-                        json.append(String.format("\\u%04x", (int) c));
-                    } else {
-                        json.append(c);
-                    }
-                }
-            }
-        }
-        json.append('"');
     }
 }

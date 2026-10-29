@@ -274,3 +274,11 @@ keep drawing (only a start while locked is known to hang), and does
 
 Steps 1 and 2 already let the agent run the Sodium/Iris A/B of the
 2026-10-29 log alone, before any detector.
+
+### State (2026-10-29, end of day)
+
+Done: step 1 (ADR-095, ADR-096: inbox, window out of the way), step 2
+(ADR-097, ADR-098: pack run, fresh worlds, Connector in dev), steps 3 and
+4 (ADR-099: flight record and replay, frame probe with a flash detector, an
+erased-LOD check and a column flicker watch from the renderer's state).
+Kept in mind, not started: step 5 (CI smoke test, off-PC rendering).

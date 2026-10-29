@@ -822,7 +822,9 @@ public final class LodRenderer {
 
     /** Called from the level renderer mixin, after the sky, before the terrain. */
     public static void render(Camera camera, Matrix4f viewRotation, Matrix4f projection) {
+        FrameProbe.beforeLods(); // glitch watch (ADR-099), off by default
         INSTANCE.renderFrame(camera, viewRotation, projection);
+        FrameProbe.afterLods();
     }
 
     private boolean init() {
@@ -953,6 +955,7 @@ public final class LodRenderer {
             nextHoleScan = frameStart + HOLE_SCAN_NANOS;
             scanHoles(frameStart, mc.options.getEffectiveRenderDistance());
         }
+        watchColumns(mc.options.getEffectiveRenderDistance());
         logFill(frameStart, false);
         for (int l = 0; l < commands.length; l++) {
             commands[l].clear();
@@ -1528,6 +1531,52 @@ public final class LodRenderer {
             }
         }
         return false;
+    }
+
+    /**
+     * With the frame probe on (ADR-099): what draws each chunk column the hole
+     * detector watches, this frame, for its flicker watch.
+     */
+    private void watchColumns(int renderDistance) {
+        io.lakio.farfield.core.debug.ColumnFlicker watch = FrameProbe.beginColumns();
+        if (watch == null) {
+            return;
+        }
+        int cx0 = (int) Math.floor(selectedX) >> 4;
+        int cz0 = (int) Math.floor(selectedZ) >> 4;
+        int r = HOLE_RADIUS_CHUNKS;
+        for (int dz = -r; dz <= r; dz++) {
+            for (int dx = -r; dx <= r; dx++) {
+                if (dx * dx + dz * dz > r * r || Math.max(Math.abs(dx), Math.abs(dz)) <= renderDistance) {
+                    continue; // the game's own chunks
+                }
+                watch.set(cx0 + dx, cz0 + dz, columnState(cx0 + dx, cz0 + dz));
+            }
+        }
+        FrameProbe.endColumns();
+    }
+
+    /** The finest real level with quads in a chunk column, else the finest preview level, else nothing. */
+    private int columnState(int chunkX, int chunkZ) {
+        int preview = io.lakio.farfield.core.debug.ColumnFlicker.NONE;
+        for (int level = 0; level < LodWorld.LEVELS; level++) {
+            int size = LodSection.SIZE << level;
+            int x = chunkX >> (level + 1);
+            int z = chunkZ >> (level + 1);
+            for (int y = Math.floorDiv(selectedMinY, size); y <= Math.floorDiv(selectedMaxY - 1, size); y++) {
+                long key = LodKey.pack(level, x, y, z);
+                if (drawn.contains(key) && drawsColumn(resident.get(key), level, chunkX, chunkZ)) {
+                    return io.lakio.farfield.core.debug.ColumnFlicker.real(level);
+                }
+                if (preview == io.lakio.farfield.core.debug.ColumnFlicker.NONE) {
+                    long p = PreviewLayer.toPreview(key);
+                    if (drawn.contains(p) && drawsColumn(resident.get(p), level, chunkX, chunkZ)) {
+                        preview = io.lakio.farfield.core.debug.ColumnFlicker.preview(level);
+                    }
+                }
+            }
+        }
+        return preview;
     }
 
     /** The level a section is drawn at (preview keys carry an offset). */

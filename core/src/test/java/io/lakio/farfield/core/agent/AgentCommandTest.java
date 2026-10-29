@@ -70,6 +70,22 @@ class AgentCommandTest {
     }
 
     @Test
+    void flightsAndFrames() {
+        assertEquals(new AgentCommand.Record("coast"), AgentCommand.parse("record start coast"));
+        assertEquals(new AgentCommand.Record(null), AgentCommand.parse("record stop"));
+        assertEquals(new AgentCommand.Replay("coast", 1, 0), AgentCommand.parse("replay coast"));
+        assertEquals(new AgentCommand.Replay("coast", 0.5, 20), AgentCommand.parse("replay coast speed 0.5 every 20"));
+        assertEquals(new AgentCommand.Frames(true), AgentCommand.parse("frames on"));
+        assertTrue(AgentCommand.parse("replay coast").needsPlayer());
+        assertFalse(AgentCommand.parse("record stop").needsPlayer());
+        assertThrows(IllegalArgumentException.class, () -> AgentCommand.parse("replay ../x"));
+        assertThrows(IllegalArgumentException.class, () -> AgentCommand.parse("replay coast every 1.5"));
+        assertThrows(IllegalArgumentException.class, () -> AgentCommand.parse("replay coast speed"));
+        assertThrows(IllegalArgumentException.class, () -> AgentCommand.parse("record start"));
+        assertThrows(IllegalArgumentException.class, () -> AgentCommand.parse("frames maybe"));
+    }
+
+    @Test
     void onlyWorldCommandsWaitForAPlayer() {
         assertTrue(AgentCommand.parse("tp 0 100 0").needsPlayer());
         assertTrue(AgentCommand.parse("wait stable").needsPlayer());

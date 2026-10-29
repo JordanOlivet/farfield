@@ -2,13 +2,16 @@ package io.lakio.farfield.client;
 
 import com.mojang.blaze3d.platform.NativeImage;
 import io.lakio.farfield.Farfield;
+import io.lakio.farfield.client.render.FrameProbe;
 import io.lakio.farfield.client.render.LodRenderer;
 import io.lakio.farfield.core.agent.AgentCommand;
 import io.lakio.farfield.core.agent.AgentInbox;
 import io.lakio.farfield.core.agent.SettleWatch;
+import io.lakio.farfield.core.debug.FlightPath;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.world.phys.Vec3;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -45,6 +48,15 @@ public final class AgentClient {
     private long waitUntilNanos;
     private boolean hudHidden;
     private boolean hudWas;
+    /** The flight being replayed, where in it (in recorded ticks), the ticks played and when it began. */
+    private FlightPath replay;
+    private double replayAt;
+    private int replayPlayed;
+    private long replayStart;
+    private long replayEvents;
+    /** A replay starting far from the player teleports there first, then waits this long. */
+    private static final int REPLAY_TELEPORT_TICKS = 40;
+    private static final double REPLAY_TELEPORT_DISTANCE = 16;
 
     private AgentClient(AgentInbox inbox) {
         this.inbox = inbox;
@@ -164,6 +176,15 @@ public final class AgentClient {
                 });
                 reply(e, true, Map.of());
             }
+            case AgentCommand.Record r -> {
+                String line = r.name() == null ? FlightRecorder.stop(mc) : FlightRecorder.start(mc, r.name());
+                boolean ok = r.name() == null ? line.startsWith("Flight ") : line.startsWith("Recording");
+                reply(e, ok, Map.of("message", line));
+            }
+            case AgentCommand.Frames f -> reply(e, true, Map.of("message", FrameProbe.setEnabled(f.on())));
+            case AgentCommand.Replay r -> {
+                return startReplay(mc, r);
+            }
             case AgentCommand.Quit ignored -> {
                 reply(e, true, Map.of());
                 Farfield.LOG.info("Agent inbox: closing the game");
@@ -222,6 +243,9 @@ public final class AgentClient {
                 }
                 reply(e, true, Map.of());
             }
+            case AgentCommand.Replay r -> {
+                return stepReplay(mc, r);
+            }
             default -> throw new IllegalStateException("not a waiting command: " + e.text());
         }
         return true;
@@ -229,17 +253,112 @@ public final class AgentClient {
 
     /** The last frame of the main render target, as the game's own screenshot reads it. */
     private void screenshot(Minecraft mc, AgentCommand.Screenshot s) {
-        Path file = inbox.shots().resolve(s.name() + ".png");
+        try {
+            Map<String, Object> fields = writeShot(mc, s.name());
+            reply(current, true, fields);
+        } catch (IOException | RuntimeException ex) {
+            Farfield.LOG.warn("Agent inbox: screenshot {} failed", s.name(), ex);
+            reply(current, false, Map.of("error", String.valueOf(ex.getMessage())));
+        }
+    }
+
+    private Map<String, Object> writeShot(Minecraft mc, String name) throws IOException {
+        Path file = inbox.shots().resolve(name + ".png");
         try (NativeImage image = Screenshot.takeScreenshot(mc.getMainRenderTarget())) {
             image.writeToFile(file);
             Map<String, Object> fields = new LinkedHashMap<>();
             fields.put("path", file.toAbsolutePath().toString());
             fields.put("width", image.getWidth());
             fields.put("height", image.getHeight());
-            reply(current, true, fields);
-        } catch (IOException | RuntimeException ex) {
-            Farfield.LOG.warn("Agent inbox: screenshot {} failed", file, ex);
+            return fields;
+        }
+    }
+
+    /** Loads the flight and goes to its start; true when it is already done (it failed). */
+    private boolean startReplay(Minecraft mc, AgentCommand.Replay r) {
+        Path file = FlightRecorder.folder(mc).resolve(r.name() + FlightPath.SUFFIX);
+        FlightPath path;
+        try {
+            path = FlightPath.read(file);
+        } catch (IOException ex) {
             reply(current, false, Map.of("error", String.valueOf(ex.getMessage())));
+            return true;
+        }
+        LocalPlayer p = mc.player;
+        String dimension = p.level().dimension().location().toString();
+        if (!dimension.equals(path.dimension())) {
+            reply(current, false, Map.of("error", "the flight is in " + path.dimension() + ", the player in " + dimension));
+            return true;
+        }
+        replay = path;
+        replayAt = 0;
+        replayPlayed = 0;
+        replayEvents = FrameProbe.events();
+        FlightPath.Sample first = path.sample(0);
+        waitUntilTick = ticks;
+        if (p.position().distanceTo(new Vec3(first.x(), first.y(), first.z())) > REPLAY_TELEPORT_DISTANCE) {
+            // A long first step would be refused by a remote server as moving too fast.
+            p.connection.sendCommand(new AgentCommand.Teleport(first.x(), first.y(), first.z(), first.yaw(),
+                    first.pitch()).asCommand());
+            waitUntilTick = ticks + REPLAY_TELEPORT_TICKS;
+        }
+        if (r.every() > 0 && !mc.options.hideGui) {
+            hudWas = false;
+            mc.options.hideGui = true;
+            hudHidden = true;
+        }
+        Farfield.LOG.info("Agent inbox: replaying {} ({} ticks at speed {})", file, path.ticks(), r.speed());
+        return false;
+    }
+
+    /** One tick of the replay: the camera where the flight had it; true once the flight is over. */
+    private boolean stepReplay(Minecraft mc, AgentCommand.Replay r) {
+        if (ticks < waitUntilTick) {
+            return false;
+        }
+        LocalPlayer p = mc.player;
+        if (p == null) {
+            endReplay(mc);
+            reply(current, false, Map.of("error", "the player left the world", "ticks", replayPlayed));
+            return true;
+        }
+        if (replayPlayed == 0) {
+            replayStart = System.nanoTime();
+        }
+        FlightPath.Sample s = replay.at(replayAt);
+        // Set at the end of the tick: the next tick keeps it as the old position, so frames interpolate.
+        p.setDeltaMovement(Vec3.ZERO);
+        p.setPos(s.x(), s.y(), s.z());
+        p.setYRot(s.yaw());
+        p.setXRot(s.pitch());
+        p.setYHeadRot(s.yaw());
+        if (r.every() > 0 && replayPlayed % r.every() == 0) {
+            try {
+                writeShot(mc, String.format(java.util.Locale.ROOT, "%s-%05d", r.name(), replayPlayed));
+            } catch (IOException | RuntimeException ex) {
+                Farfield.LOG.warn("Agent inbox: replay screenshot failed", ex);
+            }
+        }
+        replayPlayed++;
+        replayAt += r.speed();
+        if (replayAt <= replay.ticks() - 1 + 1e-9) {
+            return false;
+        }
+        Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("ticks", replayPlayed);
+        fields.put("seconds", Math.round((System.nanoTime() - replayStart) / 1e8) / 10.0);
+        fields.put("frameEvents", FrameProbe.events() - replayEvents);
+        fields.put("frameProbe", FrameProbe.enabled());
+        endReplay(mc);
+        reply(current, true, fields);
+        return true;
+    }
+
+    private void endReplay(Minecraft mc) {
+        replay = null;
+        if (hudHidden) {
+            mc.options.hideGui = hudWas;
+            hudHidden = false;
         }
     }
 
