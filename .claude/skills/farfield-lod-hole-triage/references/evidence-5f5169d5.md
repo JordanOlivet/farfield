@@ -1,0 +1,1 @@
++    /** Chunks the preview left after a hold since the last report, their summed and longest hold, and those timed out. */   +    String heldReport() {   +                            + " {} closed in 10 s, {} ms on average, {} ms at most; {} open now; {}", maxHoles,

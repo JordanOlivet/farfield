@@ -1,0 +1,1 @@
+{"python edit docstring": " * then the world's own features grown on that ground ({@link\n * PreviewFeatures}, ADR-079: every mod's trees, plants and rocks where the\n * game will put them), away from villages. The client turns tiles into\n * sections of every level."}

@@ -1,0 +1,3 @@
+- dans les biomes froids, la preview pose de la neige pleine comme sol ;
+  - les arbres ne se posent que là où une pousse peut survivre, et une pousse ne survit pas sur de la neige ;
+  - résultat : 6 érables sur 669 chunks en Snowy Maple Woods, contre 84 arbres par chunk dans la Wintry Forest de Terralith.

@@ -1,0 +1,1 @@
+Polled, not taken from the write's notice: that comes before the writer counts it done. ... if (stream == null || !stream.storing(waiting.nextLong())) { waiting.remove(); selectionDirty = true; }

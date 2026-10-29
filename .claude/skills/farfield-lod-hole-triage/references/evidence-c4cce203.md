@@ -1,0 +1,1 @@
+med=np.median(a); b=np.clip((a-med)*8+128,0,255).astype('uint8')   |   "lastPrompt":"1. C'est toujours là, je t'ai pris deux screens qui montre bien, c'est les deux premier, les deus sans avoir bougé donc tu peux faire une A/B comparaison.

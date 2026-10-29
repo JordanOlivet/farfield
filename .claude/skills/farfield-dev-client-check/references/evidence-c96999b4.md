@@ -1,0 +1,1 @@
+Ok pour le moment on garde l'étape 5 en tête mais on ne la fais pas. Sur ce worktree, on va se concentrer sur outiller le projet, on ne va pas faire de vrai debug. Fais l'étape 3 et 4 du coup

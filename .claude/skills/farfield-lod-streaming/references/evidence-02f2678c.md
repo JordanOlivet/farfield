@@ -1,0 +1,1 @@
+ADR-085 meshed a section again when its data was stored during its first mesh; at the generation front that is almost every pushed section, and a section waiting for its second mesh keeps the preview held over it (`realReady`), so both drew.

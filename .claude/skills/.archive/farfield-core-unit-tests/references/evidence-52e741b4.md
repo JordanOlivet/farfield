@@ -1,0 +1,1 @@
+{"compile error": "C:\\Users\\Lakio\\source\\repos\\farfield\\core\\src\\test\\java\\io\\lakio\\farfield\\core\\preview\\PreviewTest.java:888: error: variable LOG is already defined in class PreviewTest\n    private static final int LOG = 8;", "grep": "453:    private static final int LOG = 6;\n454:    private static final int LEAVES = 7;"}

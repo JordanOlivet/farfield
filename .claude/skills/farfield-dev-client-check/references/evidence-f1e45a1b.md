@@ -1,0 +1,1 @@
+Bon je viens de tester sur le client de dev neo forge et ça ne le fait pas (il y a de temps en temps un mini morceau de rendu de l'eau qui devient transparent au niveau de la côte mais vraiment c'est minime). Donc sodium ou un autre truc doit peser dans la balance.

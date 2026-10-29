@@ -1,0 +1,1 @@
+-                    if (stale.contains(key) || requested.contains(key)) {   +                    boolean draws = drawsColumn(resident.get(key), level, chunkX, chunkZ);   +                    if (!draws && (stale.contains(key) || requested.contains(key))) {   +                    covered |= draws;

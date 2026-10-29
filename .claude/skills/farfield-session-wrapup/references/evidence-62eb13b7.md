@@ -1,0 +1,1 @@
+user: "commit et pousse déjà" ... user: "Ah non je parlais de la branche du worktree, remet main là où il était" ... assistant forced origin/main back to 8cb74ab before pushing the worktree branch.
