@@ -13,6 +13,7 @@
     "client.FogRendererMixin",
     "client.LevelRendererAccessor",
     "client.LevelRendererMixin",
+    "client.MinecraftMixin",
     "client.SpriteContentsAccessor",
     "client.WindowMixin"
   ],

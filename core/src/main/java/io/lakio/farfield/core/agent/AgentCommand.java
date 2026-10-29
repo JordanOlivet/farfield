@@ -15,6 +15,7 @@ import java.util.Locale;
  * state                          position, fps and the renderer's counters
  * wait stable [timeout] [hold]   until nothing is wanted in view, meshing or fetched for hold s (default 120, 2)
  * wait ticks &lt;n&gt; | wait seconds &lt;s&gt;
+ * window minimize|background|restore   taskbar, behind the others (both unfocused), or in front, focused
  * quit                           closes the game as its window's close button does
  * </pre>
  */
@@ -55,6 +56,11 @@ public sealed interface AgentCommand {
     }
 
     record Quit() implements AgentCommand {
+    }
+
+    enum WindowMode { MINIMIZE, BACKGROUND, RESTORE }
+
+    record Window(WindowMode mode) implements AgentCommand {
     }
 
     /** Whether the command needs a player in a world; the others run from any screen. */
@@ -116,12 +122,21 @@ public sealed interface AgentCommand {
                 yield new State();
             }
             case "wait" -> parseWait(w);
+            case "window" -> {
+                String usage = "window takes minimize, background or restore";
+                expectWords(w, 2, usage);
+                try {
+                    yield new Window(WindowMode.valueOf(w[1].toUpperCase(Locale.ROOT)));
+                } catch (IllegalArgumentException e) {
+                    throw new IllegalArgumentException(usage);
+                }
+            }
             case "quit" -> {
                 expectWords(w, 1, "quit takes no argument");
                 yield new Quit();
             }
             default -> throw new IllegalArgumentException("unknown command '" + w[0]
-                    + "' (command, tp, look, screenshot, state, wait, quit)");
+                    + "' (command, tp, look, screenshot, state, wait, window, quit)");
         };
     }
 

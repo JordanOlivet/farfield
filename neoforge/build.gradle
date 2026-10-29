@@ -24,6 +24,10 @@ neoForge {
             client()
             // Test agents drive the dev client through files (ADR-095).
             systemProperty('farfield.agent', 'true')
+            // -PagentWindow=minimized|background: an agent's run stays out of the user's way (ADR-096).
+            if (project.hasProperty('agentWindow')) {
+                systemProperty('farfield.agent.window', project.property('agentWindow') as String)
+            }
             // Scripted checks: -PquickPlay=<save name> opens that world directly.
             if (project.hasProperty('quickPlay')) {
                 programArguments.addAll('--quickPlaySingleplayer', project.property('quickPlay') as String)
@@ -61,6 +65,34 @@ dependencies {
 
 // Client and server share the default run dir.
 registerPrepareRuns(file('run'), file('run'))
+
+// An agent's run (-PagentWindow) goes without FML's loading window, which takes the
+// focus before any mod code runs (ADR-096); fml.toml is put back once the game exits.
+if (project.hasProperty('agentWindow')) {
+    def fmlConfig = file('run/config/fml.toml')
+    def restoreFmlConfig = tasks.register('restoreFmlConfig') {
+        doLast {
+            def saved = file("${fmlConfig}.agent-saved")
+            if (saved.exists()) {
+                fmlConfig.bytes = saved.bytes
+                saved.delete()
+            }
+        }
+    }
+    tasks.matching { it.name == 'runClient' }.configureEach {
+        finalizedBy restoreFmlConfig
+        doFirst {
+            if (fmlConfig.exists()) {
+                file("${fmlConfig}.agent-saved").bytes = fmlConfig.bytes
+                fmlConfig.setText(fmlConfig.getText('UTF-8')
+                        .replaceAll(/(?m)^earlyWindowControl = true/, 'earlyWindowControl = false'), 'UTF-8')
+            } else {
+                fmlConfig.parentFile.mkdirs()
+                fmlConfig.setText("earlyWindowControl = false${System.lineSeparator()}", 'UTF-8')
+            }
+        }
+    }
+}
 
 // Dev servers read console commands (scripted checks pipe them in).
 tasks.matching { it.name == 'runServer' }.configureEach {

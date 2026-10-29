@@ -50,6 +50,10 @@ loom {
             runDir('runs/client')
             // Test agents drive the dev client through files (ADR-095).
             property('farfield.agent', 'true')
+            // -PagentWindow=minimized|background: an agent's run stays out of the user's way (ADR-096).
+            if (project.hasProperty('agentWindow')) {
+                property('farfield.agent.window', project.property('agentWindow') as String)
+            }
             // Scripted checks: -PquickPlay=<save name> opens that world directly.
             if (project.hasProperty('quickPlay')) {
                 programArgs('--quickPlaySingleplayer', project.property('quickPlay') as String)

@@ -60,6 +60,16 @@ class AgentCommandTest {
     }
 
     @Test
+    void windowModes() {
+        assertEquals(new AgentCommand.Window(AgentCommand.WindowMode.BACKGROUND),
+                AgentCommand.parse("window background"));
+        assertEquals(new AgentCommand.Window(AgentCommand.WindowMode.RESTORE), AgentCommand.parse("window Restore"));
+        assertFalse(AgentCommand.parse("window minimize").needsPlayer());
+        assertThrows(IllegalArgumentException.class, () -> AgentCommand.parse("window hide"));
+        assertThrows(IllegalArgumentException.class, () -> AgentCommand.parse("window"));
+    }
+
+    @Test
     void onlyWorldCommandsWaitForAPlayer() {
         assertTrue(AgentCommand.parse("tp 0 100 0").needsPlayer());
         assertTrue(AgentCommand.parse("wait stable").needsPlayer());

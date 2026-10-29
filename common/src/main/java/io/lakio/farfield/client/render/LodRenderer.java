@@ -738,18 +738,19 @@ public final class LodRenderer {
     /**
      * What the agent inbox reads (ADR-095), client thread.
      *
+     * @param disabled      LOD rendering turned itself off (no OpenGL 4.6, a failed start)
      * @param drawing       a LOD world is attached and drawn
      * @param drawn         sections the last frame drew
      * @param wantedInView  sections in view the last selection wanted and had no mesh for
      * @param meshing       mesh jobs in flight
      * @param holesOpen     chunk columns near the camera with nothing drawn (ADR-077 detector)
      */
-    public record Snapshot(boolean drawing, int drawn, int resident, int wantedInView, int meshing, int holesOpen) {
+    public record Snapshot(boolean disabled, boolean drawing, int drawn, int resident, int wantedInView, int meshing, int holesOpen) {
     }
 
     public static Snapshot snapshot() {
         LodRenderer r = INSTANCE;
-        return new Snapshot(drawsBeyondVanilla(), r.lastDrawn, r.resident.size(), r.lastWantedInView,
+        return new Snapshot(r.disabled, drawsBeyondVanilla(), r.lastDrawn, r.resident.size(), r.lastWantedInView,
                 r.requested.size(), r.holeSince.size());
     }
 

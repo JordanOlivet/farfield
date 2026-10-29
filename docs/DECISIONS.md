@@ -2582,3 +2582,41 @@ Status: accepted, 2026-10-29. First step of `docs/analysis/agent-playtesting.md`
 - **Not covered**: the window must still render, so the Windows session
   stays unlocked; flight replay, the frame oracle and the pack instance
   are the next steps of the analysis.
+
+## ADR-096 — An agent's dev client stays out of the user's way
+
+Status: accepted, 2026-10-29. Amends ADR-095.
+
+- **Context**: the dev clients of ADR-095 took the keyboard focus when
+  their window opened, and vanilla then grabbed the mouse when the world
+  opened, so the user's mouse turned the game's camera while they worked.
+  Vanilla marks its window active right after creating it, focused or not
+  (`Minecraft.<init>` calls `setWindowActive(true)`), and `grabMouse` only
+  checks that flag. NeoForge shows FML's loading window, focused, before
+  any mod code runs.
+- **Decision**:
+  - `-PagentWindow=minimized|background` on `runClient` (both loaders)
+    sets `-Dfarfield.agent.window`; without it a dev client opens as
+    before, so the user's own launches are unchanged.
+  - The window is created without the focus (`GLFW_FOCUSED`,
+    `GLFW_FOCUS_ON_SHOW` off); `MinecraftMixin` marks it inactive after
+    vanilla, so no mouse grab until the user clicks in, then minimizes it
+    (`minimized`) or puts it behind every other window (`background`),
+    never activating it. A window that had the focus hands it on as the
+    minimize button does.
+  - NeoForge: an agent's run turns `earlyWindowControl` off in
+    `run/config/fml.toml` and a finalizer task puts the file back after the
+    game. NeoForge then creates the window through `ImmediateWindowHandler`
+    with the hints set in `Window.<init>`, so `WindowMixin` probes and
+    requests OpenGL 4.6 there too, when FML's public config says the early
+    window is off. This also covers a pack that turns the early window off.
+  - Inbox command `window minimize|background|restore`; `wait stable`
+    fails at once when LOD rendering is disabled instead of at its timeout.
+- **Result**: `gradlew build` passes. In game, minimized, while the user
+  worked (a focus monitor sampled the foreground window every 250 ms):
+  Fabric never had the focus (the window showed unfocused for 0.26 s,
+  then minimized); NeoForge with FML's early window had it about 3 s,
+  without it never; both drew while minimized (about 1,300 fps, fresh
+  screenshots after `look`), settled and closed on `quit`; `fml.toml`
+  came back byte for byte. `background` was checked through the inbox
+  command only, not as a launch mode.

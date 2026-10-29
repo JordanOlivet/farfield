@@ -156,6 +156,14 @@ public final class AgentClient {
                 waitUntilNanos = System.nanoTime() + (long) (w.seconds() * 1e9);
                 return false;
             }
+            case AgentCommand.Window w -> {
+                AgentWindow.apply(mc.getWindow().getWindow(), switch (w.mode()) {
+                    case MINIMIZE -> AgentWindow.Mode.MINIMIZED;
+                    case BACKGROUND -> AgentWindow.Mode.BACKGROUND;
+                    case RESTORE -> AgentWindow.Mode.NORMAL;
+                });
+                reply(e, true, Map.of());
+            }
             case AgentCommand.Quit ignored -> {
                 reply(e, true, Map.of());
                 Farfield.LOG.info("Agent inbox: closing the game");
@@ -185,6 +193,11 @@ public final class AgentClient {
                 }
                 LodRenderer.Snapshot r = LodRenderer.snapshot();
                 long now = System.nanoTime();
+                if (r.disabled()) {
+                    reply(e, false, Map.of("outcome", "LOD rendering disabled", "lod", lod(r)));
+                    settle = null;
+                    return true; // nothing will ever settle: say so now, not at the timeout
+                }
                 boolean quiet = r.drawing() && r.wantedInView() == 0 && r.meshing() == 0 && StreamClient.pending() == 0;
                 SettleWatch.Outcome outcome = settle.check(quiet, now);
                 if (outcome == SettleWatch.Outcome.WAITING) {
@@ -251,6 +264,7 @@ public final class AgentClient {
 
     private static Map<String, Object> lod(LodRenderer.Snapshot r) {
         Map<String, Object> m = new LinkedHashMap<>();
+        m.put("disabled", r.disabled());
         m.put("drawing", r.drawing());
         m.put("drawn", r.drawn());
         m.put("resident", r.resident());
