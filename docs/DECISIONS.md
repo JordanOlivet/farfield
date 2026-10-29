@@ -2620,3 +2620,37 @@ Status: accepted, 2026-10-29. Amends ADR-095.
   screenshots after `look`), settled and closed on `quit`; `fml.toml`
   came back byte for byte. `background` was checked through the inbox
   command only, not as a launch mode.
+
+## ADR-097 — A pack run beside the dev client, fresh worlds on demand
+
+Status: accepted, 2026-10-29. Step 2 of `docs/analysis/agent-playtesting.md`.
+
+- **Context**: the open bands show only in the user's pack (Sodium 0.8.13,
+  Iris and about 380 other mods on NeoForge 21.1.248), and only where the
+  preview gives way to the LOD, once per chunk: an agent's check needs that
+  pack and terrain that was never generated.
+- **Decision**:
+  - `runPackClient` (NeoForge): the dev build with the mods of the pack
+    instance `farfield.pack.dir` (local.properties) in its own run dir
+    `neoforge/runs/pack`. `syncPackMods` mirrors the pack's jars, leaving
+    out Farfield's (the dev build replaces it) and Crash Assistant (a
+    window of its own on every crash); `syncPackInstance` copies the
+    pack's configs, kubejs, resource and shader packs and options once
+    (missing files only), then the dev/client templates. 10 GB of heap.
+  - The dev NeoForge moves to 21.1.248, the pack's: its Forgified Fabric
+    API refuses older. The shipped jar still accepts any 21.1.
+  - `-PfreshWorld` with `-PquickPlay=<save>` deletes that save before the
+    run (LOD store included), on both loaders; only saves with a template
+    in `dev/client/saves`.
+  - `dev/agent/run-commands.sh` drops a command file once the inbox is on
+    and waits for `quit`; on a crash report or a timeout it closes the
+    game JVMs of the checkout (`dev/agent/close-game.ps1`), since FML's
+    error screen keeps a failed client open.
+- **Result**: `gradlew build` passes; the sync and `-PfreshWorld` work.
+  The pack does not start in the dev environment: Sinytra Connector,
+  which loads the pack's Fabric mods, fails with "Could not determine
+  clean minecraft artifact path", the Fabric mods are refused and the
+  client crashes after about a minute ("Registry is already frozen"). The
+  runner caught that crash (exit 2, report named, no window left).
+- **Open**: a production launch of the pack (the game as the launcher
+  starts it), or a way for Connector to find its clean game jar in dev.

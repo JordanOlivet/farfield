@@ -57,7 +57,7 @@ Prefer it to every keystroke and `click.ps1` step above: no focus, no chat key, 
 4. Chat replies are not in the outbox: grep the game log for `[CHAT]`, as before.
 5. End with `quit`: the game closes as from its own close button (no truncated `options.txt`), then sweep the JVMs.
 
-A runner that waits for the inbox, drops one file and waits for the `quit` reply took 81 s on NeoForge for a spawn, a teleport, two settles, four shots and a level colors toggle (2026-10-29).
+Steps 1 to 3 in one go: `dev/agent/run-commands.sh <run dir> <command file> [timeout s]` (Git Bash, run in the background beside the client). It waits for the inbox, drops the file, waits for the `quit` reply (exit 0), and on a crash report in the game log (exit 2) or at the timeout (exit 3) closes the game JVMs this checkout started since it began (`dev/agent/close-game.ps1`): a mod loading failure leaves FML's error screen open and the client would never quit. It took 81 s on NeoForge for a spawn, a teleport, two settles, four shots and a level colors toggle (2026-10-29). Match crashes on `Crash report saved to`, never on `Crash`: the pack's Crash Assistant mod logs that word at every start.
 
 Rendering and lighting rules: see `farfield-lod-renderer`. Server-to-client streaming: see `farfield-lod-streaming`.
 

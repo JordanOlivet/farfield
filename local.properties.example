@@ -14,3 +14,7 @@ farfield.testJars.dir=C:/Users/<you>/farfield-test-jars
 # its latest.log (not read by Gradle). Vanilla launcher default:
 # C:/Users/<you>/AppData/Roaming/.minecraft/logs
 farfield.gameLogs.dir=C:/Users/<you>/AppData/Roaming/.minecraft/logs
+
+# The pack instance whose mods and configs runPackClient loads beside the dev
+# build (ADR-097), e.g. a CurseForge instance folder. Not needed otherwise.
+farfield.pack.dir=C:/Users/<you>/curseforge/minecraft/Instances/<pack>

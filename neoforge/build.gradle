@@ -3,6 +3,28 @@ plugins {
     id 'net.neoforged.moddev'
 }
 
+// Settings shared by the dev client runs.
+def clientRunSettings = { run ->
+    // Test agents drive the dev client through files (ADR-095).
+    run.systemProperty('farfield.agent', 'true')
+    // -PagentWindow=minimized|background: an agent's run stays out of the user's way (ADR-096).
+    if (project.hasProperty('agentWindow')) {
+        run.systemProperty('farfield.agent.window', project.property('agentWindow') as String)
+    }
+    // Scripted checks: -PquickPlay=<save name> opens that world directly.
+    if (project.hasProperty('quickPlay')) {
+        run.programArguments.addAll('--quickPlaySingleplayer', project.property('quickPlay') as String)
+    }
+    // -PquickPlayServer=<host:port> joins that server directly (client mode checks).
+    if (project.hasProperty('quickPlayServer')) {
+        run.programArguments.addAll('--quickPlayMultiplayer', project.property('quickPlayServer') as String)
+    }
+    // -PclientUsername=<name>: a fixed offline name (operator rights on a test server).
+    if (project.hasProperty('clientUsername')) {
+        run.programArguments.addAll('--username', project.property('clientUsername') as String)
+    }
+}
+
 neoForge {
     version = neoforge_version
     // Automatically enable neoforge AccessTransformers if the file exists
@@ -22,24 +44,16 @@ neoForge {
         }
         client {
             client()
-            // Test agents drive the dev client through files (ADR-095).
-            systemProperty('farfield.agent', 'true')
-            // -PagentWindow=minimized|background: an agent's run stays out of the user's way (ADR-096).
-            if (project.hasProperty('agentWindow')) {
-                systemProperty('farfield.agent.window', project.property('agentWindow') as String)
-            }
-            // Scripted checks: -PquickPlay=<save name> opens that world directly.
-            if (project.hasProperty('quickPlay')) {
-                programArguments.addAll('--quickPlaySingleplayer', project.property('quickPlay') as String)
-            }
-            // -PquickPlayServer=<host:port> joins that server directly (client mode checks).
-            if (project.hasProperty('quickPlayServer')) {
-                programArguments.addAll('--quickPlayMultiplayer', project.property('quickPlayServer') as String)
-            }
-            // -PclientUsername=<name>: a fixed offline name (operator rights on a test server).
-            if (project.hasProperty('clientUsername')) {
-                programArguments.addAll('--username', project.property('clientUsername') as String)
-            }
+            clientRunSettings(it)
+        }
+        // The dev mod among the mods and configs of the user's pack instance
+        // (<farfield.pack.dir> in local.properties): pack-only bugs without the
+        // user (ADR-097). Its own run dir, filled by syncPackInstance.
+        packClient {
+            client()
+            gameDirectory = project.file('runs/pack')
+            jvmArgument('-Xmx10G')
+            clientRunSettings(it)
         }
         server {
             server()
@@ -69,30 +83,84 @@ registerPrepareRuns(file('run'), file('run'))
 // An agent's run (-PagentWindow) goes without FML's loading window, which takes the
 // focus before any mod code runs (ADR-096); fml.toml is put back once the game exits.
 if (project.hasProperty('agentWindow')) {
-    def fmlConfig = file('run/config/fml.toml')
-    def restoreFmlConfig = tasks.register('restoreFmlConfig') {
-        doLast {
-            def saved = file("${fmlConfig}.agent-saved")
-            if (saved.exists()) {
-                fmlConfig.bytes = saved.bytes
-                saved.delete()
+    [runClient: file('run'), runPackClient: file('runs/pack')].each { String runTask, File runDir ->
+        def fmlConfig = new File(runDir, 'config/fml.toml')
+        def saved = new File(runDir, 'config/fml.toml.agent-saved')
+        def restore = tasks.register("restoreFmlConfigAfter${runTask.capitalize()}") {
+            doLast {
+                if (saved.exists()) {
+                    fmlConfig.bytes = saved.bytes
+                    saved.delete()
+                }
             }
         }
-    }
-    tasks.matching { it.name == 'runClient' }.configureEach {
-        finalizedBy restoreFmlConfig
-        doFirst {
-            if (fmlConfig.exists()) {
-                file("${fmlConfig}.agent-saved").bytes = fmlConfig.bytes
-                fmlConfig.setText(fmlConfig.getText('UTF-8')
-                        .replaceAll(/(?m)^earlyWindowControl = true/, 'earlyWindowControl = false'), 'UTF-8')
-            } else {
-                fmlConfig.parentFile.mkdirs()
-                fmlConfig.setText("earlyWindowControl = false${System.lineSeparator()}", 'UTF-8')
+        tasks.matching { it.name == runTask }.configureEach {
+            finalizedBy restore
+            doFirst {
+                if (fmlConfig.exists()) {
+                    saved.bytes = fmlConfig.bytes
+                    fmlConfig.setText(fmlConfig.getText('UTF-8')
+                            .replaceAll(/(?m)^earlyWindowControl = true/, 'earlyWindowControl = false'), 'UTF-8')
+                } else {
+                    fmlConfig.parentFile.mkdirs()
+                    fmlConfig.setText("earlyWindowControl = false${System.lineSeparator()}", 'UTF-8')
+                }
             }
         }
     }
 }
+
+// The pack run dir (ADR-097): the pack's mods mirrored (Farfield's own jar left out, the
+// dev build replaces it; Crash Assistant left out too), its configs, resource and shader packs and options copied once
+// when missing (delete one to take the pack's again), then the dev/client templates.
+def packDir = project.findProperty('farfield.pack.dir')
+def packRunDir = file('runs/pack')
+def syncPackMods = tasks.register('syncPackMods', Sync) {
+    if (packDir != null) {
+        from("${packDir}/mods") {
+            include '*.jar'
+            exclude 'farfield-*'
+            // Opens a window of its own on every crash, which an agent's run leaves orphaned;
+            // the agent reads crash-reports/ itself.
+            exclude 'CrashAssistant-*'
+        }
+    }
+    into(new File(packRunDir, 'mods'))
+}
+def syncPackInstance = tasks.register('syncPackInstance') {
+    group = 'farfield'
+    description = 'Fills runs/pack from the pack instance named by farfield.pack.dir.'
+    dependsOn syncPackMods
+    doFirst {
+        if (packDir == null) {
+            throw new GradleException('Set farfield.pack.dir in local.properties to the pack instance folder')
+        }
+    }
+    doLast {
+        ['config', 'defaultconfigs', 'kubejs', 'resourcepacks', 'shaderpacks'].each { String folder ->
+            File from = file("${packDir}/${folder}")
+            if (from.directory) {
+                int count = DevTemplates.copyMissing(from, new File(packRunDir, folder)).size()
+                if (count > 0) {
+                    logger.lifecycle("Copied ${count} files of the pack's ${folder}")
+                }
+            }
+        }
+        File options = new File(packRunDir, 'options.txt')
+        if (!options.exists() && file("${packDir}/options.txt").exists()) {
+            options.bytes = file("${packDir}/options.txt").bytes
+            logger.lifecycle("Copied the pack's options.txt")
+        }
+        DevTemplates.copyMissing(rootProject.file('dev/client'), packRunDir).each {
+            logger.lifecycle("Created ${project.relativePath(it)} from dev/")
+        }
+    }
+}
+tasks.matching { it.name == 'runPackClient' }.configureEach {
+    dependsOn syncPackInstance
+}
+registerFreshWorld('runClient', file('run'))
+registerFreshWorld('runPackClient', packRunDir)
 
 // Dev servers read console commands (scripted checks pipe them in).
 tasks.matching { it.name == 'runServer' }.configureEach {

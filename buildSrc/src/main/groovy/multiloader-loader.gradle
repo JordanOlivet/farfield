@@ -61,3 +61,31 @@ ext.registerPrepareRuns = { File clientDir, File serverDir ->
         dependsOn prepareRuns
     }
 }
+
+// -PfreshWorld with -PquickPlay=<save>: the run starts again from the template
+// world of dev/client/saves, its LOD store included, so an agent replays a
+// flight over terrain that was never generated (ADR-097). Only saves that have
+// a template are deleted; the others would be lost for good.
+ext.registerFreshWorld = { String runTaskName, File clientDir ->
+    if (!project.hasProperty('freshWorld') || !project.hasProperty('quickPlay')) {
+        return
+    }
+    String save = project.property('quickPlay') as String
+    File template = rootProject.file("dev/client/saves/${save}")
+    if (!(save ==~ /[A-Za-z0-9._ -]+/) || save.startsWith('.') || !template.directory) {
+        throw new GradleException("-PfreshWorld needs a save with a template in dev/client/saves, not '${save}'")
+    }
+    def fresh = tasks.register("freshWorldFor${runTaskName.capitalize()}") {
+        group = 'farfield'
+        description = "Deletes saves/${save} of ${project.relativePath(clientDir)} so it starts from the template."
+        doLast {
+            File dir = new File(clientDir, "saves/${save}")
+            if (dir.exists()) {
+                project.delete(dir)
+                logger.lifecycle("Deleted ${project.relativePath(dir)}: the run starts from the template world")
+            }
+        }
+    }
+    tasks.matching { it.name == runTaskName }.configureEach { dependsOn fresh }
+    tasks.matching { it.name in ['prepareRuns', 'syncPackInstance', 'syncPackMods'] }.configureEach { mustRunAfter fresh }
+}
