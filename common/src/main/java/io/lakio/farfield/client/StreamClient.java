@@ -237,6 +237,12 @@ public final class StreamClient {
         return c != null && world != null && c.mirror == world && c.ready() ? c : null;
     }
 
+    /** Sections and tiles asked of the server or waiting to be (agent inbox, ADR-095); 0 when not streaming. */
+    public static int pending() {
+        StreamClient c = instance;
+        return c == null ? 0 : c.wishes.size() + c.inFlight.size() + c.tilesInFlight.size();
+    }
+
     /** The game is closing. */
     public static void onClientStopping() {
         StreamClient c = instance;

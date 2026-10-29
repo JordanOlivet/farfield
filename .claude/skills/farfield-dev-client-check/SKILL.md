@@ -47,6 +47,18 @@ Judge a dev client run from the game log and a screenshot, never from the Gradle
    - A fix to how chunks are ingested does not change stored LODs. Before the check, delete the world's `import.checkpoint` (the LOD dir under the save, e.g. `fabric/runs/client/saves/farfield-test/farfield/import.checkpoint`), or the import skips regions already marked done, then run `/farfield import` and wait for `LOD import ... done`. Also the same re-import is needed on the user's server and in his pack copy.
    - Stop the client window with `CloseMainWindow`, wait about 15 s, then send `stop` to the server file and sweep the JVMs. Append the `stop` from Bash (`echo stop >> <cmdfile>`). A PowerShell `Add-Content` to the same file failed with a sharing violation while the server held it, and the server was then force-killed. A force kill skips the LOD store close, so the counters `stop` logs are lost: wait for that line in the server log before sweeping. The `CloseMainWindow` filter on `MainWindowTitle -like 'Minecraft*'` reaches only the client, since the dev server has no window.
 
+## Agent inbox: drive the client without keystrokes (ADR-095)
+
+Prefer it to every keystroke and `click.ps1` step above: no focus, no chat key, no AZERTY trap. The dev client runs of both loaders set `-Dfarfield.agent=true`; a pack instance needs it added to its JVM arguments.
+
+1. Launch as usual (consent, sweep, `-PquickPlay`). Wait for `Agent inbox on: <dir>` in the game log, never before: opening the inbox deletes the command files already there.
+2. Write the commands to `<run dir>/farfield-agent/inbox/<name>.tmp`, then `mv` it to `.cmd` (only `.cmd` is read, files in name order). One per line: `command <text>`, `tp <x> <y> <z> [<yaw> <pitch>]` (absolute numbers only; `~` and `^` are refused), `look <yaw> <pitch>`, `screenshot <name> [hud]`, `state`, `wait stable [timeout] [hold]`, `wait ticks <n>`, `wait seconds <s>`, `quit`. World commands wait for the player, so the file may go in while the world loads.
+3. Read `<run dir>/farfield-agent/outbox.jsonl`: one JSON line per command with `ok`, and `error` when a line was refused. `screenshot` gives the PNG `path` (in `farfield-agent/shots/`, the game's own framebuffer at window size: maximize first for a detail check). `wait stable` gives `outcome` (`settled` or `timed out`), the seconds and the renderer counters; capture only after `settled`.
+4. Chat replies are not in the outbox: grep the game log for `[CHAT]`, as before.
+5. End with `quit`: the game closes as from its own close button (no truncated `options.txt`), then sweep the JVMs.
+
+A runner that waits for the inbox, drops one file and waits for the `quit` reply took 81 s on NeoForge for a spawn, a teleport, two settles, four shots and a level colors toggle (2026-10-29).
+
 Rendering and lighting rules: see `farfield-lod-renderer`. Server-to-client streaming: see `farfield-lod-streaming`.
 
 ## Handing a jar to the user (pack test)

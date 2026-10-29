@@ -48,6 +48,8 @@ loom {
             setConfigName('Fabric Client')
             ideConfigGenerated(true)
             runDir('runs/client')
+            // Test agents drive the dev client through files (ADR-095).
+            property('farfield.agent', 'true')
             // Scripted checks: -PquickPlay=<save name> opens that world directly.
             if (project.hasProperty('quickPlay')) {
                 programArgs('--quickPlaySingleplayer', project.property('quickPlay') as String)

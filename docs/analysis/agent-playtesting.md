@@ -223,3 +223,54 @@ If one works, the agent tests at night and the consent question
 Steps 1 and 2 alone remove the keystroke hazards and let the agent replay
 the user's exact flight; step 3 is what lets the agent say "fixed"
 without asking the user to fly again.
+
+## Review (2026-10-29, second pass)
+
+A second read against the progress log of the day found five gaps; they
+change the order above.
+
+1. **A replay needs fresh terrain.** The open bug shows "only where the
+   preview gives way to the LOD, once per chunk": a second flight over
+   the same path shows nothing. Each run starts from a pristine copy of
+   the world with the LOD stores emptied (server side and the client
+   mirror), or it reproduces nothing.
+2. **The open bug is pack-only.** The NeoForge dev client shows no bands
+   (`docs/progress/2026-10-29.md`); steps 1 to 3 in the plain dev client
+   would not reproduce it. The pack-like instance moves up, and the
+   agent hook must run in the user's CurseForge instance as well (the dev
+   jar plus `-Dfarfield.agent=true`), not only in `runClient`.
+3. **An engine-state oracle can be blind to it.** With ADR-094 the holes
+   line reported nothing while the user saw bands. If Sodium or Iris
+   damages the image after our pass, the renderer's state says "fine".
+   The discriminating detector compares what Farfield believes it drew
+   (its level-ID buffer) with the final image: a pixel we drew that ends
+   up sky-coloured points at the other mod.
+4. **Validation as written is not possible.** An in-engine detector
+   cannot run on a past video, and the 2026-10-28 flights were not
+   recorded. Two separate validations instead: a pixel "flash" detector
+   checked against the 18 annotated frames; the in-engine detector
+   checked by reproducing the case (pack, fresh terrain) once while the
+   user watches.
+5. **No determinism.** Freezing world time does not freeze our
+   generation and meshing threads, so two replays never give the same
+   frames. Judge a fix over N runs (about 5) by counting events, not on
+   one before/after pair.
+
+Smaller points: covered-window capture already works with `PrintWindow`
+(the gain of A is the keystrokes, not the capture). Before the off-PC
+spikes, two 10 minute checks: does a client started *before* the lock
+keep drawing (only a start while locked is known to hang), and does
+`tscon` to the console keep an RDP session unlocked after a disconnect.
+
+### Revised order
+
+| Step | Content | Estimate |
+|---|---|---|
+| 1 | A: inbox, command, screenshot readback, state, wait stable; usable in the pack instance from the start | half a day |
+| 2 | D: pack instance driven by the agent; pristine world and LOD stores reset on demand | half a day |
+| 3 | B: recorder + replay, judged over N runs | half a day to a day |
+| 4 | C: "drawn by Farfield but sky on screen" detector + ring buffer of the last 60 frames | 1 to 2 days |
+| 5 | E: CI smoke test, then the off-PC spikes | 2 hours, then half a day each |
+
+Steps 1 and 2 already let the agent run the Sodium/Iris A/B of the
+2026-10-29 log alone, before any detector.

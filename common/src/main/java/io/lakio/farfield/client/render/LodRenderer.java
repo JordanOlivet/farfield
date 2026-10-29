@@ -397,6 +397,9 @@ public final class LodRenderer {
     private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap holeSince =
             new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
     private static final long HOLE_SCAN_NANOS = 250_000_000L;
+    /** For the agent inbox (ADR-095): sections the last frame drew, sections wanted in view by the last selection. */
+    private int lastDrawn;
+    private int lastWantedInView;
     private static final int HOLE_RADIUS_CHUNKS = 32;
     private static final int HOLE_EXAMPLES = 3;
     private long nextHoleScan;
@@ -732,6 +735,24 @@ public final class LodRenderer {
                 + (sodiumRule ? "Sodium" : "vanilla") + " terrain, Sodium rule): " + (inReach ? "yes" : "no");
     }
 
+    /**
+     * What the agent inbox reads (ADR-095), client thread.
+     *
+     * @param drawing       a LOD world is attached and drawn
+     * @param drawn         sections the last frame drew
+     * @param wantedInView  sections in view the last selection wanted and had no mesh for
+     * @param meshing       mesh jobs in flight
+     * @param holesOpen     chunk columns near the camera with nothing drawn (ADR-077 detector)
+     */
+    public record Snapshot(boolean drawing, int drawn, int resident, int wantedInView, int meshing, int holesOpen) {
+    }
+
+    public static Snapshot snapshot() {
+        LodRenderer r = INSTANCE;
+        return new Snapshot(drawsBeyondVanilla(), r.lastDrawn, r.resident.size(), r.lastWantedInView,
+                r.requested.size(), r.holeSince.size());
+    }
+
     /** Whether LODs are drawn beyond the vanilla terrain (a LOD world is attached and rendering is on). */
     public static boolean drawsBeyondVanilla() {
         LodRenderer r = INSTANCE;
@@ -982,6 +1003,7 @@ public final class LodRenderer {
         if (frame % 60 == 0) {
             evictUnused(frameStart);
         }
+        lastDrawn = count;
         if (count > 0) {
             draw(cam, viewRotation, projection, mc);
         }
@@ -1233,6 +1255,7 @@ public final class LodRenderer {
             }
         }
         wantOrder.sort();
+        lastWantedInView = inView;
         if (stream != null) {
             stream.newSelection();
             stream.setDetail(selector.detail()); // the server pushes each level where it is drawn

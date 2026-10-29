@@ -2538,3 +2538,47 @@ Status: accepted, 2026-10-28. Amends ADR-076 and ADR-093.
   leave (2 s at most, as before).
 - **Result**: `gradlew build` passes, `LodSelectorTest` checks the
   stand-in set. Not run in game yet.
+
+## ADR-095 — An agent inbox drives the dev client without keystrokes
+
+Status: accepted, 2026-10-29. First step of `docs/analysis/agent-playtesting.md`.
+
+- **Context**: every in-game check went through OS keystrokes into the
+  game window (`farfield-dev-client-check`): the chat key the user rebound,
+  AZERTY dead keys (a `^` turned a relative `/tp` into an absolute one
+  underground), `SetForegroundWindow` failing silently, Escape opening the
+  menu. The agent could not run a check without the window focused, and
+  each trap cost a run. The analysis of 2026-10-29 found no 1.21.1 mod
+  that fits both loaders, and chose files over MCP: Claude Code reads and
+  writes files and PNGs directly, with no server, port or token.
+- **Decision**:
+  - `AgentClient` (common) runs the commands of `AgentInbox` (core) at the
+    end of client ticks, only with `-Dfarfield.agent=true`; the dev client
+    runs of both loaders set it, a pack instance gets it as a JVM argument.
+    Shipped jars carry the code, off.
+  - Folder `<game dir>/farfield-agent/`: command files `inbox/*.cmd` (one
+    command per line, read in name order, deleted once read; written
+    under another name and renamed), one JSON line per command in
+    `outbox.jsonl`, screenshots in `shots/`. Files and outbox of an
+    earlier run are cleared when the inbox opens.
+  - Commands: `command <text>` (through `ClientPacketListener.sendCommand`,
+    which runs client commands first on both loaders), `tp` with absolute
+    numbers only (sent as `/tp @s`), `look`, `screenshot <name> [hud]`
+    (the main render target, as F2 reads it, HUD hidden for two ticks
+    first), `state` (position, fps, renderer counters), `wait stable
+    [timeout] [hold]` (nothing wanted in view, meshing or fetched from the
+    stream for the whole hold), `wait ticks|seconds`, `quit`. Commands
+    that need a player wait for the world, so a file can be dropped
+    during loading.
+  - The inbox turns `pauseOnLostFocus` off in memory: a covered window
+    must not pause a single player world under the agent.
+- **Result**: unit tests (`AgentCommandTest`, `AgentInboxTest`,
+  `SettleWatchTest`); `gradlew build` passes. In game on both loaders
+  (2026-10-29, fresh `farfield-test`): one command file with no keystroke
+  ran a spawn settle (36 s NeoForge, 32 s Fabric), a teleport, a second
+  settle, four screenshots (HUD hidden and shown), the level colors on
+  and off, two refused lines (`tp ^ ^ ^3`, an unknown verb) and `quit`;
+  78 to 81 s from launch to a clean close, `options.txt` intact.
+- **Not covered**: the window must still render, so the Windows session
+  stays unlocked; flight replay, the frame oracle and the pack instance
+  are the next steps of the analysis.
