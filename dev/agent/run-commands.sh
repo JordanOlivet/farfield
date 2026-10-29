@@ -58,6 +58,13 @@ stop_on_timeout() {
     fi
 }
 
+# The test flights of dev/agent/flights/ for `replay` (ADR-099); a flight the
+# run dir already has (the user's, recorded in game) is left as it is.
+mkdir -p "$RUN/farfield/flights"
+for flight in "$HERE"/flights/*.flight; do
+    [ -e "$flight" ] && [ ! -e "$RUN/farfield/flights/$(basename "$flight")" ] && cp "$flight" "$RUN/farfield/flights/"
+done
+
 # Opening the inbox deletes the files already there: drop ours only after it.
 until fresh_log && grep -aq "Agent inbox on" "$LOG"; do
     stop_on_crash

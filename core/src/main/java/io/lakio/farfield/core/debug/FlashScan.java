@@ -22,7 +22,9 @@ import java.util.stream.Stream;
  *
  * Frames are read in file name order and numbered from 1. {@code --expect}
  * lists the frames a person saw a glitch on: the scan reports which it
- * found, missed and found besides. {@code --out} writes each flagged frame
+ * found, missed and found besides, and scores it by glitch (consecutive
+ * expected frames are one glitch, found when any of its frames is; a frame
+ * flagged next to a glitch is not counted as another). {@code --out} writes each flagged frame
  * with its box, beside the frames before and after it. {@code --ignore-color}
  * takes out marks drawn on the frames (a person's annotation strokes): pixels
  * within the distance of that colour, and their neighbours, take the pixel
@@ -125,7 +127,31 @@ public final class FlashScan {
             System.out.println("expected and found: " + hit);
             System.out.println("expected, missed: " + missed);
             System.out.println("found, not expected: " + extra);
+            List<List<Long>> glitches = glitches(expected);
+            int foundGlitches = 0;
+            for (List<Long> g : glitches) {
+                foundGlitches += g.stream().anyMatch(found::contains) ? 1 : 0;
+            }
+            long others = extra.stream().filter(f -> !expected.contains(f - 1) && !expected.contains(f + 1)).count();
+            System.out.printf(Locale.ROOT, "score: %d of %d glitches found, %d other frames flagged%n",
+                    foundGlitches, glitches.size(), others);
         }
+    }
+
+    /** Runs of consecutive frames, each one glitch. */
+    static List<List<Long>> glitches(TreeSet<Long> frames) {
+        List<List<Long>> runs = new ArrayList<>();
+        for (long f : frames) {
+            List<Long> last = runs.isEmpty() ? null : runs.get(runs.size() - 1);
+            if (last != null && last.get(last.size() - 1) == f - 1) {
+                last.add(f);
+            } else {
+                List<Long> run = new ArrayList<>();
+                run.add(f);
+                runs.add(run);
+            }
+        }
+        return runs;
     }
 
     /** Pixels near {@code color}, and their 8 neighbours, take the pixel of {@code previous}. */

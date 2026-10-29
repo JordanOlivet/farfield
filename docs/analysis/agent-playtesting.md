@@ -282,3 +282,42 @@ Done: step 1 (ADR-095, ADR-096: inbox, window out of the way), step 2
 4 (ADR-099: flight record and replay, frame probe with a flash detector, an
 erased-LOD check and a column flicker watch from the renderer's state).
 Kept in mind, not started: step 5 (CI smoke test, off-PC rendering).
+
+Tracked tools: `dev/agent/run-commands.sh` (drops a command file, waits,
+closes a crashed game), `dev/agent/close-game.ps1`,
+`dev/agent/focus-watch.ps1` (proves a run never takes the focus),
+`dev/agent/scenarios/*.cmd` (the checks run on 2026-10-29, each with its
+launch line and what to read), `dev/agent/flights/east.flight` (a
+400-tick test flight the runner copies into the run dir).
+
+### Reference recording for the flash detector
+
+The ground truth the frame probe's flash detector was tuned on (ADR-099);
+score any change to `FlashDetector` against it again.
+
+- Frames: `<Videos>/farfield-frames-231234/0001.jpg` to `0707.jpg`, outside
+  the repository (the user's Videos folder), 3838 x 2062 JPEG, cut from the
+  user's screen recording of 2026-10-28 in the pack with `debug levels` on
+  (`docs/progress/2026-10-28.md`, ADR-092 on the client).
+- Annotations: the user drew blue strokes (about RGB 0, 112, 208) on the
+  frames where they saw a glitch, frames 1 to 350 only. A detector run on
+  them as they are finds the strokes: always erase them
+  (`--ignore-color 0070D0:90`). Annotated frames, found by that colour:
+  87, 94, 112, 113, 126, 127, 138, 145, 146, 172, 185, 206, 207, 266, 286,
+  294, 337, 338: 13 glitches (the five pairs are two-frame glitches).
+- What they show: faint bands or patches where the preview gives way to
+  the LOD (frame 172: a colour distance of about 26 of 765, the frames
+  around it within 10 of each other); 286 and 294, a level-2 area for one
+  frame amid level 0; 336 to 338 and 576 to 577, a two to three frame hole
+  at the game's own render edge, a separate glitch (577 is past the
+  annotated range).
+- Score with the probe's defaults (change 14, settle 6, area 60 of
+  479 x 257): 10 of 13 glitches found, 40 other frames flagged in 350, some
+  of them at the render edge, the rest not judged.
+
+```
+gradlew :core:flashScan --args="<Videos>/farfield-frames-231234 --to 350 --ignore-color 0070D0:90 --expect 87,94,112,113,126,127,138,145,146,172,185,206,207,266,286,294,337,338"
+```
+
+The last line it prints is the score; `--out <dir>` writes every flagged
+frame with its box beside its neighbours.
