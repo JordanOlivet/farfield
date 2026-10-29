@@ -1,0 +1,1 @@
+User: "vire crash assistant déjà et fais la fermeture auto pour commencer". Build edit: "// Opens a window of its own on every crash, which an agent's run leaves orphaned;\n            // the agent reads crash-reports/ itself.\n            exclude 'CrashAssistant-*'"

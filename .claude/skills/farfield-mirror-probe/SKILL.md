@@ -18,4 +18,6 @@ Answer a render question from the stored data, not from a guess: copy the store,
 8. For a leak test, build the area as one grid of blocks across section borders and count water touching a non-water hollow through all 26 neighbours, not just 6 faces. A per-section, face-only check reported 0 where the grid found the leak.
 6. Delete the probe before any commit; `git status` must not list it.
 
+9. Tell a feature missing from the LOD from one missing from the preview by counting its blocks on the same chunks: the server's region files, read by the temporary test, against the mirror's level 0. Equal counts mean the LOD holds the feature and the bare land is the preview: switch to `farfield-feature-spike`. Delete the probe afterwards, as in step 6.
+
 Probe template: `scripts/MirrorLightProbe.java`.

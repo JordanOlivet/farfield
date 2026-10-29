@@ -1,0 +1,1 @@
+The pipeline writes sections idle for 250 ms every 250 ms (was 3 s and 1 s). A refreshed coarse index makes the client ask the finer region's index again.

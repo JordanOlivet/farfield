@@ -1,0 +1,1 @@
+À savoir avant de déployer : avec le protocole 5, tout client qui a encore l'ancien jar (par exemple l'instance Fabric `Cobblemon Custom Modpack`) sera refusé par le serveur et construira ses propres LODs.

@@ -1,0 +1,1 @@
+{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-28T13:48:21.139Z","sessionId":"8f5a38dc-74b2-4925-82ec-68b0d6885a78","content":"Il faudrait tout gérer et à la limite permettre à l'utilisateur de désactiver certains types de features si ça le gène. Car si on gère chaque feature une par une on y arrivera jamais"}

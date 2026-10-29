@@ -1,0 +1,2 @@
+Agent window: minimized at launch (it had the focus: true)
+Ah oui, si le minimise fonctionne pas, mettre la fenêtre en arrière plan derrière toutes les fenêtres déjà ouverte ça me va aussi. Vas y fais ça

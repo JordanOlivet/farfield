@@ -1,0 +1,1 @@
+A mirror (`LodWorld.openMirror`) never rebuilds its coarse levels. Once

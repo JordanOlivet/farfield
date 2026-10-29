@@ -1,0 +1,1 @@
+found the mirror's level 0 holding the world's tree blocks exactly (614,757 both), so the treeless land was the noise preview.
