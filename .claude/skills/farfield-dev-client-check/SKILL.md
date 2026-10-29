@@ -47,6 +47,14 @@ Judge a dev client run from the game log and a screenshot, never from the Gradle
    - A fix to how chunks are ingested does not change stored LODs. Before the check, delete the world's `import.checkpoint` (the LOD dir under the save, e.g. `fabric/runs/client/saves/farfield-test/farfield/import.checkpoint`), or the import skips regions already marked done, then run `/farfield import` and wait for `LOD import ... done`. Also the same re-import is needed on the user's server and in his pack copy.
    - Stop the client window with `CloseMainWindow`, wait about 15 s, then send `stop` to the server file and sweep the JVMs. Append the `stop` from Bash (`echo stop >> <cmdfile>`). A PowerShell `Add-Content` to the same file failed with a sharing violation while the server held it, and the server was then force-killed. A force kill skips the LOD store close, so the counters `stop` logs are lost: wait for that line in the server log before sweeping. The `CloseMainWindow` filter on `MainWindowTitle -like 'Minecraft*'` reaches only the client, since the dev server has no window.
 
+## Pack run: the user's pack beside the dev build (ADR-097, ADR-098)
+
+`.\gradlew.bat :neoforge:runPackClient -PquickPlay=farfield-test -PfreshWorld -PagentWindow=minimized` loads the dev build among the mods of the pack instance named by `farfield.pack.dir` (local.properties), in `neoforge/runs/pack`. It takes about 80 s to the agent inbox and 10 GB of heap.
+- `syncPackMods` mirrors the pack's jars on every run (Farfield's own jar and Crash Assistant left out); configs, kubejs, resource and shader packs and `options.txt` are copied once, missing files only: delete one in `runs/pack` to take the pack's again. Disable a mod for an A/B by renaming it in `runs/pack/mods`, and remember the next sync puts it back.
+- `-PfreshWorld` deletes the save first (LOD store included): the open bug shows only over terrain never generated, so use it for every repro run.
+- The dev NeoForge is the pack's (21.1.248): when the pack moves, move `neoforge_version` too, or its Forgified Fabric API refuses the run.
+- Connector needs `-Dconnector.clean.path` (the run passes ModDevGradle's `vanilla-deobfuscated.jar`). Without it the Fabric mods are refused, NeoForge logs `Cowardly refusing to send event ... to a broken mod state`, and the client crashes later on an unrelated mod ("Registry is already frozen"): read the first error of the log, not the crash's.
+
 ## Agent inbox: drive the client without keystrokes (ADR-095)
 
 Prefer it to every keystroke and `click.ps1` step above: no focus, no chat key, no AZERTY trap. The dev client runs of both loaders set `-Dfarfield.agent=true`; a pack instance needs it added to its JVM arguments.

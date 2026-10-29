@@ -25,8 +25,14 @@ def clientRunSettings = { run ->
     }
 }
 
+// A clean (unpatched, Mojang-named) game jar: Sinytra Connector reads it to adapt the
+// pack's Fabric mods, from the launcher's libraries in production and from
+// -Dconnector.clean.path in dev (ADR-097).
+def vanillaJar = file('build/moddev/artifacts/vanilla-deobfuscated.jar')
+
 neoForge {
     version = neoforge_version
+    additionalMinecraftArtifacts.put('vanillaDeobfuscated', vanillaJar)
     // Automatically enable neoforge AccessTransformers if the file exists
     def at = project(':common').file('src/main/resources/META-INF/accesstransformer.cfg')
     if (at.exists()) {
@@ -53,6 +59,7 @@ neoForge {
             client()
             gameDirectory = project.file('runs/pack')
             jvmArgument('-Xmx10G')
+            systemProperty('connector.clean.path', vanillaJar.absolutePath)
             clientRunSettings(it)
         }
         server {

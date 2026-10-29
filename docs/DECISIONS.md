@@ -2654,3 +2654,27 @@ Status: accepted, 2026-10-29. Step 2 of `docs/analysis/agent-playtesting.md`.
   runner caught that crash (exit 2, report named, no window left).
 - **Open**: a production launch of the pack (the game as the launcher
   starts it), or a way for Connector to find its clean game jar in dev.
+
+## ADR-098 — Connector reads a clean game jar in the pack run
+
+Status: accepted, 2026-10-29. Closes ADR-097's open point.
+
+- **Context**: in the pack run, Sinytra Connector failed with "Could not
+  determine clean minecraft artifact path", the pack's Fabric mods were
+  refused, NeoForge then refused every event to "a broken mod state"
+  (registration included), and the first late item crashed the client
+  ("Registry is already frozen", cobblenav). Connector does not need a
+  production game: it reads the clean (unpatched, Mojang-named) game jar
+  from the launcher's libraries in production
+  (`net.minecraft:client:<mc>-<neoform>:srg`) and from
+  `-Dconnector.clean.path` in dev.
+- **Decision**: ModDevGradle writes NeoFormRuntime's `vanillaDeobfuscated`
+  result to `neoforge/build/moddev/artifacts/vanilla-deobfuscated.jar`
+  (`additionalMinecraftArtifacts`), and `packClient` passes it as
+  `connector.clean.path`.
+- **Result**: the pack run (384 mods, Sodium 0.8.13, Iris, Connector,
+  NeoForge 21.1.248, fresh `farfield-test`) started minimized without the
+  focus, opened the agent inbox after 78 s and ran a flight of six
+  256-block jumps east with captures: 26 commands, none failed, both
+  `wait stable` settled (39.5 s, 32.5 s), LODs drawn on OpenGL 4.6, closed
+  on `quit` after 291 s, `fml.toml` restored.
