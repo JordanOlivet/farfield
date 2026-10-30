@@ -31,7 +31,7 @@ Legend: `[ ]` todo · `[~]` in progress (the text says what remains) ·
   the files were approved (the user, 2026-10-25). Not checked: Modrinth
   search (the project is still in review)
 
-- [~] A.3 Release 0.2.0 (tag `v0.2.0`, release type): server streaming
+- [x] A.3 Release 0.2.0 (tag `v0.2.0`, release type): server streaming
   of LODs and the preview (B.2, B.3), mod features and surface rules in
   the preview (D.1, D.2, D.4, D.5). Published 2026-10-30, run
   41088514099: five jobs green, both Publish jobs `Successfully
@@ -41,8 +41,9 @@ Legend: `[ ]` todo · `[~]` in progress (the text says what remains) ·
   rewritten (sections, a where-it-works table, server owners,
   compatibility) with ten screenshots from the dev client, pushed to
   Modrinth with its gallery (2026-10-30; the user: "on va faire avec ça
-  pour commencer", their own screenshots later). Remains: CurseForge (the
-  user pastes it) and the version pages checked by the user.
+  pour commencer", their own screenshots later). CurseForge: text and
+  images (JPEG under its 2 MB limit) put there by the user, who closed
+  with "tout est bon".
 
 ## M2.B — Server streaming of LODs and the noise preview (ADR-013)
 
