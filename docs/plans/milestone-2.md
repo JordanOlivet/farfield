@@ -41,6 +41,7 @@ Legend: `[ ]` todo · `[~]` in progress (the text says what remains) ·
   listing text (`docs/listing/description.md`, rewritten for 0.2.0) on
   Modrinth and CurseForge once the user validates it; the version pages
   checked by the user.
+
 ## M2.B — Server streaming of LODs and the noise preview (ADR-013)
 
 Today the noise preview is built by the integrated server only, and a
