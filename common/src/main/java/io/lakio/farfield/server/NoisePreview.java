@@ -93,7 +93,7 @@ final class NoisePreview {
     private final Map<ResourceKey<Level>, Optional<Dimension>> dimensions = new ConcurrentHashMap<>();
     private volatile boolean stopped;
     private long ticks;
-    /** When the pipeline last took in new chunks; the preview keeps one thread until {@link #YIELD_NANOS} after. */
+    /** When the pipeline last took in new chunks; the preview keeps half its threads until {@link #YIELD_NANOS} after. */
     private long lastIngest;
     private static final long YIELD_NANOS = 5_000_000_000L;
 
@@ -197,13 +197,15 @@ final class NoisePreview {
             return;
         }
         // New chunks first: while the server takes in chunks a player generates, the preview keeps
-        // one thread, so their generation, light and ingest get the processor (ADR-084).
+        // half its threads, so their generation, light and ingest get the processor (ADR-084). One
+        // thread there left a 16-core server mostly idle after a teleport (ADR-103).
         long now = System.nanoTime();
         if (pipeline.ingesting()) {
             lastIngest = now;
         }
-        int threads = now - lastIngest < YIELD_NANOS ? 1
-                : RenderSettings.effectiveThreads(RenderSettings.previewThreads());
+        int usual = RenderSettings.effectiveThreads(RenderSettings.previewThreads());
+        int threads = now - lastIngest < YIELD_NANOS ? io.lakio.farfield.core.config.RenderConfig.yieldingThreads(usual)
+                : usual;
         RenderSettings.resize(pool, threads, "Noise preview");
         boolean report = ticks % REPORT_TICKS == 0;
         for (ServerLevel level : server.getAllLevels()) {

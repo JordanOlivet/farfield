@@ -17,4 +17,8 @@ Trees missing in a cold biome: check the ground under the features before judgin
 
 The same spike judges the preview's ground: `/farfield spike surface <biome> [side]` compares the generator's surface rules on the stand-in with the real top of chunks generated to their surface. Read its `Surface spike: tops right` line; the guess it prints is the old one. Check the reading code first: `ChunkAccess.getHeight` is the top block itself, so a spike comparing the block under it reports nonsense (it did once: plains' real top came out as "dirt").
 
+Timing is not measured in dev. The same worldgen mods ran 5 to 7 times slower in the pack (C2ME compiles the density functions): a tile took 35.5 s in the pack and 2 to 5 ms a stand-in chunk in dev. Before claiming a speed, measure it in the pack (single player, `runPackClient`, `/farfield spike tile`) or on the server, and profile with JFR attached by `jcmd` to `net.neoforged.devlaunch.Main` when the pack is slow.
+
+Under C2ME a chunk fetched from another thread comes back `null`: the spike's real chunks are asked on the server thread (`level.getServer().submit(() -> level.getChunkSource().getChunk(...)).join()`). A `NullPointerException` at `SurfaceSpike.run` with `"real" is null` means that call ran off the server thread.
+
 Run details and the last result: see `references/spike-run.md`.

@@ -116,6 +116,16 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
         return setting == AUTO ? Math.max(1, Math.min(6, processors / 3)) : setting;
     }
 
+    /**
+     * The noise preview's threads while the server takes in the chunks a
+     * player generates: half its usual count, rounded up (5 threads: 3; 1
+     * or 2: 1), so the new chunks keep the processor first (ADR-084) on a
+     * small machine without leaving a large one idle (ADR-103).
+     */
+    public static int yieldingThreads(int threads) {
+        return Math.max(1, (threads + 1) / 2);
+    }
+
     public static float clampVoxelPixels(float pixels) {
         if (Float.isNaN(pixels)) {
             return DEFAULT_VOXEL_PIXELS;

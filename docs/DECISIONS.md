@@ -2902,3 +2902,22 @@ Status: accepted, 2026-10-30. Amends ADR-101.
   before this), 1.8 to 2.3 ms a stand-in chunk. `gradlew build` passes.
 - **Not covered**: the tile time on the home server (its CPU is not this
   PC's); biomes that differ with height at the surface (none seen).
+
+## ADR-103 — The preview keeps half its threads while new chunks come in
+
+Status: accepted, 2026-10-30. Amends ADR-084.
+
+- **Context**: after a far teleport on the home server (16 cores, the
+  preview's `auto` is 5 threads), the preview built 9 tiles a minute on
+  the one thread ADR-084 leaves it while the server takes in new chunks;
+  the load average read 4.3 of 16. The user: keep the cut on a teleport,
+  "mais il ne faut pas clamp à 1 thread, il faut que ce soit
+  proportionnel au nombre de thread dispo".
+- **Decision**: while chunks wait for their snapshot or are ingested, and
+  5 s after, the preview keeps half its usual threads, rounded up, at
+  least one (`RenderConfig.yieldingThreads`): 5 threads give 3, 1 or 2
+  give 1. ADR-084's reason stands: the chunks a player generates keep the
+  processor first.
+- **Result**: `RenderConfigTest`, `gradlew build` pass. Not measured on
+  the server yet (tiles a minute after a teleport, the pipeline's load to
+  ingest time).

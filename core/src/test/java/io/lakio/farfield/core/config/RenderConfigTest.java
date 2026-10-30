@@ -55,6 +55,12 @@ class RenderConfigTest {
         assertEquals(5, RenderConfig.threads(RenderConfig.AUTO, 16));
         assertEquals(6, RenderConfig.threads(RenderConfig.AUTO, 64));
         assertEquals(6, RenderConfig.threads(6, 4));
+        // While new chunks come in: half, rounded up, at least one.
+        assertEquals(1, RenderConfig.yieldingThreads(1));
+        assertEquals(1, RenderConfig.yieldingThreads(2));
+        assertEquals(3, RenderConfig.yieldingThreads(5));
+        assertEquals(3, RenderConfig.yieldingThreads(6));
+        assertEquals(8, RenderConfig.yieldingThreads(16));
     }
 
     @Test
