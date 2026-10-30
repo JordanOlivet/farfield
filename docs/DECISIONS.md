@@ -2951,3 +2951,48 @@ Status: accepted, 2026-10-30. Amends ADR-101 and ADR-102; tile format 15.
   tile 6.5 s, its surface rules 1.5 s. `gradlew build` passes.
 - **Not covered**: other mods that swap the surface rules' lookups by
   class; the user's server after the deploy.
+
+## ADR-105 — Kelp and seagrass in the preview's water
+
+Status: accepted, 2026-10-30. Amends ADR-079 and ADR-060; tile format 16.
+
+- **Context**: the user asked for the sea floor's plants in the preview.
+  ADR-079's stand-in already grows the oceans' features, but the tile left
+  out everything under the sea that holds water. Real LODs draw kelp and
+  seagrass as crossed quads in their water (ADR-065); coral fans, coral
+  plants and sea pickles are water there, coral blocks are blocks (which
+  the preview's feature voxels already keep).
+- **Decision**: the stand-in's submerged plants (`BlockKeys.isSubmergedPlant`:
+  kelp, seagrass, tall seagrass) are counted per column of the tile, with
+  their blocks and the material of their lowest block; per chunk the tile
+  keeps each lowest material's columns and mean height
+  (`PreviewTile.seaPlantEntry`, kind, height up to 63, columns in
+  sixteenths). On the finest level the preview draws, on a sea floor, a
+  column of that material at that height in the water, one block under the
+  surface at most, chosen per block as land plants are (ADR-060, another
+  hash); coarser levels draw the water as before.
+- **Result**: unit test (kelp on a floor at y 50: 1 - 1/e of the floor,
+  up to y 61 under a sea at 63, the tile through its encoding). The feature
+  spike now counts them (dev server, Biomes O' Plenty and Terralith, 8 x 8
+  chunks): warm ocean 1,688 real columns, 1,629 in the stand-in, 1,421 at
+  the same place; lukewarm 1,599 / 1,548 / 1,525; ocean 1,836 / 1,799 /
+  1,799; deep lukewarm 4,068 / 3,960 / 3,843; blocks within 3 %. A dev
+  client's tile over the warm ocean of `farfield-test`: kelp 6,214
+  columns of 6.5 blocks in 289 chunks, seagrass 37,534, tall seagrass
+  21,030. `gradlew build` passes.
+- **Not covered**: a look in the user's pack; corals beyond their blocks
+  (the real LODs show nothing else of them).
+
+## ADR-106 — An agent's dev client out of the way is silent
+
+Status: accepted, 2026-10-30. Amends ADR-096.
+
+- **Context**: the user heard the minimized dev clients the agent ran:
+  "le son du jeu est activé. Il faudra le désactivé par défaut".
+- **Decision**: with `-PagentWindow=minimized|background`, the agent
+  client sets the sound listener's gain to 0 every tick
+  (`SoundManager.updateSourceVolume(MASTER, 0)`), not the master option:
+  the run dir's `options.txt` keeps the user's volume for their own runs.
+  One `Agent window: sound muted` log line.
+- **Result**: a NeoForge dev run logged the line 6 s after launch;
+  `soundCategory_master:1.0` unchanged. Not heard (the agent has no ears).

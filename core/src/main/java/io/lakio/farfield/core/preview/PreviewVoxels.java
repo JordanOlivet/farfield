@@ -246,6 +246,20 @@ public final class PreviewVoxels {
                         section.set(i, height - oy, k, plant);
                     }
                 }
+                if (level == 0 && water >= 0 && height < sea - 1 && layerAxis < 0) {
+                    // Kelp and seagrass on the sea floor, in the water they stand in (ADR-105).
+                    int entry = seaPlantAt(tile, bx, bz);
+                    if (entry >= 0) {
+                        int material = tile.plantMaterial(PreviewTile.seaPlantKind(entry));
+                        int to = Math.min(height + PreviewTile.seaPlantHeight(entry), sea - 1);
+                        for (int y = Math.max(height, oy); y < Math.min(to, oy + S); y++) {
+                            if (section == null) {
+                                section = new LodSection(air);
+                            }
+                            section.set(i, y - oy, k, material);
+                        }
+                    }
+                }
             }
         }
         if (section != null) {
@@ -314,6 +328,35 @@ public final class PreviewVoxels {
             }
         }
         return tile.plantMaterial(entries[entries.length - 1] & 0xFF);
+    }
+
+    /**
+     * The entry of the plant under the sea at block (bx, bz) on the finest
+     * level, -1 for none: each of the chunk's columns per chunk lands on a
+     * random block, as {@link #plantAt}, with another hash.
+     */
+    static int seaPlantAt(PreviewTile tile, int bx, int bz) {
+        int[] entries = tile.seaPlants(Math.floorMod(bx, PreviewTile.BLOCKS) >> 4,
+                Math.floorMod(bz, PreviewTile.BLOCKS) >> 4);
+        if (entries.length == 0) {
+            return -1;
+        }
+        double total = 0;
+        for (int e : entries) {
+            total += PreviewTile.seaPlantColumns(e);
+        }
+        long h = mix(bx * 0xD6E8FEB86659FD93L ^ bz * 0x9E3779B97F4A7C15L ^ 0x5EA5EAL);
+        if ((h >>> 11) * 0x1.0p-53 >= plantCover(total)) {
+            return -1;
+        }
+        double r = (mix(h) >>> 11) * 0x1.0p-53 * total;
+        for (int e : entries) {
+            r -= PreviewTile.seaPlantColumns(e);
+            if (r < 0) {
+                return e;
+            }
+        }
+        return entries[entries.length - 1];
     }
 
     /** The top material of a coarse voxel at block (bx, bz): its ground covered by the chunk's plants. */

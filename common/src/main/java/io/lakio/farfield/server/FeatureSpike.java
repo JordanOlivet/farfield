@@ -110,6 +110,9 @@ final class FeatureSpike {
             }
         }
         int chunks = side * side;
+        // Kelp and seagrass (ADR-105): their columns and blocks, in the sandbox and for real.
+        LongOpenHashSet sandboxSea = new LongOpenHashSet();
+        long[] sandboxSeaBlocks = new long[1];
         sandbox.written().forEach((pos, state) -> {
             int x = BlockPos.getX(pos);
             int z = BlockPos.getZ(pos);
@@ -125,6 +128,10 @@ final class FeatureSpike {
             if (state.is(BlockTags.LOGS)) {
                 sandboxTrunks.add(ChunkPos.asLong(x, z));
             }
+            if (io.lakio.farfield.lod.BlockKeys.isSubmergedPlant(state)) {
+                sandboxSea.add(ChunkPos.asLong(x, z));
+                sandboxSeaBlocks[0]++;
+            }
         });
         report.accept(String.format(java.util.Locale.ROOT,
                 "sandbox: %.2f ms per chunk decorating, %.2f ms per stand-in chunk copied (%d chunks, %d already"
@@ -138,6 +145,8 @@ final class FeatureSpike {
         // that ground (the sandbox's copies hold its own features now).
         long genStart = System.nanoTime();
         LongOpenHashSet realTrunks = new LongOpenHashSet();
+        LongOpenHashSet realSea = new LongOpenHashSet();
+        long[] realSeaBlocks = new long[1];
         long[] realBlocks = new long[4];
         java.util.Map<Long, ChunkAccess> grounds = new java.util.HashMap<>();
         for (int dz = 0; dz < side; dz++) {
@@ -164,6 +173,10 @@ final class FeatureSpike {
                                 continue;
                             }
                             classify(state, realBlocks);
+                            if (io.lakio.farfield.lod.BlockKeys.isSubmergedPlant(state)) {
+                                realSea.add(ChunkPos.asLong(bx, bz));
+                                realSeaBlocks[0]++;
+                            }
                             if (state.is(BlockTags.LOGS)) {
                                 realTrunks.add(ChunkPos.asLong(bx, bz));
                             }
@@ -186,6 +199,16 @@ final class FeatureSpike {
                 realBlocks[3], realTrunks.size(), sandboxTrunks.size(), both,
                 realTrunks.isEmpty() ? 0 : 100.0 * both / realTrunks.size(),
                 sandboxTrunks.isEmpty() ? 0 : 100.0 * both / sandboxTrunks.size()));
+        int seaBoth = 0;
+        for (long column : sandboxSea) {
+            if (realSea.contains(column)) {
+                seaBoth++;
+            }
+        }
+        report.accept(String.format(java.util.Locale.ROOT,
+                "under the sea (kelp, seagrass): columns %d real, %d in the sandbox, %d in both; blocks %d real,"
+                        + " %d in the sandbox", realSea.size(), sandboxSea.size(), seaBoth, realSeaBlocks[0],
+                sandboxSeaBlocks[0]));
     }
 
     private static void classify(BlockState state, long[] counts) {

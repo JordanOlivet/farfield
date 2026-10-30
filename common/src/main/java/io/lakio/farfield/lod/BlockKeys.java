@@ -221,7 +221,7 @@ public final class BlockKeys {
     }
 
     /** A plant without collision standing in its fluid: kelp, seagrass, a waterlogged propagule. */
-    private static boolean isSubmergedPlant(BlockState state) {
+    public static boolean isSubmergedPlant(BlockState state) {
         Block block = state.getBlock();
         return !state.getFluidState().isEmpty() && !hasCollision(state)
                 && (block instanceof BushBlock || block instanceof GrowingPlantBlock);

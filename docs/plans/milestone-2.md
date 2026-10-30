@@ -140,14 +140,16 @@ Items:
   mes tests rien ne m'est sauté au yeux donc je pense qu'on est bon";
   reopened if they see something. Left as they were: the amethyst
   rainforest's 34 %, the tile size.
-- [~] D.2 Real surface rules on the preview's ground (the top block is
+- [x] D.2 Real surface rules on the preview's ground (the top block is
   guessed from the biome: Biomes O' Plenty's white sand, Terralith's
   surfaces), with the same stand-in world. ADR-101: the generator's own
   surface rules on one column per cell of each stand-in chunk; against
   real generation (8 biomes of vanilla, Biomes O' Plenty and Terralith,
   8 x 8 chunks each) the ruled column's top is right in 98.2 to 100 % of
   cells, the guess in 0 to 77 %; 2 to 2.4 s more a tile. Seen in a dev
-  client (redwood forest, badlands). Remains: a look in the user's pack.
+  client (redwood forest, badlands). ADR-102 (biome per quart column,
+  7.9 s a tile in the pack), ADR-104 (ModernFix's lookup bypassed: the
+  grid). The user, on their server (2026-10-30): "D.2 c'est ok".
 - [ ] D.3 A client toggle per kind of feature (trees, plants, rocks).
 - [x] D.4 Vegetation without collision that grows like kelp or vines
   (`GrowingPlantBlock`: Biomes O' Plenty's `high_grass`) was drawn as

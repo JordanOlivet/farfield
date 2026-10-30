@@ -110,6 +110,8 @@ final class PreviewFeatures {
     private final FeatureSandbox sandbox;
     /** Per feature voxel ({@link #voxel}): blocks set in it, by material. */
     private final Long2ObjectOpenHashMap<Int2IntOpenHashMap> voxels = new Long2ObjectOpenHashMap<>();
+    /** Per column of the tile ({@code BlockPos.asLong(x, 0, z)}): its plants under the sea, {lowest y, blocks, lowest block's material}. */
+    private final Long2ObjectOpenHashMap<int[]> seaColumns = new Long2ObjectOpenHashMap<>();
     /** Per chunk of the tile: plant blocks set in it, by material. */
     private final Int2IntOpenHashMap[] plants = new Int2IntOpenHashMap[PreviewTile.CHUNKS * PreviewTile.CHUNKS];
     private int failures;
@@ -652,8 +654,21 @@ final class PreviewFeatures {
                     || z >= z0 + PreviewTile.BLOCKS + margin || y < ground(x, z) || bare.test(x, z)) {
                 continue;
             }
+            if (y < seaLevel && BlockKeys.isSubmergedPlant(state)) {
+                // Kelp and seagrass: counted per column, drawn in the tile's water (ADR-105).
+                if (x >= x0 && z >= z0 && x < x0 + PreviewTile.BLOCKS && z < z0 + PreviewTile.BLOCKS) {
+                    int[] column = seaColumns.computeIfAbsent(BlockPos.asLong(x, 0, z),
+                            k -> new int[]{Integer.MAX_VALUE, 0, -1});
+                    column[1]++;
+                    if (y < column[0]) {
+                        column[0] = y;
+                        column[2] = world.blockStates().id(BlockKeys.key(state));
+                    }
+                }
+                continue;
+            }
             if (y < seaLevel && (!state.getFluidState().isEmpty() || state.is(Blocks.ICE))) {
-                continue; // the tile's sea, its ice, and what grows in it (the tile's water covers them)
+                continue; // the tile's sea, its ice, and what stands in it as water (coral fans, pickles)
             }
             int meshClass = BlockKeys.meshClass(state);
             if (meshClass == io.lakio.farfield.core.mesh.MaterialClassifier.AIR) {
@@ -755,6 +770,40 @@ final class PreviewFeatures {
                 }
             }
             tile.setPlants(c % PreviewTile.CHUNKS, c / PreviewTile.CHUNKS, java.util.Arrays.copyOf(entries, n));
+        }
+        storeSeaPlants();
+    }
+
+    /** Per chunk and lowest block's material: the columns of plants under the sea and their mean height. */
+    private void storeSeaPlants() {
+        @SuppressWarnings("unchecked")
+        Int2ObjectOpenHashMap<long[]>[] perChunk = new Int2ObjectOpenHashMap[PreviewTile.CHUNKS * PreviewTile.CHUNKS];
+        for (var e : seaColumns.long2ObjectEntrySet()) {
+            int x = BlockPos.getX(e.getLongKey()) - x0;
+            int z = BlockPos.getZ(e.getLongKey()) - z0;
+            int c = (z >> 4) * PreviewTile.CHUNKS + (x >> 4);
+            int[] column = e.getValue();
+            if (perChunk[c] == null) {
+                perChunk[c] = new Int2ObjectOpenHashMap<>();
+            }
+            long[] sum = perChunk[c].computeIfAbsent(column[2], m -> new long[2]);
+            sum[0]++;
+            sum[1] += column[1];
+        }
+        for (int c = 0; c < perChunk.length; c++) {
+            if (perChunk[c] == null) {
+                continue;
+            }
+            int[] entries = new int[perChunk[c].size()];
+            int n = 0;
+            for (var m : perChunk[c].int2ObjectEntrySet()) {
+                int kind = tile.plantKind(m.getIntKey());
+                if (kind >= 0) {
+                    long[] sum = m.getValue();
+                    entries[n++] = PreviewTile.seaPlantEntry(kind, sum[0], (double) sum[1] / sum[0]);
+                }
+            }
+            tile.setSeaPlants(c % PreviewTile.CHUNKS, c / PreviewTile.CHUNKS, java.util.Arrays.copyOf(entries, n));
         }
     }
 }

@@ -11,7 +11,8 @@ import io.lakio.farfield.core.util.ByteWriter;
  * the buildings of villages (ADR-041); per cell whether the sea's top
  * block freezes; for the whole tile the ground's material, the sea and its
  * ice; per chunk its plants without collision, as kinds and mean counts,
- * and the ground they grow on (ADR-060); the blocks the world's own
+ * and the ground they grow on (ADR-060), and its plants under the sea
+ * (kelp, seagrass), as kinds, columns and mean heights (ADR-105); the blocks the world's own
  * features set above the ground (ADR-079: trees, rocks, every mod's), as
  * {@link #FEATURE_VOXEL}-block voxels in runs per column, over the tile and
  * a {@link #FEATURE_MARGIN}-block margin around it (a crown spreading out
@@ -44,9 +45,11 @@ public final class PreviewTile {
      * against generated chunks), 11 the world's own features instead of the
      * guessed trees, 12 vines-like plants as plants and nothing LODs leave
      * out among the features (ADR-080), 13 the trees of snowy forests
-     * (ADR-086); older tiles are built again.
+     * (ADR-086), 14 and 15 the ground from the surface rules (ADR-101,
+     * ADR-104), 16 the plants under the sea (ADR-105); older tiles are
+     * built again.
      */
-    private static final int FORMAT = 15;
+    private static final int FORMAT = 16;
     /** Blocks a side of a feature voxel. */
     public static final int FEATURE_VOXEL = 2;
     /** Blocks around the tile its features may reach. */
@@ -79,6 +82,8 @@ public final class PreviewTile {
     private final java.util.List<Integer> plantKinds = new java.util.ArrayList<>();
     /** Per chunk, its plants: kind | mean count per chunk in sixteenths << 8. */
     private final int[][] plants = new int[CHUNKS * CHUNKS][];
+    /** Per chunk, its plants under the sea ({@link #seaPlantEntry}). */
+    private final int[][] seaPlants = new int[CHUNKS * CHUNKS][];
     /** The top material plants grow on; -1 for none. */
     private int plantGround = -1;
     /**
@@ -226,6 +231,41 @@ public final class PreviewTile {
     public int[] plants(int chunkX, int chunkZ) {
         int[] list = plants[chunkZ * CHUNKS + chunkX];
         return list == null ? NO_TREES : list;
+    }
+
+    /** Sets a chunk's plants under the sea, each a {@link #seaPlantEntry}. */
+    public void setSeaPlants(int chunkX, int chunkZ, int[] entries) {
+        seaPlants[chunkZ * CHUNKS + chunkX] = entries.length == 0 ? null : entries.clone();
+    }
+
+    /** The plants under the sea of a chunk of the tile ({@link #seaPlantEntry}); never null. */
+    public int[] seaPlants(int chunkX, int chunkZ) {
+        int[] list = seaPlants[chunkZ * CHUNKS + chunkX];
+        return list == null ? NO_TREES : list;
+    }
+
+    /**
+     * A chunk's entry of plants under the sea: a kind (its material is the
+     * column's lowest block), the columns it stands in per chunk, and their
+     * mean height in blocks (kelp grows tall), {@code kind | height << 8 |
+     * sixteenths << 14}.
+     */
+    public static int seaPlantEntry(int kind, double columnsPerChunk, double meanHeight) {
+        int height = (int) Math.max(1, Math.min(63, Math.round(meanHeight)));
+        return kind | height << 8 | (int) Math.min(0x3FFFF, Math.round(columnsPerChunk * 16)) << 14;
+    }
+
+    public static int seaPlantKind(int entry) {
+        return entry & 0xFF;
+    }
+
+    public static int seaPlantHeight(int entry) {
+        return entry >>> 8 & 63;
+    }
+
+    /** Columns per chunk of a {@link #seaPlantEntry}. */
+    public static double seaPlantColumns(int entry) {
+        return (entry >>> 14) / 16.0;
     }
 
     /** A chunk's plant entry: a kind and its mean count per chunk. */
@@ -597,6 +637,13 @@ public final class PreviewTile {
                 out.writeVarInt(list[i]);
             }
         }
+        for (int[] list : seaPlants) {
+            int n = list == null ? 0 : list.length;
+            out.writeVarInt(n);
+            for (int i = 0; i < n; i++) {
+                out.writeVarInt(list[i]);
+            }
+        }
         // Feature runs: per column their count, then each run's rise from the last one's top
         // (small numbers for the compressor), its length and its material.
         for (int[] runs : features) {
@@ -678,6 +725,16 @@ public final class PreviewTile {
                     list[i] = in.readVarInt();
                 }
                 t.plants[c] = list;
+            }
+        }
+        for (int c = 0; c < t.seaPlants.length; c++) {
+            int n = in.readVarInt();
+            if (n > 0) {
+                int[] list = new int[n];
+                for (int i = 0; i < n; i++) {
+                    list[i] = in.readVarInt();
+                }
+                t.seaPlants[c] = list;
             }
         }
         for (int c = 0; c < t.features.length; c++) {

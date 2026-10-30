@@ -272,6 +272,51 @@ class PreviewTest {
     }
 
     @Test
+    void kelpStandsOnTheSeaFloorAtItsHeightUnderTheSurface() {
+        int kelp = 31;
+        PreviewTile sea = new PreviewTile();
+        for (int k = 0; k < PreviewTile.SAMPLES; k++) {
+            for (int i = 0; i < PreviewTile.SAMPLES; i++) {
+                sea.setHeight(i, k, 50);
+            }
+        }
+        for (int cz = 0; cz < PreviewTile.CELLS; cz++) {
+            for (int cx = 0; cx < PreviewTile.CELLS; cx++) {
+                sea.setCell(cx, cz, SAND, SAND);
+            }
+        }
+        sea.setBelow(STONE);
+        sea.setWater(WATER, 63);
+        // 256 columns per chunk, 20 blocks tall: capped one block under the surface (y 62).
+        int kind = sea.plantKind(kelp);
+        for (int c = 0; c < PreviewTile.CHUNKS * PreviewTile.CHUNKS; c++) {
+            sea.setSeaPlants(c % PreviewTile.CHUNKS, c / PreviewTile.CHUNKS,
+                    new int[]{PreviewTile.seaPlantEntry(kind, 256, 20)});
+        }
+        ByteWriter out = new ByteWriter(1024);
+        sea.encode(out);
+        PreviewTile back = PreviewTile.decode(new ByteReader().reset(out.array(), 0, out.length()));
+        assertEquals(1, back.seaPlants(3, 4).length);
+        PreviewVoxels.Tiles tiles = (x, z) -> x == 0 && z == 0 ? back : null;
+        // Sea floor up to y 49, water from 50; section 1 holds y 32..63.
+        LodSection fine = PreviewVoxels.build(0, 0, 1, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
+        int columns = 0;
+        for (int z = 0; z < 32; z++) {
+            for (int x = 0; x < 32; x++) {
+                if (fine.material(x, 50 - 32, z) == kelp) {
+                    columns++;
+                    assertEquals(kelp, fine.material(x, 61 - 32, z));
+                    assertEquals(WATER, fine.material(x, 62 - 32, z)); // under the surface block
+                } else {
+                    assertEquals(WATER, fine.material(x, 50 - 32, z));
+                }
+            }
+        }
+        // 1 - 1/e of the floor, as the plants on land.
+        assertTrue(columns > 1024 * 0.55 && columns < 1024 * 0.72, "kelp columns " + columns);
+    }
+
+    @Test
     void plantsGrowOnTheirGroundAtTheChunksDensity() {
         int shortGrass = 9;
         PreviewTile flat = new PreviewTile();
