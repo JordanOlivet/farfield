@@ -37,10 +37,12 @@ Legend: `[ ]` todo · `[~]` in progress (the text says what remains) ·
   41088514099: five jobs green, both Publish jobs `Successfully
   published the assets to CurseForge, Modrinth`, `version-type:
   release`, GitHub Release `Farfield 0.2.0` (not a pre-release) with
-  both jars and a summary on top of the commit list. Remains: the
-  listing text (`docs/listing/description.md`, rewritten for 0.2.0) on
-  Modrinth and CurseForge once the user validates it; the version pages
-  checked by the user.
+  both jars and a summary on top of the commit list. The listing
+  rewritten (sections, a where-it-works table, server owners,
+  compatibility) with ten screenshots from the dev client, pushed to
+  Modrinth with its gallery (2026-10-30; the user: "on va faire avec ça
+  pour commencer", their own screenshots later). Remains: CurseForge (the
+  user pastes it) and the version pages checked by the user.
 
 ## M2.B — Server streaming of LODs and the noise preview (ADR-013)
 

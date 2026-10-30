@@ -1,0 +1,1 @@
+The locate run output (first 2 entries of 16 lines in the scratch log): "The nearest minecraft:badlands is at [-365, 66, 3305] (3290 blocks away)" and "The nearest minecraft:birch_forest is at [-365, 66, 1385] (1406 blocks away)", from the command file written with `command locate biome minecraft:$b` and `wait seconds 6` between entries, followed by "quit answered after 144 s".

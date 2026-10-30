@@ -1,0 +1,3 @@
+$ grep -n "noise_preview.tooltip\|preview_threads.tooltip" common/src/main/resources/assets/farfield/lang/fr_fr.json
+21:  "farfield.options.noise_preview.tooltip": "Montre le terrain que le monde n'a pas encore généré, grossièrement, à partir de la graine : relief, eau, glace, arbres, plantes et villages. Le vrai terrain le remplace à mesure que vous explorez. Solo uniquement.",
+25:  "farfield.options.preview_threads.tooltip": "Threads qui calculent l'aperçu du terrain non généré. Plus de threads terminent l'aperçu plus vite et prennent plus de temps processeur. Auto : un par trois processeurs logiques, de 1 à 6. Solo uniquement.",
