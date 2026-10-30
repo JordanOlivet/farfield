@@ -102,7 +102,9 @@ final class SurfaceSpike {
                 int chunkX = cx0 + dx;
                 int chunkZ = cz0 + dz;
                 long t = System.nanoTime();
-                ChunkAccess real = level.getChunkSource().getChunk(chunkX, chunkZ, ChunkStatus.SURFACE, true);
+                // On the server thread: C2ME's chunk system hands no chunk to another thread (null).
+                ChunkAccess real = level.getServer().submit(() -> level.getChunkSource().getChunk(chunkX, chunkZ,
+                        ChunkStatus.SURFACE, true)).join();
                 realNanos += System.nanoTime() - t;
                 int[] heights = new int[256];
                 for (int z = 0; z < 16; z++) {

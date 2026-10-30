@@ -271,8 +271,8 @@ final class PreviewFeatures {
         for (int q = 0; q < 16; q++) {
             int qx = q & 3;
             int qz = q >> 2;
-            groundBiomes[q] = biomes.getNoiseBiome(QuartPos.fromBlock(bx0) + qx,
-                    QuartPos.fromBlock(heights[(qz * 4 + 2) * 16 + qx * 4 + 2]), QuartPos.fromBlock(bz0) + qz, sampler);
+            groundBiomes[q] = quartBiome(QuartPos.fromBlock(bx0) + qx,
+                    QuartPos.fromBlock(heights[(qz * 4 + 2) * 16 + qx * 4 + 2]), QuartPos.fromBlock(bz0) + qz);
         }
         if (surface != null && inTile(chunkX, chunkZ) && !cellsRead[cellsIndex(chunkX, chunkZ)]) {
             // The rules lay the cells' tops first; the features then grow on a ground made of them.
@@ -419,16 +419,19 @@ final class PreviewFeatures {
     private void layGround(ProtoChunk chunk) {
         var random = level.getChunkSource().randomState();
         if (noiseChunk == null) {
-            // One for the tile: the rules only ask it each column's preliminary surface level, by
-            // absolute position (its caches hold the first chunk; the others are computed). Made for
-            // every chunk it cost about 5 ms a chunk, as much as the rules themselves.
+            // One for the tile, and it computes no density: the rules ask it only for the preliminary
+            // surface level, under which `abovePreliminarySurface` fails; the preview reads the top
+            // block, above it. Computed, it cost 30 to 50 ms a chunk in the user's pack (C2ME's
+            // compiled density functions, and nothing cached across chunks), 1 to 3 ms in dev.
             var noiseSettings = surface.generatorSettings().value();
+            var clamped = noiseSettings.noiseSettings().clampToHeightAccessor(chunk);
             Aquifer.FluidStatus sea = new Aquifer.FluidStatus(seaLevel,
                     fluid != null ? fluid : Blocks.AIR.defaultBlockState());
             Beardifier none = new Beardifier((it.unimi.dsi.fastutil.objects.ObjectListIterator) it.unimi.dsi.fastutil
                     .objects.ObjectLists.emptyList().iterator(), (it.unimi.dsi.fastutil.objects.ObjectListIterator) it
                     .unimi.dsi.fastutil.objects.ObjectLists.emptyList().iterator());
-            noiseChunk = NoiseChunk.forChunk(chunk, random, none, noiseSettings, (x, y, z) -> sea, Blender.empty());
+            noiseChunk = new SurfaceNoise(16 / clamped.getCellWidth(), random, chunk.getPos().getMinBlockX(),
+                    chunk.getPos().getMinBlockZ(), clamped, none, noiseSettings, (x, y, z) -> sea, level.getMinBuildHeight());
         }
         NoiseChunk shared = noiseChunk;
         chunk.getOrCreateNoiseChunk(c -> shared);
@@ -445,9 +448,34 @@ final class PreviewFeatures {
             Heightmap.Types.OCEAN_FLOOR_WG, Heightmap.Types.MOTION_BLOCKING, Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
             Heightmap.Types.OCEAN_FLOOR, Heightmap.Types.WORLD_SURFACE);
 
-    /** The biome source's biome at a quart, sampled once per tile. */
+    /** A noise chunk for the surface rules alone: every block is above its preliminary surface. */
+    private static final class SurfaceNoise extends NoiseChunk {
+        private final int bottom;
+
+        SurfaceNoise(int cells, net.minecraft.world.level.levelgen.RandomState random, int x, int z,
+                     net.minecraft.world.level.levelgen.NoiseSettings settings, Beardifier beardifier,
+                     net.minecraft.world.level.levelgen.NoiseGeneratorSettings generator, Aquifer.FluidPicker fluid,
+                     int bottom) {
+            super(cells, random, x, z, settings, beardifier, generator, fluid, Blender.empty());
+            this.bottom = bottom;
+        }
+
+        @Override
+        public int preliminarySurfaceLevel(int x, int z) {
+            return bottom;
+        }
+    }
+
+    /**
+     * The biome source's biome of a quart column, sampled once per tile at
+     * the height first asked (the ground's: a stand-in's own biomes, then its
+     * surface rules near the ground). Sampled per quart in three dimensions,
+     * as the game's zoom asks, the surface rules took 30 ms a chunk in the
+     * user's pack: each climate sample there costs about half a millisecond.
+     * The surface has no underground biome to miss.
+     */
     private net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome> quartBiome(int qx, int qy, int qz) {
-        long key = BlockPos.asLong(qx, qy, qz);
+        long key = ChunkPos.asLong(qx, qz);
         var biome = quarts.get(key);
         if (biome == null) {
             biome = biomes.getNoiseBiome(qx, qy, qz, sampler);

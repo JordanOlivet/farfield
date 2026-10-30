@@ -2866,3 +2866,39 @@ stand-in ground) and ADR-039's guessed tops.
 - **Not covered**: the user's pack on their server; Biomes O' Plenty's
   `stringy_cobweb` still fails in the stand-in (it casts the level to
   `WorldGenRegion`; underground, left out as before).
+
+## ADR-102 — The preview's surface rules sample a biome per quart column, and no preliminary surface
+
+Status: accepted, 2026-10-30. Amends ADR-101.
+
+- **Context**: deployed to the home server, ADR-101 built a tile in 34 to
+  39 s instead of 4.3 to 5.2 s (one preview thread, 232 tiles to rebuild:
+  over two hours). The pack in single player (`runPackClient`,
+  `/farfield spike tile`) gave the same: 28 to 54 s of surface rules a
+  tile (30 to 50 ms a stand-in chunk; 2 to 5 ms in dev with the same
+  worldgen mods). A JFR profile of the pack (attached with `jcmd` to the
+  `net.neoforged.devlaunch.Main` JVM, dumped before `quit`): 2,030 of
+  2,859 samples of the tile's thread in noise sampling under density
+  functions, the climate's included (`Climate$RTree.search`,
+  `ShiftedNoise`); C2ME compiles the pack's density functions.
+- **Decision**:
+  - the surface rules' biomes come from one sample per quart column a
+    tile (the height first asked, the ground's), shared with the
+    stand-in's own biomes; per quart in three dimensions, as the game's
+    zoom asks for each block a rule reads, each climate sample costs
+    about half a millisecond in the pack;
+  - the surface rules' noise chunk (`SurfaceNoise`) computes no density:
+    its preliminary surface level is the bottom of the world, so
+    `abovePreliminarySurface` holds for every block (the preview reads
+    the top block, above it). Measured alone it changed nothing in the
+    pack (28.8 s), kept since it costs nothing and no density function
+    of a mod runs from a preview thread for it.
+  - `SurfaceSpike` asks its real chunks on the server thread: under
+    C2ME, `getChunk` from another thread returns null.
+- **Result**: in the pack, a tile 7.9 s instead of 35.5 s, its surface
+  rules 1.8 s instead of 28.8 s. In dev with Biomes O' Plenty, Terralith,
+  TerraBlender, Lithostitched (a fresh world, 6 biomes present): the
+  ruled column's top right in 98.8 to 100 % of cells (99.0 to 100 %
+  before this), 1.8 to 2.3 ms a stand-in chunk. `gradlew build` passes.
+- **Not covered**: the tile time on the home server (its CPU is not this
+  PC's); biomes that differ with height at the surface (none seen).
