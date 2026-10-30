@@ -30,7 +30,6 @@ import java.util.Map;
 public final class AgentClient {
 
     public static final boolean ENABLED = Boolean.getBoolean("farfield.agent");
-    private static boolean muted;
     private static final String FOLDER = "farfield-agent";
     private static final int POLL_TICKS = 4;
     /** Frames rendered with the HUD hidden before a screenshot reads one. */
@@ -67,16 +66,6 @@ public final class AgentClient {
     public static void tick(Minecraft mc) {
         if (!ENABLED || failed) {
             return;
-        }
-        if (AgentWindow.LAUNCH != AgentWindow.Mode.NORMAL) {
-            // An agent's client out of the way makes no sound either (the user, 2026-10-30): the
-            // listener's gain, not the option, so the run dir's options.txt keeps the user's volume.
-            // Every tick: the sound engine sets the option's gain again when it loads.
-            mc.getSoundManager().updateSourceVolume(net.minecraft.sounds.SoundSource.MASTER, 0f);
-            if (!muted) {
-                muted = true;
-                Farfield.LOG.info("Agent window: sound muted (the options' volume is left as it is)");
-            }
         }
         AgentClient a = instance;
         if (a == null) {

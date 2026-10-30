@@ -155,8 +155,10 @@ def syncPackInstance = tasks.register('syncPackInstance') {
         }
         File options = new File(packRunDir, 'options.txt')
         if (!options.exists() && file("${packDir}/options.txt").exists()) {
-            options.bytes = file("${packDir}/options.txt").bytes
-            logger.lifecycle("Copied the pack's options.txt")
+            // Dev runs are silent (ADR-107): the pack's own volume stays in the pack.
+            options.text = file("${packDir}/options.txt").getText('UTF-8')
+                    .replaceAll(/(?m)^soundCategory_master:.*$/, 'soundCategory_master:0.0')
+            logger.lifecycle("Copied the pack's options.txt, sound off")
         }
         DevTemplates.copyMissing(rootProject.file('dev/client'), packRunDir).each {
             logger.lifecycle("Created ${project.relativePath(it)} from dev/")

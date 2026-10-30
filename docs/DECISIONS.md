@@ -2996,3 +2996,20 @@ Status: accepted, 2026-10-30. Amends ADR-096.
   One `Agent window: sound muted` log line.
 - **Result**: a NeoForge dev run logged the line 6 s after launch;
   `soundCategory_master:1.0` unchanged. Not heard (the agent has no ears).
+
+## ADR-107 — Dev runs are silent through options.txt
+
+Status: accepted, 2026-10-30. Reverts ADR-106.
+
+- **Context**: ADR-106 muted an agent's client by the listener's gain,
+  every tick, to keep the user's volume in the shared run dirs. The user:
+  "pour moi aussi on désactive le son, j'en pas besoin pour tester. ça
+  évitera de rajouter un truc chaque tick".
+- **Decision**: no code: every dev run dir's `options.txt` holds
+  `soundCategory_master:0.0` (the `dev/client` template had it already,
+  and so had the Fabric and pack run dirs; `neoforge/run` is set); the
+  pack run's first copy of the pack's `options.txt` sets it too
+  (`syncPackInstance`). ADR-106's per-tick mute is taken out.
+- **Result**: `gradlew build` passes; a fresh copy of the pack's options
+  reads `soundCategory_master:0.0` (the user's pack has it at 0 already,
+  so the replacement changed nothing there).
