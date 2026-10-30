@@ -6,13 +6,13 @@ Far-distance terrain rendering for Minecraft, using levels of detail (LOD):
 the terrain beyond your render distance, up to 4,096 blocks away, at a
 fraction of the cost of real chunks.
 
-Status: 0.1.0, early. Minecraft 1.21.1, NeoForge and Fabric. What it does
+Status: 0.2.0, early. Minecraft 1.21.1, NeoForge and Fabric. What it does
 today, its requirements and what is planned: [`docs/listing/description.md`](docs/listing/description.md)
 (the text of the Modrinth and CurseForge pages).
 
 - Vision: [`docs/VISION.md`](docs/VISION.md)
 - Decisions: [`docs/DECISIONS.md`](docs/DECISIONS.md)
-- Current plan: [`docs/plans/milestone-1.md`](docs/plans/milestone-1.md)
+- Current plan: [`docs/plans/milestone-2.md`](docs/plans/milestone-2.md)
 - State of the art: [`docs/analysis/lod-engine-state-of-the-art.md`](docs/analysis/lod-engine-state-of-the-art.md)
 
 ## Building

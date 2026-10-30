@@ -13,15 +13,23 @@ servers.
   own terrain ends, with its colors and textures, biome tints (Biome Blend
   included), smooth lighting, day and night light, and its fog. Works with
   Sodium.
-- **Terrain the world has not generated yet** (single player). A coarse
-  preview built from the world seed shows relief, water, ice, trees,
-  plants and villages, so the horizon is never empty. Real terrain
+- **Terrain the world has not generated yet.** A coarse preview built
+  from the world seed shows relief, water, ice, villages, and the ground
+  the world's own surface rules lay there (sand, snow, terracotta, mods'
+  blocks). Trees, plants and rocks grow where the game will place them,
+  from every mod that adds them, and the sea floor gets its kelp,
+  seagrass and coral reefs. So the horizon is never empty; real terrain
   replaces it as you explore.
 - **Details that still read far away.** Water at vanilla's height, grass
   and flowers, kelp, and the shapes of fences, walls, panes and stairs up
   close.
 - **Your whole world at once.** `/farfield import` builds the LODs of every
   chunk your world already has, in the background.
+- **Servers with Farfield send the LODs and the preview.** The server
+  builds the LODs of its world and the preview around each player, and
+  streams both, nearest first, within a bandwidth cap per player and in
+  total (`config/farfield-server.properties`). Both sides need Farfield
+  0.2.0.
 - **On any server.** On a server without Farfield, your client builds the
   LODs from the chunks it receives and keeps them per server.
 - **Light on your machine.** The terrain nearest to you and in front of
@@ -35,9 +43,11 @@ Controls > Key Binds > Farfield: LOD drawing, level of detail, texture
 distance, fog distances, the terrain preview, threads, level colors and
 performance logs.
 
-Commands (single player, or operators on a server): `/farfield render`,
-`/farfield detail`, `/farfield textures`, `/farfield fog`,
-`/farfield preview`, `/farfield import`, `/farfield debug levels`.
+Commands in single player: `/farfield render`, `/farfield detail`,
+`/farfield textures`, `/farfield fog`, `/farfield preview`,
+`/farfield import`, `/farfield debug levels`. On a server, the drawing
+ones are `/farfieldclient ...` for each player, and operators run
+`/farfield import` on the server.
 
 ## Requirements
 
@@ -48,9 +58,9 @@ Commands (single player, or operators on a server): `/farfield render`,
 ## Not there yet
 
 - **Shader packs** (Iris, Oculus): not supported yet; planned.
-- **Servers sending LODs and the terrain preview to their players**:
-  planned. Today a client builds its own from what it has seen, and the
-  preview needs single player.
+- **Light from blocks in the preview** (glowing plants, sea pickles):
+  planned with shader pack support; the real LODs have it.
+- **Beyond 4,096 blocks**: planned.
 
 ## Feedback
 
