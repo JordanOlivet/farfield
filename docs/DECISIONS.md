@@ -3013,3 +3013,22 @@ Status: accepted, 2026-10-30. Reverts ADR-106.
 - **Result**: `gradlew build` passes; a fresh copy of the pack's options
   reads `soundCategory_master:0.0` (the user's pack has it at 0 already,
   so the replacement changed nothing there).
+
+## ADR-108 — The preview's features take the place of its water
+
+Status: accepted, 2026-10-30. Amends ADR-079 (feature voxels).
+
+- **Context**: the user's screenshots over a warm ocean: coral reefs in
+  the real LODs, none in the preview. The tiles held them (a dev tile over
+  the warm ocean of `farfield-test`: 600 to 700 voxels of each of the five
+  coral blocks, all under the sea), but `PreviewVoxels` stamps feature
+  and tree voxels only into air, and a preview column fills its sea before
+  the features are stamped: every feature under the sea was dropped.
+- **Decision**: a feature or tree voxel also takes the place of the
+  preview's own water (the tile's water material), on every level, as a
+  real coral block shows over the water around it in the real LODs. Drawing
+  only: the tiles do not change, no format bump.
+- **Result**: `PreviewTest.featuresUnderTheSeaTakeThePlaceOfItsWater`
+  (a reef run under 20 blocks of sea, on the finest level and on level
+  1) fails without the change and passes with it; `gradlew build` passes.
+- **Not covered**: a look in the user's pack.

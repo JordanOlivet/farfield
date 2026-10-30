@@ -437,6 +437,7 @@ public final class PreviewVoxels {
     /** Stamps the feature runs of one tile (its west and north side at x0, z0) that reach the section. */
     private static void features(Stamp stamp, PreviewTile tile, int x0, int z0, int ox, int oy, int oz, int size,
                                  Mask mask) {
+        stamp.water = tile.water();
         int v = PreviewTile.FEATURE_VOXEL;
         int margin = PreviewTile.FEATURE_MARGIN;
         int fx0 = Math.max(0, Math.floorDiv(ox - x0 + margin, v));
@@ -475,6 +476,12 @@ public final class PreviewVoxels {
         private final int size;
         private final Mask mask;
         private final int air;
+        /**
+         * The preview's water, which a feature takes the place of as it does
+         * air: the columns fill their sea before the features, and coral reefs
+         * under it never showed (ADR-108). -1: none.
+         */
+        int water = -1;
         private final int layerAxis;
         private final int layerIndex;
         private final int[] counts;
@@ -865,7 +872,8 @@ public final class PreviewVoxels {
             if (section == null) {
                 section = new LodSection(air);
             }
-            if (section.material(vx, vy, vz) == air) {
+            int there = section.material(vx, vy, vz);
+            if (there == air || there == water && water >= 0) {
                 section.set(vx, vy, vz, material);
             }
         }

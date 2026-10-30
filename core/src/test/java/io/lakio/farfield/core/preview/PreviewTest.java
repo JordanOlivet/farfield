@@ -963,6 +963,36 @@ class PreviewTest {
     }
 
     @Test
+    void featuresUnderTheSeaTakeThePlaceOfItsWater() {
+        int coral = 40;
+        PreviewTile t = new PreviewTile();
+        for (int k = 0; k < PreviewTile.SAMPLES; k++) {
+            for (int i = 0; i < PreviewTile.SAMPLES; i++) {
+                t.setHeight(i, k, 40);
+            }
+        }
+        for (int cz = 0; cz < PreviewTile.CELLS; cz++) {
+            for (int cx = 0; cx < PreviewTile.CELLS; cx++) {
+                t.setCell(cx, cz, SAND, SAND);
+            }
+        }
+        t.setBelow(STONE);
+        t.setWater(WATER, 63);
+        // A reef run at y 40 to 43 over block (10, 20), under 20 blocks of sea (runs count 2-block voxels).
+        int fx = (10 + PreviewTile.FEATURE_MARGIN) / PreviewTile.FEATURE_VOXEL;
+        int fz = (20 + PreviewTile.FEATURE_MARGIN) / PreviewTile.FEATURE_VOXEL;
+        t.setFeatureColumn(fx, fz, new int[]{PreviewTile.featureRun(20, 2), coral});
+        PreviewVoxels.Tiles tiles = (x, z) -> x == 0 && z == 0 ? t : null;
+        LodSection fine = PreviewVoxels.build(0, 0, 1, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
+        assertEquals(coral, fine.material(10, 40 - 32, 20));
+        assertEquals(coral, fine.material(10, 43 - 32, 20));
+        assertEquals(WATER, fine.material(10, 44 - 32, 20));
+        // Level 1 (2-block voxels), section y 0 holding y 0 to 63: the reef's voxels too.
+        LodSection coarse = PreviewVoxels.build(1, 0, 0, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
+        assertEquals(coral, coarse.material(5, 20, 10)); // y 0..63 at level 1: voxel y 20 holds y 40, 41
+    }
+
+    @Test
     void featureColumnsRoundTripAndRaiseTheSummary() {
         PreviewTile t = featureTile();
         // A run of the margin, west of the tile: stored, but no chunk of this tile under it.
