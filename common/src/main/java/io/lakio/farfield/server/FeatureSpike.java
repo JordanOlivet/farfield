@@ -207,19 +207,27 @@ final class FeatureSpike {
      * size and what features grew in it; on a thread of its own.
      */
     static boolean startTile(ServerLevel level, ResourceLocation biomeId, Consumer<String> report) {
+        return startTile(level, biomeId, null, report);
+    }
+
+    /** The tile over block {@code position} (x, z) when it is given, else over the closest {@code biomeId}. */
+    static boolean startTile(ServerLevel level, ResourceLocation biomeId, BlockPos position, Consumer<String> report) {
         if (!RUNNING.compareAndSet(false, true)) {
             return false;
         }
         Thread t = new Thread(() -> {
             try {
-                ResourceKey<Biome> key = ResourceKey.create(Registries.BIOME, biomeId);
-                BlockPos from = level.getSharedSpawnPos().offset(4000, 0, 4000);
-                var found = level.findClosestBiome3d(h -> h.is(key), from, 6400, 32, 64);
-                if (found == null) {
-                    report.accept("no " + biomeId + " within 6400 blocks");
-                    return;
+                BlockPos at = position;
+                if (at == null) {
+                    ResourceKey<Biome> key = ResourceKey.create(Registries.BIOME, biomeId);
+                    BlockPos from = level.getSharedSpawnPos().offset(4000, 0, 4000);
+                    var found = level.findClosestBiome3d(h -> h.is(key), from, 6400, 32, 64);
+                    if (found == null) {
+                        report.accept("no " + biomeId + " within 6400 blocks");
+                        return;
+                    }
+                    at = found.getFirst();
                 }
-                BlockPos at = found.getFirst();
                 int tileX = Math.floorDiv(at.getX(), io.lakio.farfield.core.preview.PreviewTile.BLOCKS);
                 int tileZ = Math.floorDiv(at.getZ(), io.lakio.farfield.core.preview.PreviewTile.BLOCKS);
                 long start = System.nanoTime();

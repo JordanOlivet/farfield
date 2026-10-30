@@ -41,12 +41,17 @@ final class SurfaceSpike {
 
     /** Starts a run on a thread of its own near the closest {@code biome}; false if one is running. */
     static boolean start(ServerLevel level, ResourceLocation biome, int side, Consumer<String> report) {
+        return start(level, biome, null, side, report);
+    }
+
+    /** Starts a run over the chunks around block {@code at} (x, z) when it is given; false if one is running. */
+    static boolean start(ServerLevel level, ResourceLocation biome, BlockPos at, int side, Consumer<String> report) {
         if (!RUNNING.compareAndSet(false, true)) {
             return false;
         }
         Thread t = new Thread(() -> {
             try {
-                run(level, biome, side, line -> {
+                run(level, biome, at, side, line -> {
                     Farfield.LOG.info("Surface spike: {}", line);
                     report.accept(line);
                 });
@@ -62,23 +67,33 @@ final class SurfaceSpike {
         return true;
     }
 
-    private static void run(ServerLevel level, ResourceLocation biomeId, int side, Consumer<String> report) {
+    private static void run(ServerLevel level, ResourceLocation biomeId, BlockPos at, int side,
+                            Consumer<String> report) {
         if (!(level.getChunkSource().getGenerator() instanceof NoiseBasedChunkGenerator generator)) {
             report.accept("the generator of " + level.dimension().location() + " has no surface rules");
             return;
         }
-        ResourceKey<Biome> key = ResourceKey.create(Registries.BIOME, biomeId);
-        BlockPos from = level.getSharedSpawnPos().offset(4000, 0, 4000);
-        var found = level.findClosestBiome3d(h -> h.is(key), from, 6400, 32, 64);
-        if (found == null) {
-            report.accept("no " + biomeId + " within 6400 blocks of " + from.toShortString());
-            return;
+        BlockPos center = at;
+        if (center == null) {
+            ResourceKey<Biome> key = ResourceKey.create(Registries.BIOME, biomeId);
+            BlockPos from = level.getSharedSpawnPos().offset(4000, 0, 4000);
+            var found = level.findClosestBiome3d(h -> h.is(key), from, 6400, 32, 64);
+            if (found == null) {
+                report.accept("no " + biomeId + " within 6400 blocks of " + from.toShortString());
+                return;
+            }
+            center = found.getFirst();
         }
-        BlockPos center = found.getFirst();
         int cx0 = (center.getX() >> 4) - side / 2;
         int cz0 = (center.getZ() >> 4) - side / 2;
-        report.accept(biomeId + " at " + center.toShortString() + ": " + side + "x" + side + " chunks from chunk "
-                + cx0 + " " + cz0);
+        report.accept((at != null ? "around" : biomeId.toString()) + " at " + center.toShortString() + ": " + side
+                + "x" + side + " chunks from chunk " + cx0 + " " + cz0);
+        // With a position: the real and the ruled top of every cell as letters, row by row.
+        Map<net.minecraft.world.level.block.Block, Character> letters = new java.util.LinkedHashMap<>();
+        int cellSide = side * 16 / PreviewTile.GRID;
+        char[][] realMap = new char[cellSide][cellSide];
+        char[][] ruleMap = new char[cellSide][cellSide];
+        String example = null;
 
         var settings = generator.generatorSettings().value();
         int seaLevel = generator.getSeaLevel();
@@ -148,6 +163,26 @@ final class SurfaceSpike {
                                     BlockState r = rules.getBlockState(pos.set(x,
                                             rules.getHeight(Heightmap.Types.OCEAN_FLOOR_WG, x, z), z));
                                     ruleTops.merge(r, 1, Integer::sum);
+                                    if (at != null) {
+                                        int mx = dx * (16 / PreviewTile.GRID) + gx;
+                                        int mz = dz * (16 / PreviewTile.GRID) + gz;
+                                        realMap[mz][mx] = letter(letters, top);
+                                        ruleMap[mz][mx] = letter(letters, r);
+                                        if (example == null && r.getBlock() != top.getBlock()) {
+                                            int wx = (chunkX << 4) + x;
+                                            int wz = (chunkZ << 4) + z;
+                                            int ry = rules.getHeight(Heightmap.Types.OCEAN_FLOOR_WG, x, z);
+                                            int realY = heights[z * 16 + x] - 1;
+                                            example = "first wrong cell at " + wx + " " + wz + ": real " + name(top)
+                                                    + " at y " + realY + ", the real chunk's biome there "
+                                                    + key(real.getNoiseBiome(QuartPos.fromBlock(x), QuartPos.fromBlock(realY),
+                                                    QuartPos.fromBlock(z))) + "; ruled " + name(r) + " at y " + ry
+                                                    + ", the biome source's there " + key(biomes.getNoiseBiome(
+                                                    QuartPos.fromBlock(wx), QuartPos.fromBlock(ry), QuartPos.fromBlock(wz),
+                                                    sampler)) + ", over the ruled top: "
+                                                    + name(rules.getBlockState(new BlockPos(x, ry + 1, z)));
+                                        }
+                                    }
                                     if (r.getBlock() == top.getBlock()) {
                                         rulesRight++;
                                     } else {
@@ -177,6 +212,23 @@ final class SurfaceSpike {
                 stand.surfaceNanos() / 1e6 / chunks, realNanos / 1e6 / chunks));
         report.accept("surface rules wrong: " + worst(rulesWrong));
         report.accept("guess wrong: " + worst(guessWrong));
+        if (at != null) {
+            if (example != null) {
+                report.accept(example);
+            }
+            letters.forEach((b, c) -> report.accept("  " + c + " " + BuiltInRegistries.BLOCK.getKey(b).getPath()));
+            for (int row = 0; row < cellSide; row++) {
+                report.accept("  real " + new String(realMap[row]) + "   ruled " + new String(ruleMap[row]));
+            }
+        }
+    }
+
+    private static char letter(Map<net.minecraft.world.level.block.Block, Character> letters, BlockState state) {
+        return letters.computeIfAbsent(state.getBlock(), b -> "abcdefghijklmnopqrstuvwxyz".charAt(letters.size() % 26));
+    }
+
+    private static String key(Holder<Biome> biome) {
+        return biome.unwrapKey().map(k -> k.location().toString()).orElse("?");
     }
 
     private static BlockState mostCommon(Map<BlockState, Integer> counts) {

@@ -52,9 +52,17 @@ public final class FarfieldCommands {
                                 .then(Commands.argument("side", IntegerArgumentType.integer(1, 64))
                                         .executes(c -> generationSpike(c, IntegerArgumentType.getInteger(c, "side")))))
                         .then(Commands.literal("tile")
+                                .then(Commands.literal("at")
+                                        .then(Commands.argument("x", IntegerArgumentType.integer())
+                                                .then(Commands.argument("z", IntegerArgumentType.integer())
+                                                        .executes(FarfieldCommands::tileSpikeAt))))
                                 .then(Commands.argument("biome", net.minecraft.commands.arguments.ResourceLocationArgument.id())
                                         .executes(FarfieldCommands::tileSpike)))
                         .then(Commands.literal("surface")
+                                .then(Commands.literal("at")
+                                        .then(Commands.argument("x", IntegerArgumentType.integer())
+                                                .then(Commands.argument("z", IntegerArgumentType.integer())
+                                                        .executes(FarfieldCommands::surfaceSpikeAt))))
                                 .then(Commands.argument("biome", net.minecraft.commands.arguments.ResourceLocationArgument.id())
                                         .executes(c -> surfaceSpike(c, 8))
                                         .then(Commands.argument("side", IntegerArgumentType.integer(1, 64))
@@ -125,6 +133,36 @@ public final class FarfieldCommands {
         }
         source.sendSuccess(() -> Component.literal("Surface spike started near " + biome + ", " + side + "x" + side
                 + " chunks. It generates far chunks into this world."), true);
+        return 1;
+    }
+
+    /** The preview tile over a position, built now (ADR-079's tile spike). */
+    private static int tileSpikeAt(CommandContext<CommandSourceStack> c) {
+        CommandSourceStack source = c.getSource();
+        var at = new net.minecraft.core.BlockPos(IntegerArgumentType.getInteger(c, "x"), 0,
+                IntegerArgumentType.getInteger(c, "z"));
+        boolean started = FeatureSpike.startTile(source.getLevel(), null, at,
+                line -> source.getServer().execute(() -> source.sendSuccess(() -> Component.literal(line), true)));
+        if (!started) {
+            source.sendFailure(Component.literal("A feature spike is already running."));
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal("Preview tile spike started at " + at.getX() + " " + at.getZ()), true);
+        return 1;
+    }
+
+    /** The surface spike over the 4 x 4 chunks around a position, with the real and ruled tops as maps. */
+    private static int surfaceSpikeAt(CommandContext<CommandSourceStack> c) {
+        CommandSourceStack source = c.getSource();
+        var at = new net.minecraft.core.BlockPos(IntegerArgumentType.getInteger(c, "x"), 0,
+                IntegerArgumentType.getInteger(c, "z"));
+        boolean started = SurfaceSpike.start(source.getLevel(), null, at, 4,
+                line -> source.getServer().execute(() -> source.sendSuccess(() -> Component.literal(line), true)));
+        if (!started) {
+            source.sendFailure(Component.literal("A surface spike is already running."));
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal("Surface spike started around " + at.getX() + " " + at.getZ()), true);
         return 1;
     }
 

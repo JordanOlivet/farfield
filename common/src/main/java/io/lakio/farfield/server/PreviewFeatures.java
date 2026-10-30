@@ -135,8 +135,13 @@ final class PreviewFeatures {
         if (level.getChunkSource().getGenerator() instanceof NoiseBasedChunkGenerator noise
                 && !SURFACE_FAILED.contains(level.dimension().location().toString())) {
             this.surface = noise;
+            // A subclass on purpose: ModernFix swaps a plain BiomeManager in the surface rules for a
+            // lookup in the chunk's own biomes, and a stand-in holds one per quart column, at its
+            // ground: the rules then saw another biome at every chunk's first cell row and column
+            // (grass lines across a gravel beach, ADR-104).
             this.surfaceBiomes = new net.minecraft.world.level.biome.BiomeManager(this::quartBiome,
-                    net.minecraft.world.level.biome.BiomeManager.obfuscateSeed(level.getSeed()));
+                    net.minecraft.world.level.biome.BiomeManager.obfuscateSeed(level.getSeed())) {
+            };
         }
         this.sandbox = new FeatureSandbox(level, this::standIn);
         this.sandbox.timeSteps(stepNanos);

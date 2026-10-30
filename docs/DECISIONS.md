@@ -2921,3 +2921,33 @@ Status: accepted, 2026-10-30. Amends ADR-084.
 - **Result**: `RenderConfigTest`, `gradlew build` pass. Not measured on
   the server yet (tiles a minute after a teleport, the pipeline's load to
   ingest time).
+
+## ADR-104 — The preview's surface rules get a BiomeManager ModernFix leaves alone
+
+Status: accepted, 2026-10-30. Amends ADR-101 and ADR-102; tile format 15.
+
+- **Context**: the user, on their server after ADR-103: a grid in the
+  preview, "quand je me rapproche, les LOD dévoilent le vrai terrain".
+  The server's tile 259.7, decoded from its store: per chunk, the first
+  row and column of cells grass over dirt, the nine others gravel; the
+  real ground there is `terralith:gravel_beach`. The pack in single
+  player on the user's seed (`/farfield spike surface at 132700 4040`,
+  added for this) gave the same grid against the real ground (82 % of
+  tops right); the dev server with only the worldgen mods gave 100 %, and
+  with ModernFix added 82 % again. ModernFix's `optimize_surface_rules`
+  replaces the surface rules' biome lookup by one in the chunk's own
+  biomes when the `BiomeManager` is exactly that class; a stand-in holds
+  one biome per quart column at its ground, so the rules saw another
+  biome at the cells whose ruled column is at x or z 2 of the chunk.
+- **Decision**: the surface rules get an anonymous subclass of
+  `BiomeManager` over the preview's biome source (ADR-102's cache):
+  ModernFix's check fails and the game's own lookup runs, for the preview
+  only. Tile format 15, so the tiles built with the grid are built again.
+  `/farfield spike surface at <x> <z>` and `/farfield spike tile at <x>
+  <z>` stay as tools (maps of real and ruled tops, one tile at a place).
+- **Result**: dev server with ModernFix, the user's seed: 100 % of the
+  ruled columns right at the island, maps identical. The pack on the
+  user's seed: 99.2 %; tile 259.7 built again has no grid (decoded); a
+  tile 6.5 s, its surface rules 1.5 s. `gradlew build` passes.
+- **Not covered**: other mods that swap the surface rules' lookups by
+  class; the user's server after the deploy.
