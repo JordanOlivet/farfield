@@ -2810,3 +2810,59 @@ to 2026-10-30).
 - **Not covered**: the user's pack on the home server; the dark one-frame
   areas at the game's render edge (ADR-052's hand-off, next steps of
   2026-10-29) are a separate glitch, left as they were.
+
+## ADR-101 — The preview's ground comes from the generator's surface rules
+
+Status: accepted, 2026-10-30. Plan item D.2; amends ADR-079 (the
+stand-in ground) and ADR-039's guessed tops.
+
+- **Context**: the preview's top and filler block per 4-block cell were
+  guessed from the biome and the slope (`NoisePreview.Materials.surface`):
+  grass, sand under the sea, red sand in badlands, snow where cold. Mods
+  lay their own surfaces (Biomes O' Plenty's white sand and podzol,
+  Terralith's basalt, calcite, coarse dirt), and the user's pack drew
+  them as grass. ADR-079's stand-in world already makes a `ProtoChunk` per
+  chunk of a tile for the features.
+- **Decision**: each stand-in chunk inside the tile is first made for the
+  generator's own surface rules (`NoiseBasedChunkGenerator.buildSurface`,
+  the overload without a world region, so every mod's rules and mixins
+  run as in the real world):
+  - one column per cell (`PreviewFeatures.ruled`, the cell's center) has
+    6 blocks of the dimension's default block under the preview's surface
+    (`CRUST`) over bedrock; the other columns are bedrock up to their
+    height, so the rules read the slope but run on 16 columns, not 256;
+    the sea over lower ground; biomes from the biome source with the
+    game's fuzzy zoom (`BiomeManager`), each quart sampled once a tile;
+  - the noise chunk is made once a tile with an empty `Beardifier`: the
+    generator's own asks the real world for the chunk's structure
+    references, which would generate real chunks from a preview thread;
+  - the tile's cell takes that column's top block and the one under it
+    (`ChunkAccess.getHeight` is the top block itself); iceberg cells keep
+    theirs; above the sea, a cell cold enough to snow shows a snow top
+    over the rules' block (the game's snow comes with the
+    `freeze_top_layer` feature, not the rules), as the guess did;
+  - the features then grow on a ground made of those cells (ADR-079);
+    with the features off the ground is still laid; margin chunks outside
+    the tile take the edge cells, as before;
+  - if the rules throw, the dimension falls back to the guess, logged
+    once; tile format 14 (older tiles are built again).
+- **Result**: `/farfield spike surface <biome> [side]` (`SurfaceSpike`)
+  compares, on the real heights of 8 x 8 chunks generated for real to
+  their surface, the ruled column's top and the guess with the real top.
+  With Biomes O' Plenty, Terralith, TerraBlender, Lithostitched: ruled
+  column right in 98.2 % (tropics) to 100 % of cells, the guess 0 %
+  (deep ocean) to 77 % (volcanic peaks, badlands); against each cell's
+  most common real top 88.9 to 99.7 % (one column stands for a patchy
+  cell). Cost: 1.7 to 4.9 ms a stand-in chunk (all 256 columns: 4.6 to
+  9.6 ms; a 20-block crust then 6: unchanged results), whole tiles
+  6.0 and 6.3 s with 2.0 and 2.4 s of surface rules. In a dev client over
+  the spike world: podzol under the redwoods, lavender meadows,
+  terracotta, red and white sand in the badlands. `gradlew build` passes.
+  A first run read the block under the top everywhere (`getHeight` taken
+  for the first free block); found by the spike's own numbers (plains'
+  real top "dirt"), fixed before these.
+- **Cost**: about 2 s more a tile, once (tiles are kept); every existing
+  tile is built again for format 14.
+- **Not covered**: the user's pack on their server; Biomes O' Plenty's
+  `stringy_cobweb` still fails in the stand-in (it casts the level to
+  `WorldGenRegion`; underground, left out as before).

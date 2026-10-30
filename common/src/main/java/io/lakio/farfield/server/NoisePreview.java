@@ -467,6 +467,7 @@ final class NoisePreview {
             tile.setGrid(grid);
             long t = stage(d, HEIGHTS, start);
             Materials m = new Materials(world, d);
+            boolean[] icebergCells = new boolean[PreviewTile.CELLS * PreviewTile.CELLS];
             Holder<Biome>[] chunkBiomes = biomes(d, tile, x0, z0, world);
             t = stage(d, BIOMES, t);
             for (int cz = 0; cz < PreviewTile.CELLS; cz++) {
@@ -480,6 +481,7 @@ final class NoisePreview {
                     if (h > d.seaLevel && iceberg(icebergs, cx, cz, step)) {
                         // Vanilla caps the highest icebergs with a few blocks of snow from sea + 18 to 27.
                         m.set(h - 1 > d.seaLevel + ICEBERG_SNOW ? m.snow : m.packedIce, m.packedIce);
+                        icebergCells[cz * PreviewTile.CELLS + cx] = true;
                     }
                     tile.setCell(cx, cz, m.top, m.filler);
                     // Vanilla's freeze_top_layer: the sea's top block turns to ice where the
@@ -502,7 +504,7 @@ final class NoisePreview {
             tile.setPlantGround(m.grass);
             List<PreviewVillages.Village> villages = villages(d, tile, x0, z0, m);
             t = stage(d, VILLAGES, t);
-            growFeatures(d, tile, tileX, tileZ, villages);
+            growFeatures(d, tile, tileX, tileZ, villages, icebergCells);
             t = stage(d, FEATURES, t);
             world.preview().write(tileX, tileZ, tile);
             stage(d, WRITE, t);
@@ -613,14 +615,20 @@ final class NoisePreview {
      * the server's settings turn them off; none within a village's radius,
      * where the preview lays its houses.
      */
+    /**
+     * The tile's ground from the generator's own surface rules (ADR-101),
+     * then, unless the settings turn them off, its features (ADR-079).
+     */
     private void growFeatures(Dimension d, PreviewTile tile, int tileX, int tileZ,
-                              List<PreviewVillages.Village> villages) {
+                              List<PreviewVillages.Village> villages, boolean[] icebergCells) {
         io.lakio.farfield.core.config.ServerConfig settings = StreamServer.settings();
+        PreviewFeatures features = new PreviewFeatures(d.level, d.biomes, d.columnSampler.get(), d.fluid, d.seaLevel,
+                d.world, settings, tile, tileX, tileZ, (x, z) -> inVillage(villages, x, z), icebergCells);
         if (!settings.previewFeatures()) {
+            features.surfaceOnly();
+            d.lastFeatureTiming = features.timing();
             return;
         }
-        PreviewFeatures features = new PreviewFeatures(d.level, d.biomes, d.columnSampler.get(), d.fluid, d.seaLevel,
-                d.world, settings, tile, tileX, tileZ, (x, z) -> inVillage(villages, x, z));
         features.decorate();
         d.featureFailures.addAndGet(features.failures());
         d.lastFeatureTiming = features.timing();
@@ -777,27 +785,61 @@ final class NoisePreview {
             filler = fillerMaterial;
         }
 
-        /** The blocks seen on top of a cell and just under it, guessed from its biome and slope. */
+        /**
+         * The blocks seen on top of a cell and just under it, guessed from its
+         * biome and slope ({@link #guess}); the generator's surface rules replace
+         * them where they run (ADR-101).
+         */
         void surface(Holder<Biome> biome, int x, int surfaceY, int z, boolean steep) {
-            if (d.end) {
-                set(below, below);
-            } else if (surfaceY < d.seaLevel && d.fluid != null) {
-                int floor = biome.value().getBaseTemperature() < 0.15f ? gravel : sand;
-                set(floor, floor);
-            } else if (biome.is(BiomeTags.IS_BADLANDS)) {
-                set(steep ? terracotta : redSand, terracotta);
-            } else if (biome.is(Biomes.DESERT) || biome.is(BiomeTags.IS_BEACH)) {
-                set(sand, sandstone);
-            } else if (steep || biome.is(Biomes.STONY_PEAKS) || biome.is(Biomes.STONY_SHORE)) {
-                set(stone, stone);
-            } else if (biome.value().coldEnoughToSnow(new BlockPos(x, surfaceY, z))) {
-                set(snow, biome.is(BiomeTags.IS_MOUNTAIN) ? snow : dirt);
-            } else if (biome.is(Biomes.MUSHROOM_FIELDS)) {
-                set(mycelium, dirt);
-            } else {
-                set(grass, dirt);
-            }
+            BlockState[] g = guess(biome, x, surfaceY, z, steep, d.seaLevel, d.fluid != null, d.end, d.defaultBlock);
+            set(cachedId(g[0]), cachedId(g[1]));
         }
+
+        private final java.util.Map<BlockState, Integer> ids = new java.util.IdentityHashMap<>();
+
+        private int cachedId(BlockState state) {
+            return ids.computeIfAbsent(state, this::id);
+        }
+    }
+
+    /**
+     * The top block of a column and the one under it, guessed from its biome
+     * and slope: the preview's ground before ADR-101, and still where the
+     * generator's surface rules cannot run. {top, filler}.
+     */
+    static BlockState[] guess(Holder<Biome> biome, int x, int surfaceY, int z, boolean steep, int seaLevel,
+                              boolean sea, boolean end, BlockState below) {
+        if (end) {
+            return new BlockState[]{below, below};
+        }
+        if (surfaceY < seaLevel && sea) {
+            BlockState floor = biome.value().getBaseTemperature() < 0.15f ? Blocks.GRAVEL.defaultBlockState()
+                    : Blocks.SAND.defaultBlockState();
+            return new BlockState[]{floor, floor};
+        }
+        if (biome.is(BiomeTags.IS_BADLANDS)) {
+            return new BlockState[]{steep ? Blocks.TERRACOTTA.defaultBlockState() : Blocks.RED_SAND.defaultBlockState(),
+                    Blocks.TERRACOTTA.defaultBlockState()};
+        }
+        if (biome.is(Biomes.DESERT) || biome.is(BiomeTags.IS_BEACH)) {
+            return new BlockState[]{Blocks.SAND.defaultBlockState(), Blocks.SANDSTONE.defaultBlockState()};
+        }
+        if (steep || biome.is(Biomes.STONY_PEAKS) || biome.is(Biomes.STONY_SHORE)) {
+            return new BlockState[]{Blocks.STONE.defaultBlockState(), Blocks.STONE.defaultBlockState()};
+        }
+        if (biome.value().coldEnoughToSnow(new BlockPos(x, surfaceY, z))) {
+            return new BlockState[]{Blocks.SNOW_BLOCK.defaultBlockState(), biome.is(BiomeTags.IS_MOUNTAIN)
+                    ? Blocks.SNOW_BLOCK.defaultBlockState() : Blocks.DIRT.defaultBlockState()};
+        }
+        if (biome.is(Biomes.MUSHROOM_FIELDS)) {
+            return new BlockState[]{Blocks.MYCELIUM.defaultBlockState(), Blocks.DIRT.defaultBlockState()};
+        }
+        return new BlockState[]{Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.DIRT.defaultBlockState()};
+    }
+
+    /** Height a 4-block cell rises across its corners from which the guess calls it a cliff. */
+    static int cliffRise() {
+        return CLIFF_RISE;
     }
 
     /** Stops building and waits for the running tiles, before the stores close. */

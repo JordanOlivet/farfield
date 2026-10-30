@@ -127,7 +127,7 @@ Items:
 
 ## M2.D — Mod features in the noise preview
 
-- [~] D.1 Features that come from mods in the preview. The user
+- [x] D.1 Features that come from mods in the preview. The user
   (2026-10-28): plains in the preview turned out, flown over, to be full
   of giant trees from a mod; the same for vegetation; handle every type
   generically, with a way to turn some off. ADR-079: the world's own
@@ -136,19 +136,31 @@ Items:
   and `preview_feature_exclude`. Spike: 88 to 94 % of real tree columns
   found in three biomes, 0 failures; tiles 3 to 6 s, 59 to 113 KB.
   Remains: a look in a client and in the pack, the amethyst rainforest's
-  34 %, the tile size.
-- [ ] D.2 Real surface rules on the preview's ground (the top block is
+  34 %, the tile size. The user (2026-10-30), after their tests: "de tout
+  mes tests rien ne m'est sauté au yeux donc je pense qu'on est bon";
+  reopened if they see something. Left as they were: the amethyst
+  rainforest's 34 %, the tile size.
+- [~] D.2 Real surface rules on the preview's ground (the top block is
   guessed from the biome: Biomes O' Plenty's white sand, Terralith's
-  surfaces), with the same stand-in world.
+  surfaces), with the same stand-in world. ADR-101: the generator's own
+  surface rules on one column per cell of each stand-in chunk; against
+  real generation (8 biomes of vanilla, Biomes O' Plenty and Terralith,
+  8 x 8 chunks each) the ruled column's top is right in 98.2 to 100 % of
+  cells, the guess in 0 to 77 %; 2 to 2.4 s more a tile. Seen in a dev
+  client (redwood forest, badlands). Remains: a look in the user's pack.
 - [ ] D.3 A client toggle per kind of feature (trees, plants, rocks).
-- [~] D.4 Vegetation without collision that grows like kelp or vines
+- [x] D.4 Vegetation without collision that grows like kelp or vines
   (`GrowingPlantBlock`: Biomes O' Plenty's `high_grass`) was drawn as
   nothing, in real LODs and in the preview. ADR-080: classed as plants,
   double plants too; the tiles keep out what LODs never draw and the
   plants under the sea; the preview store persists its key tables before
-  each tile. Dev tile checked; remains: a look in the pack.
+  each tile. Dev tile checked; the user found nothing wrong in the pack
+  (2026-10-30, with D.1).
 
 ## M2.E — Distance up to 16,384 blocks
+
+Put off by the user (2026-10-30): "c'est pas du tout prio". The order
+from there: D.2, then the sea floor's plants and corals in the preview.
 
 - [ ] E.1 The user (2026-10-28): raise the limit from 4,096 to 16,384
   blocks, 4,096 staying the default. A server maximum never exceeded

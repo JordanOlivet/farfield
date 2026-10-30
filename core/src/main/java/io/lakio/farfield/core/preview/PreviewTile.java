@@ -46,7 +46,7 @@ public final class PreviewTile {
      * out among the features (ADR-080), 13 the trees of snowy forests
      * (ADR-086); older tiles are built again.
      */
-    private static final int FORMAT = 13;
+    private static final int FORMAT = 14;
     /** Blocks a side of a feature voxel. */
     public static final int FEATURE_VOXEL = 2;
     /** Blocks around the tile its features may reach. */

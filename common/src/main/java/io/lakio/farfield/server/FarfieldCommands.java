@@ -54,6 +54,11 @@ public final class FarfieldCommands {
                         .then(Commands.literal("tile")
                                 .then(Commands.argument("biome", net.minecraft.commands.arguments.ResourceLocationArgument.id())
                                         .executes(FarfieldCommands::tileSpike)))
+                        .then(Commands.literal("surface")
+                                .then(Commands.argument("biome", net.minecraft.commands.arguments.ResourceLocationArgument.id())
+                                        .executes(c -> surfaceSpike(c, 8))
+                                        .then(Commands.argument("side", IntegerArgumentType.integer(1, 64))
+                                                .executes(c -> surfaceSpike(c, IntegerArgumentType.getInteger(c, "side"))))))
                         .then(Commands.literal("features")
                                 .then(Commands.argument("biome", net.minecraft.commands.arguments.ResourceLocationArgument.id())
                                         .executes(c -> featureSpike(c, 8))
@@ -104,6 +109,21 @@ public final class FarfieldCommands {
             return 0;
         }
         source.sendSuccess(() -> Component.literal("Feature spike started near " + biome + ", " + side + "x" + side
+                + " chunks. It generates far chunks into this world."), true);
+        return 1;
+    }
+
+    /** Spike for ADR-101: the surface rules on a stand-in and the guessed tops, against the real ones. */
+    private static int surfaceSpike(CommandContext<CommandSourceStack> c, int side) {
+        CommandSourceStack source = c.getSource();
+        var biome = net.minecraft.commands.arguments.ResourceLocationArgument.getId(c, "biome");
+        boolean started = SurfaceSpike.start(source.getLevel(), biome, side,
+                line -> source.getServer().execute(() -> source.sendSuccess(() -> Component.literal(line), true)));
+        if (!started) {
+            source.sendFailure(Component.literal("A surface spike is already running."));
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal("Surface spike started near " + biome + ", " + side + "x" + side
                 + " chunks. It generates far chunks into this world."), true);
         return 1;
     }
