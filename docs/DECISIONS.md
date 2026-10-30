@@ -3032,3 +3032,30 @@ Status: accepted, 2026-10-30. Amends ADR-079 (feature voxels).
   (a reef run under 20 blocks of sea, on the finest level and on level
   1) fails without the change and passes with it; `gradlew build` passes.
 - **Not covered**: a look in the user's pack.
+
+## ADR-109 — Real chunks beside the preview stand at their lowest ground
+
+Status: accepted, 2026-10-30. Amends ADR-090 (the preview's mask of real chunks).
+
+- **Context**: the user's Fabric pack, a single-player world from an old
+  map: the sky through the ground in many places, "notamment sur des
+  grottes". The store was whole (`storeHoles`: 15,063 full chunks, 0
+  without voxels; level 0 matched the region files column by column
+  around the hole). The mask of a real chunk holds one ground per chunk,
+  read from level 4: the top of its one voxel's fill, near the chunk's
+  highest columns (80 for a chunk whose columns top at 55 to 84). A
+  preview column beside it goes down only to that ground, and is hollow
+  under its skin; the view passed over a real pit at 56, at the edge of
+  the real terrain, into that hollow, and met no face.
+- **Decision**: in the mask, a real chunk touching a preview chunk
+  (diagonals included; across a tile's edge, the neighbor tile's mask in
+  use decides, none yet counts as preview) takes the lowest solid column
+  top over the chunk, read at the finest level that holds it, 0 to 3
+  (`RealGround.lowest`). Fluids are not ground. The preview's wall beside
+  it reaches the pit; where the real ground is higher it hides the wall.
+  Chunks away from the preview keep the level-4 value: no preview column
+  stands beside them.
+- **Result**: `RealGroundTest` (a pit column, a chunk held only on level
+  1); on a copy of the user's store, the chunk above reads 56 instead of
+  80, about 1 ms per border chunk; `gradlew build` passes.
+- **Not covered**: a look in the user's pack at the same view.

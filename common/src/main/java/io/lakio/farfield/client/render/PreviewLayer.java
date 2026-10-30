@@ -7,6 +7,7 @@ import io.lakio.farfield.core.mesh.MaterialClassifier;
 import io.lakio.farfield.core.preview.PreviewStore;
 import io.lakio.farfield.core.preview.PreviewTile;
 import io.lakio.farfield.core.preview.PreviewVoxels;
+import io.lakio.farfield.core.preview.RealGround;
 import io.lakio.farfield.core.select.LodSelector;
 import io.lakio.farfield.core.world.LodWorld;
 import it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap;
@@ -452,7 +453,7 @@ final class PreviewLayer {
         if ((mask[Math.floorMod(chunkZ, PreviewTile.CHUNKS)] >>> Math.floorMod(chunkX, PreviewTile.CHUNKS) & 1) == 0) {
             return "shown (no real data at level " + TOP_LEVEL + ")" + hold;
         }
-        return "hidden for real terrain (level " + TOP_LEVEL + " ground at " + mask[GROUND + c] + ", fluid top "
+        return "hidden for real terrain (ground at " + mask[GROUND + c] + ", fluid top "
                 + mask[FLUID + c] + ")" + hold;
     }
 
@@ -834,6 +835,22 @@ final class PreviewLayer {
             }
         }
         mergeFine(tile, mask);
+        // A level-4 ground stands near the chunk's highest columns: on the border with the
+        // preview, the lowest one, else the view passed over a low real pit into the hollow
+        // under the preview column beside it, the sky showing (ADR-109).
+        for (int cz = 0; cz < PreviewTile.CHUNKS; cz++) {
+            for (int cx = 0; cx < PreviewTile.CHUNKS; cx++) {
+                if ((mask[cz] >>> cx & 1) == 0 || !bordersPreview(mask, x, z, cx, cz)) {
+                    continue;
+                }
+                int c = cz * PreviewTile.CHUNKS + cx;
+                int low = RealGround.lowest(w, x * PreviewTile.CHUNKS + cx, z * PreviewTile.CHUNKS + cz, minY, maxY,
+                        TOP_LEVEL);
+                if (low != Integer.MIN_VALUE && (mask[GROUND + c] == Integer.MIN_VALUE || low < mask[GROUND + c])) {
+                    mask[GROUND + c] = low;
+                }
+            }
+        }
         // Fluid without ground under it in the store: its bottom stands for the ground.
         for (int c = 0; c < PreviewTile.CHUNKS * PreviewTile.CHUNKS; c++) {
             if (mask[GROUND + c] == Integer.MIN_VALUE && mask[FLUID + c] != Integer.MIN_VALUE) {
@@ -844,6 +861,32 @@ final class PreviewLayer {
             }
         }
         return mask;
+    }
+
+    /**
+     * Whether a real chunk of a mask touches a preview chunk, diagonals
+     * included (a preview column goes down to under its eight neighbors).
+     * Across the tile's edge the neighbor tile's mask in use decides; none
+     * yet counts as preview.
+     */
+    private boolean bordersPreview(int[] mask, int tileX, int tileZ, int cx, int cz) {
+        for (int dz = -1; dz <= 1; dz++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                int nx = cx + dx;
+                int nz = cz + dz;
+                int[] m = mask;
+                if (nx < 0 || nz < 0 || nx >= PreviewTile.CHUNKS || nz >= PreviewTile.CHUNKS) {
+                    m = masks.get(PreviewStore.key(tileX + Math.floorDiv(nx, PreviewTile.CHUNKS),
+                            tileZ + Math.floorDiv(nz, PreviewTile.CHUNKS)));
+                    nx = Math.floorMod(nx, PreviewTile.CHUNKS);
+                    nz = Math.floorMod(nz, PreviewTile.CHUNKS);
+                }
+                if (m == null || (m[nz] >>> nx & 1) == 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** The section of a preview key, real chunks left empty; null when empty. Mesher threads. */
