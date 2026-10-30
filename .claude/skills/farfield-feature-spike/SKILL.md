@@ -15,4 +15,6 @@ Judge a feature in the preview by decorating the same chunks the real generator 
 
 Trees missing in a cold biome: check the ground under the features before judging the feature. The preview's stand-in puts the tile's top block where the features look; a snow block lets no sapling survive, so every sapling filter fails and the forest comes out bare. Snow over dirt is snowy grass in the stand-in since tile format 13 (`PreviewFeatures.soil`); snow over snow stays, as on peaks. Before blaming the preview, confirm the LOD holds the trees (`farfield-mirror-probe`, step 9).
 
+The same spike judges the preview's ground: `/farfield spike surface <biome> [side]` compares the generator's surface rules on the stand-in with the real top of chunks generated to their surface. Read its `Surface spike: tops right` line; the guess it prints is the old one. Check the reading code first: `ChunkAccess.getHeight` is the top block itself, so a spike comparing the block under it reports nonsense (it did once: plains' real top came out as "dirt").
+
 Run details and the last result: see `references/spike-run.md`.

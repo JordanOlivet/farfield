@@ -35,5 +35,6 @@ Thumbs.db
 .claude/skills/**/.sidecar.json
 __pycache__/
 
-# Machine-specific skill: the user's home server (host name, paths outside the repository; ADR-042).
-.claude/skills/farfield-home-server-deploy/
+# Machine-specific skill: deploys to the user's home server and pack instance (host name, paths
+# outside the repository; ADR-042).
+.claude/skills/farfield-deploy/

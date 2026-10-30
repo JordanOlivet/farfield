@@ -1,0 +1,2 @@
+  - the spike world under `saves/`, set `allowCommands` to 1 in its `level.dat` (a dedicated server's world has it off), `-PquickPlay=<name>`, `time set noon`.
+  The tool result of that patch: found at 1637 value 0 / patched to 1
