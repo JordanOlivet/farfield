@@ -3074,3 +3074,26 @@ Status: accepted, 2026-10-30.
 - **Result**: from an empty `output/`, `:neoforge:jar :fabric:remapJar`
   logs both copies; after `gradlew build` the two files there have the
   same sha256 as the jars in `build/libs`.
+
+## ADR-111 — The A/B series and flash scoring scripts are tracked
+
+Status: accepted, 2026-10-30.
+
+- **Context**: the bands at the generation front (ADR-100) were measured
+  with A/B series of agent runs and scored from the frame probe's
+  sessions, by scripts kept in a session's scratch folder, with that
+  folder's paths and a temporary switch written in. Flash counts vary a
+  lot from one run to the next: a fix is judged on medians of about five
+  runs per side, so the series must be easy to run again.
+- **Decision**: `dev/agent/series.sh` (single player, fresh world, rounds
+  of every mode) and `dev/agent/stream-series.sh` (a fresh Fabric dev
+  server world, the Fabric client joined) take each mode as
+  `name=<JVM options>`, so a temporary switch is passed, not written in;
+  results go to `build/agent-series/`. `score-flashes.py` counts a
+  session's far bands (lighter or darker than the frame before), LOD
+  flashes and render-edge flashes; `band-keys.py` lists the renderer's
+  notes on each far band's chunks. The flights' command files are
+  `scenarios/band-sea.cmd`, `band-sea-server.cmd` and `band-land.cmd`.
+- **Result**: on a dev session of 2026-10-30 both Python scripts print
+  the same counts and notes as the scratch versions; both shell scripts
+  pass `bash -n`. A full series was not run with the tracked versions.

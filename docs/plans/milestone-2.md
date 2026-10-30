@@ -169,6 +169,8 @@ Items:
   spread at draw time into the voxels' block light, as the real LODs show
   it. The user (2026-10-30): later, "avec possibilité de désactiver dans
   les options" (a client setting, on by default or not: their call then).
+  When (2026-10-30): after release 0.2.0, with the shader pack version
+  (C.1), "car la lumière sera importante à ce moment".
 
 ## M2.E — Distance up to 16,384 blocks
 
