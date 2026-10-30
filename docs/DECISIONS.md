@@ -3059,3 +3059,18 @@ Status: accepted, 2026-10-30. Amends ADR-090 (the preview's mask of real chunks)
   1); on a copy of the user's store, the chunk above reads 56 instead of
   80, about 1 ms per border chunk; `gradlew build` passes.
 - **Not covered**: a look in the user's pack at the same view.
+
+## ADR-110 — Every build copies both loaders' jars to output/
+
+Status: accepted, 2026-10-30.
+
+- **Context**: the user: "c'est assez embêtant d'aller à chaque fois
+  chercher chaque jar dans les sous dossiers".
+- **Decision**: the shippable jar task of each loader (`remapJar` on
+  Fabric, `jar` on NeoForge) is finalized by `copyJarToOutput`, which
+  copies the jar into `output/` at the repository root (gitignored) and
+  deletes that loader's previous jar there. Sources jars stay in
+  `build/libs`.
+- **Result**: from an empty `output/`, `:neoforge:jar :fabric:remapJar`
+  logs both copies; after `gradlew build` the two files there have the
+  same sha256 as the jars in `build/libs`.

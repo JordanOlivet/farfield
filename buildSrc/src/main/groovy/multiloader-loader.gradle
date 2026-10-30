@@ -89,3 +89,25 @@ ext.registerFreshWorld = { String runTaskName, File clientDir ->
     tasks.matching { it.name == runTaskName }.configureEach { dependsOn fresh }
     tasks.matching { it.name in ['prepareRuns', 'syncPackInstance', 'syncPackMods'] }.configureEach { mustRunAfter fresh }
 }
+
+// Every shippable jar built is also copied to output/ at the repository's root
+// (gitignored), so both loaders' jars sit side by side (ADR-110). Fabric ships
+// the remapped jar, NeoForge the plain one; the loader's previous jar there goes.
+afterEvaluate {
+    def shipped = tasks.named(tasks.findByName('remapJar') ? 'remapJar' : 'jar',
+            org.gradle.api.tasks.bundling.AbstractArchiveTask)
+    def toOutput = tasks.register('copyJarToOutput') {
+        group = 'farfield'
+        description = 'Copies the shippable jar into output/ at the repository root.'
+        doLast {
+            File out = rootProject.file('output')
+            out.mkdirs()
+            File jar = shipped.get().archiveFile.get().asFile
+            out.listFiles().findAll { it.name ==~ /farfield-${project.name}-.*\.jar/ && it.name != jar.name }*.delete()
+            java.nio.file.Files.copy(jar.toPath(), new File(out, jar.name).toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            logger.lifecycle("Copied ${jar.name} to output/")
+        }
+    }
+    shipped.configure { finalizedBy toOutput }
+}

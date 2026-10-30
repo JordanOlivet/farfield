@@ -57,7 +57,8 @@ e.g. `git tag v0.1.0-alpha.2 && git push origin v0.1.0-alpha.2`;
 and a GitHub Release.
 
 Shippable jars: `neoforge/build/libs/farfield-neoforge-1.21.1-<version>.jar`
-and `fabric/build/libs/farfield-fabric-1.21.1-<version>.jar`.
+and `fabric/build/libs/farfield-fabric-1.21.1-<version>.jar`. Every build also copies
+both to `output/` at the root (gitignored, ADR-110).
 
 ## Architecture (ADR-006)
 

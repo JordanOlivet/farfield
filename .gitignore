@@ -2,6 +2,8 @@
 .gradle/
 build/
 out/
+# Both loaders' jars, copied there by every build (ADR-110)
+/output/
 
 # Minecraft dev runs (set up from dev/, ADR-042)
 run/
