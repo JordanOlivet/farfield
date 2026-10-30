@@ -244,6 +244,8 @@ public final class LodRenderer {
      * neighbors, everything right after a teleport) keep their LODs.
      */
     private GlBuffer drawnSections;
+    /** Chunk columns whose preview fragments are discarded ({@link #handOver}), around the camera. */
+    private GlBuffer previewHidden;
     private int[] drawnBits = new int[0];
     /** Raw compiled state of the last pass, same layout: a section must stay built for two passes. */
     private int[] compiledBits = new int[0];
@@ -484,6 +486,7 @@ public final class LodRenderer {
         final int gridMin;
         final int gridSize;
         final int sodiumRule;
+        final int hiddenMin;
         final int lightmap;
         final int fogColor;
         final int fog;
@@ -505,6 +508,7 @@ public final class LodRenderer {
             gridMin = program.uniform("u_gridMin");
             gridSize = program.uniform("u_gridSize");
             sodiumRule = program.uniform("u_sodiumRule");
+            hiddenMin = program.uniform("u_hiddenMin");
             lightmap = program.uniform("u_lightmap");
             fogColor = program.uniform("u_fogColor");
             fog = program.uniform("u_fog");
@@ -864,6 +868,7 @@ public final class LodRenderer {
         neighborSlots = new GlBuffer(1024L * NEIGHBOR_INTS * 4);
         biomeColumns = new GlBuffer(1024L * BIOME_COLUMN_INTS * 4);
         drawnSections = new GlBuffer(4096L * 4);
+        previewHidden = new GlBuffer((long) HIDDEN_SIDE * HIDDEN_SIDE / 8);
         indirect = new GlBuffer(1024L * COMMAND_BYTES);
         vao = glCreateVertexArrays();
         int[] indices = new int[INDEXED_QUADS * 6];
@@ -955,6 +960,7 @@ public final class LodRenderer {
             nextHoleScan = frameStart + HOLE_SCAN_NANOS;
             scanHoles(frameStart, mc.options.getEffectiveRenderDistance());
         }
+        updateHandOver(cam, frameStart);
         watchColumns(mc.options.getEffectiveRenderDistance());
         logFill(frameStart, false);
         for (int l = 0; l < commands.length; l++) {
@@ -971,6 +977,9 @@ public final class LodRenderer {
                 continue;
             }
             if (!looksReady(r)) {
+                if (FrameProbe.enabled()) {
+                    FrameProbe.note("looks" + probeName(key));
+                }
                 continue; // a material without its look yet: drawn once all have one (ADR-062, ADR-078)
             }
             int faces = visibleFaces(key, cam);
@@ -983,7 +992,7 @@ public final class LodRenderer {
             }
             count++;
             quadsInView += r.quadCount;
-            boolean discards = r.cutout || nearGame(key);
+            boolean discards = r.cutout || nearGame(key) || previewOverHandOver(key);
             discardSections += discards ? 1 : 0;
             addCommands(r, discards ? DISCARD : SOLID, faces);
             // Plants' diagonals face every way and always cut their holes: their own pass,
@@ -1198,6 +1207,9 @@ public final class LodRenderer {
         selectedLookZ = look.z;
         selectionDirty = false;
         selections++;
+        if (FrameProbe.enabled()) {
+            FrameProbe.note("select");
+        }
         drawList.clear();
         wanted.clear();
         LongPredicate viewed = key -> inView(key, cam);
@@ -1220,6 +1232,7 @@ public final class LodRenderer {
                     lastSelectionDistance, sections::ready, drawSink, wantSink);
         }
         int outdatedDrawn = 0;
+        LongOpenHashSet drawnBefore = FrameProbe.enabled() ? new LongOpenHashSet(drawn) : null;
         drawn.clear();
         selectedMinY = level.getMinBuildHeight();
         selectedMaxY = level.getMaxBuildHeight();
@@ -1239,6 +1252,19 @@ public final class LodRenderer {
             }
         }
         maxOutdatedDrawn = Math.max(maxOutdatedDrawn, outdatedDrawn);
+        if (drawnBefore != null) {
+            LongIterator added = drawn.iterator();
+            while (added.hasNext()) {
+                long k = added.nextLong();
+                if (!drawnBefore.remove(k)) {
+                    FrameProbe.note("+" + probeName(k));
+                }
+            }
+            LongIterator removed = drawnBefore.iterator();
+            while (removed.hasNext()) {
+                FrameProbe.note("-" + probeName(removed.nextLong()));
+            }
+        }
         // The traversal walks the grid from one corner: ask for what is near and in view first,
         // or the meshes in flight go to far sections behind the camera (ADR-056).
         wantOrder.clear();
@@ -1534,6 +1560,160 @@ public final class LodRenderer {
     }
 
     /**
+     * Chunk columns a real mesh just began to draw while the preview showed
+     * them, with the time it came: until the preview's own meshes leave them,
+     * both drew there, and two sea tops blended into a lighter band for the
+     * frame or two the preview took to be meshed again (ADR-100).
+     */
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap handOver =
+            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+    /** Of those, the ones the real terrain drew once: hidden from the preview until it leaves them. */
+    private final LongOpenHashSet hidingPreview = new LongOpenHashSet();
+    /** The columns hidden from the preview this frame. */
+    private final LongOpenHashSet hiddenColumns = new LongOpenHashSet();
+    /** Preview sections (level, x, 0, z) over a hidden column: drawn with the discarding shader. */
+    private final LongOpenHashSet previewOverHidden = new LongOpenHashSet();
+    /** The grid of hidden columns the shader reads: this many chunks a side, centered on the camera. */
+    private static final int HIDDEN_SIDE = 256;
+    /** A column is handed over for this long at most: the preview's new meshes come well before. */
+    private static final long HAND_OVER_NANOS = 5_000_000_000L;
+    private final int[] hiddenBits = new int[HIDDEN_SIDE * HIDDEN_SIDE / 32];
+    private int hiddenMinX;
+    private int hiddenMinZ;
+    private boolean hiddenUploaded;
+    /** Columns handed over since the last report, and those still under the preview at the time limit. */
+    private long handedOver;
+    private long handOverExpired;
+
+    /** Notes the chunk columns a real section's new mesh draws that its old one did not. */
+    private void noteHandOver(long key, long[] before, long[] after) {
+        if (after == null) {
+            return;
+        }
+        int side = 2 << LodKey.level(key);
+        int baseX = LodKey.x(key) * side;
+        int baseZ = LodKey.z(key) * side;
+        long now = System.nanoTime();
+        for (int i = 0; i < after.length; i++) {
+            long added = before == null || i >= before.length ? after[i] : after[i] & ~before[i];
+            while (added != 0) {
+                int bit = i * 64 + Long.numberOfTrailingZeros(added);
+                added &= added - 1;
+                int chunkX = baseX + bit % side;
+                int chunkZ = baseZ + bit / side;
+                handOver.putIfAbsent((long) chunkX << 32 | (chunkZ & 0xFFFFFFFFL), now);
+            }
+        }
+    }
+
+    /**
+     * After the selection: a handed-over column is hidden from the preview
+     * in this frame's shader once a drawn real section with quads there
+     * spans the height of the preview's top there (its sea, its ground), and
+     * stays hidden until the preview's meshes no longer draw there (shown
+     * again for a frame, the preview flickered over the real sea). Not
+     * {@link #realReady}: it waits for every section over the column, and the
+     * overlap lasted as long; nor any real quads there: a section under the
+     * sea left holes where the preview's sea was hidden. Render thread.
+     */
+    private void updateHandOver(Vec3 cam, long now) {
+        hiddenColumns.clear();
+        previewOverHidden.clear();
+        var it = handOver.long2LongEntrySet().iterator();
+        while (it.hasNext()) {
+            var e = it.next();
+            long c = e.getLongKey();
+            int chunkX = (int) (c >> 32);
+            int chunkZ = (int) c;
+            long top = previewTop(chunkX, chunkZ);
+            if (top == Long.MIN_VALUE) {
+                it.remove(); // the preview's new meshes left it, or it never drew there
+                hidingPreview.remove(c);
+                continue;
+            }
+            if (now - e.getLongValue() > HAND_OVER_NANOS) {
+                handOverExpired++;
+                it.remove();
+                hidingPreview.remove(c);
+                continue;
+            }
+            if (hidingPreview.contains(c) || realCovers(chunkX, chunkZ, (int) (top >> 32), (int) top)) {
+                hidingPreview.add(c);
+                hiddenColumns.add(c);
+                for (int level = 0; level < LodWorld.LEVELS; level++) {
+                    previewOverHidden.add(LodKey.pack(level, chunkX >> (level + 1), 0, chunkZ >> (level + 1)));
+                }
+            }
+        }
+        handedOver += hiddenColumns.size();
+        if (hiddenColumns.isEmpty() && !hiddenUploaded) {
+            return;
+        }
+        hiddenMinX = ((int) Math.floor(cam.x) >> 4) - HIDDEN_SIDE / 2;
+        hiddenMinZ = ((int) Math.floor(cam.z) >> 4) - HIDDEN_SIDE / 2;
+        java.util.Arrays.fill(hiddenBits, 0);
+        LongIterator columns = hiddenColumns.iterator();
+        while (columns.hasNext()) {
+            long c = columns.nextLong();
+            int gx = (int) (c >> 32) - hiddenMinX;
+            int gz = (int) c - hiddenMinZ;
+            if (gx >= 0 && gz >= 0 && gx < HIDDEN_SIDE && gz < HIDDEN_SIDE) {
+                int bit = gz * HIDDEN_SIDE + gx;
+                hiddenBits[bit >> 5] |= 1 << (bit & 31);
+            }
+        }
+        previewHidden.upload(0, hiddenBits);
+        hiddenUploaded = !hiddenColumns.isEmpty();
+    }
+
+    /** Whether a drawn real section with quads in a chunk column spans blocks [minY, maxY). */
+    private boolean realCovers(int chunkX, int chunkZ, int minY, int maxY) {
+        for (int level = 0; level < LodWorld.LEVELS; level++) {
+            int size = LodSection.SIZE << level;
+            int x = chunkX >> (level + 1);
+            int z = chunkZ >> (level + 1);
+            for (int y = Math.floorDiv(minY, size); y <= Math.floorDiv(maxY - 1, size); y++) {
+                long key = LodKey.pack(level, x, y, z);
+                if (drawn.contains(key) && drawsColumn(resident.get(key), level, chunkX, chunkZ)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The blocks [minY, maxY) of the highest drawn preview section with quads
+     * in a chunk column, packed {@code minY << 32 | maxY}; Long.MIN_VALUE for none.
+     */
+    private long previewTop(int chunkX, int chunkZ) {
+        int bestMin = Integer.MIN_VALUE;
+        int bestMax = Integer.MIN_VALUE;
+        for (int level = 0; level < LodWorld.LEVELS; level++) {
+            int size = LodSection.SIZE << level;
+            int x = chunkX >> (level + 1);
+            int z = chunkZ >> (level + 1);
+            for (int y = Math.floorDiv(selectedMaxY - 1, size); y >= Math.floorDiv(selectedMinY, size); y--) {
+                long p = PreviewLayer.toPreview(LodKey.pack(level, x, y, z));
+                if (drawn.contains(p) && drawsColumn(resident.get(p), level, chunkX, chunkZ)) {
+                    if ((y + 1) * size > bestMax) {
+                        bestMin = y * size;
+                        bestMax = (y + 1) * size;
+                    }
+                    break; // the highest at this level
+                }
+            }
+        }
+        return bestMax == Integer.MIN_VALUE ? Long.MIN_VALUE : (long) bestMin << 32 | (bestMax & 0xFFFFFFFFL);
+    }
+
+    /** A preview section over a hidden column: its fragments there are discarded. */
+    private boolean previewOverHandOver(long key) {
+        return !previewOverHidden.isEmpty() && PreviewLayer.isPreview(key)
+                && previewOverHidden.contains(LodKey.pack(drawLevel(key), LodKey.x(key), 0, LodKey.z(key)));
+    }
+
+    /**
      * With the frame probe on (ADR-099): what draws each chunk column the hole
      * detector watches, this frame, for its flicker watch.
      */
@@ -1556,19 +1736,25 @@ public final class LodRenderer {
         FrameProbe.endColumns();
     }
 
-    /** The finest real level with quads in a chunk column, else the finest preview level, else nothing. */
+    /**
+     * The finest real level with quads in a chunk column, else the finest
+     * preview level, else nothing; a real level with preview quads in the
+     * same column is both drawn over each other.
+     */
     private int columnState(int chunkX, int chunkZ) {
-        int preview = io.lakio.farfield.core.debug.ColumnFlicker.NONE;
+        int none = io.lakio.farfield.core.debug.ColumnFlicker.NONE;
+        int real = none;
+        int preview = none;
         for (int level = 0; level < LodWorld.LEVELS; level++) {
             int size = LodSection.SIZE << level;
             int x = chunkX >> (level + 1);
             int z = chunkZ >> (level + 1);
             for (int y = Math.floorDiv(selectedMinY, size); y <= Math.floorDiv(selectedMaxY - 1, size); y++) {
                 long key = LodKey.pack(level, x, y, z);
-                if (drawn.contains(key) && drawsColumn(resident.get(key), level, chunkX, chunkZ)) {
-                    return io.lakio.farfield.core.debug.ColumnFlicker.real(level);
+                if (real == none && drawn.contains(key) && drawsColumn(resident.get(key), level, chunkX, chunkZ)) {
+                    real = level;
                 }
-                if (preview == io.lakio.farfield.core.debug.ColumnFlicker.NONE) {
+                if (preview == none) {
                     long p = PreviewLayer.toPreview(key);
                     if (drawn.contains(p) && drawsColumn(resident.get(p), level, chunkX, chunkZ)) {
                         preview = io.lakio.farfield.core.debug.ColumnFlicker.preview(level);
@@ -1576,7 +1762,17 @@ public final class LodRenderer {
                 }
             }
         }
-        return preview;
+        if (real == none) {
+            return preview;
+        }
+        return preview == none ? io.lakio.farfield.core.debug.ColumnFlicker.real(real)
+                : io.lakio.farfield.core.debug.ColumnFlicker.both(real);
+    }
+
+    /** A section for the frame probe's notes: R (real) or P (preview), its level, [x,y,z]. */
+    private static String probeName(long key) {
+        return (PreviewLayer.isPreview(key) ? "P" : "R") + drawLevel(key) + "[" + LodKey.x(key) + "," + LodKey.y(key)
+                + "," + LodKey.z(key) + "]";
     }
 
     /** The level a section is drawn at (preview keys carry an offset). */
@@ -1645,11 +1841,15 @@ public final class LodRenderer {
                     HOLE_RADIUS_CHUNKS, holesClosed, holesClosed == 0 ? 0 : holeNanos / holesClosed / 1_000_000,
                     holeMaxNanos / 1_000_000, holeSince.size(), previewLayer.heldReport()
                             + "; " + swapsDone + " preview swaps put in whole, " + swapsTimedOut + " at the "
-                            + SWAP_TIMEOUT_NANOS / 1_000_000 + " ms limit, " + swapMaxNanos / 1_000_000 + " ms at most");
+                            + SWAP_TIMEOUT_NANOS / 1_000_000 + " ms limit, " + swapMaxNanos / 1_000_000 + " ms at most"
+                            + "; preview hidden over " + handedOver + " handed-over column frames, "
+                            + handOverExpired + " columns still under it after " + HAND_OVER_NANOS / 1_000_000_000L + " s");
         } else {
             previewLayer.heldReport();
         }
         maxHoles = 0;
+        handedOver = 0;
+        handOverExpired = 0;
         swapsDone = 0;
         swapsTimedOut = 0;
         swapMaxNanos = 0;
@@ -2149,6 +2349,9 @@ public final class LodRenderer {
             if (!swap.waiting.isEmpty() && !timedOut) {
                 continue;
             }
+            if (FrameProbe.enabled()) {
+                FrameProbe.note("swap" + swap.ready.size() + (swap.waiting.isEmpty() ? "" : "timedOut"));
+            }
             for (MeshResult m : swap.ready) {
                 upload(m);
             }
@@ -2201,6 +2404,9 @@ public final class LodRenderer {
         }
         Resident r = resident.get(m.key);
         boolean fresh = r == null;
+        if (FrameProbe.enabled()) {
+            FrameProbe.note(probeName(m.key) + (fresh ? "new" : "") + (drawn.contains(m.key) ? "d" : "") + "q" + m.quads.length);
+        }
         if (rewrittenMeanwhile) {
             stale.add(m.key);
             selectionDirty = true;
@@ -2219,6 +2425,9 @@ public final class LodRenderer {
         r.cutout = m.cutout;
         r.borderFaces = m.borderFaces;
         r.octants = m.octants;
+        if (!PreviewLayer.isPreview(m.key)) {
+            noteHandOver(m.key, r.columns, m.columns);
+        }
         r.columns = m.columns;
         long[] oldBorders = r.borders;
         r.borders = m.borders;
@@ -2338,7 +2547,7 @@ public final class LodRenderer {
         int size = LodSection.SIZE << level;
         sectionInfo.upload((long) r.slot * SECTION_BYTES, new int[]{
                 LodKey.x(key) * size, LodKey.y(key) * size, LodKey.z(key) * size, level,
-                (int) r.start, r.quadCount, r.occluders ? 1 : 0, 0});
+                (int) r.start, r.quadCount, r.occluders ? 1 : 0, PreviewLayer.isPreview(key) ? 1 : 0});
     }
 
     /**
@@ -2780,6 +2989,7 @@ public final class LodRenderer {
         boolean locked = selector.forcedLevel() >= 0;
         glUniform2i(s.gridSize, locked ? 0 : gridWidth, locked ? 0 : gridHeight);
         glUniform1i(s.sodiumRule, sodiumRule ? 1 : 0);
+        glUniform2i(s.hiddenMin, hiddenMinX, hiddenMinZ);
         glUniform1i(s.lightmap, LIGHTMAP_UNIT);
         glUniform4f(s.fogColor, fogColor[0], fogColor[1], fogColor[2], 1f);
         if (pushedFog || followVanillaFog) {
@@ -2846,6 +3056,7 @@ public final class LodRenderer {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, neighborSlots.id());
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, drawnSections.id());
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, biomeColumns.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, previewHidden.id());
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirect.id());
         RenderSystem.enableDepthTest();
         RenderSystem.depthFunc(GL_LEQUAL);

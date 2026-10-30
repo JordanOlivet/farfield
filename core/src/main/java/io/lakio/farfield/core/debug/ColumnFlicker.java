@@ -33,6 +33,15 @@ public final class ColumnFlicker {
         return 100 + level;
     }
 
+    /**
+     * A real level drawn with the preview over the same column: worse than
+     * the preview alone, since two translucent sea tops blend into a lighter
+     * one (the bands at the generation front).
+     */
+    public static int both(int level) {
+        return 200 + level;
+    }
+
     /** A brief state: column {@code chunkX, chunkZ} went {@code before} to {@code brief} for {@code frames} frames, then {@code after}. */
     public record Flicker(long frame, int frames, int chunkX, int chunkZ, int before, int brief, int after) {
     }
@@ -94,8 +103,14 @@ public final class ColumnFlicker {
         return List.copyOf(found);
     }
 
-    /** A rank for a person: "level 2", "preview 3", "nothing". */
+    /** A rank for a person: "level 2", "preview 3", "level 0 and the preview", "nothing". */
     public static String describe(int state) {
-        return state == NONE ? "nothing" : state >= 100 ? "preview " + (state - 100) : "level " + state;
+        if (state == NONE) {
+            return "nothing";
+        }
+        if (state >= 200) {
+            return "level " + (state - 200) + " and the preview";
+        }
+        return state >= 100 ? "preview " + (state - 100) : "level " + state;
     }
 }

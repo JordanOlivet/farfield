@@ -1,0 +1,1 @@
+"20261030-005123 8 [('Rdrawn,Rother,select,swap', 4), ('Rdrawn,Rother,select', 3), ('Rdrawn,select', 1)]" and "20261030-005759 74 [('P,Rdrawn,Rother,select,swap', 30), ('Rdrawn,Rother,select,swap', 16), ('P,Rdrawn,Rother,swap', 7), ('Rdrawn,Rother,swap', 6), ('nothing', 5), ('P,Rdrawn,Rother,select', 2)]"

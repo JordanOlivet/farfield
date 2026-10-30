@@ -12,7 +12,7 @@ layout(std430, binding = 0) readonly buffer Quads {
 
 struct Section {
     ivec4 originLevel; // origin in blocks (xyz), level (w)
-    uvec4 info;        // x: first quad, y: quad count, z: 1 if its opaque voxels are in Occupancy
+    uvec4 info;        // x: first quad, y: quad count, z: 1 if its opaque voxels are in Occupancy, w: 1 for the preview
 };
 
 layout(std430, binding = 1) readonly buffer Sections {
@@ -65,7 +65,7 @@ flat out uint v_direction;
 flat out uint v_slot;      // section slot (Occupancy), with v_occluders
 flat out uint v_occluders;
 flat out uint v_cutout;     // 1: the face's texture has holes (opaque pass cuts them out)
-flat out uint v_handoff;    // 1: the section overlaps the grid where the game may draw (hand-off test)
+flat out uint v_handoff;    // bit 0: the section overlaps the grid where the game may draw (hand-off test); bit 1: a preview section
 
 // Directions 6 and 7: a plant's diagonals (vanilla's cross model, unshaded).
 const float SHADE[8] = float[](0.6, 0.6, 0.5, 1.0, 0.8, 0.8, 1.0, 1.0);
@@ -192,7 +192,8 @@ void main() {
     ivec3 gridLo = u_gridMin * 16;
     ivec3 gridHi = (u_gridMin + ivec3(u_gridSize.x, u_gridSize.y, u_gridSize.x)) * 16;
     ivec3 sectionHi = s.originLevel.xyz + (32 << s.originLevel.w);
-    v_handoff = all(lessThan(s.originLevel.xyz, gridHi)) && all(greaterThan(sectionHi, gridLo)) ? 1u : 0u;
+    v_handoff = (all(lessThan(s.originLevel.xyz, gridHi)) && all(greaterThan(sectionHi, gridLo)) ? 1u : 0u)
+            | (s.info.w & 1u) << 1;
 #ifndef DEPTH_ONLY
     vec4 untinted = unpackUnorm4x8(colors[face]);
     vec3 color = toLinear(untinted.rgb);

@@ -51,6 +51,24 @@ uniform ivec2 u_gridSize;      // its width (x and z) and height, in sections
 layout(std430, binding = 5) readonly buffer DrawnSections {
     uint drawnSections[];
 };
+// Chunk columns the real terrain took over from the preview this frame, before
+// the preview's own meshes left them (LodRenderer.updateHandOver): bit
+// (z * 256 + x) of a 256-chunk grid whose corner is u_hiddenMin.
+layout(std430, binding = 8) readonly buffer PreviewHidden {
+    uint previewHidden[];
+};
+uniform ivec2 u_hiddenMin;
+const int HIDDEN_SIDE = 256;
+
+bool previewHiddenAt(ivec3 block) {
+    ivec2 g = (block.xz >> 4) - u_hiddenMin;
+    if (any(lessThan(g, ivec2(0))) || any(greaterThanEqual(g, ivec2(HIDDEN_SIDE)))) {
+        return false;
+    }
+    uint bit = uint(g.y * HIDDEN_SIDE + g.x);
+    return ((previewHidden[bit >> 5] >> (bit & 31u)) & 1u) != 0u;
+}
+
 uniform vec4 u_fogColor;
 uniform vec2 u_fog;            // start, end
 uniform bool u_fogCylinder;    // vanilla's cylinder fog shape (max of horizontal and vertical distance)
@@ -199,8 +217,11 @@ void main() {
     }
     vec3 inside = v_relative + u_cameraFrac - normal * 0.01;
 #ifndef SOLID
-    if (!prepassed && v_handoff != 0u && vanillaDraws(u_cameraBlock + ivec3(floor(inside)))) {
-        discard;
+    if (!prepassed && v_handoff != 0u) {
+        ivec3 block = u_cameraBlock + ivec3(floor(inside));
+        if ((v_handoff & 1u) != 0u && vanillaDraws(block) || (v_handoff & 2u) != 0u && previewHiddenAt(block)) {
+            discard;
+        }
     }
 #endif
     float distance = length(v_relative);

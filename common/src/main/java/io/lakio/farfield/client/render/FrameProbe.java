@@ -73,7 +73,9 @@ public final class FrameProbe {
     private static final int BACKGROUND = 1;
     private static final int LODS = 2;
     private static final int RING = 48;
-    private static final int MAX_DUMPS_PER_MINUTE = 20;
+    private static final int MAX_DUMPS_PER_MINUTE = Integer.getInteger("farfield.frames.dumps", 20);
+    /** Mesh uploads noted per frame, at most. */
+    private static final int MAX_NOTES = 600;
     private static final long STATS_NANOS = 10_000_000_000L;
     private static final DateTimeFormatter STAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
@@ -100,6 +102,9 @@ public final class FrameProbe {
     private long frame;
     private int capturedLayers;
     private final ColumnFlicker columns = new ColumnFlicker();
+    /** Per frame of the ring, what the renderer put in that frame (mesh uploads, swaps): read by events. */
+    private final String[][] notes = new String[RING][];
+    private final List<String> frameNotes = new ArrayList<>();
 
     // Shared.
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
@@ -119,10 +124,11 @@ public final class FrameProbe {
 
     // Analysis thread.
     private final FlashDetector flashes;
-    /** The last end-of-level images; the captures around the LOD pass are kept for their own frame only. */
-    private final FrameRing ring = new FrameRing(RING, 1);
+    /** The same on the capture after the LOD pass: a flash there is in Farfield's own drawing. */
+    private final FlashDetector lodFlashes;
+    /** The last end-of-level images and captures after the LOD pass; the sky is kept for its own frame only. */
+    private final FrameRing ring = new FrameRing(RING, 2);
     private int[] background;
-    private int[] lods;
     private final double[][] ringCamera = new double[RING][5];
     /** Events whose frames are not all read back yet: written once they are. */
     private final List<Dump> pending = new ArrayList<>();
@@ -178,6 +184,7 @@ public final class FrameProbe {
         }
         glBindBuffer(GL_PIXEL_PACK_BUFFER, previousPack);
         flashes = new FlashDetector(width, height, CHANGE, SETTLE, minArea());
+        lodFlashes = new FlashDetector(width, height, CHANGE, SETTLE, minArea());
         folder = mc.gameDirectory.toPath().toAbsolutePath().normalize().resolve("farfield").resolve("frames")
                 .resolve(LocalDateTime.now().format(STAMP));
         Farfield.LOG.info("Frame probe on: {}x{} captures of a {}x{} frame, events in {}", width, height,
@@ -212,6 +219,14 @@ public final class FrameProbe {
     public static long events() {
         FrameProbe p = instance;
         return p == null ? 0 : p.totalEvents.get();
+    }
+
+    /** Notes what the renderer puts in the frame being drawn (a mesh upload, a swap); render thread. */
+    public static void note(String what) {
+        FrameProbe p = instance;
+        if (enabled && p != null && p.frameNotes.size() < MAX_NOTES) {
+            p.frameNotes.add(what);
+        }
     }
 
     /** The column watch for the frame being drawn, begun; null when the probe is off. */
@@ -343,6 +358,8 @@ public final class FrameProbe {
             dropped.incrementAndGet();
         }
         capturedLayers = 0;
+        notes[(int) (frame % RING)] = frameNotes.toArray(new String[0]);
+        frameNotes.clear();
         frame++;
         // Copy out every finished slot, oldest first; the analysis thread does the rest.
         for (int k = 0; k < IN_FLIGHT; k++) {
@@ -429,11 +446,10 @@ public final class FrameProbe {
         images[END] = topDownRgb(raw[END], ring.get(f - RING, 0));
         if (raw[BACKGROUND] != null && raw[LODS] != null) {
             background = topDownRgb(raw[BACKGROUND], background);
-            lods = topDownRgb(raw[LODS], lods);
             images[BACKGROUND] = background;
-            images[LODS] = lods;
+            images[LODS] = topDownRgb(raw[LODS], ring.get(f - RING, 1));
         }
-        ring.put(f, images[END]);
+        ring.put(f, images[END], images[LODS]);
         System.arraycopy(cam, 0, ringCamera[(int) (f % RING)], 0, 5);
         analysed++;
         if (!firstWritten && images[BACKGROUND] != null) {
@@ -453,6 +469,14 @@ public final class FrameProbe {
             event(flash.frames() == 1 ? "flash1" : "flash2", flash.frame(), flash.frames(), flash.pixels(),
                     new int[]{flash.minX(), flash.minY(), flash.maxX(), flash.maxY()}, ringCamera(flash.frame()),
                     Map.of(), null);
+        }
+        if (images[LODS] != null) {
+            for (FlashDetector.Flash flash : lodFlashes.push(f, images[LODS])) {
+                flashCount++;
+                event(flash.frames() == 1 ? "lods-flash1" : "lods-flash2", flash.frame(), flash.frames(),
+                        flash.pixels(), new int[]{flash.minX(), flash.minY(), flash.maxX(), flash.maxY()},
+                        ringCamera(flash.frame()), Map.of(), null);
+            }
         }
         if (images[BACKGROUND] != null && images[LODS] != null) {
             ErasedCheck.Result erased = ErasedCheck.check(width, images[BACKGROUND], images[LODS], images[END],
@@ -531,6 +555,8 @@ public final class FrameProbe {
                     boolean flagged = k >= d.flagFirst() && k <= d.flagLast();
                     png(d.name(), ring.get(k, 0), (int) (k - d.first()), flagged ? d.minX() : 0,
                             flagged ? d.minY() : 0, flagged ? d.maxX() : -1, flagged ? d.maxY() : -1);
+                    png(d.name() + "-lods", ring.get(k, 1), (int) (k - d.first()), flagged ? d.minX() : 0,
+                            flagged ? d.minY() : 0, flagged ? d.maxX() : -1, flagged ? d.maxY() : -1);
                 }
             } catch (IOException | RuntimeException e) {
                 Farfield.LOG.warn("Frame probe: writing the frames of {} failed", d.name(), e);
@@ -563,6 +589,11 @@ public final class FrameProbe {
             line.put("box", box[0] + "," + box[1] + "," + box[2] + "," + box[3]);
         }
         line.put("size", width + "x" + height);
+        if (box != null) {
+            // What changed in the frame the area changed and in the one it came back.
+            line.put("putIn", String.join(" ", notesOf(f)));
+            line.put("putInAfter", String.join(" ", notesOf(f + frames)));
+        }
         line.put("camera", String.format(Locale.ROOT, "%.1f %.1f %.1f %.1f %.1f", cam[0], cam[1], cam[2], cam[3], cam[4]));
         line.putAll(extra);
         line.put("written", dump);
@@ -590,6 +621,11 @@ public final class FrameProbe {
         Farfield.LOG.info("Frame probe: {} at frame {}, {} {}{}{}", kind, f, pixels, box == null ? "columns" : "pixels",
                 extra.containsKey("examples") ? " (" + extra.get("examples") + ")" : "",
                 dump ? "" : " (frames not written: over the minute's limit)");
+    }
+
+    private String[] notesOf(long f) {
+        String[] n = notes[(int) (f % RING)];
+        return n == null ? new String[0] : n;
     }
 
     private void png(String name, int[] rgb, int index, int minX, int minY, int maxX, int maxY) throws IOException {

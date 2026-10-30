@@ -73,9 +73,18 @@ class ColumnFlickerTest {
     }
 
     @Test
+    void thePreviewOverRealTerrainForAFrameIsOne() {
+        int p = ColumnFlicker.preview(2);
+        int both = ColumnFlicker.both(0);
+        int r = ColumnFlicker.real(0);
+        assertEquals(List.of(new ColumnFlicker.Flicker(3, 1, 3, -7, p, both, r)), run(p, p, both, r, r));
+    }
+
+    @Test
     void describesRanks() {
         assertEquals("level 2", ColumnFlicker.describe(ColumnFlicker.real(2)));
         assertEquals("preview 3", ColumnFlicker.describe(ColumnFlicker.preview(3)));
+        assertEquals("level 0 and the preview", ColumnFlicker.describe(ColumnFlicker.both(0)));
         assertEquals("nothing", ColumnFlicker.describe(ColumnFlicker.NONE));
     }
 }

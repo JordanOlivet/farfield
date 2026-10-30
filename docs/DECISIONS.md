@@ -2738,3 +2738,75 @@ Status: accepted, 2026-10-29. Steps 3 and 4 of `docs/analysis/agent-playtesting.
 - **Not covered**: whether the flashes in game are real glitches (they
   are not judged: this worktree builds tools, not fixes); validation of the
   in-game judges against a glitch the user sees.
+
+## ADR-100 — The preview gives way in the shader the frame the real terrain takes a column
+
+Status: accepted, 2026-10-30. The bands at the generation front (2026-10-28
+to 2026-10-30).
+
+- **Context**: lighter bands on the sea, one chunk row deep, for one or two
+  frames, wherever new chunks arrive. First seen only in the user's pack
+  (Sodium, Iris, 384 mods, on the home server). Measured with the agent
+  tools (ADR-095 to ADR-099): the pack in single player reproduces them;
+  49 of 52 far flashes are already in the capture after the LOD pass, so
+  Farfield draws them, not Sodium or Iris; they lie on the chunk rows of
+  the generation front. The NeoForge dev client without the pack shows
+  as many (render distance 4, FOV 90, 20 blocks/s over a sea never
+  generated): the user's dev check of 2026-10-29 ran at render distance 8
+  and did not fly over new sea, so "pack only" was wrong. A per-frame log
+  of what the renderer put in (mesh uploads, sections added to or removed
+  from the drawn set) gave the mechanism: a drawn real section gets a mesh
+  holding the new chunk row; the preview sections over that row leave one
+  or two frames later (their mask waits for the real terrain to be drawn,
+  ADR-076, then their meshes or the selection drop the row). Meanwhile
+  both seas draw there, and the translucent pass (no depth writes) blends
+  two sea tops into a lighter band.
+- **Decision**: the preview gives way in the shader, in the frame the real
+  terrain draws the column:
+  - a real mesh upload notes the chunk columns its new mesh draws that its
+    old one did not (`noteHandOver`);
+  - each frame after the selection (`updateHandOver`), such a column is
+    hidden from the preview once a drawn real section with quads there
+    spans the height of the highest drawn preview section with quads there
+    (the preview's sea or ground), and stays hidden until no drawn preview
+    section has quads there (5 s at most);
+  - the hidden columns go to a 256x256-chunk bit grid around the camera
+    (SSBO binding 8, `u_hiddenMin`); section info's fourth word marks
+    preview sections; `lod.frag` discards a preview fragment in a hidden
+    column (with the hand-off test of ADR-047); preview sections over a
+    hidden column take the discarding path of the depth pre-pass;
+  - the hidden column-frames and the columns still under the preview at
+    the limit are on the `LOD holes` line.
+  Two rules that failed, measured: the preview's own rule
+  (`realReady`, every section over the column meshed) waited as long as
+  the overlap, no change (86 bands); any real quads in the column hid the
+  preview over real terrain under the sea and left dark holes (28 and 16
+  a run). A first attempt that put a real section's mesh in with its
+  neighbors' (an ADR-092 swap for real sections) changed nothing and was
+  taken out.
+- **Frame probe additions** (ADR-099): a flash detector on the capture
+  after the LOD pass (`lods-flash1|2` events) and its frames written as
+  `-lods-N.png`; per event, what the renderer put in the frame it changed
+  and the frame it came back (`putIn`, `putInAfter`: uploads, `+`/`-`
+  drawn sections, sections skipped for their looks, swaps, selections);
+  `-Dfarfield.frames.dumps` raises the 20 written events a minute; the
+  column watch has a state for real terrain and preview drawn over each
+  other. The test flight `dev/agent/flights/sea-1808.flight` (900 ticks,
+  20 blocks/s, y 110, over the sea at x 1808, z 1700 to 2600 of
+  `farfield-test`).
+- **Result**: NeoForge dev client, fresh world, the sea flight, lighter
+  far bands of one or two frames in the post-LOD capture per run: without
+  the change 33, 30, 34, 46, 27; with it 0, 1, 0, and no darker ones. The
+  land flight (`east.flight`): lighter and darker flashes 14/8 and 12/7
+  with it, 14/10 and 13/9 without: no new holes on land. In the pack: the
+  change runs (800 to 1,000 hidden column-frames per 10 s while flying),
+  no error; the flash detector sees few one-or-two-frame bands there with
+  or without it (the overlap there lasts longer than its two frames), so
+  the pack's own check is the user's eye. A Fabric dev client joined to a
+  Fabric dev server (streaming, a fresh server world per run): 0 bands
+  with it (42,318 hidden column-frames), 6 without. The final code, two
+  more runs: 0 and 1, no darker ones, no error in the log.
+  `gradlew build` passes.
+- **Not covered**: the user's pack on the home server; the dark one-frame
+  areas at the game's render edge (ADR-052's hand-off, next steps of
+  2026-10-29) are a separate glitch, left as they were.
