@@ -31,6 +31,16 @@ Legend: `[ ]` todo · `[~]` in progress (the text says what remains) ·
   the files were approved (the user, 2026-10-25). Not checked: Modrinth
   search (the project is still in review)
 
+- [~] A.3 Release 0.2.0 (tag `v0.2.0`, release type): server streaming
+  of LODs and the preview (B.2, B.3), mod features and surface rules in
+  the preview (D.1, D.2, D.4, D.5). Published 2026-10-30, run
+  41088514099: five jobs green, both Publish jobs `Successfully
+  published the assets to CurseForge, Modrinth`, `version-type:
+  release`, GitHub Release `Farfield 0.2.0` (not a pre-release) with
+  both jars and a summary on top of the commit list. Remains: the
+  listing text (`docs/listing/description.md`, rewritten for 0.2.0) on
+  Modrinth and CurseForge once the user validates it; the version pages
+  checked by the user.
 ## M2.B — Server streaming of LODs and the noise preview (ADR-013)
 
 Today the noise preview is built by the integrated server only, and a

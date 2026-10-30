@@ -1,0 +1,1 @@
+farfield-lod-hole-triage [project] body line 64: "measure it with `screen-recording-frame-analysis`, not by eye."; screen-recording-frame-analysis [global]: Use when a user sends a screen recording of a glitch.

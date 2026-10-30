@@ -1,0 +1,1 @@
+farfield-dev-client-check [project] step 7: "(see the global `background-process-sweep` skill)"; skill-library-maintenance [global]: every backticked skill name in the live skills must resolve to a live directory.
