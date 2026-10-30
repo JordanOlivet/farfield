@@ -1,0 +1,1 @@
+t.setFeatureColumn(fx, fz, new int[]{PreviewTile.featureRun(40, 4), coral});  (...) assertEquals(coral, fine.material(10, 40 - 32, 20));  (agent's reasoning, verbatim:) Mon test était erroné : `featureRun(40, 4)` plaçait le corail à y=80, hors de l'eau. Je corrige en `featureRun(20, 2)` (y=40-43)

@@ -158,6 +158,17 @@ Items:
   plants under the sea; the preview store persists its key tables before
   each tile. Dev tile checked; the user found nothing wrong in the pack
   (2026-10-30, with D.1).
+- [x] D.5 The sea floor in the preview: kelp and seagrass (ADR-105) and
+  the features under the sea, coral blocks first (ADR-108), as the real
+  LODs draw them. The user, on their server (2026-10-30): "c'est bon pour
+  le corail". Left out as in the real LODs: coral fans and plants, sea
+  pickles (water there).
+- [ ] D.6 Block light in the preview: the light sources the stand-in's
+  features place (sea pickles among corals, glow lichen, sea lanterns,
+  mods' glowing plants), kept per feature voxel with their emission and
+  spread at draw time into the voxels' block light, as the real LODs show
+  it. The user (2026-10-30): later, "avec possibilité de désactiver dans
+  les options" (a client setting, on by default or not: their call then).
 
 ## M2.E — Distance up to 16,384 blocks
 

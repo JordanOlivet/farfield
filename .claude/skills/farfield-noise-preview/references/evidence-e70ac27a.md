@@ -1,0 +1,2 @@
+git stash push -q core/src/main/java/io/lakio/farfield/core/preview/PreviewVoxels.java && ./gradlew.bat :core:test --tests "*PreviewTest" --no-daemon --console plain -q 2>&1 | grep -E "tests completed|failed" | head -3; git stash pop -q && git diff --stat -- core/src/main/java/io/lakio/farfield/core/preview/PreviewVoxels.java
+  → 35 tests completed, 1 failed

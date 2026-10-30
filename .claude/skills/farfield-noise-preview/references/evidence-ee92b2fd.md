@@ -1,0 +1,3 @@
+ADR-108 — The preview's features take the place of its water
+- **Context**: the user's screenshots over a warm ocean: coral reefs in the real LODs, none in the preview. The tiles held them (...), but `PreviewVoxels` stamps feature and tree voxels only into air, and a preview column fills its sea before the features are stamped: every feature under the sea was dropped.
+- **Decision**: a feature or tree voxel also takes the place of the preview's own water (the tile's water material), on every level, as a real coral block shows over the water around it in the real LODs.
