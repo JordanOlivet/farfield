@@ -21,4 +21,6 @@ Timing is not measured in dev. The same worldgen mods ran 5 to 7 times slower in
 
 Under C2ME a chunk fetched from another thread comes back `null`: the spike's real chunks are asked on the server thread (`level.getServer().submit(() -> level.getChunkSource().getChunk(...)).join()`). A `NullPointerException` at `SurfaceSpike.run` with `"real" is null` means that call ran off the server thread.
 
+A surface spike that reads well short of 100 % tops right with one mod loaded and 100 % without it is a mod changing the rules' biome lookup, not the ground: rerun with that mod removed, then follow `minecraft-mod-interference-debug`. With ModernFix loaded the spike read 82 % against 100 % without it.
+
 Run details and the last result: see `references/spike-run.md`.

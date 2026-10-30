@@ -56,7 +56,7 @@ Judge a dev client run from the game log and a screenshot, never from the Gradle
 - Crash Assistant stays out because its window opens orphaned on each crash and the agent reads `crash-reports/` itself: after a sync (`:neoforge:syncPackInstance`), check the count of `crashassistant` in `runs/pack/mods` is 0.
 - The Essential mod's loader can open an "Updating Essential..." window at start and wait on it forever (no inbox, no crash: seen 2026-10-30, 10 min lost). `runs/pack/essential/essential-loader.properties` holds `autoUpdate=false` since; if a run shows no `Agent inbox on` after 3 min, list the `java` windows before waiting longer.
 - A pack-only bug may not be: rerun the same flight on the NeoForge dev client with the pack's `renderDistance` and `fov` first (2 min a run against 6). The bands of 2026-10-28 showed there as well (ADR-100).
-- A/B series: never edit code while a series runs; each launch recompiles, so later runs mix builds.
+- A/B series, on the dev client as in the pack: never edit code or run a build (`gradlew`, `compileJava`, `build`) while a series runs; each launch recompiles, so later runs mix builds. If you break this, stop the series and restart it from run 1 on one build.
 - `-PfreshWorld` deletes the save first (LOD store included): the open bug shows only over terrain never generated, so use it for every repro run.
 - Essential's update window blocks a fresh pack client launch: set `autoUpdate=false` in `neoforge/runs/pack` before the first launch. The user's instance is not touched.
 - Before editing a run dir config for a check, copy it to `<file>.orig`; after the check, `mv` it back and grep the restored keys (seen: `server.properties`, `ops.json`, `config/farfield-client.properties` in `fabric/runs`).

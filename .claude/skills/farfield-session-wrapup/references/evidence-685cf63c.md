@@ -1,0 +1,1 @@
+Je retire le nombre de la **graine** de ton monde du journal avant de commiter : le dépôt est public, et cette graine permettrait de reconstituer la carte de ton serveur.

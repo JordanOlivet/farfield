@@ -1,0 +1,1 @@
+**Reproduit en dev avec ModernFix seul** : même grille, 82 % au lieu de 100 %. Le coupable est l'optimisation `prefetchBlockArray` de ModernFix dans `SurfaceSystem`. Je regarde ce qu'elle fait.
