@@ -82,6 +82,8 @@ dependencies {
         }
     }
     additionalRuntimeClasspath "io.airlift:aircompressor:${aircompressor_version}"
+    // Shader packs (ADR-113): compiled against, never bundled.
+    compileOnly("maven.modrinth:iris:${iris_neoforge_version}") { transitive = false }
 }
 
 // Client and server share the default run dir.

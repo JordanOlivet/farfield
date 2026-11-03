@@ -139,10 +139,13 @@ Items:
   contracts (`docs/analysis/shader-lod-contracts.md`) and ADR-113 (Voxy's
   contract first, then DH's, through mixins into Iris). Remains: C.1a to
   C.1e.
-  - [ ] C.1a Spike: opaque LODs and the preview through `photon-gcea`'s
+  - [~] C.1a Spike: opaque LODs and the preview through `photon-gcea`'s
     `voxy_opaque` in a pack client (Iris 1.8.14, NeoForge): the snippet
     linked into `lod.frag`, its draw buffers, `vxDepthTexOpaque` and the
-    `vx*` matrices in the composites, the `VOXY` macro.
+    `vx*` matrices in the composites, the `VOXY` macro. Done: opaque LODs
+    drawn and lit by Photon in the pack client (2026-11-03, run 7).
+    Remains: the user's eye in their pack, a night shot, Fabric, and a
+    check that shaders off still draw as before.
   - [ ] C.1b Translucent LODs (`voxy_translucent`, `vxDepthTexTrans`,
     blending), then the other packs of the user's instance (BSL,
     Complementary, MakeUp, Photon 1.3b); a link error falls back.

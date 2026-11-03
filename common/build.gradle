@@ -19,9 +19,13 @@ neoForge {
 dependencies {
     api project(':core')
     compileOnly group: 'org.spongepowered', name: 'mixin', version: '0.8.5'
+    // The mixin config plugin's interface names ASM's ClassNode (the Iris mixins, ADR-113).
+    compileOnly group: 'org.ow2.asm', name: 'asm-tree', version: '9.7.1'
     // fabric and neoforge both bundle mixinextras, so it is safe to use it in common
     compileOnly group: 'io.github.llamalad7', name: 'mixinextras-common', version: '0.3.5'
     annotationProcessor group: 'io.github.llamalad7', name: 'mixinextras-common', version: '0.3.5'
+    // Shader packs (ADR-113): Iris's NeoForge jar is Mojang-named, as common is.
+    compileOnly("maven.modrinth:iris:${iris_neoforge_version}") { transitive = false }
 }
 
 configurations {

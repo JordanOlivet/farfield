@@ -25,20 +25,50 @@ final class GlProgram implements AutoCloseable {
      *                variants of one source
      */
     GlProgram(String vertexResource, String fragmentResource, String defines) {
+        this(vertexResource, fragmentResource, defines, null, null);
+    }
+
+    /**
+     * @param extraFragment a second fragment shader unit linked in (a shader
+     *                      pack's code, ADR-113), or null
+     * @param extraName     its name in error messages
+     */
+    GlProgram(String vertexResource, String fragmentResource, String defines, String extraFragment, String extraName) {
         int vs = compile(GL_VERTEX_SHADER, define(read(vertexResource), defines), vertexResource);
         int fs = compile(GL_FRAGMENT_SHADER, define(read(fragmentResource), defines), fragmentResource);
+        int extra = 0;
+        if (extraFragment != null) {
+            try {
+                extra = compile(GL_FRAGMENT_SHADER, extraFragment, extraName);
+            } catch (RuntimeException e) {
+                glDeleteShader(vs);
+                glDeleteShader(fs);
+                throw e;
+            }
+        }
         id = glCreateProgram();
         glAttachShader(id, vs);
         glAttachShader(id, fs);
+        if (extra != 0) {
+            glAttachShader(id, extra);
+        }
         glLinkProgram(id);
         glDeleteShader(vs);
         glDeleteShader(fs);
+        if (extra != 0) {
+            glDeleteShader(extra);
+        }
         if (glGetProgrami(id, GL_LINK_STATUS) == 0) {
             String log = glGetProgramInfoLog(id);
             glDeleteProgram(id);
             id = 0;
             throw new IllegalStateException("cannot link " + vertexResource + " + " + fragmentResource + ": " + log);
         }
+    }
+
+    /** A shader source of the class path, its includes expanded. */
+    static String resource(String resource) {
+        return read(resource);
     }
 
     private static String read(String resource) {

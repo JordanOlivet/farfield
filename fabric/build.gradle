@@ -25,6 +25,8 @@ dependencies {
     modImplementation "net.fabricmc.fabric-api:fabric-api:${fabric_version}"
     // Mod Menu opens the settings screen; optional at runtime, present in the dev client.
     modCompileOnly "com.terraformersmc:modmenu:${modmenu_version}"
+    // Shader packs (ADR-113): compiled against, never bundled.
+    modCompileOnly("maven.modrinth:iris:${iris_fabric_version}") { transitive = false }
     modLocalRuntime "com.terraformersmc:modmenu:${modmenu_version}"
     // Libraries of the engine core, nested in the mod jar.
     include(implementation("io.airlift:aircompressor:${aircompressor_version}"))

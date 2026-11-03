@@ -1,0 +1,18 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "io.lakio.farfield.mixin.iris",
+  "plugin": "io.lakio.farfield.mixin.iris.IrisMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "CommonUniformsMixin",
+    "IrisRenderingPipelineAccessor",
+    "IrisSamplersMixin",
+    "ShaderPackAccessor",
+    "ShaderPackSourceNamesMixin",
+    "StandardMacrosMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

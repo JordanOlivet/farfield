@@ -22,7 +22,8 @@
     ]
   },
   "mixins": [
-    "farfield.mixins.json"
+    "farfield.mixins.json",
+    "farfield.iris.mixins.json"
   ],
   "depends": {
     "fabricloader": ">=${fabric_loader_version}",

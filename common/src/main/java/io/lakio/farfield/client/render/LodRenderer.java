@@ -224,6 +224,16 @@ public final class LodRenderer {
      * (in theirs it cost the opaque pass 126 us).
      */
     private Shader plants;
+    /**
+     * The LOD passes under a shader pack (ADR-113), null without Iris; the
+     * shaded and plant variants linked with the pack's code, for
+     * {@link #packGeneration}.
+     */
+    private ShaderPackLink packLink;
+    private int packGeneration = -1;
+    private Shader packShaded;
+    private Shader packPlain;
+    private Shader packPlants;
     private GlBuffer quads;
     private GlBuffer sectionInfo;
     private GlBuffer colorBuffer;
@@ -497,9 +507,16 @@ public final class LodRenderer {
         final int atlas;
         final int atlasSize;
         final int textureEnd;
+        /** Linked with a shader pack's code: binds the pack's uniforms too (ADR-113). */
+        final boolean pack;
 
         Shader(String defines) {
-            program = new GlProgram("lod.vert", "lod.frag", defines);
+            this(defines, null);
+        }
+
+        Shader(String defines, String packUnit) {
+            program = new GlProgram("lod.vert", "lod.frag", defines, packUnit, "the shader pack's voxy_opaque");
+            pack = packUnit != null;
             viewProj = program.uniform("u_viewProj");
             cameraBlock = program.uniform("u_cameraBlock");
             cameraFrac = program.uniform("u_cameraFrac");
@@ -825,6 +842,17 @@ public final class LodRenderer {
     }
 
     /** Called from the level renderer mixin, after the sky, before the terrain. */
+    /**
+     * At the start of the level's frame: the shader pack's LOD state for it
+     * (ADR-113), set even when no LOD draws.
+     */
+    public static void beginLevel(Matrix4f viewRotation, Matrix4f projection) {
+        LodRenderer r = INSTANCE;
+        if (r.packLink != null && !r.disabled) {
+            r.packLink.frame(projection, viewRotation, 8f, (float) MAX_DISTANCE * 2, (int) r.selectionDistance());
+        }
+    }
+
     public static void render(Camera camera, Matrix4f viewRotation, Matrix4f projection) {
         FrameProbe.beforeLods(); // glitch watch (ADR-099), off by default
         INSTANCE.renderFrame(camera, viewRotation, projection);
@@ -858,6 +886,7 @@ public final class LodRenderer {
                 || classExists("org.embeddedt.embeddium.impl.Embeddium")
                 || classExists("me.jellysquid.mods.sodium.client.SodiumClientMod");
         Farfield.LOG.info("LOD hand-off follows the {} section rule", sodiumRule ? "Sodium" : "vanilla");
+        packLink = createPackLink();
         glGenQueries(timerQueries);
         quads = new GlBuffer(INITIAL_QUADS * 8);
         arena = new RangeAllocator(INITIAL_QUADS);
@@ -889,6 +918,59 @@ public final class LodRenderer {
         Farfield.LOG.info("LOD renderer ready on {}, OpenGL {} ({} MB of quads to start, {} meshes in flight at most)",
                 glGetString(GL_RENDERER), glGetString(GL_VERSION), INITIAL_QUADS * 8 >> 20, MAX_IN_FLIGHT);
         return true;
+    }
+
+    /** The shader pack path over Iris (ADR-113), or null without Iris or with Voxy itself. */
+    private static ShaderPackLink createPackLink() {
+        if (!Services.PLATFORM.isModLoaded("iris") || Services.PLATFORM.isModLoaded("voxy")) {
+            return null;
+        }
+        try {
+            ShaderPackLink link = (ShaderPackLink) Class.forName("io.lakio.farfield.client.render.iris.IrisLink")
+                    .getConstructor(int[].class).newInstance((Object) new int[]{ATLAS_UNIT, LIGHTMAP_UNIT});
+            Farfield.LOG.info("Shader pack LODs: Iris found, the packs' Voxy contract is read");
+            return link;
+        } catch (ReflectiveOperationException | LinkageError e) {
+            Farfield.LOG.warn("Shader pack LODs off: this Iris does not fit ({})", e.toString());
+            return null;
+        }
+    }
+
+    /** The variants linked with the pack's code, built again when the pack's sources change. */
+    private boolean packShaders() {
+        if (packGeneration == packLink.generation() && packShaded != null) {
+            return true;
+        }
+        closePackShaders();
+        packGeneration = packLink.generation();
+        String unit = packLink.opaqueUnit(GlProgram.resource("voxy_parameters.glsl"));
+        if (unit == null) {
+            return false;
+        }
+        try {
+            packShaded = new Shader("#define EARLY_Z\n#define VOXY\n", unit);
+            packPlain = new Shader("#define VOXY\n", unit);
+            packPlants = new Shader("#define PLANTS\n#define VOXY\n", unit);
+            for (Shader s : new Shader[]{packShaded, packPlain, packPlants}) {
+                packLink.attach(s.program.id(), "farfield_lod");
+            }
+        } catch (RuntimeException e) {
+            Farfield.LOG.error("Shader pack LODs: the pack's voxy_opaque does not build with the LOD shader", e);
+            closePackShaders();
+            packLink.fail("its voxy_opaque does not build with the LOD shader (" + e.getMessage().lines().findFirst().orElse("") + ")");
+            return false;
+        }
+        return true;
+    }
+
+    private void closePackShaders() {
+        for (Shader s : new Shader[]{packShaded, packPlain, packPlants}) {
+            if (s != null) {
+                packLink.detach(s.program.id());
+                s.program.close();
+            }
+        }
+        packShaded = packPlain = packPlants = null;
     }
 
     private void renderFrame(Camera camera, Matrix4f viewRotation, Matrix4f projection) {
@@ -2973,6 +3055,9 @@ public final class LodRenderer {
         int blockZ = (int) Math.floor(cam.z);
         float[] fogColor = RenderSystem.getShaderFogColor();
         GlStateManager._glUseProgram(s.program.id());
+        if (s.pack) {
+            packLink.bind(s.program.id());
+        }
         glUniformMatrix4fv(s.viewProj, false, viewProj.get(matrix));
         glUniform3i(s.cameraBlock, blockX, blockY, blockZ);
         glUniform3f(s.cameraFrac, (float) (cam.x - blockX), (float) (cam.y - blockY), (float) (cam.z - blockZ));
@@ -3027,6 +3112,17 @@ public final class LodRenderer {
 
         viewProj.set(projection).mul(viewRotation);
 
+        // Under a shader pack, its own target and program code, or nothing (ADR-113).
+        int packMode = packLink == null ? ShaderPackLink.VANILLA : packLink.begin();
+        if (packMode == ShaderPackLink.NONE) {
+            return;
+        }
+        boolean packed = packMode == ShaderPackLink.VOXY;
+        if (packed && !packShaders()) {
+            packLink.end();
+            return;
+        }
+
         // Timestamps rather than a time-elapsed query: the game may have one open.
         int slot = timerSlot;
         boolean timed = !timerPending[slot];
@@ -3065,7 +3161,7 @@ public final class LodRenderer {
         // with a shader without discard, so the pre-pass keeps early tests
         // for them and the others mostly land behind depth already written.
         boolean prepass = RenderSettings.depthPrepass();
-        Shader shaded = prepass ? earlyZ : plain;
+        Shader shaded = packed ? (prepass ? packShaded : packPlain) : (prepass ? earlyZ : plain);
         int opaqueDraws = solidDraws + discardDraws;
         if (prepass && opaqueDraws > 0) {
             RenderSystem.colorMask(false, false, false, false);
@@ -3099,13 +3195,14 @@ public final class LodRenderer {
         if (plantDraws > 0) {
             // Plants: once, depth-tested against the opaque faces and writing their own,
             // holes cut out; the pre-pass would draw their thin quads twice.
-            use(plants, cam, mc, false);
+            use(packed ? packPlants : plants, cam, mc, false);
             glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, plantOffset, plantDraws, 0);
         }
         if (timed) {
             glQueryCounter(timerQueries[slot * TIMESTAMPS + 3], GL_TIMESTAMP);
         }
-        if (translucentDraws > 0 && RenderSettings.drawTranslucent()) {
+        // Under a shader pack, translucent LODs wait for voxy_translucent (C.1b).
+        if (translucentDraws > 0 && RenderSettings.drawTranslucent() && !packed) {
             use(shaded, cam, mc, true);
             RenderSystem.enableBlend();
             RenderSystem.blendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
@@ -3125,6 +3222,11 @@ public final class LodRenderer {
         GlStateManager._glBindVertexArray(0);
         BufferUploader.invalidate();
         GlStateManager._glUseProgram(0);
+        if (packed) {
+            // The LODs drew into their own depth texture: the game's depth is untouched.
+            packLink.end();
+            return;
+        }
         // Vanilla terrain draws next with its own depth range: start it clean.
         RenderSystem.clear(GL_DEPTH_BUFFER_BIT, Minecraft.ON_OSX);
     }

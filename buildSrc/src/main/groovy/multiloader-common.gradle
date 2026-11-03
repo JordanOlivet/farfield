@@ -35,6 +35,16 @@ repositories {
         )
         filter { includeGroup('org.parchmentmc.data') }
     }
+    // Iris, compiled against for the shader pack path (ADR-113), never bundled.
+    exclusiveContent {
+        forRepository {
+            maven {
+                name = 'Modrinth'
+                url = 'https://api.modrinth.com/maven'
+            }
+        }
+        filter { includeGroup('maven.modrinth') }
+    }
 }
 
 // Capabilities let the loader projects depend on 'common' without clashing

@@ -33,6 +33,14 @@ public abstract class LevelRendererMixin {
         LodRenderer.render(camera, frustumMatrix, projectionMatrix);
     }
 
+    /** The shader pack's LOD depth and matrices for this frame (ADR-113), before any pass reads them. */
+    @Inject(method = "renderLevel", at = @At("HEAD"), require = 0)
+    private void farfield$beginLevel(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera,
+                                     GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix,
+                                     Matrix4f projectionMatrix, CallbackInfo ci) {
+        LodRenderer.beginLevel(frustumMatrix, projectionMatrix);
+    }
+
     @Inject(method = "renderLevel", at = @At("RETURN"), require = 0)
     private void farfield$endOfLevel(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera,
                                      GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix,

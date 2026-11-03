@@ -11,6 +11,9 @@
 // holds the hand-off and cutout holes; the translucent pass writes no depth,
 // so its discards stay valid with early tests. Neither: one pass, as before.
 // PLANTS: the plants' pass, nothing else (one pass, no pre-pass).
+// VOXY: under a shader pack (ADR-113), the shaded passes hand the fragment to
+// the pack's voxy_emitFragment, linked from a second unit, instead of
+// lighting and fogging it here.
 #if defined(EARLY_Z) || defined(SOLID)
 layout(early_fragment_tests) in;
 #endif
@@ -81,8 +84,23 @@ uniform sampler2D u_lightmap;  // vanilla's lightmap: x block light, y sky light
 
 const uint NO_TINT = 0xFFFFFFFFu;
 
+#ifdef VOXY
+#include "voxy_parameters.glsl"
+void voxy_emitFragment(VoxyFragmentParameters parameters);
 
+// The Voxy contract's faces: axis face >> 1 (0 Y, 1 Z, 2 X), sign face & 1;
+// ours: axis direction >> 1 (0 X, 1 Y, 2 Z), the same sign bit.
+uint voxyFace(uint direction) {
+    if (direction >= 6u) {
+        return 1u; // plants' diagonals: up, as their light
+    }
+    uint axis = direction >> 1;
+    uint voxyAxis = axis == 0u ? 2u : axis - 1u;
+    return (voxyAxis << 1) | (direction & 1u);
+}
+#else
 out vec4 fragColor;
+#endif
 
 #include "biome_tint.glsl"
 
@@ -251,7 +269,9 @@ void main() {
         discard; // a plant without its texture would be a solid rectangle
     }
 #endif
+#ifndef VOXY
     fragColor = vec4(0.0);
+#endif
 #else
     vec3 tint = vec3(0.0);
     vec3 color = v_flat.rgb;
@@ -291,6 +311,18 @@ void main() {
     }
     // As vanilla's terrain: texture times shade times lightmap, in sRGB.
     float ao = (v_occluders != 0u && !u_translucent) ? ambientOcclusion() : 1.0;
+#ifdef VOXY
+    // The pack lights and fogs it: the texture with its tint, the occlusion
+    // baked in as vanilla's vertex colors carry it, and the light levels.
+    VoxyFragmentParameters parameters;
+    parameters.sampledColour = vec4(pow(min(color, vec3(1.0)), vec3(1.0 / 2.2)) * ao, alpha);
+    parameters.tinting = vec4(1.0);
+    parameters.uv = v_texCoord;
+    parameters.lightMap = (vec2(v_lightmap) + 0.5) / 16.0;
+    parameters.face = voxyFace(v_direction);
+    parameters.customId = 0u;
+    voxy_emitFragment(parameters);
+#else
     // Vanilla samples its lightmap filtered at level / 16 (minecraft_sample_lightmap),
     // between two texels: full light reads halfway between levels 14 and 15.
     vec2 lightUv = clamp(vec2(v_lightmap) / 16.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0));
@@ -302,5 +334,6 @@ void main() {
     float fogDistance = u_fogCylinder ? max(length(v_relative.xz), abs(v_relative.y)) : distance;
     float fog = smoothstep(u_fog.x, u_fog.y, fogDistance);
     fragColor = vec4(mix(color, u_fogColor.rgb, fog), u_translucent ? alpha : 1.0);
+#endif
 #endif
 }
