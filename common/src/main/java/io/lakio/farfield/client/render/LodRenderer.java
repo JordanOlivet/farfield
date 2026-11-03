@@ -3209,10 +3209,15 @@ public final class LodRenderer {
      * Called from the level renderer mixin at the game's translucent stage:
      * under a shader pack, the translucent LODs this frame's draw left.
      */
-    public static void renderTranslucent() {
+    public static void renderTranslucent(boolean beforeDeferred) {
         LodRenderer r = INSTANCE;
         if (r.translucentPending) {
             r.translucentPending = false;
+            if (r.translucentStage != (beforeDeferred ? 1 : 2)) {
+                r.translucentStage = beforeDeferred ? 1 : 2;
+                Farfield.LOG.info("Shader pack LODs: translucent LODs drawn {}", beforeDeferred
+                        ? "before the pack's deferred passes" : "at the game's translucent stage (Iris's hook missing)");
+            }
             try {
                 r.drawPackTranslucent(Minecraft.getInstance());
             } catch (RuntimeException e) {
@@ -3220,6 +3225,9 @@ public final class LodRenderer {
             }
         }
     }
+
+    /** Where the translucent LODs last drew under a pack: 0 not yet, 1 before deferred, 2 the fallback. */
+    private int translucentStage;
 
     private void drawPackTranslucent(Minecraft mc) {
         if (!packLink.beginTranslucent()) {

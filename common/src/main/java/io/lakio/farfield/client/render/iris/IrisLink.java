@@ -192,7 +192,8 @@ public final class IrisLink implements ShaderPackLink {
             translucentFramebuffer = null;
             createExtraTargets(targets.getRenderTargetCount(), w, h);
             framebuffer = target(targets, iris.getFlippedAfterPrepare(), contract.opaqueDrawBuffers, depth);
-            translucentFramebuffer = target(targets, iris.getFlippedAfterTranslucent(), contract.translucentDrawBuffers,
+            // Translucent LODs draw before the pack's deferred passes, as Voxy's: the buffers as after prepare.
+            translucentFramebuffer = target(targets, iris.getFlippedAfterPrepare(), contract.translucentDrawBuffers,
                     translucentDepth);
             framebufferTargets = targets;
             if (framebuffer == null) {
@@ -493,8 +494,8 @@ public final class IrisLink implements ShaderPackLink {
         BuiltinReplacementUniforms.addBuiltinReplacementUniforms(uniforms);
         ProgramSamplers.Builder samplers = ProgramSamplers.builder(program, reservedUnits);
         ProgramImages.Builder images = ProgramImages.builder(program);
-        iris.addGbufferOrShadowSamplers(samplers, images,
-                translucent ? iris::getFlippedAfterTranslucent : iris::getFlippedAfterPrepare, false, false, true, false);
+        // Both LOD stages run before the pack's deferred passes: the buffers as after prepare.
+        iris.addGbufferOrShadowSamplers(samplers, images, iris::getFlippedAfterPrepare, false, false, true, false);
         custom.mapholderToPass(uniforms, pass);
         bound.put(program, new Bound(uniforms.buildUniforms(), samplers.build(), images.build(), pass));
     }

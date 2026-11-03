@@ -42,10 +42,10 @@ public abstract class LevelRendererMixin {
     }
 
     /**
-     * The translucent LODs under a shader pack (ADR-113), as the game's
-     * translucent terrain starts: after Iris's deferred passes and its copy
-     * of the opaque depth, both run at the "translucent" profiler step just
-     * before. One of the two calls runs per frame (Fabulous or not).
+     * The translucent LODs under a shader pack (ADR-113), a fallback: Iris's
+     * {@code beginTranslucents} draws them first, before the pack's deferred
+     * passes ({@code IrisRenderingPipelineMixin}); this runs only when that
+     * mixin did not apply. One of the two calls runs per frame (Fabulous or not).
      */
     @Inject(method = "renderLevel",
             at = @At(value = "INVOKE",
@@ -54,7 +54,7 @@ public abstract class LevelRendererMixin {
     private void farfield$renderTranslucentLods(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera,
                                                 GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix,
                                                 Matrix4f projectionMatrix, CallbackInfo ci) {
-        LodRenderer.renderTranslucent();
+        LodRenderer.renderTranslucent(false);
     }
 
     @Inject(method = "renderLevel", at = @At("RETURN"), require = 0)

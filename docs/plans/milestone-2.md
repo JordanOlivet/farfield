@@ -153,7 +153,10 @@ Items:
     depth, the blending per draw buffer, opaque game terrain in front
     hides it; render targets past Iris's 16 given by Farfield (Photon's
     colortex16). Verified under photon-gcea in the pack client (sea by day
-    and night, 2026-11-03, run 12). Remains: the other packs.
+    and night, 2026-11-03, run 12), then under the five other packs of
+    the user's instance (BSL, Complementary Reimagined and Unbound, MakeUp,
+    Photon 1.3b, 2026-11-04), drawn before the pack's deferred passes as
+    Voxy's. Remains: the user's eye.
   - [~] C.1c `customId` from the pack's `block.properties`, TAA offset and
     render scale. Done (code, built): ids per material from Iris's block
     state map, the `taaOffset` jitter in every pack program (pre-pass

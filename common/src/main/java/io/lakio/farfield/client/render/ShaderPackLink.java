@@ -61,14 +61,15 @@ public interface ShaderPackLink {
     /**
      * Connects a linked program to the pack's uniforms and samplers.
      *
-     * @param translucent the program draws at the translucent stage (the
-     *                    pack's buffers as they stand after its deferred passes)
+     * @param translucent the program draws the translucent LODs (before the
+     *                    pack's deferred passes, as the opaque ones)
      */
     void attach(int program, String name, boolean translucent);
 
     /**
-     * At the game's translucent stage, after the pack's deferred passes: the
-     * pack's translucent LOD target bound with its blending, or false.
+     * After the game's opaque terrain and entities, before the pack's
+     * deferred passes (where Voxy draws them): the pack's translucent LOD
+     * target bound with its blending, or false.
      */
     boolean beginTranslucent();
 
