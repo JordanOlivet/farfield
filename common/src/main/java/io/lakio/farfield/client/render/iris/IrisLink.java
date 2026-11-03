@@ -436,16 +436,29 @@ public final class IrisLink implements ShaderPackLink {
 
     private static final String NL = String.valueOf((char) 10);
 
-    /** The uniforms voxy.json lists, with the types Iris gives them. */
+    /**
+     * The uniforms voxy.json lists, with the types Iris gives them. One Iris
+     * does not know in this dimension (Complementary lists its Nether biome
+     * floats everywhere) is declared a float, left at 0, as the snippet
+     * still names it.
+     */
     private void declareUniforms(StringBuilder out) {
         Map<String, UniformType> types = uniformTypes();
+        java.util.List<String> unknown = new java.util.ArrayList<>();
         for (String name : contract.uniforms) {
             UniformType type = types.get(name);
-            if (type != null) {
-                out.append("uniform ").append(glsl(type)).append(' ').append(name).append(';').append(NL);
+            if (type == null) {
+                unknown.add(name);
             }
+            out.append("uniform ").append(type != null ? glsl(type) : "float").append(' ').append(name).append(';').append(NL);
+        }
+        if (!unknown.isEmpty() && unknownLogged != generation) {
+            unknownLogged = generation;
+            Farfield.LOG.info("Shader pack LODs: uniforms of voxy.json unknown to Iris here, declared as floats at 0: {}", unknown);
         }
     }
+
+    private int unknownLogged = -1;
 
     private String unit(String snippet, String pass, String parameters) {
         StringBuilder out = new StringBuilder("#version 460 core\n");
@@ -459,15 +472,7 @@ public final class IrisLink implements ShaderPackLink {
             }
         }
         out.append("#define VOXY\n#define ").append(pass).append('\n').append(parameters).append('\n');
-        Map<String, UniformType> types = uniformTypes();
-        for (String name : contract.uniforms) {
-            UniformType type = types.get(name);
-            if (type != null) {
-                out.append("uniform ").append(glsl(type)).append(' ').append(name).append(";\n");
-            } else {
-                Farfield.LOG.warn("Shader pack LODs: uniform {} of voxy.json unknown to Iris, not declared", name);
-            }
-        }
+        declareUniforms(out);
         for (Map.Entry<String, String> s : contract.samplers.entrySet()) {
             out.append("uniform ").append(s.getValue()).append(' ').append(s.getKey()).append(";\n");
         }

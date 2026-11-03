@@ -8,6 +8,7 @@
     "CommonUniformsMixin",
     "IrisRenderingPipelineAccessor",
     "IrisSamplersMixin",
+    "PackRenderTargetDirectivesMixin",
     "ShaderPackAccessor",
     "ShaderPackSourceNamesMixin",
     "StandardMacrosMixin"

@@ -1,0 +1,2 @@
+Oui baisse à 8Go pour les prochains, ça devrait passer effectivement
+C'est fait : le client du pack utilisera `-Xmx8G`, au lieu de `-Xmx10G`, à partir du prochain lancement (`neoforge/build.gradle:61`).
