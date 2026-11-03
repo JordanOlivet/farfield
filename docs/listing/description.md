@@ -57,7 +57,7 @@ the background: in single player, or from the server console.
 ## For server owners
 
 Install Farfield on the server and on the players' clients; both need the
-same Farfield version (0.2.0) to stream. Settings in
+same Farfield version (0.2.x) to stream. Settings in
 `config/farfield-server.properties`:
 
 - `streaming_radius`: how far around a player LODs are sent (default
