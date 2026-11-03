@@ -34,29 +34,47 @@ final class GlProgram implements AutoCloseable {
      * @param extraName     its name in error messages
      */
     GlProgram(String vertexResource, String fragmentResource, String defines, String extraFragment, String extraName) {
+        this(vertexResource, fragmentResource, defines, null, extraFragment, extraName);
+    }
+
+    /**
+     * @param extraVertex a second vertex shader unit linked in (a shader
+     *                    pack's TAA jitter, ADR-113), or null
+     */
+    GlProgram(String vertexResource, String fragmentResource, String defines, String extraVertex, String extraFragment,
+              String extraName) {
         int vs = compile(GL_VERTEX_SHADER, define(read(vertexResource), defines), vertexResource);
-        int fs = compile(GL_FRAGMENT_SHADER, define(read(fragmentResource), defines), fragmentResource);
-        int extra = 0;
-        if (extraFragment != null) {
-            try {
-                extra = compile(GL_FRAGMENT_SHADER, extraFragment, extraName);
-            } catch (RuntimeException e) {
-                glDeleteShader(vs);
-                glDeleteShader(fs);
-                throw e;
+        int fs = 0;
+        int extraVs = 0;
+        int extraFs = 0;
+        try {
+            fs = compile(GL_FRAGMENT_SHADER, define(read(fragmentResource), defines), fragmentResource);
+            if (extraVertex != null) {
+                extraVs = compile(GL_VERTEX_SHADER, extraVertex, extraName + " (vertex)");
             }
+            if (extraFragment != null) {
+                extraFs = compile(GL_FRAGMENT_SHADER, extraFragment, extraName);
+            }
+        } catch (RuntimeException e) {
+            for (int shader : new int[]{vs, fs, extraVs}) {
+                if (shader != 0) {
+                    glDeleteShader(shader);
+                }
+            }
+            throw e;
         }
         id = glCreateProgram();
-        glAttachShader(id, vs);
-        glAttachShader(id, fs);
-        if (extra != 0) {
-            glAttachShader(id, extra);
+        int[] shaders = {vs, fs, extraVs, extraFs};
+        for (int shader : shaders) {
+            if (shader != 0) {
+                glAttachShader(id, shader);
+            }
         }
         glLinkProgram(id);
-        glDeleteShader(vs);
-        glDeleteShader(fs);
-        if (extra != 0) {
-            glDeleteShader(extra);
+        for (int shader : shaders) {
+            if (shader != 0) {
+                glDeleteShader(shader);
+            }
         }
         if (glGetProgrami(id, GL_LINK_STATUS) == 0) {
             String log = glGetProgramInfoLog(id);

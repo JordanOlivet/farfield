@@ -41,6 +41,22 @@ public abstract class LevelRendererMixin {
         LodRenderer.beginLevel(frustumMatrix, projectionMatrix);
     }
 
+    /**
+     * The translucent LODs under a shader pack (ADR-113), as the game's
+     * translucent terrain starts: after Iris's deferred passes and its copy
+     * of the opaque depth, both run at the "translucent" profiler step just
+     * before. One of the two calls runs per frame (Fabulous or not).
+     */
+    @Inject(method = "renderLevel",
+            at = @At(value = "INVOKE",
+                    target = "Lnet/minecraft/client/renderer/RenderType;translucent()Lnet/minecraft/client/renderer/RenderType;"),
+            require = 0)
+    private void farfield$renderTranslucentLods(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera,
+                                                GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix,
+                                                Matrix4f projectionMatrix, CallbackInfo ci) {
+        LodRenderer.renderTranslucent();
+    }
+
     @Inject(method = "renderLevel", at = @At("RETURN"), require = 0)
     private void farfield$endOfLevel(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera,
                                      GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix,

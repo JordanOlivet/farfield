@@ -1,6 +1,8 @@
 package io.lakio.farfield.client.render.iris;
 
 import com.google.common.collect.ImmutableSet;
+import com.mojang.blaze3d.platform.GlStateManager;
+import com.mojang.blaze3d.systems.RenderSystem;
 import io.lakio.farfield.Farfield;
 import io.lakio.farfield.client.render.ShaderPackLink;
 import io.lakio.farfield.mixin.iris.IrisRenderingPipelineAccessor;
@@ -48,6 +50,27 @@ import static org.lwjgl.opengl.GL11C.glGetInteger;
 import static org.lwjgl.opengl.GL11C.GL_DEPTH_COMPONENT;
 import static org.lwjgl.opengl.GL11C.GL_FLOAT;
 import static org.lwjgl.opengl.GL44C.glClearTexImage;
+import static org.lwjgl.opengl.GL11C.GL_BLEND;
+import static org.lwjgl.opengl.GL11C.GL_DST_ALPHA;
+import static org.lwjgl.opengl.GL11C.GL_DST_COLOR;
+import static org.lwjgl.opengl.GL11C.GL_ONE;
+import static org.lwjgl.opengl.GL11C.GL_ONE_MINUS_DST_ALPHA;
+import static org.lwjgl.opengl.GL11C.GL_ONE_MINUS_DST_COLOR;
+import static org.lwjgl.opengl.GL11C.GL_ONE_MINUS_SRC_ALPHA;
+import static org.lwjgl.opengl.GL11C.GL_ONE_MINUS_SRC_COLOR;
+import static org.lwjgl.opengl.GL11C.GL_SRC_ALPHA;
+import static org.lwjgl.opengl.GL11C.GL_SRC_ALPHA_SATURATE;
+import static org.lwjgl.opengl.GL11C.GL_SRC_COLOR;
+import static org.lwjgl.opengl.GL11C.GL_TEXTURE_2D;
+import static org.lwjgl.opengl.GL11C.GL_ZERO;
+import static org.lwjgl.opengl.GL11C.glDisable;
+import static org.lwjgl.opengl.GL30C.GL_DEPTH_STENCIL_ATTACHMENT;
+import static org.lwjgl.opengl.GL30C.glDisablei;
+import static org.lwjgl.opengl.GL30C.glEnablei;
+import static org.lwjgl.opengl.GL40C.glBlendFuncSeparatei;
+import static org.lwjgl.opengl.GL43C.glCopyImageSubData;
+import static org.lwjgl.opengl.GL45C.glCheckNamedFramebufferStatus;
+import static org.lwjgl.opengl.GL45C.glNamedFramebufferTexture;
 
 /**
  * The LOD passes through a shader pack's Voxy contract, over Iris
@@ -64,7 +87,10 @@ public final class IrisLink implements ShaderPackLink {
     private String off;
     private int generation;
     private DepthTexture depth;
+    /** The LODs' nearest depth, translucent faces included: the opaque depth, then the translucent pass's. */
+    private DepthTexture translucentDepth;
     private GlFramebuffer framebuffer;
+    private GlFramebuffer translucentFramebuffer;
     private RenderTargets framebufferTargets;
     private int width;
     private int height;
@@ -115,25 +141,21 @@ public final class IrisLink implements ShaderPackLink {
         int w = targets.getCurrentWidth();
         int h = targets.getCurrentHeight();
         if (depth == null || w != width || h != height) {
-            if (depth != null) {
-                depth.destroy();
-            }
-            if (framebuffer != null) {
-                framebuffer.destroy();
-                framebuffer = null;
-            }
+            releaseTargets();
             depth = new DepthTexture("Farfield LOD depth", w, h, DepthBufferFormat.DEPTH32F);
+            translucentDepth = new DepthTexture("Farfield LOD translucent depth", w, h, DepthBufferFormat.DEPTH32F);
             width = w;
             height = h;
         }
         glClearTexImage(depth.getTextureId(), 0, GL_DEPTH_COMPONENT, GL_FLOAT, ONE);
+        glClearTexImage(translucentDepth.getTextureId(), 0, GL_DEPTH_COMPONENT, GL_FLOAT, ONE);
         // The game's projection with the LODs' depth range, as lod.vert computes it.
         lodProjection.set(projection);
         lodProjection.m22(-(far + near) / (far - near));
         lodProjection.m32(-2f * far * near / (far - near));
         IrisLod.setFrame(lodProjection, viewRotation, distance >> 4);
         IrisLod.opaqueDepth = depth.getTextureId();
-        IrisLod.translucentDepth = 0;
+        IrisLod.translucentDepth = translucentDepth.getTextureId();
         if (off != null) {
             mode = NONE;
             return;
@@ -142,16 +164,16 @@ public final class IrisLink implements ShaderPackLink {
             if (framebuffer != null) {
                 framebuffer.destroy();
             }
-            framebuffer = targets.createGbufferFramebuffer(iris.getFlippedAfterPrepare(), contract.opaqueDrawBuffers);
-            // Iris attached the game's depth, a depth-stencil texture when a mod
-            // enables the stencil: its stencil half stayed attached beside our
-            // depth, and every LOD draw failed (GL_INVALID_FRAMEBUFFER_OPERATION).
-            org.lwjgl.opengl.GL45C.glNamedFramebufferTexture(framebuffer.getId(),
-                    org.lwjgl.opengl.GL30C.GL_DEPTH_STENCIL_ATTACHMENT, 0, 0);
-            framebuffer.addDepthAttachment(depth.getTextureId());
+            if (translucentFramebuffer != null) {
+                translucentFramebuffer.destroy();
+            }
+            framebuffer = target(targets, iris.getFlippedAfterPrepare(), contract.opaqueDrawBuffers, depth);
+            translucentFramebuffer = target(targets, iris.getFlippedAfterTranslucent(), contract.translucentDrawBuffers,
+                    translucentDepth);
             framebufferTargets = targets;
-            Farfield.LOG.info("Shader pack LODs: target {}x{} built, status {}", w, h, Integer.toHexString(
-                    org.lwjgl.opengl.GL45C.glCheckNamedFramebufferStatus(framebuffer.getId(), GL_DRAW_FRAMEBUFFER)));
+            Farfield.LOG.info("Shader pack LODs: targets {}x{} built, status {} and {}", w, h,
+                    Integer.toHexString(glCheckNamedFramebufferStatus(framebuffer.getId(), GL_DRAW_FRAMEBUFFER)),
+                    Integer.toHexString(glCheckNamedFramebufferStatus(translucentFramebuffer.getId(), GL_DRAW_FRAMEBUFFER)));
         }
         mode = VOXY;
     }
@@ -161,6 +183,32 @@ public final class IrisLink implements ShaderPackLink {
         if (mode != VOXY) {
             return mode;
         }
+        bindTarget(framebuffer);
+        return VOXY;
+    }
+
+    /** A gbuffer framebuffer of the pack's draw buffers over a LOD depth of ours. */
+    private static GlFramebuffer target(RenderTargets targets, ImmutableSet<Integer> flipped, int[] drawBuffers,
+                                        DepthTexture depth) {
+        GlFramebuffer fb = targets.createGbufferFramebuffer(flipped, drawBuffers);
+        // Iris attached the game's depth, a depth-stencil texture when a mod
+        // enables the stencil: its stencil half stayed attached beside our
+        // depth, and every LOD draw failed (GL_INVALID_FRAMEBUFFER_OPERATION).
+        glNamedFramebufferTexture(fb.getId(), GL_DEPTH_STENCIL_ATTACHMENT, 0, 0);
+        fb.addDepthAttachment(depth.getTextureId());
+        return fb;
+    }
+
+    @Override
+    public void end() {
+        restoreTarget();
+        // Translucent LODs test against the opaque ones, and the pack reads
+        // the nearest of both: start from the opaque depth.
+        glCopyImageSubData(depth.getTextureId(), GL_TEXTURE_2D, 0, 0, 0, 0,
+                translucentDepth.getTextureId(), GL_TEXTURE_2D, 0, 0, 0, 0, width, height, 1);
+    }
+
+    private void bindTarget(GlFramebuffer fb) {
         // A program Iris disables (the vanilla sky under most packs) locks the depth
         // and color masks and the blending, then ignores every change until
         // the next program: the LOD passes wrote nothing. Their state is theirs.
@@ -172,15 +220,90 @@ public final class IrisLink implements ShaderPackLink {
         }
         previousFramebuffer = glGetInteger(GL_DRAW_FRAMEBUFFER_BINDING);
         glGetIntegerv(GL_VIEWPORT, previousViewport);
-        framebuffer.bind();
-        glViewport(0, 0, width, height);
-        return VOXY;
+        fb.bind();
+        // Under TAAU the pack draws its terrain into the scaled part of its buffers.
+        glViewport(0, 0, Math.max(1, Math.round(width * contract.renderScale[0])),
+                Math.max(1, Math.round(height * contract.renderScale[1])));
+    }
+
+    private void restoreTarget() {
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, previousFramebuffer);
+        glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
     }
 
     @Override
-    public void end() {
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, previousFramebuffer);
-        glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+    public boolean beginTranslucent() {
+        if (mode != VOXY || contract.translucent == null || translucentFramebuffer == null) {
+            return false;
+        }
+        bindTarget(translucentFramebuffer);
+        // The pack's blending per draw buffer: -1 for every buffer, then each
+        // location's own; without the key, the usual alpha blending.
+        int buffers = contract.translucentDrawBuffers.length;
+        String all = contract.blending.getOrDefault(-1,
+                contract.blending.isEmpty() ? "SRC_ALPHA ONE_MINUS_SRC_ALPHA ONE ONE_MINUS_SRC_ALPHA" : "off");
+        for (int i = 0; i < buffers; i++) {
+            blend(i, contract.blending.getOrDefault(i, all));
+        }
+        return true;
+    }
+
+    /** One draw buffer's blending: "off", or four GL factor names. */
+    private static void blend(int buffer, String mode) {
+        String[] f = mode.trim().split("\\s+");
+        if (f.length != 4) {
+            glDisablei(GL_BLEND, buffer);
+            return;
+        }
+        glEnablei(GL_BLEND, buffer);
+        glBlendFuncSeparatei(buffer, factor(f[0]), factor(f[1]), factor(f[2]), factor(f[3]));
+    }
+
+    private static int factor(String name) {
+        return switch (name.toUpperCase(java.util.Locale.ROOT)) {
+            case "ZERO" -> GL_ZERO;
+            case "ONE" -> GL_ONE;
+            case "SRC_COLOR" -> GL_SRC_COLOR;
+            case "ONE_MINUS_SRC_COLOR" -> GL_ONE_MINUS_SRC_COLOR;
+            case "DST_COLOR" -> GL_DST_COLOR;
+            case "ONE_MINUS_DST_COLOR" -> GL_ONE_MINUS_DST_COLOR;
+            case "SRC_ALPHA" -> GL_SRC_ALPHA;
+            case "ONE_MINUS_SRC_ALPHA" -> GL_ONE_MINUS_SRC_ALPHA;
+            case "DST_ALPHA" -> GL_DST_ALPHA;
+            case "ONE_MINUS_DST_ALPHA" -> GL_ONE_MINUS_DST_ALPHA;
+            case "SRC_ALPHA_SATURATE" -> GL_SRC_ALPHA_SATURATE;
+            default -> GL_ONE;
+        };
+    }
+
+    @Override
+    public void endTranslucent() {
+        restoreTarget();
+        // The indexed calls went around the game's state cache: every buffer
+        // back off with the default factors, then the cache set through calls
+        // that differ from what it holds, so they reach GL.
+        glDisable(GL_BLEND);
+        RenderSystem.enableBlend();
+        RenderSystem.disableBlend();
+        RenderSystem.blendFuncSeparate(GlStateManager.SourceFactor.ZERO, GlStateManager.DestFactor.ZERO,
+                GlStateManager.SourceFactor.ZERO, GlStateManager.DestFactor.ZERO);
+        RenderSystem.defaultBlendFunc();
+    }
+
+    @Override
+    public int customId(net.minecraft.world.level.block.state.BlockState state) {
+        // The map Iris built from the pack's block.properties for its own terrain.
+        it.unimi.dsi.fastutil.objects.Object2IntMap<net.minecraft.world.level.block.state.BlockState> ids =
+                net.irisshaders.iris.shaderpack.materialmap.WorldRenderingSettings.INSTANCE.getBlockStateIds();
+        if (ids == null || state == null) {
+            return 0;
+        }
+        return Math.max(0, ids.getOrDefault(state, 0));
+    }
+
+    @Override
+    public int gameDepthTexture() {
+        return ((IrisRenderingPipelineAccessor) pipeline).farfield$renderTargets().getDepthTexture();
     }
 
     @Override
@@ -190,20 +313,50 @@ public final class IrisLink implements ShaderPackLink {
 
     @Override
     public String opaqueUnit(String parameters) {
-        if (contract == null) {
+        return contract == null ? null : unit(contract.opaque, "VOXY_OPAQUE_PASS", parameters);
+    }
+
+    @Override
+    public String translucentUnit(String parameters) {
+        return contract == null || contract.translucent == null ? null
+                : unit(contract.translucent, "VOXY_TRANSLUCENT_PASS", parameters);
+    }
+
+    @Override
+    public String vertexUnit() {
+        if (contract == null || contract.taaOffset == null) {
             return null;
         }
+        StringBuilder out = new StringBuilder("#version 460 core" + NL);
+        declareUniforms(out);
+        return out.append("vec2 voxy_taaOffset() ").append(contract.taaOffset).append(NL).toString();
+    }
+
+    private static final String NL = String.valueOf((char) 10);
+
+    /** The uniforms voxy.json lists, with the types Iris gives them. */
+    private void declareUniforms(StringBuilder out) {
+        Map<String, UniformType> types = uniformTypes();
+        for (String name : contract.uniforms) {
+            UniformType type = types.get(name);
+            if (type != null) {
+                out.append("uniform ").append(glsl(type)).append(' ').append(name).append(';').append(NL);
+            }
+        }
+    }
+
+    private String unit(String snippet, String pass, String parameters) {
         StringBuilder out = new StringBuilder("#version 460 core\n");
         StringBuilder body = new StringBuilder();
         // #extension lines must come before any declaration.
-        for (String line : contract.opaque.split("\n", -1)) {
+        for (String line : snippet.split("\n", -1)) {
             if (line.trim().startsWith("#extension")) {
                 out.append(line).append('\n');
             } else if (!line.trim().startsWith("#version")) {
                 body.append(line).append('\n');
             }
         }
-        out.append("#define VOXY\n#define VOXY_OPAQUE_PASS\n").append(parameters).append('\n');
+        out.append("#define VOXY\n#define ").append(pass).append('\n').append(parameters).append('\n');
         Map<String, UniformType> types = uniformTypes();
         for (String name : contract.uniforms) {
             UniformType type = types.get(name);
@@ -220,7 +373,7 @@ public final class IrisLink implements ShaderPackLink {
     }
 
     @Override
-    public void attach(int program, String name) {
+    public void attach(int program, String name, boolean translucent) {
         IrisRenderingPipeline iris = (IrisRenderingPipeline) pipeline;
         IrisRenderingPipelineAccessor access = (IrisRenderingPipelineAccessor) iris;
         ShaderPack pack = Iris.getCurrentPack().orElseThrow();
@@ -233,7 +386,8 @@ public final class IrisLink implements ShaderPackLink {
         BuiltinReplacementUniforms.addBuiltinReplacementUniforms(uniforms);
         ProgramSamplers.Builder samplers = ProgramSamplers.builder(program, reservedUnits);
         ProgramImages.Builder images = ProgramImages.builder(program);
-        iris.addGbufferOrShadowSamplers(samplers, images, iris::getFlippedAfterPrepare, false, false, true, false);
+        iris.addGbufferOrShadowSamplers(samplers, images,
+                translucent ? iris::getFlippedAfterTranslucent : iris::getFlippedAfterPrepare, false, false, true, false);
         custom.mapholderToPass(uniforms, pass);
         bound.put(program, new Bound(uniforms.buildUniforms(), samplers.build(), images.build(), pass));
     }
@@ -281,24 +435,37 @@ public final class IrisLink implements ShaderPackLink {
                     + Iris.getCurrentDimension());
             return;
         }
-        Farfield.LOG.info("Shader pack LODs: {} through its Voxy contract ({}), opaque draw buffers {}",
+        Farfield.LOG.info("Shader pack LODs: {} through its Voxy contract ({}), opaque draw buffers {}, translucent {}"
+                        + " ({}), blending {}, TAA jitter {}, render scale {}",
                 Iris.getCurrentPackName(), contract.folder.isEmpty() ? "/" : contract.folder,
-                java.util.Arrays.toString(contract.opaqueDrawBuffers));
+                java.util.Arrays.toString(contract.opaqueDrawBuffers),
+                java.util.Arrays.toString(contract.translucentDrawBuffers),
+                contract.translucent != null ? "snippet found" : "no snippet", contract.blending,
+                contract.taaOffset == null ? "none" : contract.taaOffset.replaceAll("[\\s]+", " "),
+                java.util.Arrays.toString(contract.renderScale));
     }
 
     private void release() {
-        if (framebuffer != null) {
-            framebuffer.destroy();
-            framebuffer = null;
-        }
-        if (depth != null) {
-            depth.destroy();
-            depth = null;
-        }
-        framebufferTargets = null;
+        releaseTargets();
         bound.clear();
         IrisLod.opaqueDepth = 0;
         IrisLod.translucentDepth = 0;
+    }
+
+    private void releaseTargets() {
+        for (GlFramebuffer fb : new GlFramebuffer[]{framebuffer, translucentFramebuffer}) {
+            if (fb != null) {
+                fb.destroy();
+            }
+        }
+        for (DepthTexture t : new DepthTexture[]{depth, translucentDepth}) {
+            if (t != null) {
+                t.destroy();
+            }
+        }
+        framebuffer = translucentFramebuffer = null;
+        depth = translucentDepth = null;
+        framebufferTargets = null;
     }
 
     /** The GLSL types of the uniforms Iris would give a program under this pack. */

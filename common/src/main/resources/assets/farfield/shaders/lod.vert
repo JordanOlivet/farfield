@@ -38,6 +38,10 @@ const uint BOX_OFFSET = 19u;
 // The depth pre-pass and the shaded pass are separate programs: they must
 // compute the same depth to the bit for the shaded pass's GL_EQUAL test.
 invariant gl_Position;
+#ifdef VOXY_TAA
+// The shader pack's TAA jitter (voxy.json taaOffset, ADR-113), in NDC.
+vec2 voxy_taaOffset();
+#endif
 
 uniform mat4 u_viewProj;    // the game's projection * view rotation
 uniform ivec3 u_cameraBlock;
@@ -65,6 +69,13 @@ flat out uint v_direction;
 flat out uint v_slot;      // section slot (Occupancy), with v_occluders
 flat out uint v_occluders;
 flat out uint v_cutout;     // 1: the face's texture has holes (opaque pass cuts them out)
+#ifdef VOXY
+// Per material, the shader pack's block id (Voxy's customId, ADR-113).
+layout(std430, binding = 9) readonly buffer PackIds {
+    uint packIds[];
+};
+flat out uint v_customId;
+#endif
 flat out uint v_handoff;    // bit 0: the section overlaps the grid where the game may draw (hand-off test); bit 1: a preview section
 
 // Directions 6 and 7: a plant's diagonals (vanilla's cross model, unshaded).
@@ -90,6 +101,9 @@ void main() {
     uint sizeV = ((lo >> 20) & 31u) + 1u;
     uint direction = (lo >> 25) & 7u;
     uint material = (lo >> 28) | ((q.y & 0xFFFu) << 4);
+#ifdef VOXY
+    v_customId = material < uint(packIds.length()) ? packIds[material] : 0u;
+#endif
 
     bool plant = direction >= 6u;
     uint axis = plant ? 0u : direction >> 1;
@@ -178,6 +192,10 @@ void main() {
     float n = u_depthRange.x;
     float f = u_depthRange.y;
     gl_Position.z = gl_Position.w * (f + n) / (f - n) - 2.0 * f * n / (f - n);
+#ifdef VOXY_TAA
+    // As the pack jitters its own terrain: its TAA resolves the LODs too.
+    gl_Position.xy += voxy_taaOffset() * gl_Position.w;
+#endif
 
     // Section-local block coordinates: the section origin is a multiple of
     // its size, so their fractions are the world's.

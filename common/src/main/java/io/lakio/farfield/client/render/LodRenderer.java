@@ -234,6 +234,22 @@ public final class LodRenderer {
     private Shader packShaded;
     private Shader packPlain;
     private Shader packPlants;
+    private Shader packTranslucent;
+    /** The pre-pass under a pack with a TAA jitter: its depth must match the jittered shaded pass. */
+    private Shader packDepthSolid;
+    private Shader packDepthOnly;
+    /** The pack generation whose TAA jitter did not build: its programs go without it. */
+    private int packNoTaa = -1;
+    /** Per material, the shader pack's block id (Voxy's customId), for the pack's snippets. */
+    private GlBuffer packIds;
+    private int packIdsCount = -1;
+    private int packIdsGeneration = -1;
+    private int[] packIdsScratch = new int[0];
+    /** The translucent LODs of this frame wait for the game's translucent stage (under a pack). */
+    private boolean translucentPending;
+    private Vec3 translucentCam;
+    private long translucentOffset;
+    private int translucentCount;
     private GlBuffer quads;
     private GlBuffer sectionInfo;
     private GlBuffer colorBuffer;
@@ -274,6 +290,8 @@ public final class LodRenderer {
     private static final int ATLAS_UNIT = 10;
     /** Texture unit of vanilla's lightmap for the LOD shader. */
     private static final int LIGHTMAP_UNIT = 11;
+    /** Texture unit of the game's depth under a shader pack, outside the game's tracked units. */
+    private static final int GAME_DEPTH_UNIT = 12;
 
     private final FaceTextures faceTextures = new FaceTextures();
     private final MaterialColors colors = new MaterialColors(faceTextures);
@@ -507,16 +525,17 @@ public final class LodRenderer {
         final int atlas;
         final int atlasSize;
         final int textureEnd;
+        final int gameDepth;
         /** Linked with a shader pack's code: binds the pack's uniforms too (ADR-113). */
         final boolean pack;
 
         Shader(String defines) {
-            this(defines, null);
+            this(defines, null, null, null);
         }
 
-        Shader(String defines, String packUnit) {
-            program = new GlProgram("lod.vert", "lod.frag", defines, packUnit, "the shader pack's voxy_opaque");
-            pack = packUnit != null;
+        Shader(String defines, String packVertex, String packUnit, String packName) {
+            program = new GlProgram("lod.vert", "lod.frag", defines, packVertex, packUnit, packName);
+            pack = packUnit != null || packVertex != null;
             viewProj = program.uniform("u_viewProj");
             cameraBlock = program.uniform("u_cameraBlock");
             cameraFrac = program.uniform("u_cameraFrac");
@@ -536,6 +555,7 @@ public final class LodRenderer {
             atlas = program.uniform("u_atlas");
             atlasSize = program.uniform("u_atlasSize");
             textureEnd = program.uniform("u_textureEnd");
+            gameDepth = program.uniform("u_gameDepth");
         }
     }
 
@@ -848,6 +868,7 @@ public final class LodRenderer {
      */
     public static void beginLevel(Matrix4f viewRotation, Matrix4f projection) {
         LodRenderer r = INSTANCE;
+        r.translucentPending = false;
         if (r.packLink != null && !r.disabled) {
             r.packLink.frame(projection, viewRotation, 8f, (float) MAX_DISTANCE * 2, (int) r.selectionDistance());
         }
@@ -927,7 +948,7 @@ public final class LodRenderer {
         }
         try {
             ShaderPackLink link = (ShaderPackLink) Class.forName("io.lakio.farfield.client.render.iris.IrisLink")
-                    .getConstructor(int[].class).newInstance((Object) new int[]{ATLAS_UNIT, LIGHTMAP_UNIT});
+                    .getConstructor(int[].class).newInstance((Object) new int[]{ATLAS_UNIT, LIGHTMAP_UNIT, GAME_DEPTH_UNIT});
             Farfield.LOG.info("Shader pack LODs: Iris found, the packs' Voxy contract is read");
             return link;
         } catch (ReflectiveOperationException | LinkageError e) {
@@ -943,34 +964,67 @@ public final class LodRenderer {
         }
         closePackShaders();
         packGeneration = packLink.generation();
-        String unit = packLink.opaqueUnit(GlProgram.resource("voxy_parameters.glsl"));
+        String parameters = GlProgram.resource("voxy_parameters.glsl");
+        String unit = packLink.opaqueUnit(parameters);
         if (unit == null) {
             return false;
         }
+        String opaqueName = "the shader pack's voxy_opaque";
+        String vertex = packNoTaa == packGeneration ? null : packLink.vertexUnit();
+        String taa = vertex != null ? "#define VOXY_TAA\n" : "";
         try {
-            packShaded = new Shader("#define EARLY_Z\n#define VOXY\n", unit);
-            packPlain = new Shader("#define VOXY\n", unit);
-            packPlants = new Shader("#define PLANTS\n#define VOXY\n", unit);
-            for (Shader s : new Shader[]{packShaded, packPlain, packPlants}) {
-                packLink.attach(s.program.id(), "farfield_lod");
+            packShaded = new Shader("#define EARLY_Z\n#define VOXY\n" + taa, vertex, unit, opaqueName);
+            packPlain = new Shader("#define VOXY\n" + taa, vertex, unit, opaqueName);
+            packPlants = new Shader("#define PLANTS\n#define VOXY\n" + taa, vertex, unit, opaqueName);
+            if (vertex != null) {
+                packDepthSolid = new Shader("#define DEPTH_ONLY\n#define SOLID\n" + taa, vertex, null, "the shader pack's taaOffset");
+                packDepthOnly = new Shader("#define DEPTH_ONLY\n" + taa, vertex, null, "the shader pack's taaOffset");
+            }
+            for (Shader s : new Shader[]{packShaded, packPlain, packPlants, packDepthSolid, packDepthOnly}) {
+                if (s != null) {
+                    packLink.attach(s.program.id(), "farfield_lod", false);
+                }
             }
         } catch (RuntimeException e) {
+            if (vertex != null) {
+                // The jitter is the least of it: the LODs without it rather than none.
+                Farfield.LOG.warn("Shader pack LODs: built again without the pack's taaOffset ({})",
+                        e.getMessage().lines().findFirst().orElse(""));
+                closePackShaders();
+                packNoTaa = packGeneration;
+                return packShaders();
+            }
             Farfield.LOG.error("Shader pack LODs: the pack's voxy_opaque does not build with the LOD shader", e);
             closePackShaders();
             packLink.fail("its voxy_opaque does not build with the LOD shader (" + e.getMessage().lines().findFirst().orElse("") + ")");
             return false;
         }
+        // Without a translucent snippet that builds, the translucent LODs stay off; the opaque ones draw.
+        String translucentUnit = packLink.translucentUnit(parameters);
+        if (translucentUnit != null) {
+            try {
+                packTranslucent = new Shader("#define VOXY\n#define VOXY_TRANSLUCENT\n" + taa, vertex, translucentUnit,
+                        "the shader pack's voxy_translucent");
+                packLink.attach(packTranslucent.program.id(), "farfield_lod_translucent", true);
+            } catch (RuntimeException e) {
+                Farfield.LOG.error("Shader pack LODs: the pack's voxy_translucent does not build with the LOD shader,"
+                        + " translucent LODs off under it", e);
+                packTranslucent = null;
+            }
+        }
+        Farfield.LOG.info("Shader pack LODs: programs built, translucent LODs {}, TAA jitter {}",
+                packTranslucent != null ? "on" : "off", vertex != null ? "on" : "off");
         return true;
     }
 
     private void closePackShaders() {
-        for (Shader s : new Shader[]{packShaded, packPlain, packPlants}) {
+        for (Shader s : new Shader[]{packShaded, packPlain, packPlants, packTranslucent, packDepthSolid, packDepthOnly}) {
             if (s != null) {
                 packLink.detach(s.program.id());
                 s.program.close();
             }
         }
-        packShaded = packPlain = packPlants = null;
+        packShaded = packPlain = packPlants = packTranslucent = packDepthSolid = packDepthOnly = null;
     }
 
     private void renderFrame(Camera camera, Matrix4f viewRotation, Matrix4f projection) {
@@ -3086,10 +3140,100 @@ public final class LodRenderer {
         // Vanilla's Biome Blend option (0 off, else the radius in blocks), as the game's terrain.
         glUniform1i(s.biomeBlend, mc.options.biomeBlendRadius().get());
         glUniform1i(s.atlas, ATLAS_UNIT);
+        glUniform1i(s.gameDepth, GAME_DEPTH_UNIT);
         glUniform2f(s.atlasSize, faceTextures.width(), Math.max(1, faceTextures.height()));
         int textureDistance = RenderSettings.textureDistance();
         glUniform1f(s.textureEnd, atlas == 0 ? 0
                 : textureDistance == RenderSettings.ALL_DISTANCES ? Float.MAX_VALUE : textureDistance);
+    }
+
+    /**
+     * The pack's block id of every material, again when materials were added
+     * or the pack changed: a few thousand map lookups, rarely.
+     */
+    private void updatePackIds() {
+        int count = world == null ? 0 : world.blockStates().size();
+        if (packIds != null && count == packIdsCount && packLink.idsGeneration() == packIdsGeneration) {
+            return;
+        }
+        if (packIdsScratch.length < Math.max(1, count)) {
+            packIdsScratch = new int[Math.max(1024, Integer.highestOneBit(Math.max(1, count)) << 1)];
+        }
+        java.util.Arrays.fill(packIdsScratch, 0);
+        int named = 0;
+        for (int id = 0; id < count; id++) {
+            String key = world.blockStates().key(id);
+            int custom = key == null ? 0 : packLink.customId(io.lakio.farfield.lod.BlockKeys.state(key));
+            packIdsScratch[id] = custom;
+            if (custom != 0) {
+                named++;
+            }
+        }
+        long bytes = (long) packIdsScratch.length * 4;
+        if (packIds == null) {
+            packIds = new GlBuffer(bytes);
+        } else if (packIds.size() < bytes) {
+            packIds.grow(bytes, 0);
+        }
+        packIds.upload(0, packIdsScratch);
+        if (packIdsGeneration != packLink.idsGeneration()) {
+            Farfield.LOG.info("Shader pack LODs: {} of {} materials have a block id of the pack", named, count);
+        }
+        packIdsCount = count;
+        packIdsGeneration = packLink.idsGeneration();
+    }
+
+    /**
+     * Called from the level renderer mixin at the game's translucent stage:
+     * under a shader pack, the translucent LODs this frame's draw left.
+     */
+    public static void renderTranslucent() {
+        LodRenderer r = INSTANCE;
+        if (r.translucentPending) {
+            r.translucentPending = false;
+            r.drawPackTranslucent(Minecraft.getInstance());
+        }
+    }
+
+    private void drawPackTranslucent(Minecraft mc) {
+        if (!packLink.beginTranslucent()) {
+            return;
+        }
+        int previousUnit = GlStateManager._getActiveTexture();
+        GlStateManager._activeTexture(GL_TEXTURE0 + ATLAS_UNIT);
+        GlStateManager._bindTexture(atlas);
+        GlStateManager._activeTexture(GL_TEXTURE0 + LIGHTMAP_UNIT);
+        GlStateManager._bindTexture(lightmap(mc));
+        GlStateManager._activeTexture(previousUnit);
+        org.lwjgl.opengl.GL45C.glBindTextureUnit(GAME_DEPTH_UNIT, packLink.gameDepthTexture());
+
+        GlStateManager._glBindVertexArray(vao);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, quads.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, sectionInfo.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, colorBuffer.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, biomeBuffer.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, occupancy.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, neighborSlots.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, drawnSections.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, biomeColumns.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, previewHidden.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, packIds.id());
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirect.id());
+        RenderSystem.enableDepthTest();
+        RenderSystem.depthFunc(GL_LEQUAL);
+        // The pack reads the nearest LOD surface, translucent ones included.
+        RenderSystem.depthMask(true);
+        RenderSystem.enableCull();
+        RenderSystem.colorMask(true, true, true, true);
+        use(packTranslucent, translucentCam, mc, true);
+        glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, translucentOffset, translucentCount, 0);
+
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
+        GlStateManager._glBindVertexArray(0);
+        BufferUploader.invalidate();
+        GlStateManager._glUseProgram(0);
+        org.lwjgl.opengl.GL45C.glBindTextureUnit(GAME_DEPTH_UNIT, 0);
+        packLink.endTranslucent();
     }
 
     private void draw(Vec3 cam, Matrix4f viewRotation, Matrix4f projection, Minecraft mc) {
@@ -3122,6 +3266,9 @@ public final class LodRenderer {
             packLink.end();
             return;
         }
+        if (packed) {
+            updatePackIds();
+        }
 
         // Timestamps rather than a time-elapsed query: the game may have one open.
         int slot = timerSlot;
@@ -3147,6 +3294,9 @@ public final class LodRenderer {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, drawnSections.id());
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, biomeColumns.id());
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, previewHidden.id());
+        if (packed) {
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, packIds.id());
+        }
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirect.id());
         RenderSystem.enableDepthTest();
         RenderSystem.depthFunc(GL_LEQUAL);
@@ -3166,11 +3316,11 @@ public final class LodRenderer {
         if (prepass && opaqueDraws > 0) {
             RenderSystem.colorMask(false, false, false, false);
             if (solidDraws > 0) {
-                use(depthSolid, cam, mc, false);
+                use(packed && packDepthSolid != null ? packDepthSolid : depthSolid, cam, mc, false);
                 glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, 0, solidDraws, 0);
             }
             if (discardDraws > 0) {
-                use(depthOnly, cam, mc, false);
+                use(packed && packDepthOnly != null ? packDepthOnly : depthOnly, cam, mc, false);
                 glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, (long) solidDraws * COMMAND_BYTES,
                         discardDraws, 0);
             }
@@ -3225,6 +3375,11 @@ public final class LodRenderer {
         if (packed) {
             // The LODs drew into their own depth texture: the game's depth is untouched.
             packLink.end();
+            // Translucent LODs at the game's translucent stage, after the pack's deferred passes.
+            translucentPending = translucentDraws > 0 && RenderSettings.drawTranslucent() && packTranslucent != null;
+            translucentCam = cam;
+            translucentOffset = opaqueBytes;
+            translucentCount = translucentDraws;
             return;
         }
         // Vanilla terrain draws next with its own depth range: start it clean.

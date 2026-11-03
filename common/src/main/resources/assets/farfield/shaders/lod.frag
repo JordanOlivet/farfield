@@ -85,8 +85,14 @@ uniform sampler2D u_lightmap;  // vanilla's lightmap: x block light, y sky light
 const uint NO_TINT = 0xFFFFFFFFu;
 
 #ifdef VOXY
+flat in uint v_customId;
 #include "voxy_parameters.glsl"
 void voxy_emitFragment(VoxyFragmentParameters parameters);
+#ifdef VOXY_TRANSLUCENT
+// The game's depth at its translucent stage: its opaque terrain, nearer than
+// any LOD; the translucent LODs give way to it, as the pack's composites do.
+uniform sampler2D u_gameDepth;
+#endif
 
 // The Voxy contract's faces: axis face >> 1 (0 Y, 1 Z, 2 X), sign face & 1;
 // ours: axis direction >> 1 (0 X, 1 Y, 2 Z), the same sign bit.
@@ -234,6 +240,11 @@ void main() {
         normal[v_direction >> 1] = (v_direction & 1u) != 0u ? 1.0 : -1.0;
     }
     vec3 inside = v_relative + u_cameraFrac - normal * 0.01;
+#ifdef VOXY_TRANSLUCENT
+    if (texelFetch(u_gameDepth, ivec2(gl_FragCoord.xy), 0).r < 1.0) {
+        discard;
+    }
+#endif
 #ifndef SOLID
     if (!prepassed && v_handoff != 0u) {
         ivec3 block = u_cameraBlock + ivec3(floor(inside));
@@ -275,6 +286,9 @@ void main() {
 #else
     vec3 tint = vec3(0.0);
     vec3 color = v_flat.rgb;
+    // The untinted and tinted parts apart, for a pack that applies the tint itself.
+    vec3 untintedPart = v_flat.rgb;
+    vec3 tintedPart = v_tinted;
     if (v_tintKind != NO_TINT) {
         // The column this face belongs to: a hair inside its voxel, as above.
 #ifdef PLANTS
@@ -293,8 +307,10 @@ void main() {
     if (v_tiles != 0u && distance < u_textureEnd) {
         vec4 base = tile((v_tiles & 0xFFFFu) - 1u, f, gx, gy);
         vec3 textured = base.rgb;
+        vec3 overlay = vec3(0.0);
         if ((v_tiles >> 16) != 0u) {
-            textured += tile((v_tiles >> 16) - 1u, f, gx, gy).rgb * tint;
+            overlay = tile((v_tiles >> 16) - 1u, f, gx, gy).rgb;
+            textured += overlay * tint;
         }
         // Plants keep their holes up to the end of the textures, where they stop.
         float fade = plant ? 0.0 : smoothstep(u_textureEnd * 0.75, u_textureEnd, distance);
@@ -304,6 +320,8 @@ void main() {
             discard;
         }
         color = mix(textured, color, fade);
+        untintedPart = mix(base.rgb, untintedPart, fade);
+        tintedPart = mix(overlay, tintedPart, fade);
         alpha = mix(base.a, alpha, fade);
     }
     if (plant && (v_tiles == 0u || distance >= u_textureEnd)) {
@@ -315,12 +333,19 @@ void main() {
     // The pack lights and fogs it: the texture with its tint, the occlusion
     // baked in as vanilla's vertex colors carry it, and the light levels.
     VoxyFragmentParameters parameters;
-    parameters.sampledColour = vec4(pow(min(color, vec3(1.0)), vec3(1.0 / 2.2)) * ao, alpha);
-    parameters.tinting = vec4(1.0);
+    if (v_tintKind != NO_TINT && max(untintedPart.r, max(untintedPart.g, untintedPart.b)) < 1.0 / 255.0) {
+        // All of the face is tinted (water, leaves, grass tops): the sample and
+        // the biome tint apart, as vanilla's texture and vertex color.
+        parameters.sampledColour = vec4(pow(min(tintedPart, vec3(1.0)), vec3(1.0 / 2.2)) * ao, alpha);
+        parameters.tinting = vec4(pow(tint, vec3(1.0 / 2.2)), 1.0);
+    } else {
+        parameters.sampledColour = vec4(pow(min(color, vec3(1.0)), vec3(1.0 / 2.2)) * ao, alpha);
+        parameters.tinting = vec4(1.0);
+    }
     parameters.uv = v_texCoord;
     parameters.lightMap = (vec2(v_lightmap) + 0.5) / 16.0;
     parameters.face = voxyFace(v_direction);
-    parameters.customId = 0u;
+    parameters.customId = v_customId;
     voxy_emitFragment(parameters);
 #else
     // Vanilla samples its lightmap filtered at level / 16 (minecraft_sample_lightmap),

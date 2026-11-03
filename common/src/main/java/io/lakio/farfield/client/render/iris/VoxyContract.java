@@ -34,18 +34,32 @@ public final class VoxyContract {
     final List<String> uniforms;
     /** Samplers the snippets read and their GLSL types, declared for them. */
     final Map<String, String> samplers;
+    /**
+     * The translucent snippet's blending per draw buffer location, -1 for
+     * the default: "off" or four GL factor names (source and destination
+     * color, then alpha).
+     */
+    final Map<Integer, String> blending;
     final String opaque;
     final String translucent;
+    /** The body of a GLSL function returning the pack's TAA jitter in NDC, or null. */
+    final String taaOffset;
+    /** The pack's TAAU render scale (x, y): the LODs draw into that part of the viewport. */
+    final float[] renderScale;
 
     private VoxyContract(String folder, int[] opaqueDrawBuffers, int[] translucentDrawBuffers, List<String> uniforms,
-                         Map<String, String> samplers, String opaque, String translucent) {
+                         Map<String, String> samplers, Map<Integer, String> blending, String opaque, String translucent,
+                         String taaOffset, float[] renderScale) {
         this.folder = folder;
         this.opaqueDrawBuffers = opaqueDrawBuffers;
         this.translucentDrawBuffers = translucentDrawBuffers;
         this.uniforms = uniforms;
         this.samplers = samplers;
+        this.blending = blending;
         this.opaque = opaque;
         this.translucent = translucent;
+        this.taaOffset = taaOffset;
+        this.renderScale = renderScale;
     }
 
     /**
@@ -106,12 +120,52 @@ public final class VoxyContract {
                 samplers.put(e.getKey(), e.getValue().getAsString());
             }
         }
+        Map<Integer, String> blending = new LinkedHashMap<>();
+        if (root.get("blending") instanceof JsonObject map) {
+            for (Map.Entry<String, JsonElement> e : map.entrySet()) {
+                try {
+                    blending.put(Integer.parseInt(e.getKey().trim()), e.getValue().getAsString().trim());
+                } catch (NumberFormatException ignored) {
+                    // not a draw buffer location
+                }
+            }
+        }
         return new VoxyContract(folder, drawBuffers(root, "opaqueDrawBuffers"), drawBuffers(root, "translucentDrawBuffers"),
-                uniforms, samplers, opaque, translucent);
+                uniforms, samplers, blending, opaque, translucent, taaOffset(root), renderScale(root));
     }
 
     private static final List<String> KEYS = List.of("opaqueDrawBuffers", "translucentDrawBuffers", "uniforms",
-            "samplers", "blending", "excludeLodsFromVanillaDepth");
+            "samplers", "blending", "excludeLodsFromVanillaDepth", "taaOffset", "renderScale");
+
+    private static String taaOffset(JsonObject root) {
+        JsonElement e = root.get("taaOffset");
+        if (e == null || !e.isJsonPrimitive()) {
+            return null;
+        }
+        String body = e.getAsString().trim();
+        if (body.isEmpty()) {
+            return null;
+        }
+        // A function body; a bare expression is returned as is.
+        return body.startsWith("{") ? body : "{ return (" + body + "); }";
+    }
+
+    private static float[] renderScale(JsonObject root) {
+        float[] scale = {1f, 1f};
+        if (root.get("renderScale") instanceof JsonArray list && list.size() >= 2) {
+            for (int i = 0; i < 2; i++) {
+                try {
+                    float s = list.get(i).getAsFloat();
+                    if (s > 0f && s <= 1f) {
+                        scale[i] = s;
+                    }
+                } catch (RuntimeException e) {
+                    // not a number: a macro the preprocessor left, full scale
+                }
+            }
+        }
+        return scale;
+    }
 
     /**
      * The value of {@code "key":} in {@code json}, an array, an object or a
@@ -128,6 +182,19 @@ public final class VoxyContract {
             i++;
         }
         int end = i;
+        if (i < json.length() && json.charAt(i) == '"') {
+            // A string, line breaks included (Photon's taaOffset is GLSL over
+            // several lines, no JSON string): read to its closing quote.
+            StringBuilder text = new StringBuilder();
+            for (end = i + 1; end < json.length() && json.charAt(end) != '"'; end++) {
+                char c = json.charAt(end);
+                if (c == '\\' && end + 1 < json.length()) {
+                    c = json.charAt(++end);
+                }
+                text.append(c);
+            }
+            return new com.google.gson.JsonPrimitive(text.toString());
+        }
         if (i < json.length() && (json.charAt(i) == '[' || json.charAt(i) == '{')) {
             int depth = 0;
             boolean quoted = false;

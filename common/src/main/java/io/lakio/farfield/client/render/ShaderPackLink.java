@@ -45,8 +45,52 @@ public interface ShaderPackLink {
      */
     String opaqueUnit(String parameters);
 
-    /** Connects a linked program to the pack's uniforms and samplers. */
-    void attach(int program, String name);
+    /**
+     * A vertex shader unit that defines {@code vec2 voxy_taaOffset()}, the
+     * pack's TAA jitter in NDC, or null when the pack has none: every LOD
+     * program under the pack links it, depth pre-pass included.
+     */
+    String vertexUnit();
+
+    /**
+     * The pack's translucent fragment code as a shader unit that defines
+     * {@code voxy_emitFragment}, or null: no translucent LODs under this pack.
+     */
+    String translucentUnit(String parameters);
+
+    /**
+     * Connects a linked program to the pack's uniforms and samplers.
+     *
+     * @param translucent the program draws at the translucent stage (the
+     *                    pack's buffers as they stand after its deferred passes)
+     */
+    void attach(int program, String name, boolean translucent);
+
+    /**
+     * At the game's translucent stage, after the pack's deferred passes: the
+     * pack's translucent LOD target bound with its blending, or false.
+     */
+    boolean beginTranslucent();
+
+    /** After the translucent LOD pass: the pack's own target and blending back. */
+    void endTranslucent();
+
+    /**
+     * The pack's id for a block state, from its {@code block.properties}
+     * (Voxy's {@code customId}), 0 when the pack names none.
+     */
+    int customId(net.minecraft.world.level.block.state.BlockState state);
+
+    /** Bumped when the pack's block ids may have changed (a pack or dimension change). */
+    default int idsGeneration() {
+        return generation();
+    }
+
+    /**
+     * The game's depth texture under the pack (opaque terrain at the
+     * translucent stage): translucent LODs give way where it is written.
+     */
+    int gameDepthTexture();
 
     /** After {@code glUseProgram} of an attached program: the pack's uniforms and samplers for this frame. */
     void bind(int program);
@@ -54,7 +98,10 @@ public interface ShaderPackLink {
     /** Forgets an attached program before it is deleted. */
     void detach(int program);
 
-    /** After the LOD passes: the pack's own target back. */
+    /**
+     * After the opaque LOD passes: the pack's own target back; the
+     * translucent depth starts from the opaque one.
+     */
     void end();
 
     /** A program failed to build: the LODs stay off under this pack until it changes. */

@@ -58,7 +58,9 @@ neoForge {
         packClient {
             client()
             gameDirectory = project.file('runs/pack')
-            jvmArgument('-Xmx10G')
+            // 8 GB loads the test world; 10 GB brought a 32 GB machine under
+            // 1 GB free beside other apps (2026-11-03).
+            jvmArgument('-Xmx8G')
             systemProperty('connector.clean.path', vanillaJar.absolutePath)
             clientRunSettings(it)
         }
