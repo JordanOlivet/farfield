@@ -1,0 +1,3 @@
+Photon déclare `colortex16`, sous `#ifdef VOXY`, comme buffer des données d'eau lointaine. Voxy fournit donc un 17e buffer qu'Iris n'a pas. Je l'ignore pour l'instant. Si le run 10 marche, je pourrai fournir ce buffer nous-mêmes, comme `vxDepthTex`, pour que Photon retrouve l'eau lointaine complète.
+Tool result: 43:#ifdef VOXY / 45:const int colortex16Format = RGBA16; // Voxy water gbuffer data / 68:#ifdef VOXY / 69:uniform sampler2D colortex16; // distant water gbuffer 0
+Edit diff comment: "Iris's render targets (Photon lists colortex16, Iris has 0 to 15)"

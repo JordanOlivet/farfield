@@ -24,5 +24,11 @@ public abstract class IrisSamplersMixin {
                                            WorldRenderingPipeline pipeline, CallbackInfo ci) {
         samplers.addDynamicSampler(TextureType.TEXTURE_2D, IrisLod::opaqueDepthTexture, null, "vxDepthTexOpaque");
         samplers.addDynamicSampler(TextureType.TEXTURE_2D, IrisLod::translucentDepthTexture, null, "vxDepthTexTrans");
+        // The render targets past Iris's own that a Voxy contract writes (Photon's colortex16).
+        for (int i = Math.max(IrisLod.FIRST_EXTRA, renderTargets.getRenderTargetCount());
+             i < IrisLod.FIRST_EXTRA + IrisLod.EXTRA_COUNT; i++) {
+            int index = i;
+            samplers.addDynamicSampler(TextureType.TEXTURE_2D, () -> IrisLod.extraTarget(index), null, "colortex" + index);
+        }
     }
 }

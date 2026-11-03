@@ -151,12 +151,16 @@ Items:
     Complementary, MakeUp, Photon 1.3b); a link error falls back. Done
     (code, built): the pass at the game's translucent stage, its target and
     depth, the blending per draw buffer, opaque game terrain in front
-    hides it. Remains: a run under Photon, the other packs.
+    hides it; render targets past Iris's 16 given by Farfield (Photon's
+    colortex16). Verified under photon-gcea in the pack client (sea by day
+    and night, 2026-11-03, run 12). Remains: the other packs.
   - [~] C.1c `customId` from the pack's `block.properties`, TAA offset and
     render scale. Done (code, built): ids per material from Iris's block
     state map, the `taaOffset` jitter in every pack program (pre-pass
     included, built again without it if it fails), the viewport scaled by
-    `renderScale`. Remains: a run under Photon.
+    `renderScale`; `vxRenderDistance` covers the farthest LOD geometry.
+    Verified running under photon-gcea (TAAU 0.75, 803 of 1,673
+    materials with a pack id). Remains: the user's eye.
   - [ ] C.1d D.6 block light in the preview, for the packs' lightmap.
   - [ ] C.1e DH's contract for packs without Voxy's.
   - Later, outside C.1 (the user, 2026-11-03): packs with neither

@@ -15,6 +15,19 @@ public final class IrisLod {
     static int translucentDepth;
     /** The LOD distance in chunks. */
     static int renderDistance;
+    /**
+     * Render targets a pack's Voxy contract names past Iris's 16 (Photon's
+     * colortex16, its far water data), as textures of ours: index
+     * {@link #FIRST_EXTRA} + i, 0 when none.
+     */
+    public static final int FIRST_EXTRA = 16;
+    public static final int EXTRA_COUNT = 4;
+    static final int[] extraTargets = new int[EXTRA_COUNT];
+
+    public static int extraTarget(int index) {
+        int i = index - FIRST_EXTRA;
+        return i >= 0 && i < EXTRA_COUNT ? extraTargets[i] : 0;
+    }
     static final Matrix4f proj = new Matrix4f();
     static final Matrix4f projInv = new Matrix4f();
     static final Matrix4f projPrev = new Matrix4f();

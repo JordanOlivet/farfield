@@ -870,7 +870,16 @@ public final class LodRenderer {
         LodRenderer r = INSTANCE;
         r.translucentPending = false;
         if (r.packLink != null && !r.disabled) {
-            r.packLink.frame(projection, viewRotation, 8f, (float) MAX_DISTANCE * 2, (int) r.selectionDistance());
+            try {
+                // The farthest LOD geometry, not the selection's radius: square sections cross it by up
+                // to a coarsest section's diagonal, and packs put their LOD far plane there (Photon's
+                // combined_far = 16 * vxRenderDistance), so geometry past it came out as fog.
+                double coarsest = 32 << (LodWorld.LEVELS - 1);
+                int extent = (int) Math.min(MAX_DISTANCE * 2.0, r.selectionDistance() + coarsest * Math.sqrt(2));
+                r.packLink.frame(projection, viewRotation, 8f, (float) MAX_DISTANCE * 2, extent);
+            } catch (RuntimeException e) {
+                r.packFailed(e);
+            }
         }
     }
 
@@ -3148,6 +3157,19 @@ public final class LodRenderer {
     }
 
     /**
+     * The shader pack path failed on something of the pack's or Iris's:
+     * LODs off under this pack with the reason, never a crash of the game.
+     */
+    private void packFailed(RuntimeException e) {
+        Farfield.LOG.error("Shader pack LODs: failed under this pack", e);
+        try {
+            packLink.fail(e.toString());
+        } catch (RuntimeException ignored) {
+            // the reason is logged above
+        }
+    }
+
+    /**
      * The pack's block id of every material, again when materials were added
      * or the pack changed: a few thousand map lookups, rarely.
      */
@@ -3191,7 +3213,11 @@ public final class LodRenderer {
         LodRenderer r = INSTANCE;
         if (r.translucentPending) {
             r.translucentPending = false;
-            r.drawPackTranslucent(Minecraft.getInstance());
+            try {
+                r.drawPackTranslucent(Minecraft.getInstance());
+            } catch (RuntimeException e) {
+                r.packFailed(e);
+            }
         }
     }
 
@@ -3257,7 +3283,13 @@ public final class LodRenderer {
         viewProj.set(projection).mul(viewRotation);
 
         // Under a shader pack, its own target and program code, or nothing (ADR-113).
-        int packMode = packLink == null ? ShaderPackLink.VANILLA : packLink.begin();
+        int packMode;
+        try {
+            packMode = packLink == null ? ShaderPackLink.VANILLA : packLink.begin();
+        } catch (RuntimeException e) {
+            packFailed(e);
+            return;
+        }
         if (packMode == ShaderPackLink.NONE) {
             return;
         }

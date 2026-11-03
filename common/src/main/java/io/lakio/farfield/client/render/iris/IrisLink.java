@@ -65,6 +65,22 @@ import static org.lwjgl.opengl.GL11C.GL_TEXTURE_2D;
 import static org.lwjgl.opengl.GL11C.GL_ZERO;
 import static org.lwjgl.opengl.GL11C.glDisable;
 import static org.lwjgl.opengl.GL30C.GL_DEPTH_STENCIL_ATTACHMENT;
+import static org.lwjgl.opengl.GL30C.GL_COLOR_ATTACHMENT0;
+import static org.lwjgl.opengl.GL11C.GL_NONE;
+import static org.lwjgl.opengl.GL11C.GL_NEAREST;
+import static org.lwjgl.opengl.GL11C.GL_RGBA;
+import static org.lwjgl.opengl.GL11C.GL_RGBA16;
+import static org.lwjgl.opengl.GL11C.GL_TEXTURE_MAG_FILTER;
+import static org.lwjgl.opengl.GL11C.GL_TEXTURE_MIN_FILTER;
+import static org.lwjgl.opengl.GL11C.GL_TEXTURE_WRAP_S;
+import static org.lwjgl.opengl.GL11C.GL_TEXTURE_WRAP_T;
+import static org.lwjgl.opengl.GL11C.GL_UNSIGNED_SHORT;
+import static org.lwjgl.opengl.GL11C.glDeleteTextures;
+import static org.lwjgl.opengl.GL12C.GL_CLAMP_TO_EDGE;
+import static org.lwjgl.opengl.GL45C.glCreateTextures;
+import static org.lwjgl.opengl.GL45C.glTextureParameteri;
+import static org.lwjgl.opengl.GL45C.glTextureStorage2D;
+import static org.lwjgl.opengl.GL45C.glNamedFramebufferDrawBuffers;
 import static org.lwjgl.opengl.GL30C.glDisablei;
 import static org.lwjgl.opengl.GL30C.glEnablei;
 import static org.lwjgl.opengl.GL40C.glBlendFuncSeparatei;
@@ -91,6 +107,8 @@ public final class IrisLink implements ShaderPackLink {
     private DepthTexture translucentDepth;
     private GlFramebuffer framebuffer;
     private GlFramebuffer translucentFramebuffer;
+    /** Our textures for the render targets past Iris's that the contract names, by index - 16; 0 when none. */
+    private final int[] extraTargets = new int[IrisLod.EXTRA_COUNT];
     private RenderTargets framebufferTargets;
     private int width;
     private int height;
@@ -149,6 +167,12 @@ public final class IrisLink implements ShaderPackLink {
         }
         glClearTexImage(depth.getTextureId(), 0, GL_DEPTH_COMPONENT, GL_FLOAT, ONE);
         glClearTexImage(translucentDepth.getTextureId(), 0, GL_DEPTH_COMPONENT, GL_FLOAT, ONE);
+        for (int i = 0; i < extraTargets.length; i++) {
+            if (extraTargets[i] != 0) {
+                glClearTexImage(extraTargets[i], 0, GL_RGBA, GL_UNSIGNED_SHORT, (java.nio.ByteBuffer) null);
+            }
+            IrisLod.extraTargets[i] = extraTargets[i];
+        }
         // The game's projection with the LODs' depth range, as lod.vert computes it.
         lodProjection.set(projection);
         lodProjection.m22(-(far + near) / (far - near));
@@ -164,16 +188,23 @@ public final class IrisLink implements ShaderPackLink {
             if (framebuffer != null) {
                 framebuffer.destroy();
             }
-            if (translucentFramebuffer != null) {
-                translucentFramebuffer.destroy();
-            }
+            destroy(translucentFramebuffer);
+            translucentFramebuffer = null;
+            createExtraTargets(targets.getRenderTargetCount(), w, h);
             framebuffer = target(targets, iris.getFlippedAfterPrepare(), contract.opaqueDrawBuffers, depth);
             translucentFramebuffer = target(targets, iris.getFlippedAfterTranslucent(), contract.translucentDrawBuffers,
                     translucentDepth);
             framebufferTargets = targets;
+            if (framebuffer == null) {
+                fail("its opaque draw buffers " + java.util.Arrays.toString(contract.opaqueDrawBuffers)
+                        + " name no render target of Iris");
+                mode = NONE;
+                return;
+            }
             Farfield.LOG.info("Shader pack LODs: targets {}x{} built, status {} and {}", w, h,
                     Integer.toHexString(glCheckNamedFramebufferStatus(framebuffer.getId(), GL_DRAW_FRAMEBUFFER)),
-                    Integer.toHexString(glCheckNamedFramebufferStatus(translucentFramebuffer.getId(), GL_DRAW_FRAMEBUFFER)));
+                    translucentFramebuffer == null ? "none"
+                            : Integer.toHexString(glCheckNamedFramebufferStatus(translucentFramebuffer.getId(), GL_DRAW_FRAMEBUFFER)));
         }
         mode = VOXY;
     }
@@ -187,16 +218,87 @@ public final class IrisLink implements ShaderPackLink {
         return VOXY;
     }
 
-    /** A gbuffer framebuffer of the pack's draw buffers over a LOD depth of ours. */
-    private static GlFramebuffer target(RenderTargets targets, ImmutableSet<Integer> flipped, int[] drawBuffers,
-                                        DepthTexture depth) {
-        GlFramebuffer fb = targets.createGbufferFramebuffer(flipped, drawBuffers);
+    /**
+     * A gbuffer framebuffer of the pack's draw buffers over a LOD depth of
+     * ours, or null when none of them exists under Iris. A buffer past
+     * Iris's render targets (Photon lists colortex16, Iris has 0 to 15)
+     * takes no attachment: its location's output goes nowhere.
+     */
+    private GlFramebuffer target(RenderTargets targets, ImmutableSet<Integer> flipped, int[] drawBuffers,
+                                 DepthTexture depth) {
+        int count = targets.getRenderTargetCount();
+        int[] valid = java.util.Arrays.stream(drawBuffers).filter(b -> b >= 0 && b < count).toArray();
+        if (valid.length == 0) {
+            return null;
+        }
+        GlFramebuffer fb = targets.createGbufferFramebuffer(flipped, valid);
         // Iris attached the game's depth, a depth-stencil texture when a mod
         // enables the stencil: its stencil half stayed attached beside our
         // depth, and every LOD draw failed (GL_INVALID_FRAMEBUFFER_OPERATION).
         glNamedFramebufferTexture(fb.getId(), GL_DEPTH_STENCIL_ATTACHMENT, 0, 0);
         fb.addDepthAttachment(depth.getTextureId());
+        if (valid.length != drawBuffers.length) {
+            // Each location keeps its place: an attachment in order, or none.
+            // A target past Iris's goes to our own texture of that index, after Iris's attachments.
+            int[] buffers = new int[drawBuffers.length];
+            int attachment = 0;
+            int extra = valid.length;
+            for (int i = 0; i < drawBuffers.length; i++) {
+                int b = drawBuffers[i];
+                if (b >= 0 && b < count) {
+                    buffers[i] = GL_COLOR_ATTACHMENT0 + attachment++;
+                } else if (IrisLod.extraTarget(b) != 0 || extraTexture(b) != 0) {
+                    glNamedFramebufferTexture(fb.getId(), GL_COLOR_ATTACHMENT0 + extra, extraTexture(b), 0);
+                    buffers[i] = GL_COLOR_ATTACHMENT0 + extra++;
+                } else {
+                    buffers[i] = GL_NONE;
+                }
+            }
+            glNamedFramebufferDrawBuffers(fb.getId(), buffers);
+            Farfield.LOG.info("Shader pack LODs: draw buffers {} past Iris's {} render targets go to textures of ours",
+                    java.util.Arrays.toString(drawBuffers), count);
+        }
         return fb;
+    }
+
+    private int extraTexture(int index) {
+        int i = index - IrisLod.FIRST_EXTRA;
+        return i >= 0 && i < extraTargets.length ? extraTargets[i] : 0;
+    }
+
+    /**
+     * A texture of ours for each render target the contract names past
+     * Iris's (RGBA16 as Photon declares its colortex16), cleared every frame.
+     */
+    private void createExtraTargets(int count, int w, int h) {
+        for (int[] list : new int[][]{contract.opaqueDrawBuffers, contract.translucentDrawBuffers}) {
+            for (int b : list) {
+                int i = b - IrisLod.FIRST_EXTRA;
+                if (b >= count && i >= 0 && i < extraTargets.length && extraTargets[i] == 0) {
+                    int t = glCreateTextures(GL_TEXTURE_2D);
+                    glTextureStorage2D(t, 1, GL_RGBA16, w, h);
+                    glTextureParameteri(t, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                    glTextureParameteri(t, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                    glTextureParameteri(t, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                    glTextureParameteri(t, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                    glClearTexImage(t, 0, GL_RGBA, GL_UNSIGNED_SHORT, (java.nio.ByteBuffer) null);
+                    extraTargets[i] = t;
+                    IrisLod.extraTargets[i] = t;
+                }
+            }
+        }
+    }
+
+    /** Destroys a framebuffer that Iris may have destroyed already, with its render targets. */
+    private static void destroy(GlFramebuffer fb) {
+        if (fb == null) {
+            return;
+        }
+        try {
+            fb.destroy();
+        } catch (RuntimeException e) {
+            // gone with the pack's targets
+        }
     }
 
     @Override
@@ -453,10 +555,14 @@ public final class IrisLink implements ShaderPackLink {
     }
 
     private void releaseTargets() {
-        for (GlFramebuffer fb : new GlFramebuffer[]{framebuffer, translucentFramebuffer}) {
-            if (fb != null) {
-                fb.destroy();
+        destroy(framebuffer);
+        destroy(translucentFramebuffer);
+        for (int i = 0; i < extraTargets.length; i++) {
+            if (extraTargets[i] != 0) {
+                glDeleteTextures(extraTargets[i]);
+                extraTargets[i] = 0;
             }
+            IrisLod.extraTargets[i] = 0;
         }
         for (DepthTexture t : new DepthTexture[]{depth, translucentDepth}) {
             if (t != null) {
