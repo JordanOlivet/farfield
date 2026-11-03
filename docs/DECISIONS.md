@@ -3097,3 +3097,38 @@ Status: accepted, 2026-10-30.
 - **Result**: on a dev session of 2026-10-30 both Python scripts print
   the same counts and notes as the scratch versions; both shell scripts
   pass `bash -n`. A full series was not run with the tracked versions.
+
+## ADR-112 — ADR-094 taken out, ADR-092 kept, on an A/B series
+
+Status: accepted, 2026-11-03. Reverts ADR-094; confirms ADR-092.
+
+- **Context**: ADR-100 found the cause of the bands at the generation
+  front and hid the preview there in the shader. The review of
+  2026-10-30 left two earlier changes aimed at the bands as candidates
+  to take out: ADR-092 (a mask change swaps the preview's new meshes in
+  one frame, up to 250 ms) and ADR-094 (a coarse stand-in does not let
+  the preview leave a chunk). Both add state and hold the preview longer.
+- **Measure**: `dev/agent/series.sh`, NeoForge dev client, render
+  distance 4, FOV 90, the sea flight `band-sea.cmd` over a fresh world,
+  5 rounds of three modes, each change behind a temporary `-D` switch
+  (not committed). Counts of `score-flashes.py`, per run:
+
+  | Mode | Far bands | LOD flashes | Render-edge flashes | Columns |
+  |---|---|---|---|---|
+  | base | 1, 1, 2, 1, 2 | 53, 32, 34, 36, 32 | 50, 30, 34, 31, 28 | 15, 14, 19, 15, 15 |
+  | without ADR-092 | 0, 1, 1, 1, 0 | 42, 45, 40, 43, 44 | 43, 38, 37, 41, 41 | 16, 18, 25, 18, 19 |
+  | without ADR-094 | 2, 0, 0, 3, 0 | 56, 35, 33, 36, 33 | 54, 36, 27, 32, 34 | 13, 17, 12, 20, 16 |
+
+  No darker far band (hole) in any run. The switch took effect: the
+  holes line counted up to 45 preview swaps per 10 s in base, none
+  without ADR-092.
+- **Decision**: ADR-094 shows no gain on any count (medians 0 bands, 35
+  flashes, against 1 and 34): the selector's stand-in set and the
+  renderer's check are taken out; the coarse fallback count and reasons
+  of ADR-093 stay. ADR-092 stays: without it the far bands are no worse
+  (3 against 7 in all), but the LOD flashes rise from a median of 34 to
+  43 and the render-edge flashes from 31 to 41, in 4 of 5 rounds.
+- **Result**: `gradlew build` passes (`LodSelectorTest` without the
+  stand-in assertions). Control on the final code, 3 runs of the same
+  flight: far bands 1, 1, 1, LOD flashes 36, 39, 38, render-edge flashes
+  33, 38, 37, no darker band, within the base runs' range.
