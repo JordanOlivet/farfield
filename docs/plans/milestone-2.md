@@ -134,10 +134,25 @@ Items:
 
 ## M2.C — Shader packs
 
-- [ ] C.1 Shader pack support (Iris on Fabric, Oculus or Iris on
-  NeoForge): what the LODs need to show under a shader pack (G-buffer
-  passes, shadow pass, depth), how Distant Horizons and Voxy do it, then
-  an ADR.
+- [~] C.1 Shader pack support: what the LODs need to show under a shader
+  pack, how Distant Horizons and Voxy do it, then an ADR. Done: the two
+  contracts (`docs/analysis/shader-lod-contracts.md`) and ADR-113 (Voxy's
+  contract first, then DH's, through mixins into Iris). Remains: C.1a to
+  C.1e.
+  - [ ] C.1a Spike: opaque LODs and the preview through `photon-gcea`'s
+    `voxy_opaque` in a pack client (Iris 1.8.14, NeoForge): the snippet
+    linked into `lod.frag`, its draw buffers, `vxDepthTexOpaque` and the
+    `vx*` matrices in the composites, the `VOXY` macro.
+  - [ ] C.1b Translucent LODs (`voxy_translucent`, `vxDepthTexTrans`,
+    blending), then the other packs of the user's instance (BSL,
+    Complementary, MakeUp, Photon 1.3b); a link error falls back.
+  - [ ] C.1c `customId` from the pack's `block.properties`, TAA offset and
+    render scale.
+  - [ ] C.1d D.6 block light in the preview, for the packs' lightmap.
+  - [ ] C.1e DH's contract for packs without Voxy's.
+  - Later, outside C.1 (the user, 2026-11-03): packs with neither
+    contract (LODs off with a message meanwhile), our own contract, LOD
+    shadows.
 
 ## M2.D — Mod features in the noise preview
 

@@ -3132,3 +3132,30 @@ Status: accepted, 2026-11-03. Reverts ADR-094; confirms ADR-092.
   stand-in assertions). Control on the final code, 3 runs of the same
   flight: far bands 1, 1, 1, LOD flashes 36, 39, 38, render-edge flashes
   33, 38, 37, no darker band, within the base runs' range.
+
+## ADR-113 — Shader packs through the packs' Voxy contract first, then DH
+
+Status: accepted, 2026-11-03. Details ADR-012 for C.1.
+
+- **Context**: the user wants any shader pack to shade the LODs and the
+  preview as it shades vanilla terrain, with no configuration on the
+  pack's side, and named Distant Horizons' and Voxy's formats besides our
+  own. All six packs of their NeoForge instance (BSL, Complementary
+  Reimagined and Unbound, MakeUp, Photon, `photon-gcea`) ship both. Iris
+  (1.8.14 on NeoForge 1.21.1; Oculus is not needed there) has no LOD API:
+  its DH path is tied to DH's API classes, and Voxy hooks Iris with its
+  own mixins. Both contracts are written down in
+  `docs/analysis/shader-lod-contracts.md`; Voxy's is taken from the
+  packs only, its code being all rights reserved (ADR-001).
+- **Decision** (the user's answers, 2026-11-03):
+  - Voxy's contract first (`voxy.json`, `voxy_emitFragment`, `vx*`
+    samplers and uniforms): our vertex path, textures, tints and the
+    pack's `block.properties` ids stay; then DH's (`dh_terrain`,
+    `dh_water`, `dhDepthTex*`) for packs that ship only it. A pack with
+    both uses Voxy, DH when the Voxy snippet does not link.
+  - Through mixins into Iris, `require = 0`, for the Iris versions
+    tested; on another version, or with Voxy or DH loaded, the path
+    stays off and says so in the log.
+  - Later, outside C.1: packs with neither contract (meanwhile the LODs
+    turn off under them, with a message), our own contract, LOD shadows.
+- **Result**: none yet; C.1a is the spike.
