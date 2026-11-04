@@ -40,6 +40,26 @@ loom {
     mixin {
         defaultRefmapName.set("${mod_id}.refmap.json")
     }
+    def clientRunSettings = { run ->
+        // Test agents drive the dev client through files (ADR-095).
+        run.property('farfield.agent', 'true')
+        // -PagentWindow=minimized|background: an agent's run stays out of the user's way (ADR-096).
+        if (project.hasProperty('agentWindow')) {
+            run.property('farfield.agent.window', project.property('agentWindow') as String)
+        }
+        // Scripted checks: -PquickPlay=<save name> opens that world directly.
+        if (project.hasProperty('quickPlay')) {
+            run.programArgs('--quickPlaySingleplayer', project.property('quickPlay') as String)
+        }
+        // -PquickPlayServer=<host:port> joins that server directly (client mode checks).
+        if (project.hasProperty('quickPlayServer')) {
+            run.programArgs('--quickPlayMultiplayer', project.property('quickPlayServer') as String)
+        }
+        // -PclientUsername=<name>: a fixed offline name (operator rights on a test server).
+        if (project.hasProperty('clientUsername')) {
+            run.programArgs('--username', project.property('clientUsername') as String)
+        }
+    }
     runs {
         configureEach {
             // Dev runs log the performance lines (off by default in play).
@@ -50,24 +70,19 @@ loom {
             setConfigName('Fabric Client')
             ideConfigGenerated(true)
             runDir('runs/client')
-            // Test agents drive the dev client through files (ADR-095).
-            property('farfield.agent', 'true')
-            // -PagentWindow=minimized|background: an agent's run stays out of the user's way (ADR-096).
-            if (project.hasProperty('agentWindow')) {
-                property('farfield.agent.window', project.property('agentWindow') as String)
-            }
-            // Scripted checks: -PquickPlay=<save name> opens that world directly.
-            if (project.hasProperty('quickPlay')) {
-                programArgs('--quickPlaySingleplayer', project.property('quickPlay') as String)
-            }
-            // -PquickPlayServer=<host:port> joins that server directly (client mode checks).
-            if (project.hasProperty('quickPlayServer')) {
-                programArgs('--quickPlayMultiplayer', project.property('quickPlayServer') as String)
-            }
-            // -PclientUsername=<name>: a fixed offline name (operator rights on a test server).
-            if (project.hasProperty('clientUsername')) {
-                programArgs('--username', project.property('clientUsername') as String)
-            }
+            clientRunSettings(it)
+        }
+        // The dev mod among the mods and configs of the user's Fabric pack
+        // instance (<farfield.fabricPack.dir> in local.properties), as the
+        // NeoForge pack run (ADR-097). Fabric Loader remaps the pack's
+        // intermediary jars to the dev names at launch.
+        packClient {
+            client()
+            setConfigName('Fabric Pack Client')
+            ideConfigGenerated(false)
+            runDir('runs/pack')
+            vmArg('-Xmx8G')
+            clientRunSettings(it)
         }
         server {
             server()
@@ -80,6 +95,61 @@ loom {
 
 registerPrepareRuns(file('runs/client'), file('runs/server'))
 registerFreshWorld('runClient', file('runs/client'))
+
+// The Fabric pack run dir: the pack's mods mirrored (Farfield's own jar left out, the
+// dev build replaces it; the pack's Fabric API too, the dev classpath has one), its
+// configs, resource and shader packs and options copied once when missing (delete one
+// to take the pack's again), then the dev/client templates.
+def fabricPackDir = project.findProperty('farfield.fabricPack.dir')
+def packRunDir = file('runs/pack')
+def syncPackMods = tasks.register('syncPackMods', Sync) {
+    if (fabricPackDir != null) {
+        from("${fabricPackDir}/mods") {
+            include '*.jar'
+            exclude 'farfield-*'
+            exclude 'fabric-api-*'
+            exclude 'CrashAssistant-*'
+        }
+    }
+    into(new File(packRunDir, 'mods'))
+}
+def syncPackInstance = tasks.register('syncPackInstance') {
+    group = 'farfield'
+    description = 'Fills runs/pack from the Fabric pack instance named by farfield.fabricPack.dir.'
+    dependsOn syncPackMods
+    doFirst {
+        if (fabricPackDir == null) {
+            throw new GradleException('Set farfield.fabricPack.dir in local.properties to the Fabric pack instance folder')
+        }
+    }
+    doLast {
+        ['config', 'resourcepacks', 'shaderpacks'].each { String folder ->
+            File from = file("${fabricPackDir}/${folder}")
+            if (from.directory) {
+                int count = DevTemplates.copyMissing(from, new File(packRunDir, folder)).size()
+                if (count > 0) {
+                    logger.lifecycle("Copied ${count} files of the pack's ${folder}")
+                }
+            }
+        }
+        File options = new File(packRunDir, 'options.txt')
+        if (!options.exists() && file("${fabricPackDir}/options.txt").exists()) {
+            // Dev runs are silent (ADR-107): the pack's own volume stays in the pack.
+            options.text = file("${fabricPackDir}/options.txt").getText('UTF-8')
+                    .replaceAll(/(?m)^soundCategory_master:.*$/, 'soundCategory_master:0.0')
+            logger.lifecycle("Copied the pack's options.txt, sound off")
+        }
+        DevTemplates.copyMissing(rootProject.file('dev/client'), packRunDir).each {
+            logger.lifecycle("Created ${project.relativePath(it)} from dev/")
+        }
+    }
+}
+tasks.matching { it.name == 'runPackClient' }.configureEach {
+    dependsOn syncPackInstance
+    // Loom launches with Gradle's own JVM (22 here): Cobblemon accepts Java 21 only.
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(java_version) }
+}
+registerFreshWorld('runPackClient', packRunDir)
 
 // Dev servers read console commands (scripted checks pipe them in).
 tasks.matching { it.name == 'runServer' }.configureEach {

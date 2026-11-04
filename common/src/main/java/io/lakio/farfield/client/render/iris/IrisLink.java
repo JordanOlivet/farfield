@@ -488,6 +488,10 @@ public final class IrisLink implements ShaderPackLink {
         CustomUniforms custom = iris.getCustomUniforms();
         Object pass = new Object();
         ProgramUniforms.Builder uniforms = ProgramUniforms.builder(name, program);
+        // All of the common uniforms, then the pack's custom ones. Some names
+        // come twice ("Duplicate uniform" warnings, harmless); the dynamic
+        // ones alone, as Iris's DH programs, left the snippets' common
+        // uniforms unset: LODs dark or white under BSL, Complementary, MakeUp.
         CommonUniforms.addCommonUniforms(uniforms, pack.getIdMap(), access.farfield$packDirectives(),
                 iris.getFrameUpdateNotifier(), FogMode.PER_VERTEX);
         custom.assignTo(uniforms);

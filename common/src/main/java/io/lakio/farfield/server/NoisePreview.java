@@ -504,10 +504,16 @@ final class NoisePreview {
             tile.setIceberg(m.packedIce);
             t = stage(d, CELLS, t);
             tile.setPlantGround(m.grass);
+            if (stopped) {
+                return;
+            }
             List<PreviewVillages.Village> villages = villages(d, tile, x0, z0, m);
             t = stage(d, VILLAGES, t);
             growFeatures(d, tile, tileX, tileZ, villages, icebergCells);
             t = stage(d, FEATURES, t);
+            if (stopped) {
+                return; // the stores close next
+            }
             world.preview().write(tileX, tileZ, tile);
             stage(d, WRITE, t);
             d.done.put(key, grid);
@@ -844,13 +850,21 @@ final class NoisePreview {
         return CLIFF_RISE;
     }
 
-    /** Stops building and waits for the running tiles, before the stores close. */
+    /**
+     * Stops building and waits for the running tiles, before the stores
+     * close. The threads are not interrupted: one interrupted inside a read
+     * of a mod jar (a structure template) closes that jar's channel for the
+     * rest of the session (ClosedByInterruptException, seen on Cobblemon's
+     * fossils at every stop). Running tiles end at their next stop check.
+     */
     void stop() {
         stopped = true;
-        pool.shutdownNow();
+        pool.getQueue().clear();
+        pool.shutdown();
         try {
             if (!pool.awaitTermination(10, TimeUnit.SECONDS)) {
-                Farfield.LOG.warn("Noise preview threads still running after 10 s");
+                Farfield.LOG.warn("Noise preview threads still running after 10 s, interrupted");
+                pool.shutdownNow();
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
