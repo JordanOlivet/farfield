@@ -415,6 +415,15 @@ public final class LodRenderer {
     /** A few of those sections since the last stat line, with why (ADR-093). */
     private final java.util.List<String> fallbackReasons = new java.util.ArrayList<>();
     private static final int FALLBACK_REASONS = 6;
+    /**
+     * Most translucent sections a selection drew inside a drawn coarser
+     * translucent section of their own kind (preview in preview, real in
+     * real), and of the other kind, since the last stat line, with a few
+     * of the first: their water blends twice (diagnostic, performance logs).
+     */
+    private int maxTranslucentNested;
+    private int maxTranslucentCrossNested;
+    private final java.util.List<String> nestedExamples = new java.util.ArrayList<>();
     /** Most sections a selection drew from a copy older than the server's since the last stat line. */
     private int maxOutdatedDrawn;
     /** Most sections a selection drew as their children, waiting for their own mesh. */
@@ -1397,6 +1406,9 @@ public final class LodRenderer {
             }
         }
         maxOutdatedDrawn = Math.max(maxOutdatedDrawn, outdatedDrawn);
+        if (RenderSettings.performanceLogs()) {
+            countNestedTranslucent();
+        }
         if (drawnBefore != null) {
             LongIterator added = drawn.iterator();
             while (added.hasNext()) {
@@ -1914,6 +1926,118 @@ public final class LodRenderer {
                 + "," + LodKey.z(key) + "]";
     }
 
+    /** Up-facing translucent faces per (x, z) column of the mesh being checked. */
+    private final byte[] stackedColumns = new byte[LodSection.SIZE * LodSection.SIZE];
+    /** Meshes uploaded since the last stat line with two up-facing translucent faces over one column, and a few. */
+    private int stackedWaterMeshes;
+    private final java.util.List<String> stackedExamples = new java.util.ArrayList<>();
+    /** Meshes uploaded since the last stat line whose up-facing translucent faces take less than full sky light. */
+    private int dimWaterMeshes;
+    private final int[] dimWaterLevels = new int[LodWorld.LEVELS];
+    private final java.util.List<String> dimExamples = new java.util.ArrayList<>();
+
+    /**
+     * A mesh whose translucent faces facing up cover one (x, z) column twice:
+     * two water surfaces there, which blend twice (diagnostic, performance
+     * logs). Over a frozen sea the ice top and the water under it are two
+     * such faces by design, so the example names the materials.
+     */
+    private void countStackedWater(MeshResult m) {
+        int from = m.groups[Quad.DIRECTIONS + Quad.POS_Y];
+        int to = m.groups[Quad.DIRECTIONS + Quad.POS_Y + 1];
+        if (to == from) {
+            return;
+        }
+        java.util.Arrays.fill(stackedColumns, (byte) 0);
+        int columns = 0;
+        int material = -1;
+        for (int i = from; i < to; i++) {
+            long q = m.quads[i];
+            // Y faces span (U, V) = (Z, X).
+            int x0 = Quad.x(q);
+            int z0 = Quad.z(q);
+            for (int dx = 0; dx < Quad.sizeV(q); dx++) {
+                for (int dz = 0; dz < Quad.sizeU(q); dz++) {
+                    int c = (x0 + dx) * LodSection.SIZE + z0 + dz;
+                    if (c >= 0 && c < stackedColumns.length && stackedColumns[c]++ == 1) {
+                        columns++;
+                        if (material < 0) {
+                            material = Quad.material(q);
+                        }
+                    }
+                }
+            }
+        }
+        int dim = 0;
+        int minSky = 15;
+        for (int i = from; i < to; i++) {
+            int sky = Quad.skyLight(m.quads[i]);
+            if (sky < 15) {
+                dim += Quad.sizeU(m.quads[i]) * Quad.sizeV(m.quads[i]);
+                minSky = Math.min(minSky, sky);
+            }
+        }
+        if (dim > 0 && PreviewLayer.isPreview(m.key)) {
+            dimWaterMeshes++;
+            dimWaterLevels[drawLevel(m.key)]++;
+            if (dimExamples.size() < FALLBACK_REASONS) {
+                dimExamples.add(probeName(m.key) + " " + dim + " voxels, sky " + minSky + " at least");
+            }
+        }
+        if (columns > 0) {
+            stackedWaterMeshes++;
+            if (stackedExamples.size() < FALLBACK_REASONS) {
+                String name = world == null || material < 0 ? "?" : world.blockStates().key(material);
+                stackedExamples.add(probeName(m.key) + " " + columns + " columns (" + name + ")");
+            }
+        }
+    }
+
+    /** Whether a drawn section has translucent quads (water, ice, glass). */
+    private boolean drawsTranslucent(long key) {
+        Resident r = resident.get(key);
+        return r != null && r.quadCount > 0 && r.groups[PLANT_GROUP] > r.opaqueCount;
+    }
+
+    /**
+     * After a selection: translucent sections drawn inside a drawn coarser
+     * translucent section, of their own kind and of the other one. Their
+     * water blends twice wherever both have it. A preview section over real
+     * chunks drops its quads there (mask), so the cross count can be
+     * harmless; the own-kind count should stay 0.
+     */
+    private void countNestedTranslucent() {
+        int nested = 0;
+        int cross = 0;
+        LongIterator it = drawn.iterator();
+        while (it.hasNext()) {
+            long key = it.nextLong();
+            if (!drawsTranslucent(key)) {
+                continue;
+            }
+            boolean preview = PreviewLayer.isPreview(key);
+            long plain = preview ? PreviewLayer.toPlain(key) : key;
+            for (int level = LodKey.level(plain) + 1; level < LodWorld.LEVELS; level++) {
+                plain = LodKey.parent(plain);
+                long own = preview ? PreviewLayer.toPreview(plain) : plain;
+                long other = preview ? plain : PreviewLayer.toPreview(plain);
+                if (drawn.contains(own) && drawsTranslucent(own)) {
+                    nested++;
+                    if (nestedExamples.size() < FALLBACK_REASONS) {
+                        nestedExamples.add(probeName(key) + " in " + probeName(own));
+                    }
+                    break;
+                }
+                if (drawn.contains(other) && drawsTranslucent(other)) {
+                    cross++;
+                    break;
+                }
+            }
+        }
+        maxTranslucentNested = Math.max(maxTranslucentNested, nested);
+        maxTranslucentCrossNested = Math.max(maxTranslucentCrossNested, cross);
+    }
+
     /** The level a section is drawn at (preview keys carry an offset). */
     private static int drawLevel(long key) {
         return PreviewLayer.drawLevel(key);
@@ -2000,6 +2124,30 @@ public final class LodRenderer {
             Farfield.LOG.info("LOD coarse fallbacks, a few: {}", String.join("; ", fallbackReasons));
         }
         fallbackReasons.clear();
+        if (RenderSettings.performanceLogs()) {
+            Farfield.LOG.info("LOD translucent nesting: at most {} translucent sections drawn inside a drawn coarser"
+                            + " one of their kind and {} inside one of the other kind per selection{}",
+                    maxTranslucentNested, maxTranslucentCrossNested,
+                    nestedExamples.isEmpty() ? "" : "; a few: " + String.join(", ", nestedExamples));
+        }
+        if (RenderSettings.performanceLogs()) {
+            Farfield.LOG.info("LOD stacked water: {} meshes uploaded with two up-facing translucent faces over one"
+                            + " column{}", stackedWaterMeshes,
+                    stackedExamples.isEmpty() ? "" : "; a few: " + String.join(", ", stackedExamples));
+        }
+        if (RenderSettings.performanceLogs()) {
+            Farfield.LOG.info("LOD dim water: {} preview meshes uploaded with up-facing translucent faces under full"
+                    + " sky light, per level {}{}", dimWaterMeshes, java.util.Arrays.toString(dimWaterLevels),
+                    dimExamples.isEmpty() ? "" : "; a few: " + String.join(", ", dimExamples));
+        }
+        dimWaterMeshes = 0;
+        java.util.Arrays.fill(dimWaterLevels, 0);
+        dimExamples.clear();
+        stackedWaterMeshes = 0;
+        stackedExamples.clear();
+        nestedExamples.clear();
+        maxTranslucentNested = 0;
+        maxTranslucentCrossNested = 0;
         maxFallbacks = 0;
         maxFinerFallbacks = 0;
         maxOutdatedDrawn = 0;
@@ -2599,6 +2747,9 @@ public final class LodRenderer {
             biomeColumns.upload((long) r.slot * BIOME_COLUMN_INTS * 4, m.biomeColumns);
         }
         meshesUploaded++;
+        if (RenderSettings.performanceLogs()) {
+            countStackedWater(m);
+        }
         if (r.quadCount > 0) {
             r.start = start;
             quads.upload(start * 8, m.quads, m.quads.length);

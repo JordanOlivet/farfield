@@ -1,0 +1,2 @@
+{"question":"L'étape 1 est faite et le build passe. ... Je lance les runs Fabric de l'étape 2 ? Au plus 6 runs de 4 min, fenêtre réduite, arrêt dès que les carrés apparaissent. Il ne faut pas toucher à la fenêtre du jeu.","options":[{"label":"Oui, je n'y touche pas"},{"label":"Pas maintenant"}]}
+"Your questions have been answered: ... ="Oui, je n'y touche pas". You can now continue with these answers in mind."

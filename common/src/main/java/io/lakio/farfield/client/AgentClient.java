@@ -185,6 +185,11 @@ public final class AgentClient {
             case AgentCommand.Replay r -> {
                 return startReplay(mc, r);
             }
+            case AgentCommand.Reload ignored -> {
+                Farfield.LOG.info("Agent inbox: reloading the resource packs");
+                mc.reloadResourcePacks();
+                reply(e, true, Map.of());
+            }
             case AgentCommand.Quit ignored -> {
                 reply(e, true, Map.of());
                 Farfield.LOG.info("Agent inbox: closing the game");

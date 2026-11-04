@@ -19,6 +19,7 @@ import java.util.Locale;
  * record start &lt;name&gt; | record stop      records the camera to farfield/flights/&lt;name&gt;.flight (ADR-099)
  * replay &lt;name&gt; [speed &lt;f&gt;] [every &lt;n&gt;]  flies that flight again, a screenshot every n ticks
  * frames on|off                  the frame probe: short glitches written to farfield/frames/
+ * reload                         reloads the resource packs, as F3+T: every resident LOD section is meshed again
  * quit                           closes the game as its window's close button does
  * </pre>
  */
@@ -56,6 +57,9 @@ public sealed interface AgentCommand {
     }
 
     record WaitSeconds(double seconds) implements AgentCommand {
+    }
+
+    record Reload() implements AgentCommand {
     }
 
     record Quit() implements AgentCommand {
@@ -157,12 +161,16 @@ public sealed interface AgentCommand {
                 }
                 yield new Frames(w[1].equalsIgnoreCase("on"));
             }
+            case "reload" -> {
+                expectWords(w, 1, "reload takes no argument");
+                yield new Reload();
+            }
             case "quit" -> {
                 expectWords(w, 1, "quit takes no argument");
                 yield new Quit();
             }
             default -> throw new IllegalArgumentException("unknown command '" + w[0]
-                    + "' (command, tp, look, screenshot, state, wait, window, record, replay, frames, quit)");
+                    + "' (command, tp, look, screenshot, state, wait, window, record, replay, frames, reload, quit)");
         };
     }
 

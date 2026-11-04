@@ -70,8 +70,12 @@ def prepare(shader):
     os.makedirs(mods, exist_ok=True)
     for f in os.listdir(mods):
         os.remove(os.path.join(mods, f))
+    # FARFIELD_ONLY_MODS=fabric-api,sodium-fabric,iris-fabric keeps only the pack
+    # mods whose file name starts with one of these, to bisect a mod conflict.
+    only = tuple(p for p in os.environ.get('FARFIELD_ONLY_MODS', '').split(',') if p)
     for f in os.listdir(os.path.join(PACK, 'mods')):
-        if f.endswith('.jar') and not f.startswith(('farfield-', 'CrashAssistant-')):
+        if (f.endswith('.jar') and not f.startswith(('farfield-', 'CrashAssistant-'))
+                and (not only or f.startswith(only))):
             shutil.copy2(os.path.join(PACK, 'mods', f), mods)
     libs = os.path.join(ROOT, 'fabric', 'build', 'libs')
     jars = [f for f in os.listdir(libs) if f.startswith('farfield-fabric-') and f.endswith('.jar')
@@ -90,9 +94,12 @@ def prepare(shader):
         lines = [('shaderPack=' + shader) if l.startswith('shaderPack=') and shader != 'none'
                  else ('enableShaders=' + on) if l.startswith('enableShaders=') else l for l in lines]
         open(props, 'w', encoding='utf-8', newline='\n').write('\n'.join(lines) + '\n')
+    # FARFIELD_WORLD=<a saved copy of farfield-test> replays that world, its LOD store
+    # and preview included, instead of the fresh one (a defect tied to one run's data).
     world = os.path.join(RUN, 'saves', 'farfield-test')
     shutil.rmtree(world, ignore_errors=True)
-    shutil.copytree(os.path.join(ROOT, 'dev', 'client', 'saves', 'farfield-test'), world)
+    shutil.copytree(os.environ.get('FARFIELD_WORLD')
+                    or os.path.join(ROOT, 'dev', 'client', 'saves', 'farfield-test'), world)
     return jar
 
 
@@ -107,7 +114,8 @@ def command(version, game):
     cp.append(os.path.join(INSTALL, 'versions', game, game + '.jar'))
     natives = os.path.join(RUN, 'natives')
     os.makedirs(natives, exist_ok=True)
-    return [JAVA, '-Xmx8G',
+    # FARFIELD_JVM_ARGS: extra JVM arguments, space separated (temporary -D switches).
+    return [JAVA, '-Xmx8G', *os.environ.get('FARFIELD_JVM_ARGS', '').split(),
             f'-Djava.library.path={natives}', f'-Djna.tmpdir={natives}',
             f'-Dorg.lwjgl.system.SharedLibraryExtractPath={natives}', f'-Dio.netty.native.workdir={natives}',
             '-DFabricMcEmu= net.minecraft.client.main.Main ',
