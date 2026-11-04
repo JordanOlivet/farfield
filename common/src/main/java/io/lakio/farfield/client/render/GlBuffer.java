@@ -17,9 +17,17 @@ final class GlBuffer implements AutoCloseable {
         this.id = create(size);
     }
 
+    /**
+     * A new store, filled with zeros: storage made without data holds
+     * whatever the driver had there. A buffer the shaders read before its
+     * first upload (the preview's hidden columns, uploaded at the first
+     * hand-over) then hid the preview's water over random chunk columns:
+     * dark squares on the sea, in some runs only (2026-11-04).
+     */
     private static int create(long size) {
         int id = glCreateBuffers();
         glNamedBufferStorage(id, size, GL_DYNAMIC_STORAGE_BIT);
+        glClearNamedBufferData(id, GL_R8UI, GL_RED_INTEGER, GL_UNSIGNED_BYTE, (java.nio.ByteBuffer) null);
         return id;
     }
 
