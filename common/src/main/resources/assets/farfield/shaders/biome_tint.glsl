@@ -42,6 +42,39 @@ vec3 biomeTint(uint slot, uint kind) {
     return unpackUnorm4x8(tints[slot * TINT_KINDS + kind]).rgb;
 }
 
+// Per section slot: per 4x4-voxel column and tint kind, the other columns'
+// tints blended over the window around the column's centre, as blendedTint
+// below (BiomeBlend, on the CPU when a section or a neighbor arrives): ABGR8
+// premultiplied, alpha the share of the window they cover. Then the radius
+// + 1 they were made with, 0 when the slot holds none.
+layout(std430, binding = 10) readonly buffer BlendedTints {
+    uint blendedTints[];
+};
+const uint BLEND_SLOT_INTS = 64u * TINT_KINDS + 1u;
+// BiomeBlend.MIN_HALF_WINDOW: narrower windows blend here, over 2x2 columns at most.
+const float MIN_HALF_WINDOW = 2.0;
+
+bool blendReady(uint slot) {
+    return blendedTints[slot * BLEND_SLOT_INTS + 64u * TINT_KINDS] == uint(u_biomeBlend + 1);
+}
+
+// A column's blended entry, in cells from the section's corner (-1..8): a
+// neighbor's own, or this section's nearest when that neighbor has none.
+vec4 cellBlend(uint home, ivec2 cell, uint kind) {
+    uint slot = home;
+    ivec2 o = cell >> 3; // -1, 0 or 1 per axis
+    if (o != ivec2(0)) {
+        uint n = neighborSlots[home * 27u + uint((o.x + 1) * 9 + 3 + (o.y + 1))];
+        if (n != 0u && blendReady(n - 1u)) {
+            slot = n - 1u;
+            cell -= o * 8;
+        } else {
+            cell = clamp(cell, ivec2(0), ivec2(7));
+        }
+    }
+    return unpackUnorm4x8(blendedTints[slot * BLEND_SLOT_INTS + uint(cell.y * 8 + cell.x) * TINT_KINDS + kind]);
+}
+
 // The biome tint at a section-local voxel position, sRGB: as vanilla's
 // biome blending, the mean tint over a square of 2r + 1 blocks around it
 // (r = u_biomeBlend), here with each block taking its column's surface biome
@@ -52,6 +85,15 @@ vec3 blendedTint(vec2 p, uint home, uint biome, uint kind, int level) {
         return biomeTint(biome, kind);
     }
     float h = (float(u_biomeBlend) + 0.5) / float(1 << level); // half window, in voxels
+    if (h >= MIN_HALF_WINDOW && blendReady(home)) {
+        // The four nearest column centres, blended once: the others' share, then the face's biome.
+        vec2 q = p / 4.0 - 0.5;
+        ivec2 c = ivec2(floor(q));
+        vec2 t = q - vec2(c);
+        vec4 b = mix(mix(cellBlend(home, c, kind), cellBlend(home, c + ivec2(1, 0), kind), t.x),
+                mix(cellBlend(home, c + ivec2(0, 1), kind), cellBlend(home, c + ivec2(1, 1), kind), t.x), t.y);
+        return b.rgb + biomeTint(biome, kind) * (1.0 - b.a);
+    }
     vec2 lo = p - h;
     vec2 hi = p + h;
     ivec2 c0 = ivec2(floor(lo / 4.0));

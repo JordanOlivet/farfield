@@ -3174,3 +3174,39 @@ Status: accepted, 2026-11-06. Amends ADR-042 (drops `copyTestJars`).
 - **Result**: one place for the jars. A NeoForge jar in `output/` older than
   the build is not stale: `:neoforge:jar` is `UP-TO-DATE` when no code
   changed, while Loom's `remapJar` rewrites the Fabric jar on every build.
+
+## ADR-115 — Biome blending once per column, interpolated per fragment
+
+Status: accepted, 2026-11-06. Amends the biome blending of the renderer (per
+fragment since its introduction).
+
+- **Context**: `blendedTint` (`biome_tint.glsl`) averaged the tints of
+  every 4x4-voxel column under a window of `2r + 1` blocks around each
+  tinted fragment, every frame: up to 25 columns at vanilla's widest Biome
+  Blend (7, the user's pack setting). Measured in the Fabric pack under
+  Complementary Reimagined, 1920x1080, plains at -1264, 107, 882: LOD GPU
+  761 us at blend 7 against 601 us at 0 (opaque 421 against 291,
+  translucent 125 against 104). Vanilla blends once, when it builds a chunk.
+- **Decision**: `BiomeBlend` (core) computes the shader's sum at each
+  column's centre on the render thread, when a section is uploaded, and
+  again within 1 ms per frame for its 8 horizontal neighbors, for every
+  section on a radius or tint table change. It stores the other columns'
+  tints premultiplied by their share of the window, with that share as
+  alpha (ABGR8, per slot, column and kind, binding 10), plus the radius
+  + 1 it was made with. The fragment interpolates the four nearest centres
+  and adds its own face's tint for the rest of the window, so the face's
+  biome and the unknown columns keep the per-fragment rule. Only windows of
+  2 voxels or more go this way (level 0 from radius 2, level 1 from radius
+  4); narrower ones span 2x2 columns at most and stay per fragment, where
+  interpolation would blur their sharper transitions. A slot whose radius
+  does not match the uniform, or a neighbor without blends, falls back to
+  the per-fragment loop or to the section's nearest column.
+- **Result**: same spot and settings, blend 7: LOD GPU 616 to 644 us,
+  opaque 303 to 319, translucent 107 to 112; most of the blend's cost is
+  gone, render-thread time unchanged (227 to 242 us against 257 to 285).
+  `BiomeBlendTest`: at column centres the result equals the shader's sum
+  within two 8-bit roundings; between centres, over a straight border at
+  radius 7, the interpolation is off by at most 6 % of the step between
+  the two biomes. Captures before and after look the same; their pixel
+  difference (mean 2.0 of 255 below the horizon) is under that of blend 7
+  against 0 (4.1), without a measured run-to-run baseline.

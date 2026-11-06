@@ -13,6 +13,7 @@ import io.lakio.farfield.core.LodKey;
 import io.lakio.farfield.core.config.RenderConfig;
 import io.lakio.farfield.core.lod.LodSection;
 import io.lakio.farfield.core.mesh.BinaryGreedyMesher;
+import io.lakio.farfield.core.mesh.BiomeBlend;
 import io.lakio.farfield.core.mesh.FaceDirections;
 import io.lakio.farfield.core.mesh.MaterialClassifier;
 import io.lakio.farfield.core.mesh.MeshBuffer;
@@ -150,6 +151,10 @@ public final class LodRenderer {
     private static final int NEIGHBOR_INTS = 27;
     /** Surface biome per 4x4-voxel column and section slot, two 16-bit entries per int (SurfaceBiomes). */
     private static final int BIOME_COLUMN_INTS = LodSection.BIOME_CELLS_PER_AXIS * LodSection.BIOME_CELLS_PER_AXIS / 2;
+    /** Per section slot: blended tints per column and kind (BiomeBlend), then the radius + 1 they were made with. */
+    private static final int BLEND_SLOT_INTS = BiomeBlend.COLUMNS * BiomeTints.KINDS + 1;
+    /** Render-thread time per frame for blending sections again (neighbors arrived, radius or tints changed). */
+    private static final long BLEND_BUDGET_NANOS = 1_000_000L;
     /** A resident mesh the selection has not used for this long is freed. */
     private static final long EVICT_AFTER_NANOS = 10_000_000_000L;
     /** The selection runs again when the camera moved this far (squared blocks)... */
@@ -260,6 +265,17 @@ public final class LodRenderer {
     private GlBuffer neighborSlots;
     /** Per section slot, its columns' surface biomes ({@link #BIOME_COLUMN_INTS}), for biome blending. */
     private GlBuffer biomeColumns;
+    /**
+     * Per section slot, its columns' tints blended once ({@link #BLEND_SLOT_INTS}, binding 10):
+     * the shader reads 4 of them per fragment instead of blending up to 25 columns.
+     */
+    private GlBuffer blendedTints;
+    /** Sections to blend again within {@link #BLEND_BUDGET_NANOS}: a neighbor arrived, the radius or the tints changed. */
+    private final LongOpenHashSet blendDirty = new LongOpenHashSet();
+    private final int[][] blendSections = new int[9][];
+    private final int[] blendScratch = new int[BLEND_SLOT_INTS];
+    /** Vanilla's Biome Blend the blended tints follow; -1 before the first frame. */
+    private int blendRadius = -1;
     private final int[] neighborScratch = new int[NEIGHBOR_INTS];
     private final int[] oneInt = new int[1];
     private final LongArrayList evicted = new LongArrayList();
@@ -588,6 +604,8 @@ public final class LodRenderer {
         boolean occluders;
         /** Last time the selection used it: drawn, or relied on to descend to its children. */
         long lastUsed;
+        /** Its columns' surface biomes as uploaded ({@link #BIOME_COLUMN_INTS}), for blending it and its neighbors. */
+        int[] biomeColumns;
         /** Directions whose neighbor lights some of its faces ({@link BinaryGreedyMesher#borderFaces}). */
         int borderFaces;
         /** The octants its quads draw in: a parent showing a new child's octant covers it until it is meshed. */
@@ -935,6 +953,7 @@ public final class LodRenderer {
         occupancy = new GlBuffer(1024L * OCCUPANCY_INTS * 4);
         neighborSlots = new GlBuffer(1024L * NEIGHBOR_INTS * 4);
         biomeColumns = new GlBuffer(1024L * BIOME_COLUMN_INTS * 4);
+        blendedTints = new GlBuffer(1024L * BLEND_SLOT_INTS * 4);
         drawnSections = new GlBuffer(4096L * 4);
         previewHidden = new GlBuffer((long) HIDDEN_SIDE * HIDDEN_SIDE / 8);
         indirect = new GlBuffer(1024L * COMMAND_BYTES);
@@ -1072,6 +1091,7 @@ public final class LodRenderer {
         RenderSettings.resize(meshers, RenderSettings.effectiveThreads(RenderSettings.meshThreads()), "LOD mesher");
         frame++;
         readGpuTimers();
+        updateBlends();
         applyRewrites();
         uploadMeshes();
         uploadColors(mc, level, looksBudget(frameStart));
@@ -2037,6 +2057,7 @@ public final class LodRenderer {
             }
         }
         resident.clear();
+        blendDirty.clear();
         requested.clear();
         rewrittenWhileMeshing.clear();
         waitingStore.clear();
@@ -2606,6 +2627,7 @@ public final class LodRenderer {
                 biomeColumns.grow(Math.max(needed, biomeColumns.size() * 2), biomeColumns.size());
             }
             biomeColumns.upload((long) r.slot * BIOME_COLUMN_INTS * 4, m.biomeColumns);
+            r.biomeColumns = m.biomeColumns;
         }
         meshesUploaded++;
         if (r.quadCount > 0) {
@@ -2614,6 +2636,8 @@ public final class LodRenderer {
         }
         writeSection(m.key, r);
         linkNeighbors(m.key, r);
+        blendSection(m.key, r);
+        markBlendNeighbors(m.key);
         return r.quadCount;
     }
 
@@ -2732,6 +2756,83 @@ public final class LodRenderer {
             neighborSlots.upload(((long) n.slot * NEIGHBOR_INTS + (26 - i)) * 4, oneInt);
         }
         neighborSlots.upload((long) r.slot * NEIGHBOR_INTS * 4, neighborScratch);
+    }
+
+    /**
+     * Blends a section's columns into its slot (BiomeBlend) when its level and
+     * the radius send its fragments that way; otherwise clears the slot's
+     * radius, so the shader never reads the blends of the slot's last section.
+     */
+    private void blendSection(long key, Resident r) {
+        long needed = (long) (r.slot + 1) * BLEND_SLOT_INTS * 4;
+        if (needed > blendedTints.size()) {
+            blendedTints.grow(Math.max(needed, blendedTints.size() * 2), blendedTints.size());
+        }
+        int level = drawLevel(key);
+        if (r.biomeColumns == null || !BiomeBlend.needed(blendRadius, level)) {
+            oneInt[0] = 0;
+            blendedTints.upload(((long) r.slot * BLEND_SLOT_INTS + BLEND_SLOT_INTS - 1) * 4, oneInt);
+            return;
+        }
+        int keyLevel = LodKey.level(key);
+        int x = LodKey.x(key);
+        int y = LodKey.y(key);
+        int z = LodKey.z(key);
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                int i = (dx + 1) * 3 + dz + 1;
+                if (i == 4) {
+                    blendSections[i] = r.biomeColumns;
+                    continue;
+                }
+                // The neighbors the shader sees: those of the neighbor table, which holds them with occluders.
+                Resident n = resident.get(LodKey.pack(keyLevel, x + dx, y, z + dz));
+                blendSections[i] = n != null && n.occluders ? n.biomeColumns : null;
+            }
+        }
+        BiomeBlend.blend(blendSections, tints.table(), tints.length() / BiomeTints.KINDS, tints.kinds(),
+                BiomeTints.KINDS, level, blendRadius, blendScratch);
+        blendScratch[BLEND_SLOT_INTS - 1] = blendRadius + 1;
+        blendedTints.upload((long) r.slot * BLEND_SLOT_INTS * 4, blendScratch);
+    }
+
+    /** Its horizontal neighbors blend with a section's columns: they are blended again. */
+    private void markBlendNeighbors(long key) {
+        if (blendRadius <= 0) {
+            return;
+        }
+        int keyLevel = LodKey.level(key);
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                long k = LodKey.pack(keyLevel, LodKey.x(key) + dx, LodKey.y(key), LodKey.z(key) + dz);
+                if ((dx != 0 || dz != 0) && resident.containsKey(k)) {
+                    blendDirty.add(k);
+                }
+            }
+        }
+    }
+
+    /** Follows vanilla's Biome Blend, then blends the waiting sections within {@link #BLEND_BUDGET_NANOS}. */
+    private void updateBlends() {
+        int radius = Minecraft.getInstance().options.biomeBlendRadius().get();
+        if (radius != blendRadius) {
+            blendRadius = radius;
+            blendDirty.clear();
+            blendDirty.addAll(resident.keySet());
+        }
+        if (blendDirty.isEmpty()) {
+            return;
+        }
+        long end = System.nanoTime() + BLEND_BUDGET_NANOS;
+        LongIterator it = blendDirty.iterator();
+        while (it.hasNext() && System.nanoTime() < end) {
+            long key = it.nextLong();
+            it.remove();
+            Resident r = resident.get(key);
+            if (r != null) {
+                blendSection(key, r);
+            }
+        }
     }
 
     /** Removes an evicted section from its resident neighbors' tables. */
@@ -2883,6 +2984,7 @@ public final class LodRenderer {
                 biomeBuffer.grow(Math.max(needed, biomeBuffer.size() * 2), 0);
             }
             biomeBuffer.upload(0, java.util.Arrays.copyOf(tints.table(), tints.length()));
+            blendDirty.addAll(resident.keySet()); // their blends hold the old tints
         }
     }
 
@@ -3269,6 +3371,7 @@ public final class LodRenderer {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, drawnSections.id());
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, biomeColumns.id());
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, previewHidden.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, blendedTints.id());
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, packIds.id());
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirect.id());
         RenderSystem.enableDepthTest();
@@ -3362,6 +3465,7 @@ public final class LodRenderer {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, drawnSections.id());
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, biomeColumns.id());
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, previewHidden.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, blendedTints.id());
         if (packed) {
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, packIds.id());
         }

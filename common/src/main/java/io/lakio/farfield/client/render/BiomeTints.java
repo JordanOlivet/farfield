@@ -71,6 +71,11 @@ final class BiomeTints {
         return true;
     }
 
+    /** Kinds in use: the first ones of each slot in {@link #table()}. */
+    int kinds() {
+        return resolvers.size();
+    }
+
     int[] table() {
         return table;
     }
