@@ -313,6 +313,14 @@ public final class LodRenderer {
     private final int[] timerQueries = new int[TIMER_SLOTS * TIMESTAMPS];
     private final boolean[] timerPending = new boolean[TIMER_SLOTS];
     private int timerSlot;
+    /**
+     * Per slot: before and after the translucent LODs under a shader pack,
+     * drawn later in the frame (Iris's translucent stage), so outside the
+     * span of {@link #timerQueries}; added to the translucent pass's time.
+     */
+    private final int[] packTranslucentQueries = new int[TIMER_SLOTS * 2];
+    private final boolean[] packTranslucentPending = new boolean[TIMER_SLOTS];
+    private int packTranslucentSlot;
 
     private LodWorld world;
     /** On a server with Farfield, the streaming that fills {@link #world} (ADR-068); else null. */
@@ -918,6 +926,7 @@ public final class LodRenderer {
         Farfield.LOG.info("LOD hand-off follows the {} section rule", sodiumRule ? "Sodium" : "vanilla");
         packLink = createPackLink();
         glGenQueries(timerQueries);
+        glGenQueries(packTranslucentQueries);
         quads = new GlBuffer(INITIAL_QUADS * 8);
         arena = new RangeAllocator(INITIAL_QUADS);
         sectionInfo = new GlBuffer(4096L * SECTION_BYTES);
@@ -3109,6 +3118,15 @@ public final class LodRenderer {
             gpuFrames++;
             timerPending[slot] = false;
         }
+        for (int slot = 0; slot < TIMER_SLOTS; slot++) {
+            if (!packTranslucentPending[slot]
+                    || glGetQueryObjecti(packTranslucentQueries[slot * 2 + 1], GL_QUERY_RESULT_AVAILABLE) == GL_FALSE) {
+                continue;
+            }
+            gpuPassNanos[3] += glGetQueryObjectui64(packTranslucentQueries[slot * 2 + 1], GL_QUERY_RESULT)
+                    - glGetQueryObjectui64(packTranslucentQueries[slot * 2], GL_QUERY_RESULT);
+            packTranslucentPending[slot] = false;
+        }
     }
 
     /** Binds a program variant and sets its uniforms for this frame ({@link #viewProj} set). */
@@ -3259,8 +3277,18 @@ public final class LodRenderer {
         RenderSystem.depthMask(true);
         RenderSystem.enableCull();
         RenderSystem.colorMask(true, true, true, true);
+        int slot = packTranslucentSlot;
+        boolean timed = !packTranslucentPending[slot];
+        if (timed) {
+            glQueryCounter(packTranslucentQueries[slot * 2], GL_TIMESTAMP);
+        }
         use(packTranslucent, translucentCam, mc, true);
         glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, translucentOffset, translucentCount, 0);
+        if (timed) {
+            glQueryCounter(packTranslucentQueries[slot * 2 + 1], GL_TIMESTAMP);
+            packTranslucentPending[slot] = true;
+            packTranslucentSlot = (slot + 1) % TIMER_SLOTS;
+        }
 
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
         GlStateManager._glBindVertexArray(0);
