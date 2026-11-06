@@ -3159,3 +3159,18 @@ Status: accepted, 2026-11-03. Details ADR-012 for C.1.
   - Later, outside C.1: packs with neither contract (meanwhile the LODs
     turn off under them, with a message), our own contract, LOD shadows.
 - **Result**: none yet; C.1a is the spike.
+
+## ADR-114 — Pack test jars come from output/ only
+
+Status: accepted, 2026-11-06. Amends ADR-042 (drops `copyTestJars`).
+
+- **Context**: since ADR-110 every build copies both loaders' jars to
+  `output/`. `copyTestJars` put the same two jars a second time into
+  `farfield.testJars.dir`. The user: "tu peux virer la copie des jar vers
+  [farfield.testJars.dir], le dossier output suffit".
+- **Decision**: the `copyTestJars` task and the `farfield.testJars.dir`
+  key are removed. Jars handed over for a pack test are taken from
+  `output/`.
+- **Result**: one place for the jars. A NeoForge jar in `output/` older than
+  the build is not stale: `:neoforge:jar` is `UP-TO-DATE` when no code
+  changed, while Loom's `remapJar` rewrites the Fabric jar on every build.

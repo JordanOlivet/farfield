@@ -103,7 +103,7 @@ Rendering and lighting rules: see `farfield-lod-renderer`. Server-to-client stre
 
 Hand a jar over only after the dev check passed and the jar is committed. The user's pack is the real check; the dev client is not.
 
-1. Commit, then run `.\gradlew.bat copyTestJars --no-daemon`. It builds both loader jars into the `farfield.testJars.dir` folder of `local.properties` and deletes the older Farfield jars there. Check the two `Copied` lines and name that folder to the user.
+1. Commit, then run `.\gradlew.bat build --no-daemon`. Both loader jars land in `output/` at the repository root (ADR-110; `copyTestJars` and `farfield.testJars.dir` are gone, ADR-114). Name `output/` and the two jar names to the user. A jar older than the build is normal when no code changed since it was made: `:neoforge:jar` stays `UP-TO-DATE`, while Loom's `:fabric:remapJar` rewrites the Fabric jar every build.
 2. Ask the user to close the game and copy his world. He tests the copy, never the live save.
 3. Send a numbered procedure: which jar goes in which loader's mods folder, remove the older Farfield jar first, start the instance, open the copy. Run `/farfield import` and wait for the `LOD import ... done` line only when the change touches stored LOD data (storage format, downsampling). A render-only or settings change needs no re-import. A `MIPS_VERSION` bump rebuilds the coarse levels once at open: warn that the first open is slower, and judge the far view only after the `coarse levels rebuilt` line.
 4. Name the views to check: distance by day and by night, F3 fps with LODs on and off (`/farfield render off` at the same spot), and the look of leaves and water.

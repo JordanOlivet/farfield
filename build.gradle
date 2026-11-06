@@ -59,28 +59,3 @@ tasks.register('runVanillaServer', Exec) {
         commandLine java.get().executablePath.asFile.absolutePath, '-Xmx2G', '-jar', 'server.jar', 'nogui'
     }
 }
-
-// Jars for the user's pack tests: both loader jars into farfield.testJars.dir
-// (local.properties), replacing the Farfield jars already there.
-tasks.register('copyTestJars') {
-    group = 'farfield'
-    description = 'Builds both loader jars and puts them alone in the farfield.testJars.dir folder.'
-    dependsOn ':neoforge:jar', ':fabric:remapJar'
-    doLast {
-        def dir = findProperty('farfield.testJars.dir')
-        if (!dir) {
-            throw new GradleException('Set farfield.testJars.dir in local.properties (see local.properties.example)')
-        }
-        def target = file(dir)
-        target.mkdirs()
-        target.listFiles().findAll { it.name ==~ /farfield-(neoforge|fabric)-.*\.jar/ }.each { it.delete() }
-        def jars = [project(':neoforge').tasks.jar, project(':fabric').tasks.remapJar].collect { it.archiveFile.get().asFile }
-        jars.each { jar ->
-            copy {
-                from jar
-                into target
-            }
-            logger.lifecycle("Copied ${jar.name} to ${target}")
-        }
-    }
-}

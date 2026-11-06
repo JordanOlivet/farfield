@@ -7,9 +7,6 @@
 # JMH benchmarks; the bench tasks take <farfield.corpus.dir>/<world> in --args.
 farfield.corpus.dir=C:/Users/<you>/farfield-corpus
 
-# Folder that receives both loader jars for pack tests (gradlew copyTestJars).
-farfield.testJars.dir=C:/Users/<you>/farfield-test-jars
-
 # logs/ folder of the Minecraft install where the pack tests run, for reading
 # its latest.log (not read by Gradle). Vanilla launcher default:
 # C:/Users/<you>/AppData/Roaming/.minecraft/logs

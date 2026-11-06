@@ -28,7 +28,6 @@ point), `docs/DECISIONS.md` (ADRs, binding), the active plan in `docs/plans/`,
 .\gradlew.bat :fabric:runServer          # dev server (run dir: fabric\runs\server)
 .\gradlew.bat :fabric:runClient          # dev client (run dir: fabric\runs\client)
 .\gradlew.bat runVanillaServer           # vanilla server for client mode checks (runs\vanilla-server)
-.\gradlew.bat copyTestJars               # both loader jars into farfield.testJars.dir, for pack tests
 ```
 
 Double-click launchers at the root (they open the test world `farfield-test`
