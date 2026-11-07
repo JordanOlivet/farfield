@@ -125,6 +125,8 @@ final class NoisePreview {
         final AtomicInteger featureFailures = new AtomicInteger();
         /** Light sources the features left in the tiles built since the last report (ADR-117). */
         final AtomicInteger lightSources = new AtomicInteger();
+        /** Block columns the features dug (lakes) in the tiles built since the last report (ADR-118). */
+        final AtomicInteger dugColumns = new AtomicInteger();
         /** Where the last tile's feature time went (the spike's report). */
         volatile String lastFeatureTiming = "";
         volatile LodWorld world;
@@ -375,9 +377,9 @@ final class NoisePreview {
             }
             if (RenderSettings.performanceLogs()) {
                 Farfield.LOG.info("Noise preview of {}: {} tiles built in the last minute ({} ms each: {}; {} villages,"
-                        + " {} features failed, {} light sources), {} left within {} blocks", d.key.location(), built,
-                        nanos / 1_000_000 / built, stages, d.villagesBuilt.getAndSet(0), d.featureFailures.getAndSet(0),
-                        d.lightSources.getAndSet(0),
+                        + " {} features failed, {} light sources, {} dug columns), {} left within {} blocks",
+                        d.key.location(), built, nanos / 1_000_000 / built, stages, d.villagesBuilt.getAndSet(0),
+                        d.featureFailures.getAndSet(0), d.lightSources.getAndSet(0), d.dugColumns.getAndSet(0),
                         d.left, (int) RANGE);
             }
             d.reportedDone = false;
@@ -643,6 +645,7 @@ final class NoisePreview {
         features.decorate();
         d.featureFailures.addAndGet(features.failures());
         d.lightSources.addAndGet(tile.lights().length / 2);
+        d.dugColumns.addAndGet(tile.pits().length / PreviewTile.PIT_INTS);
         d.lastFeatureTiming = features.timing();
     }
 

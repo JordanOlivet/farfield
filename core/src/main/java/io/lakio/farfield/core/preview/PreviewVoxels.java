@@ -48,6 +48,11 @@ import io.lakio.farfield.core.lod.NibbleBricks;
  * by the chunk's most common plant, in quarters of that cover, as the real
  * mip rule ({@link MipBuilder.Shapes#covered}).
  *
+ * <p>The lakes the features dug (ADR-118) lower the ground of their
+ * columns to the lake's bottom on the finest level, filled with the lake's
+ * fluid; on coarser levels the top voxel shows the fluid where it covers
+ * half the voxel's columns.
+ *
  * <p>The features' light sources (ADR-117) light the voxels around them:
  * a voxel takes the brightest of {@code emission - distance}, the distance
  * counted in blocks from the source to the voxel's nearest block along each
@@ -141,7 +146,12 @@ public final class PreviewVoxels {
         boolean[] real = new boolean[n];
         int[] ground = new int[n];
         int[] fluid = new int[n];
+        int[] lake = new int[n]; // per column, a dug lake's fluid (ADR-118); -1 for none
+        int[] lakeTop = new int[n];
+        boolean[] dug = new boolean[n];
+        java.util.Arrays.fill(lake, -1);
         int[] cell = new int[2];
+        int[] pit = new int[3];
         // A layer along X or Z needs only its own row of columns and the two beside it.
         int iMin = layerAxis == 0 ? layerIndex - 1 : -1;
         int iMax = layerAxis == 0 ? layerIndex + 1 : S;
@@ -159,6 +169,8 @@ public final class PreviewVoxels {
                 if (real[c]) {
                     ground[c] = mask.ground(bx >> 4, bz >> 4);
                     fluid[c] = mask.fluidTop(bx >> 4, bz >> 4);
+                } else if (h[c] != NONE) {
+                    dug[c] = dig(tiles, bx, bz, s, c, h, low, lake, lakeTop, pit);
                 }
             }
         }
@@ -226,7 +238,9 @@ public final class PreviewVoxels {
                     if (bottom < height) {
                         blocks = Math.min(s, height - bottom);
                         if (height - 1 < bottom + s) {
-                            material = level > 0 && covers != null && top == tile.plantGround()
+                            // A dug column's floor is the ground the lake laid bare: the filler.
+                            material = level > 0 && lake[c] >= 0 ? lake[c] : level == 0 && dug[c] ? filler
+                                    : level > 0 && covers != null && top == tile.plantGround()
                                     ? coveredTop(tile, bx, bz, top, covers) : top;
                         } else if (bottom + s > height - 1 - PreviewTile.FILLER_DEPTH) {
                             material = filler;
@@ -234,6 +248,9 @@ public final class PreviewVoxels {
                             // Icebergs are ice to their foot, not stone under a few blocks of filler.
                             material = filler == tile.iceberg() ? filler : tile.below();
                         }
+                    } else if (lake[c] >= 0 && bottom < lakeTop[c]) {
+                        blocks = Math.min(s, lakeTop[c] - bottom);
+                        material = lake[c];
                     } else if (water >= 0 && bottom < sea) {
                         blocks = Math.min(s, sea - bottom);
                         // The voxel holding the sea's top block shows it, as the real mip rule's view from above.
@@ -256,7 +273,7 @@ public final class PreviewVoxels {
                         section.skyLight().set(i, vy, k, seaSkyLight(Math.min(bottom + s, sea) - 1, sea, bottom + s > sea));
                     }
                 }
-                if (level == 0 && top == tile.plantGround() && top >= 0 && (water < 0 || height >= sea)
+                if (level == 0 && top == tile.plantGround() && top >= 0 && (water < 0 || height >= sea) && lake[c] < 0
                         && height >= oy && height < oy + S && layerAxis < 0) { // plants hide no neighbor face
                     int plant = plantAt(tile, bx, bz);
                     if (plant >= 0) {
@@ -312,6 +329,97 @@ public final class PreviewVoxels {
             }
         }
         return section;
+    }
+
+    /**
+     * Applies the lakes the features dug (ADR-118) to column {@code c}. On
+     * the finest level the column's ground goes down to the lake's bottom
+     * (its neighbors then reach down beside it, the lake's banks) and the
+     * fluid fills it from there. On coarser levels, where the fluid covers
+     * half the footprint's columns or more (read on a 4 x 4 grid of them),
+     * the top voxel shows it, as the real mip rule's view from above; the
+     * column keeps its height. Returns whether the finest level lowered it.
+     */
+    private static boolean dig(Tiles tiles, int bx, int bz, int s, int c, int[] h, int[] low, int[] lake, int[] lakeTop,
+                            int[] pit) {
+        if (s == 1) {
+            if (!pitAt(tiles, bx, bz, pit)) {
+                return false;
+            }
+            int surface = h[c];
+            int bottom = Math.min(pit[0], surface);
+            int top = Math.min(pit[1], surface);
+            h[c] = bottom;
+            low[c] = Math.min(low[c], bottom);
+            if (pit[2] >= 0 && top > bottom) {
+                lake[c] = pit[2];
+                lakeTop[c] = top;
+            }
+            return true;
+        }
+        if (!pitsNear(tiles, bx, bz, s)) {
+            return false;
+        }
+        // Four by four columns at most: enough to tell half the footprint, at 16 reads.
+        int step = Math.max(1, s / 4);
+        int covered = 0;
+        int samples = 0;
+        int material = -1;
+        for (int dz = step / 2; dz < s; dz += step) {
+            for (int dx = step / 2; dx < s; dx += step) {
+                samples++;
+                if (pitAt(tiles, bx + dx, bz + dz, pit) && pit[2] >= 0 && pit[1] > pit[0]) {
+                    covered++;
+                    material = pit[2];
+                }
+            }
+        }
+        if (covered * 2 >= samples) {
+            lake[c] = material;
+        }
+        return false;
+    }
+
+    /** Whether any tile whose features may reach the s-block footprint at (bx, bz) dug a column. */
+    private static boolean pitsNear(Tiles tiles, int bx, int bz, int s) {
+        int m = PreviewTile.FEATURE_MARGIN;
+        for (int tz = Math.floorDiv(bz - m, PreviewTile.BLOCKS); tz <= Math.floorDiv(bz + s - 1 + m, PreviewTile.BLOCKS); tz++) {
+            for (int tx = Math.floorDiv(bx - m, PreviewTile.BLOCKS); tx <= Math.floorDiv(bx + s - 1 + m, PreviewTile.BLOCKS); tx++) {
+                PreviewTile tile = tiles.tile(tx, tz);
+                if (tile != null && tile.pits().length > 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The dug column at block (bx, bz), from its own tile or, within the
+     * features' margin of a tile edge, from the tile beside whose features
+     * reached it: {@code pit} receives its bottom, fluid top and fluid
+     * material. False where nothing was dug.
+     */
+    static boolean pitAt(Tiles tiles, int bx, int bz, int[] pit) {
+        int m = PreviewTile.FEATURE_MARGIN;
+        int b = PreviewTile.BLOCKS;
+        for (int tz = Math.floorDiv(bz - m, b); tz <= Math.floorDiv(bz + m, b); tz++) {
+            for (int tx = Math.floorDiv(bx - m, b); tx <= Math.floorDiv(bx + m, b); tx++) {
+                PreviewTile tile = tiles.tile(tx, tz);
+                if (tile == null || tile.pits().length == 0) {
+                    continue;
+                }
+                int i = tile.pit(bx - tx * b, bz - tz * b);
+                if (i >= 0) {
+                    int[] pits = tile.pits();
+                    pit[0] = pits[i + 1];
+                    pit[1] = pits[i + 2];
+                    pit[2] = pits[i + 3];
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** Lights the section's voxels from the light sources of the tiles around (see the class comment). */

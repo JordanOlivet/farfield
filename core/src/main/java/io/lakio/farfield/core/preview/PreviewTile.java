@@ -47,9 +47,10 @@ public final class PreviewTile {
      * out among the features (ADR-080), 13 the trees of snowy forests
      * (ADR-086), 14 and 15 the ground from the surface rules (ADR-101,
      * ADR-104), 16 the plants under the sea (ADR-105), 17 the light sources
-     * of the features (ADR-117); older tiles are built again.
+     * of the features (ADR-117), 18 the lakes they dig (ADR-118); older
+     * tiles are built again.
      */
-    private static final int FORMAT = 17;
+    private static final int FORMAT = 18;
     /** Blocks a side of a feature voxel. */
     public static final int FEATURE_VOXEL = 2;
     /** Blocks around the tile its features may reach. */
@@ -95,6 +96,8 @@ public final class PreviewTile {
     private final int[][] features = new int[FEATURE_SIDE * FEATURE_SIDE][];
     /** Light sources of the features (ADR-117): pairs of {@link #lightWord} and block y. */
     private int[] lights = new int[0];
+    /** The columns the features dug (ADR-118): {@link #PIT_INTS} ints each, sorted by {@link #pitWord}. */
+    private int[] pits = new int[0];
 
     /** Crown shapes of a {@link TreeKind}. */
     public static final int BLOB = 0;
@@ -238,6 +241,86 @@ public final class PreviewTile {
 
     public static int lightEmission(int word) {
         return word >> 20 & 15;
+    }
+
+    /** Ints per dug column in {@link #pits()}: {@link #pitWord}, bottom, fluid top, fluid material. */
+    public static final int PIT_INTS = 4;
+
+    /**
+     * Sets the columns the features dug into the ground (ADR-118), {@link
+     * #PIT_INTS} ints each: {@link #pitWord}, the lowest dug block's y, the
+     * first block above the fluid that fills it from the bottom (the bottom
+     * itself without fluid), and the fluid's material (-1 for none). Above
+     * the fluid the column is open up to the tile's surface. One entry per
+     * column; any order.
+     */
+    public void setPits(int[] entries) {
+        if (entries == null || entries.length % PIT_INTS != 0) {
+            throw new IllegalArgumentException("pit entries come in " + PIT_INTS + " ints");
+        }
+        pits = sortedPits(entries.clone());
+    }
+
+    /** The dug columns ({@link #setPits}), sorted by {@link #pitWord}; never null. Do not modify. */
+    public int[] pits() {
+        return pits;
+    }
+
+    /**
+     * The index in {@link #pits()} of block column (x, z) of the tile
+     * ({@code -FEATURE_MARGIN} to {@code BLOCKS + FEATURE_MARGIN - 1}), or
+     * -1 when the features dug nothing there.
+     */
+    public int pit(int x, int z) {
+        if (pits.length == 0) {
+            return -1;
+        }
+        int key = pitWord(x, z);
+        int lo = 0;
+        int hi = pits.length / PIT_INTS - 1;
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            int word = pits[mid * PIT_INTS];
+            if (word < key) {
+                lo = mid + 1;
+            } else if (word > key) {
+                hi = mid - 1;
+            } else {
+                return mid * PIT_INTS;
+            }
+        }
+        return -1;
+    }
+
+    /** A dug column's word: block (x, z) of the tile, {@code -FEATURE_MARGIN} to {@code BLOCKS + FEATURE_MARGIN - 1}. */
+    public static int pitWord(int x, int z) {
+        return (z + FEATURE_MARGIN) << 10 | (x + FEATURE_MARGIN);
+    }
+
+    public static int pitX(int word) {
+        return (word & 0x3FF) - FEATURE_MARGIN;
+    }
+
+    public static int pitZ(int word) {
+        return (word >> 10 & 0x3FF) - FEATURE_MARGIN;
+    }
+
+    private static int[] sortedPits(int[] entries) {
+        int n = entries.length / PIT_INTS;
+        long[] order = new long[n];
+        for (int i = 0; i < n; i++) {
+            order[i] = (long) entries[i * PIT_INTS] << 32 | i;
+        }
+        java.util.Arrays.sort(order);
+        int[] sorted = new int[entries.length];
+        for (int i = 0; i < n; i++) {
+            int from = (int) order[i] * PIT_INTS;
+            if (i > 0 && order[i] >>> 32 == order[i - 1] >>> 32) {
+                throw new IllegalArgumentException("two pits in one column");
+            }
+            System.arraycopy(entries, from, sorted, i * PIT_INTS, PIT_INTS);
+        }
+        return sorted;
     }
 
     /** The index of a plant material, added when new; -1 when the tile holds {@link #MAX_PLANT_KINDS} already. */
@@ -591,6 +674,9 @@ public final class PreviewTile {
                 }
             }
         }
+        for (int i = 3; i < pits.length; i += PIT_INTS) {
+            pits[i] = mapId(materials, pits[i]);
+        }
     }
 
     private static int mapId(int[] map, int id) {
@@ -698,6 +784,13 @@ public final class PreviewTile {
             out.writeVarInt(lights[i]);
             out.writeVarInt(zigZag(lights[i + 1]));
         }
+        out.writeVarInt(pits.length / PIT_INTS);
+        for (int i = 0; i < pits.length; i += PIT_INTS) {
+            out.writeVarInt(pits[i]);
+            out.writeVarInt(zigZag(pits[i + 1]));
+            out.writeVarInt(pits[i + 2] - pits[i + 1]);
+            out.writeVarInt(pits[i + 3] + 1);
+        }
     }
 
     public static PreviewTile decode(ByteReader in) {
@@ -804,6 +897,19 @@ public final class PreviewTile {
             t.lights[i] = in.readVarInt();
             t.lights[i + 1] = unZigZag(in.readVarInt());
         }
+        int pits = in.readVarInt();
+        int columns = (BLOCKS + 2 * FEATURE_MARGIN) * (BLOCKS + 2 * FEATURE_MARGIN);
+        if (pits < 0 || pits > columns) {
+            throw new IllegalArgumentException("bad dug column count " + pits);
+        }
+        int[] entries = new int[pits * PIT_INTS];
+        for (int i = 0; i < entries.length; i += PIT_INTS) {
+            entries[i] = in.readVarInt();
+            entries[i + 1] = unZigZag(in.readVarInt());
+            entries[i + 2] = entries[i + 1] + in.readVarInt();
+            entries[i + 3] = in.readVarInt() - 1;
+        }
+        t.pits = sortedPits(entries);
         return t;
     }
 

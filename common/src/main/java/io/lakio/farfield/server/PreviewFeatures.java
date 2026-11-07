@@ -19,6 +19,7 @@ import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Climate;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.PalettedContainer;
@@ -67,6 +68,8 @@ final class PreviewFeatures {
     private static final int BIOME_ABOVE = 96;
     /** A voxel of {@link PreviewTile#FEATURE_VOXEL} blocks takes a material once this many of its 8 blocks hold one. */
     private static final int VOXEL_FILL = 2;
+    /** Deepest block under the ground a dug column is followed to (ADR-118): lakes are 8 blocks tall. */
+    private static final int PIT_DEPTH = 8;
     /** Features that failed once, logged once per server. */
     private static final Set<String> FAILED = ConcurrentHashMap.newKeySet();
     /**
@@ -114,6 +117,12 @@ final class PreviewFeatures {
     private final Long2ObjectOpenHashMap<int[]> seaColumns = new Long2ObjectOpenHashMap<>();
     /** Per block ({@code BlockPos.asLong}): the light emission of the features' light sources (ADR-117). */
     private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap lights = new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+    /**
+     * Per block column on land, the air and fluids the features wrote into
+     * the top {@link #PIT_DEPTH} blocks of the ground, index depth - 1
+     * (ADR-118): what a lake digs and fills.
+     */
+    private final Long2ObjectOpenHashMap<BlockState[]> dug = new Long2ObjectOpenHashMap<>();
     /** Per chunk of the tile: plant blocks set in it, by material. */
     private final Int2IntOpenHashMap[] plants = new Int2IntOpenHashMap[PreviewTile.CHUNKS * PreviewTile.CHUNKS];
     private int failures;
@@ -652,6 +661,20 @@ final class PreviewFeatures {
             int y = BlockPos.getY(pos);
             BlockState state = e.getValue();
             it.remove();
+            if (x < x0 - margin || z < z0 - margin || x >= x0 + PreviewTile.BLOCKS + margin
+                    || z >= z0 + PreviewTile.BLOCKS + margin) {
+                continue;
+            }
+            int g = ground(x, z);
+            if (y < g) {
+                // A lake digs the ground and fills it (ADR-118): kept down to PIT_DEPTH, on land
+                // only (the tile's sea already covers the ground under it), resolved in store().
+                if (g - y <= PIT_DEPTH && g >= seaLevel && (state.isAir() || state.getBlock() instanceof LiquidBlock)
+                        && !bare.test(x, z)) {
+                    dug.computeIfAbsent(BlockPos.asLong(x, 0, z), k -> new BlockState[PIT_DEPTH])[g - y - 1] = state;
+                }
+                continue;
+            }
             if (state.isAir() || x < x0 - margin || z < z0 - margin || x >= x0 + PreviewTile.BLOCKS + margin
                     || z >= z0 + PreviewTile.BLOCKS + margin || y < ground(x, z) || bare.test(x, z)) {
                 continue;
@@ -780,6 +803,7 @@ final class PreviewFeatures {
             tile.setPlants(c % PreviewTile.CHUNKS, c / PreviewTile.CHUNKS, java.util.Arrays.copyOf(entries, n));
         }
         storeSeaPlants();
+        storePits();
         int[] pairs = new int[lights.size() * 2];
         int n = 0;
         for (var e : lights.long2IntEntrySet()) {
@@ -788,6 +812,49 @@ final class PreviewFeatures {
             pairs[n++] = BlockPos.getY(pos);
         }
         tile.setLights(pairs);
+    }
+
+    /**
+     * Writes the dug columns into the tile (ADR-118): from the ground down,
+     * the run of air and fluid the features wrote with no ground left above
+     * it (a lake open to the sky, not a pocket under the ground), the fluid
+     * filling it from the bottom up to its highest fluid block. The fluid's
+     * top block is a light source when it glows (lava).
+     */
+    private void storePits() {
+        it.unimi.dsi.fastutil.ints.IntArrayList entries = new it.unimi.dsi.fastutil.ints.IntArrayList();
+        for (var e : dug.long2ObjectEntrySet()) {
+            BlockState[] column = e.getValue();
+            int depth = 0;
+            BlockState fluid = null;
+            int fluidDepth = -1;
+            while (depth < PIT_DEPTH && column[depth] != null) {
+                if (fluid == null && !column[depth].isAir()) {
+                    fluid = column[depth];
+                    fluidDepth = depth;
+                }
+                depth++;
+            }
+            if (depth == 0) {
+                continue; // nothing written right under the surface: a pocket in the ground
+            }
+            int x = BlockPos.getX(e.getLongKey());
+            int z = BlockPos.getZ(e.getLongKey());
+            int g = ground(x, z);
+            int bottom = g - depth;
+            int fluidTop = fluid == null ? bottom : g - fluidDepth;
+            entries.add(PreviewTile.pitWord(x - x0, z - z0));
+            entries.add(bottom);
+            entries.add(fluidTop);
+            entries.add(fluid == null ? -1 : world.blockStates().id(BlockKeys.key(fluid)));
+            int emission = fluid == null ? 0 : Math.min(15, fluid.getLightEmission());
+            if (emission > 0) {
+                long pos = BlockPos.asLong(x, fluidTop - 1, z);
+                lights.put(pos, Math.max(lights.get(pos), emission));
+            }
+        }
+        dug.clear();
+        tile.setPits(entries.toIntArray());
     }
 
     /** Per chunk and lowest block's material: the columns of plants under the sea and their mean height. */

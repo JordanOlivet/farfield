@@ -45,3 +45,4 @@ report names a spot.
 | Snowy taiga, real beside preview | 3050, 150, -170 facing 20, 40 (`/locate biome minecraft:snowy_taiga`: 2900, -96) | Snow on preview trees next to real ones (ADR-049) |
 | Frozen ocean icebergs, real beside preview | 2394, 126, -162 facing 31, 18 | Icebergs and sea light of the preview (ADR-053, ADR-054) |
 | Sea ice by the snowy village | -80, 85, 160 facing 90, 30 (village at -192, 160) | Faint lines in vanilla ice at the edge, also with LODs off |
+| Surface lava lake in a forest | -925, 120, 1390 facing 0, 19 (lake at -925, 63, 1558) | Dug lakes and lava light in the preview, at night (ADR-117, ADR-118) |

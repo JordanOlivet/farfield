@@ -1114,4 +1114,105 @@ class PreviewTest {
         assertTrue(masked == null || masked.blockLight().get(17, 60 - 32, 8) == 0);
         assertEquals(1, litSlope(0, 8, 60, 8, 10, null, true).blockLight().get(17, 60 - 32, 8));
     }
+
+    private static final int LAVA = 10;
+
+    /** Flat land, its first free block at 65 (grass at 64), and a dug lake on the given columns. */
+    private static PreviewTile dugTile(int x0, int x1, int z0, int z1, int bottom, int fluidTop) {
+        PreviewTile t = new PreviewTile();
+        for (int k = 0; k < PreviewTile.SAMPLES; k++) {
+            for (int i = 0; i < PreviewTile.SAMPLES; i++) {
+                t.setHeight(i, k, 65);
+            }
+        }
+        for (int c = 0; c < PreviewTile.CELLS * PreviewTile.CELLS; c++) {
+            t.setCell(c % PreviewTile.CELLS, c / PreviewTile.CELLS, GRASS, DIRT);
+        }
+        t.setBelow(STONE);
+        java.util.List<Integer> pits = new java.util.ArrayList<>();
+        for (int z = z0; z <= z1; z++) {
+            for (int x = x0; x <= x1; x++) {
+                java.util.Collections.addAll(pits, PreviewTile.pitWord(x, z), bottom, fluidTop, LAVA);
+            }
+        }
+        t.setPits(pits.stream().mapToInt(Integer::intValue).toArray());
+        return t;
+    }
+
+    @Test
+    void dugColumnsRoundTripAndAreFoundByColumn() {
+        PreviewTile t = dugTile(0, -1, 0, -1, 0, 0);
+        t.setPits(new int[]{PreviewTile.pitWord(3, 4), 60, 63, LAVA, PreviewTile.pitWord(-16, 527), 58, 58, -1});
+        ByteWriter out = new ByteWriter(1024);
+        t.encode(out);
+        PreviewTile back = PreviewTile.decode(new ByteReader().reset(out.array(), 0, out.length()));
+        int i = back.pit(3, 4);
+        assertTrue(i >= 0);
+        assertEquals(60, back.pits()[i + 1]);
+        assertEquals(63, back.pits()[i + 2]);
+        assertEquals(LAVA, back.pits()[i + 3]);
+        int j = back.pit(-16, 527);
+        assertTrue(j >= 0);
+        assertEquals(58, back.pits()[j + 2]);
+        assertEquals(-1, back.pits()[j + 3]);
+        assertEquals(-1, back.pit(4, 3));
+        // A server's ids become the client's.
+        int[] materials = new int[11];
+        materials[LAVA] = 7;
+        back.remapIds(materials, new int[8]);
+        assertEquals(7, back.pits()[back.pit(3, 4) + 3]);
+        assertEquals(-1, back.pits()[j + 3]);
+    }
+
+    @Test
+    void aDugLakeLowersItsColumnsAndFillsThemOnTheFinestLevel() {
+        // Lava on columns x 8..11, z 8..11, blocks 61 to 63, block 64 dug open.
+        PreviewTile t = dugTile(8, 11, 8, 11, 61, 64);
+        LodSection low = PreviewVoxels.build(0, 0, 1, 0, (tx, tz) -> tx == 0 && tz == 0 ? t : null, null, AIR, -64, -1, -1, -1, 0);
+        LodSection high = PreviewVoxels.build(0, 0, 2, 0, (tx, tz) -> tx == 0 && tz == 0 ? t : null, null, AIR, -64, -1, -1, -1, 0);
+        assertEquals(LAVA, low.material(9, 61 - 32, 9));
+        assertEquals(LAVA, low.material(9, 63 - 32, 9));
+        assertEquals(DIRT, low.material(9, 60 - 32, 9)); // the lake's floor, the filler under its new top
+        assertEquals(AIR, high == null ? AIR : high.material(9, 0, 9)); // block 64: dug open
+        // The banks: the columns beside reach down past the lake's bottom, no hollow under them in view.
+        assertTrue(low.material(7, 61 - 32, 9) != AIR);
+        assertTrue(low.material(9, 61 - 32, 12) != AIR);
+        // Away from the lake the ground is as before.
+        assertEquals(GRASS, high.material(20, 0, 20));
+        assertEquals(AIR, low.material(20, 61 - 32, 20));
+    }
+
+    @Test
+    void aCoarseTopVoxelShowsTheLakeWhereItCoversHalfItsColumns() {
+        // Level 2: voxels of 4 blocks, the top one at blocks 64..67. Lava on x 0..7, z 0..7, and on x 12, z 0..3.
+        PreviewTile t = dugTile(0, 7, 0, 7, 61, 64);
+        int[] more = new int[4 * PreviewTile.PIT_INTS];
+        for (int z = 0; z < 4; z++) {
+            more[z * 4] = PreviewTile.pitWord(12, z);
+            more[z * 4 + 1] = 61;
+            more[z * 4 + 2] = 64;
+            more[z * 4 + 3] = LAVA;
+        }
+        int[] all = java.util.Arrays.copyOf(t.pits(), t.pits().length + more.length);
+        System.arraycopy(more, 0, all, t.pits().length, more.length);
+        t.setPits(all);
+        LodSection s = PreviewVoxels.build(2, 0, 0, 0, (tx, tz) -> tx == 0 && tz == 0 ? t : null, null, AIR, -64, -1, -1, -1, 0);
+        assertEquals(LAVA, s.material(0, 16, 0));
+        assertEquals(LAVA, s.material(1, 16, 1));
+        assertEquals(GRASS, s.material(2, 16, 0)); // x 8..11: no lake
+        assertEquals(GRASS, s.material(3, 16, 0)); // x 12..15: a quarter of its columns
+    }
+
+    @Test
+    void aLakeOfTheTileBesideIsFoundInItsMargin() {
+        PreviewTile own = dugTile(0, -1, 0, -1, 0, 0);
+        PreviewTile east = dugTile(-3, -3, 8, 8, 61, 64);
+        PreviewVoxels.Tiles tiles = (tx, tz) -> tz != 0 ? null : tx == 0 ? own : tx == 1 ? east : null;
+        int[] pit = new int[3];
+        assertTrue(PreviewVoxels.pitAt(tiles, 509, 8, pit));
+        assertEquals(61, pit[0]);
+        assertEquals(64, pit[1]);
+        assertEquals(LAVA, pit[2]);
+        assertTrue(!PreviewVoxels.pitAt(tiles, 508, 8, pit));
+    }
 }

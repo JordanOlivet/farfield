@@ -3274,3 +3274,40 @@ and the stream protocol (8). Plan items C.1d and D.6.
   before with it off, the patch of real terrain in view lit the same way in
   both. Mesh jobs right after the switch: 2,801 us with the light against
   5,185 us without (noisy, no cost seen).
+
+## ADR-118 — The lakes the features dig, in the preview
+
+Status: accepted, 2026-11-07. Amends the preview tiles (ADR-079, format 18)
+and the stream protocol (9). Plan item D.7.
+
+- **Context**: a probe of the light sources the features place in the
+  test world (the user's Fabric pack, about 230 tiles) found the surface
+  lava lakes missing from the preview, blocks and light alike: a lake digs
+  the ground and fills it, its lava lies 1 to 6 blocks under the tile's
+  surface, and the features' blocks under the surface were all left out
+  (more than 3,000 lava blocks within 6 blocks of it, lakes at -925, 1558
+  among others). Up close the real chunks showed the lake glowing in its
+  forest; the preview showed a dark forest. The user picked drawing the
+  lakes (option 2) over only keeping their light.
+- **Decision**: the server follows, per block column on land (surface at
+  sea level or above), what the features wrote in the top 8 blocks of the
+  ground. From the surface down, the run of air and fluid with no ground
+  left above it is a dug column: its bottom, and the fluid filling it from
+  there up to its highest fluid block (any liquid block: lava, water, a
+  mod's). A pocket under unchanged ground is not one. The tile keeps one
+  entry per dug column, its own blocks and the features' margin: word (x,
+  z), bottom, fluid top, fluid material. The fluid's top block is a light
+  source when it glows (ADR-117). The client lowers a dug column's ground
+  to the bottom on the finest level, its floor showing the filler, and
+  fills it with the fluid; the columns beside reach down past it, the
+  lake's banks. On coarser levels the top voxel shows the fluid where it
+  covers half the footprint's columns (read on a 4 x 4 grid), as the real
+  mip rule's view from above; the column keeps its height. A margin's
+  column is read from the tile whose features reached it.
+- **Format and protocol**: tile format 18 (every preview tile is built
+  again); stream protocol 9.
+- **Result**: Fabric pack, test world, the lake at -925, 63, 1558 seen
+  from -925, 120, 1390 (pitch 19, 1080p): the lava shows orange between
+  the crowns by day, glows at midnight with the preview light on, stays
+  dark with it off; from 400 blocks (coarse levels) a glow remains. Minute
+  lines: 1,744 to 6,147 dug columns per minute of tiles.

@@ -216,6 +216,12 @@ Items:
   LODs draw them. The user, on their server (2026-10-30): "c'est bon pour
   le corail". Left out as in the real LODs: coral fans and plants, sea
   pickles (water there).
+- [~] D.7 The lakes the features dig, in the preview (ADR-118, tile format
+  18, protocol 9): found missing by a light-source probe (2026-11-07,
+  surface lava lakes under the tile's surface); the user picked drawing
+  them. Verified on the Fabric pack, the lava lake at -925, 1558, day and
+  night. Remains: the user's eye, NeoForge, a dedicated server, a mod's
+  water lake.
 - [~] D.6 Block light in the preview (ADR-117, see C.1d): the light sources the stand-in's
   features place (sea pickles among corals, glow lichen, sea lanterns,
   mods' glowing plants), kept per feature voxel with their emission and
