@@ -545,6 +545,7 @@ public final class LodRenderer {
         final int fogCylinder;
         final int translucent;
         final int debugLevels;
+        final int ambientOcclusion;
         final int biomeBlend;
         final int atlas;
         final int atlasSize;
@@ -575,6 +576,7 @@ public final class LodRenderer {
             fogCylinder = program.uniform("u_fogCylinder");
             translucent = program.uniform("u_translucent");
             debugLevels = program.uniform("u_debugLevels");
+            ambientOcclusion = program.uniform("u_ambientOcclusion");
             biomeBlend = program.uniform("u_biomeBlend");
             atlas = program.uniform("u_atlas");
             atlasSize = program.uniform("u_atlasSize");
@@ -3266,6 +3268,7 @@ public final class LodRenderer {
         }
         glUniform1i(s.translucent, translucent ? 1 : 0);
         glUniform1i(s.debugLevels, RenderSettings.debugLevels() ? 1 : 0);
+        glUniform1i(s.ambientOcclusion, RenderSettings.ambientOcclusion() ? 1 : 0);
         // Vanilla's Biome Blend option (0 off, else the radius in blocks), as the game's terrain.
         glUniform1i(s.biomeBlend, mc.options.biomeBlendRadius().get());
         glUniform1i(s.atlas, ATLAS_UNIT);

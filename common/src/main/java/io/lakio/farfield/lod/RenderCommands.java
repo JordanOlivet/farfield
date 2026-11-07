@@ -91,6 +91,12 @@ public final class RenderCommands {
                                                 0, LodWorld.LEVELS - 1))
                                         .executes(c -> run.run(c.getSource(),
                                                 () -> forcedLevel(IntegerArgumentType.getInteger(c, "level"))))))
+                        .then(LiteralArgumentBuilder.<S>literal("ao")
+                                .executes(c -> run.run(c.getSource(), () -> debugAo(!RenderSettings.ambientOcclusion())))
+                                .then(LiteralArgumentBuilder.<S>literal("on").executes(c -> run.run(c.getSource(),
+                                        () -> debugAo(true))))
+                                .then(LiteralArgumentBuilder.<S>literal("off").executes(c -> run.run(c.getSource(),
+                                        () -> debugAo(false)))))
                         .then(LiteralArgumentBuilder.<S>literal("plants")
                                 .executes(c -> run.run(c.getSource(), () -> debugPlants(!RenderSettings.drawPlants())))
                                 .then(LiteralArgumentBuilder.<S>literal("on").executes(c -> run.run(c.getSource(),
@@ -117,6 +123,13 @@ public final class RenderCommands {
         RenderSettings.setDrawPlants(on);
         Farfield.LOG.info("LOD plants switched {} by command", on ? "on" : "off");
         return "LOD plants " + (on ? "on" : "off") + " (default on, not saved; GPU times on the next stat lines).";
+    }
+
+    /** Switches the LOD ambient occlusion, to compare GPU times on the stat line. Not saved. */
+    private static String debugAo(boolean on) {
+        RenderSettings.setAmbientOcclusion(on);
+        Farfield.LOG.info("LOD ambient occlusion switched {} by command", on ? "on" : "off");
+        return "LOD ambient occlusion " + (on ? "on" : "off") + " (default on, not saved; GPU times on the next stat lines).";
     }
 
     /** Switches the LOD depth pre-pass, to compare GPU times on the stat line. Not saved. */

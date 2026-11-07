@@ -40,6 +40,7 @@ public final class RenderSettings {
     private static volatile boolean noisePreview = RenderConfig.DEFAULTS.noisePreview();
     private static volatile boolean depthPrepass = true;
     private static volatile boolean drawPlants = true;
+    private static volatile boolean ambientOcclusion = true;
     private static volatile boolean drawTranslucent = true;
     private static volatile int forcedLevel = -1;
     private static volatile int meshThreads = RenderConfig.DEFAULTS.meshThreads();
@@ -133,6 +134,19 @@ public final class RenderSettings {
 
     public static void setDrawPlants(boolean value) {
         drawPlants = value;
+    }
+
+    /**
+     * Whether opaque LOD faces get vanilla's smooth-lighting ambient
+     * occlusion. A diagnostic switch for comparing GPU times
+     * ({@code /farfield debug ao}), on at every start, not saved.
+     */
+    public static boolean ambientOcclusion() {
+        return ambientOcclusion;
+    }
+
+    public static void setAmbientOcclusion(boolean value) {
+        ambientOcclusion = value;
     }
 
     /**

@@ -77,6 +77,7 @@ uniform vec2 u_fog;            // start, end
 uniform bool u_fogCylinder;    // vanilla's cylinder fog shape (max of horizontal and vertical distance)
 uniform bool u_translucent;    // translucent pass: blend with the face's coverage
 uniform bool u_debugLevels;    // tint faces by LOD level (/farfield debug levels)
+uniform bool u_ambientOcclusion;  // smooth-lighting occlusion on (/farfield debug ao)
 uniform sampler2D u_atlas;     // FaceTextures: 16x16 sRGB tiles, 128 per row, 5 mip levels
 uniform vec2 u_atlasSize;      // in pixels
 uniform float u_textureEnd;    // textures fade into the mean color up to this distance; 0: off
@@ -328,7 +329,7 @@ void main() {
         discard;
     }
     // As vanilla's terrain: texture times shade times lightmap, in sRGB.
-    float ao = (v_occluders != 0u && !u_translucent) ? ambientOcclusion() : 1.0;
+    float ao = (u_ambientOcclusion && v_occluders != 0u && !u_translucent) ? ambientOcclusion() : 1.0;
 #ifdef VOXY
     // The pack lights and fogs it: the texture with its tint, the occlusion
     // baked in as vanilla's vertex colors carry it, and the light levels.
