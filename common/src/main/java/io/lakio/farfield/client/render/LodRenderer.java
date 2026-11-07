@@ -3234,6 +3234,9 @@ public final class LodRenderer {
     }
 
     /** Binds a program variant and sets its uniforms for this frame ({@link #viewProj} set). */
+    /** The ambient occlusion state last logged: -1 none yet, 0 off, 1 on. */
+    private int loggedOcclusion = -1;
+
     private void use(Shader s, Vec3 cam, Minecraft mc, boolean translucent) {
         int blockX = (int) Math.floor(cam.x);
         int blockY = (int) Math.floor(cam.y);
@@ -3268,7 +3271,16 @@ public final class LodRenderer {
         }
         glUniform1i(s.translucent, translucent ? 1 : 0);
         glUniform1i(s.debugLevels, RenderSettings.debugLevels() ? 1 : 0);
-        glUniform1i(s.ambientOcclusion, RenderSettings.ambientOcclusion() ? 1 : 0);
+        // Vanilla's Smooth Lighting option, as the game's terrain (ADR-116); the debug switch on top.
+        boolean smoothLighting = mc.options.ambientOcclusion().get();
+        int occlusion = smoothLighting && RenderSettings.ambientOcclusion() ? 1 : 0;
+        if (occlusion != loggedOcclusion) {
+            loggedOcclusion = occlusion;
+            Farfield.LOG.info("LOD ambient occlusion {} (Smooth Lighting {}, debug switch {})",
+                    occlusion == 1 ? "on" : "off", smoothLighting ? "on" : "off",
+                    RenderSettings.ambientOcclusion() ? "on" : "off");
+        }
+        glUniform1i(s.ambientOcclusion, occlusion);
         // Vanilla's Biome Blend option (0 off, else the radius in blocks), as the game's terrain.
         glUniform1i(s.biomeBlend, mc.options.biomeBlendRadius().get());
         glUniform1i(s.atlas, ATLAS_UNIT);

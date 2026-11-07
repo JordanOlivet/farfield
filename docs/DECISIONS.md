@@ -3210,3 +3210,28 @@ fragment since its introduction).
   the two biomes. Captures before and after look the same; their pixel
   difference (mean 2.0 of 255 below the horizon) is under that of blend 7
   against 0 (4.1), without a measured run-to-run baseline.
+
+## ADR-116 — LOD ambient occlusion follows vanilla's Smooth Lighting
+
+Status: accepted, 2026-11-07. Amends the ambient occlusion of the renderer
+(always on since its introduction).
+
+- **Context**: `lod.frag` applies vanilla's smooth-lighting occlusion per
+  fragment on opaque LOD faces, reading up to 8 neighbor voxels. Measured
+  with `/farfield debug ao` in the Fabric pack, 1920x1080, plains at -1264,
+  107, 882: +57 us of the opaque pass under Complementary Reimagined (345
+  against 288), +36 us without a pack (227 against 191), 8 to 10 % of the
+  LOD GPU time. It ignored vanilla's Smooth Lighting option: with it off,
+  the game's terrain had no occlusion and the LODs kept theirs.
+- **Decision**: the occlusion runs only while vanilla's Smooth Lighting
+  option (`ao` in `options.txt`) is on, read live every frame like Biome
+  Blend; the debug switch can still turn it off on top. With the option
+  on, the LODs render as before; with it off, they skip the occlusion and
+  its cost.
+- **Not done**: a per-vertex or per-quad occlusion would need the mesher
+  to split greedy quads where the occlusion changes (more quads); not worth
+  it for 36 to 57 us at 1080p.
+- **Result**: Fabric pack without a shader pack, same spot, Smooth Lighting
+  off: opaque 188 us, unchanged by the debug switch; on: the occlusion
+  and its switch as before. The effective state is logged when it
+  changes.
