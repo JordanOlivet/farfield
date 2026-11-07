@@ -1,0 +1,1 @@
+[15:16:29] ... (earlier run) opaque times 330 to 470 us moving with the switch, then with the state line added: "LOD ambient occlusion switched off by command" / "resident 1760 uploaded 0 render 181 gpu 354 prepass 134 opaque 188" repeated across four toggles.

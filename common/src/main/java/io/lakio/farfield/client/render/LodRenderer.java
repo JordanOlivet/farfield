@@ -431,6 +431,8 @@ public final class LodRenderer {
     private boolean selectionDirty = true;
     /** The noise preview setting the last selection ran with. */
     private boolean selectedPreview;
+    /** The preview light setting the resident preview meshes were built with (ADR-117). */
+    private boolean meshedPreviewLight = RenderSettings.previewLight();
     private final PreviewLayer previewLayer = new PreviewLayer(meshers);
     /** Preview tiles changed since the last frame, with the chunks whose sections must be meshed again. */
     private final Map<Long, int[]> changedTiles = new java.util.HashMap<>();
@@ -1122,6 +1124,20 @@ public final class LodRenderer {
         }
         if (RenderSettings.noisePreview() != selectedPreview) {
             selectionDirty = true;
+        }
+        if (RenderSettings.previewLight() != meshedPreviewLight) {
+            // The preview's light is in its sections: mesh them again, the old meshes drawn meanwhile.
+            meshedPreviewLight = RenderSettings.previewLight();
+            int n = 0;
+            for (long key : resident.keySet()) {
+                if (PreviewLayer.isPreview(key)) {
+                    stale.add(key);
+                    n++;
+                }
+            }
+            selectionDirty = true;
+            Farfield.LOG.info("LOD preview light switched {}: {} preview sections meshed again",
+                    meshedPreviewLight ? "on" : "off", n);
         }
         updateFrustum(viewRotation, projection);
         if (selectionDirty || turned || dx * dx + dy * dy + dz * dz > RESELECT_DISTANCE_SQ

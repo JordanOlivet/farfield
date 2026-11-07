@@ -17,13 +17,14 @@ import java.util.Properties;
  * dimensions and of dimensions with thick fog such as the Nether (ADR-034),
  * the noise preview of terrain not generated yet (ADR-038), the
  * threads that mesh LOD sections and build the preview, or {@link #AUTO},
- * and the performance log lines (off by default: no log flood in play).
+ * the performance log lines (off by default: no log flood in play), and
+ * the light of the preview's light sources (ADR-117).
  * Missing or invalid keys take their default, out-of-range values are
  * clamped, so a hand-edited file never stops the game.
  */
 public record RenderConfig(boolean enabled, float voxelPixels, int textureDistance, boolean levelColors,
                            int fogDistance, int thickFogDistance, boolean noisePreview, int meshThreads,
-                           int previewThreads, boolean performanceLogs) {
+                           int previewThreads, boolean performanceLogs, boolean previewLight) {
 
     /** Default target size of an LOD voxel on screen, in pixels, where a level hands over to the next. */
     public static final float DEFAULT_VOXEL_PIXELS = 6f;
@@ -51,7 +52,7 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
     public static final int MAX_THREADS = 8;
 
     public static final RenderConfig DEFAULTS = new RenderConfig(true, DEFAULT_VOXEL_PIXELS, DEFAULT_TEXTURE_DISTANCE,
-            false, DEFAULT_FOG_DISTANCE, DEFAULT_THICK_FOG_DISTANCE, true, AUTO, AUTO, false);
+            false, DEFAULT_FOG_DISTANCE, DEFAULT_THICK_FOG_DISTANCE, true, AUTO, AUTO, false, true);
 
     static final String ENABLED = "lod_rendering";
     static final String VOXEL_PIXELS = "detail_pixels_per_voxel";
@@ -63,6 +64,7 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
     static final String MESH_THREADS = "mesh_threads";
     static final String PREVIEW_THREADS = "preview_threads";
     static final String PERFORMANCE_LOGS = "performance_logs";
+    static final String PREVIEW_LIGHT = "preview_light";
     /** Before ADR-034: true meant thick fog pushed back to the LOD horizon. Read only. */
     static final String EXTEND_DIMENSION_FOG = "extend_dimension_fog";
     private static final String ALL = "all";
@@ -77,6 +79,14 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
         thickFogDistance = clampThickFogDistance(thickFogDistance);
         meshThreads = clampThreads(meshThreads);
         previewThreads = clampThreads(previewThreads);
+    }
+
+    /** The settings with the preview's light on. */
+    public RenderConfig(boolean enabled, float voxelPixels, int textureDistance, boolean levelColors,
+                        int fogDistance, int thickFogDistance, boolean noisePreview, int meshThreads,
+                        int previewThreads, boolean performanceLogs) {
+        this(enabled, voxelPixels, textureDistance, levelColors, fogDistance, thickFogDistance, noisePreview,
+                meshThreads, previewThreads, performanceLogs, true);
     }
 
     /** The settings with the performance logs off. */
@@ -167,7 +177,8 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
                 bool(p, NOISE_PREVIEW, DEFAULTS.noisePreview),
                 parseThreads(p, MESH_THREADS),
                 parseThreads(p, PREVIEW_THREADS),
-                bool(p, PERFORMANCE_LOGS, DEFAULTS.performanceLogs));
+                bool(p, PERFORMANCE_LOGS, DEFAULTS.performanceLogs),
+                bool(p, PREVIEW_LIGHT, DEFAULTS.previewLight));
     }
 
     /** Writes the file through a temporary file, so a crash mid-write keeps the previous one. */
@@ -196,6 +207,9 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
             out.write(THICK_FOG_DISTANCE + "=" + fogText(thickFogDistance) + "\n");
             out.write("# Show terrain not generated yet from the world's noise, coarsely (single player).\n");
             out.write(NOISE_PREVIEW + "=" + noisePreview + "\n");
+            out.write("# Light around the preview's light sources (sea pickles, lava, glowing blocks)."
+                    + " Default true.\n");
+            out.write(PREVIEW_LIGHT + "=" + previewLight + "\n");
             out.write("# Threads that build LOD meshes, 1 to " + MAX_THREADS + ", or auto (one per four logical\n");
             out.write("# processors, 1 to 4). Default auto.\n");
             out.write(MESH_THREADS + "=" + threadsText(meshThreads) + "\n");

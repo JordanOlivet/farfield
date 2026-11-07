@@ -1043,4 +1043,75 @@ class PreviewTest {
         LodSection masked = PreviewVoxels.build(0, 0, 2, 0, tiles, real, AIR, -64, -1, -1, -1, 0);
         assertTrue(masked == null || masked.material(10, 66 - 64, 20) == AIR);
     }
+
+    // ---------------------------------------------------------------- light sources (ADR-117)
+
+    /** Builds section (0, 1, 0) of the slope (blocks 0..31, y 32..63) with a source of {@code emission} at (x, y, z). */
+    private static LodSection litSlope(int level, int x, int y, int z, int emission, PreviewVoxels.Mask mask,
+                                       boolean blockLight) {
+        PreviewTile t = slope();
+        t.setLights(new int[]{PreviewTile.lightWord(x, z, emission), y});
+        return PreviewVoxels.build(level, 0, level == 0 ? 1 : 0, 0, (tx, tz) -> tx == 0 && tz == 0 ? t : null, mask,
+                AIR, -64, -1, -1, -1, 0, null, blockLight);
+    }
+
+    @Test
+    void lightSourcesRoundTripThroughTheirEncoding() {
+        PreviewTile t = slope();
+        t.setLights(new int[]{PreviewTile.lightWord(-16, 527, 15), -40, PreviewTile.lightWord(3, 4, 6), 70});
+        ByteWriter out = new ByteWriter(1024);
+        t.encode(out);
+        PreviewTile back = PreviewTile.decode(new ByteReader().reset(out.array(), 0, out.length()));
+        int[] lights = back.lights();
+        assertEquals(4, lights.length);
+        assertEquals(-16, PreviewTile.lightX(lights[0]));
+        assertEquals(527, PreviewTile.lightZ(lights[0]));
+        assertEquals(15, PreviewTile.lightEmission(lights[0]));
+        assertEquals(-40, lights[1]);
+        assertEquals(6, PreviewTile.lightEmission(lights[2]));
+        assertEquals(70, lights[3]);
+    }
+
+    @Test
+    void aSourceLightsTheVoxelsAroundItOneLevelLessPerBlock() {
+        // Under the slope's sea: column 8 has its surface at 59, water up to 62.
+        LodSection s = litSlope(0, 8, 60, 8, 10, null, true);
+        assertNotNull(s);
+        assertEquals(10, s.blockLight().get(8, 60 - 32, 8));
+        assertEquals(7, s.blockLight().get(11, 60 - 32, 8));
+        assertEquals(8, s.blockLight().get(9, 61 - 32, 8));
+        assertEquals(1, s.blockLight().get(8, 60 - 32, 17));
+        assertEquals(0, s.blockLight().get(8, 60 - 32, 18));
+        // Off: no block light at all, as before ADR-117.
+        LodSection off = litSlope(0, 8, 60, 8, 10, null, false);
+        assertEquals(0, off.blockLight().get(8, 60 - 32, 8));
+    }
+
+    @Test
+    void aCoarseVoxelTakesTheLightOfItsNearestBlock() {
+        // Level 1, section (0, 0, 0): voxels of 2 blocks, y 0..63.
+        LodSection s = litSlope(1, 8, 56, 8, 10, null, true);
+        assertNotNull(s);
+        assertEquals(10, s.blockLight().get(4, 28, 4)); // holds the source
+        assertEquals(8, s.blockLight().get(5, 28, 4)); // spans x 10..11: x 10 is 2 away
+        assertEquals(9, s.blockLight().get(3, 28, 4)); // spans x 6..7: x 7 is 1 away
+        assertEquals(6, s.blockLight().get(5, 29, 4)); // x 10 and y 58: 2 + 2 away
+    }
+
+    @Test
+    void sourcesOfTheTileBesideAndOverRealChunksLightOnlyPreviewTerrain() {
+        PreviewTile west = slope();
+        PreviewTile t = slope();
+        // Block x -1 of the world: the last column of the tile to the west, a source of 5.
+        west.setLights(new int[]{PreviewTile.lightWord(511, 8, 5), 60});
+        PreviewVoxels.Tiles tiles = (tx, tz) -> tz != 0 ? null : tx == 0 ? t : tx == -1 ? west : null;
+        LodSection s = PreviewVoxels.build(0, 0, 1, 0, tiles, null, AIR, -64, -1, -1, -1, 0, null, true);
+        assertEquals(4, s.blockLight().get(0, 60 - 32, 8));
+        assertEquals(1, s.blockLight().get(3, 60 - 32, 8));
+        // Over a real chunk the real LODs light it: the source is left out.
+        LodSection masked = litSlope(0, 8, 60, 8, 10, (cx, cz) -> cx == 0 && cz == 0, true);
+        // Chunk (1, 0) is preview terrain: without the mask, block x 17 would read 1.
+        assertTrue(masked == null || masked.blockLight().get(17, 60 - 32, 8) == 0);
+        assertEquals(1, litSlope(0, 8, 60, 8, 10, null, true).blockLight().get(17, 60 - 32, 8));
+    }
 }

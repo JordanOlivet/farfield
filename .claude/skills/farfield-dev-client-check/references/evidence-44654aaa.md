@@ -1,0 +1,1 @@
+overrideWidth:0 / overrideHeight:0 restored after the run, and the settle outcome: "resident 1761 uploaded 27 prepass 136 opaque 191" followed by "resident 1761 uploaded 8 prepass 136 opaque 191" (unsettled, scene still uploading) in the first run; the stable run then read "resident 1760 uploaded 0 render 181 gpu 354 prepass 134 opaque 188".

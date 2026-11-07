@@ -38,6 +38,7 @@ public final class RenderSettings {
     private static volatile int fogDistance = RenderConfig.DEFAULTS.fogDistance();
     private static volatile int thickFogDistance = RenderConfig.DEFAULTS.thickFogDistance();
     private static volatile boolean noisePreview = RenderConfig.DEFAULTS.noisePreview();
+    private static volatile boolean previewLight = RenderConfig.DEFAULTS.previewLight();
     private static volatile boolean depthPrepass = true;
     private static volatile boolean drawPlants = true;
     private static volatile boolean ambientOcclusion = true;
@@ -242,6 +243,18 @@ public final class RenderSettings {
     }
 
     /**
+     * Whether the preview's light sources light the voxels around them
+     * (ADR-117): sea pickles, lava, glowing blocks and plants.
+     */
+    public static boolean previewLight() {
+        return previewLight;
+    }
+
+    public static void setPreviewLight(boolean value) {
+        previewLight = value;
+    }
+
+    /**
      * Whether the performance lines go to the log (stat lines, fill and build
      * times): the client setting, or the {@code farfield.perfLogs} system
      * property. Lifecycle lines (stores opened and closed, settings) always do.
@@ -272,6 +285,7 @@ public final class RenderSettings {
             meshThreads = config.meshThreads();
             previewThreads = config.previewThreads();
             performanceLogs = config.performanceLogs();
+            previewLight = config.previewLight();
             Farfield.LOG.info(Files.exists(file) ? "LOD settings loaded from {}: {}" : "No {} yet, LOD settings at their defaults: {}",
                     file.getFileName(), config);
         } catch (IOException | RuntimeException e) {
@@ -286,7 +300,7 @@ public final class RenderSettings {
         }
         Path file = file();
         RenderConfig config = new RenderConfig(enabled, voxelPixels, textureDistance, debugLevels, fogDistance,
-                thickFogDistance, noisePreview, meshThreads, previewThreads, performanceLogs);
+                thickFogDistance, noisePreview, meshThreads, previewThreads, performanceLogs, previewLight);
         try {
             config.write(file);
             Farfield.LOG.info("LOD settings saved to {}: {}", file.getFileName(), config);

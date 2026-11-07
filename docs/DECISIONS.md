@@ -3235,3 +3235,42 @@ Status: accepted, 2026-11-07. Amends the ambient occlusion of the renderer
   off: opaque 188 us, unchanged by the debug switch; on: the occlusion
   and its switch as before. The effective state is logged when it
   changes.
+
+## ADR-117 — Block light in the preview, from the features' light sources
+
+Status: accepted, 2026-11-07. Amends the preview tiles (ADR-079, format 17)
+and the stream protocol (8). Plan items C.1d and D.6.
+
+- **Context**: the preview's voxels had no block light, so at night and
+  under shader packs (which light from the lightmap's block light) the far
+  terrain showed none of the light the real LODs show. A probe of the 35
+  tiles of the test world (the user's Fabric pack) found no light source
+  among the feature runs: sea pickles are stored as the sea's water, a
+  torch has no mesh class, and one sea pickle or lantern never fills the
+  quarter of a 2-block feature voxel that a run needs.
+- **Decision**: the server keeps every light source the features place, as
+  its own list in the tile: block position and the block state's light
+  emission (1 to 15), whatever the block becomes in the runs. Same rule for
+  every block, no list: sea pickles, lava, glowing blocks and plants of any
+  mod. Sources under the tile's ground are not kept, as the rest of the
+  features. The client lights the preview's voxels when it builds them:
+  each voxel takes the brightest `emission - distance`, the distance in
+  blocks from the source to the voxel's nearest block per axis (vanilla
+  spreads block light one level per block; the real mip rule keeps a
+  voxel's brightest block). Walls are not counted: with no buried source
+  and a skin-only preview, there is little to cross. Sources over real
+  chunks are left out, the real LODs carry their own light. A client
+  setting turns it off (`preview_light`, Preview Light on the settings
+  screen, `/farfield preview light on|off`, default on); switching it
+  meshes the resident preview sections again.
+- **Format and protocol**: tile format 17 (every preview tile is built
+  again, minutes of background work on a server after a deploy); stream
+  protocol 8, so a client on the previous jar declines the server's stream
+  instead of failing on the new tiles.
+- **Result**: Fabric pack, test world, warm ocean near 208, 2700 at
+  midnight, 1080p: 5,719 light sources in 42 tiles (minute line); without
+  a shader pack and under Complementary Reimagined r5.9.3, the reef and the
+  sand around its sea pickles light up with the setting on, as dark as
+  before with it off, the patch of real terrain in view lit the same way in
+  both. Mesh jobs right after the switch: 2,801 us with the light against
+  5,185 us without (noisy, no cost seen).

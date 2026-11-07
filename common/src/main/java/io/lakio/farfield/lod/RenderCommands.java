@@ -69,7 +69,13 @@ public final class RenderCommands {
                 .then(LiteralArgumentBuilder.<S>literal("preview")
                         .executes(c -> run.run(c.getSource(), () -> preview(!RenderSettings.noisePreview())))
                         .then(LiteralArgumentBuilder.<S>literal("on").executes(c -> run.run(c.getSource(), () -> preview(true))))
-                        .then(LiteralArgumentBuilder.<S>literal("off").executes(c -> run.run(c.getSource(), () -> preview(false)))))
+                        .then(LiteralArgumentBuilder.<S>literal("off").executes(c -> run.run(c.getSource(), () -> preview(false))))
+                        .then(LiteralArgumentBuilder.<S>literal("light")
+                                .executes(c -> run.run(c.getSource(), () -> previewLight(!RenderSettings.previewLight())))
+                                .then(LiteralArgumentBuilder.<S>literal("on").executes(c -> run.run(c.getSource(),
+                                        () -> previewLight(true))))
+                                .then(LiteralArgumentBuilder.<S>literal("off").executes(c -> run.run(c.getSource(),
+                                        () -> previewLight(false))))))
                 .then(LiteralArgumentBuilder.<S>literal("debug")
                         .then(LiteralArgumentBuilder.<S>literal("levels")
                                 .executes(c -> run.run(c.getSource(), () -> debugLevels(!RenderSettings.debugLevels())))
@@ -188,6 +194,14 @@ public final class RenderCommands {
         RenderSettings.save();
         Farfield.LOG.info("LOD noise preview switched {} by command", on ? "on" : "off");
         return on ? "Noise preview on: terrain not generated yet shows coarsely." : "Noise preview off.";
+    }
+
+    /** The light of the preview's light sources (ADR-117), saved like the settings screen's. */
+    private static String previewLight(boolean on) {
+        RenderSettings.setPreviewLight(on);
+        RenderSettings.save();
+        Farfield.LOG.info("LOD preview light switched {} by command", on ? "on" : "off");
+        return "Preview light " + (on ? "on" : "off") + ": the preview is meshed again.";
     }
 
     /** Tints LOD faces by level, to see where each level hands over. */

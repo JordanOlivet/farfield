@@ -64,6 +64,9 @@ public final class FarfieldSettingsScreen extends OptionsSubScreen {
         list.addBig(OptionInstance.createBoolean("farfield.options.noise_preview",
                 OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.noise_preview.tooltip")),
                 RenderSettings.noisePreview(), RenderSettings::setNoisePreview));
+        list.addBig(OptionInstance.createBoolean("farfield.options.preview_light",
+                OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.preview_light.tooltip")),
+                RenderSettings.previewLight(), RenderSettings::setPreviewLight));
         list.addBig(threadSlider("farfield.options.mesh_threads", RenderSettings.meshThreads(),
                 RenderSettings::setMeshThreads));
         list.addBig(threadSlider("farfield.options.preview_threads", RenderSettings.previewThreads(),

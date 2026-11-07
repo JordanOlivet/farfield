@@ -167,7 +167,12 @@ Items:
     `renderScale`; `vxRenderDistance` covers the farthest LOD geometry.
     Verified running under photon-gcea (TAAU 0.75, 803 of 1,673
     materials with a pack id). Remains: the user's eye.
-  - [ ] C.1d D.6 block light in the preview, for the packs' lightmap.
+  - [~] C.1d D.6 block light in the preview, for the packs' lightmap.
+    Done (ADR-117): the features' light sources kept in the tiles
+    (format 17, protocol 8), the preview's voxels lit from them, the
+    `preview_light` setting (default on). Verified on the Fabric pack, no
+    pack and Complementary, warm ocean at night. Remains: the user's eye,
+    NeoForge, a dedicated server (tiles streamed).
   - [ ] C.1e DH's contract for packs without Voxy's.
   - Later, outside C.1 (the user, 2026-11-03): packs with neither
     contract (LODs off with a message meanwhile), our own contract, LOD
@@ -211,7 +216,7 @@ Items:
   LODs draw them. The user, on their server (2026-10-30): "c'est bon pour
   le corail". Left out as in the real LODs: coral fans and plants, sea
   pickles (water there).
-- [ ] D.6 Block light in the preview: the light sources the stand-in's
+- [~] D.6 Block light in the preview (ADR-117, see C.1d): the light sources the stand-in's
   features place (sea pickles among corals, glow lichen, sea lanterns,
   mods' glowing plants), kept per feature voxel with their emission and
   spread at draw time into the voxels' block light, as the real LODs show

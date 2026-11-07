@@ -3,6 +3,7 @@ package io.lakio.farfield.client.render;
 import io.lakio.farfield.core.LodKey;
 import io.lakio.farfield.core.lod.LodSection;
 import io.lakio.farfield.core.mesh.BinaryGreedyMesher;
+import io.lakio.farfield.lod.RenderSettings;
 import io.lakio.farfield.core.mesh.MaterialClassifier;
 import io.lakio.farfield.core.preview.PreviewStore;
 import io.lakio.farfield.core.preview.PreviewTile;
@@ -904,7 +905,8 @@ final class PreviewLayer {
             }
         };
         return PreviewVoxels.build(drawLevel(key), LodKey.x(key), LodKey.y(key), LodKey.z(key), tiles, maskOf(w),
-                w.air(), minY, maskGround(w), maskFluid(w), layerAxis, layerIndex, w.materials());
+                w.air(), minY, maskGround(w), maskFluid(w), layerAxis, layerIndex, w.materials(),
+                RenderSettings.previewLight());
     }
 
     /** The material ids of real columns, whose quads {@code LodRenderer} drops. */

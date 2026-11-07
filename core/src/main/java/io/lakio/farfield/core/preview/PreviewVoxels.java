@@ -2,6 +2,7 @@ package io.lakio.farfield.core.preview;
 
 import io.lakio.farfield.core.lod.LodSection;
 import io.lakio.farfield.core.lod.MipBuilder;
+import io.lakio.farfield.core.lod.NibbleBricks;
 
 /**
  * Turns preview tiles into LOD sections of any level (ADR-039), on demand.
@@ -46,6 +47,14 @@ import io.lakio.farfield.core.lod.MipBuilder;
  * drawn by count; on coarser levels the top voxel takes the ground covered
  * by the chunk's most common plant, in quarters of that cover, as the real
  * mip rule ({@link MipBuilder.Shapes#covered}).
+ *
+ * <p>The features' light sources (ADR-117) light the voxels around them:
+ * a voxel takes the brightest of {@code emission - distance}, the distance
+ * counted in blocks from the source to the voxel's nearest block along each
+ * axis (vanilla's block light spreads one level per block, and the real mip
+ * rule keeps a voxel's brightest block). Walls between them are not
+ * counted, as sources under the ground are not kept. Sources over real
+ * chunks are left out: the real LODs carry their own light.
  */
 public final class PreviewVoxels {
 
@@ -108,6 +117,17 @@ public final class PreviewVoxels {
     public static LodSection build(int level, int sx, int sy, int sz, Tiles tiles, Mask mask, int air, int minY,
                                    int maskGround, int maskFluid, int layerAxis, int layerIndex,
                                    MipBuilder.Shapes covers) {
+        return build(level, sx, sy, sz, tiles, mask, air, minY, maskGround, maskFluid, layerAxis, layerIndex, covers,
+                false);
+    }
+
+    /**
+     * Like {@link #build(int, int, int, int, Tiles, Mask, int, int, int, int, int, int, MipBuilder.Shapes)};
+     * {@code blockLight} lights the voxels around the features' light sources (ADR-117).
+     */
+    public static LodSection build(int level, int sx, int sy, int sz, Tiles tiles, Mask mask, int air, int minY,
+                                   int maskGround, int maskFluid, int layerAxis, int layerIndex,
+                                   MipBuilder.Shapes covers, boolean blockLight) {
         int s = 1 << level;
         int size = S * s;
         int ox = sx * size;
@@ -270,6 +290,9 @@ public final class PreviewVoxels {
             // water face against a trunk on a section border stays, behind the trunk).
             section = trees(section, level, ox, oy, oz, cache, mask, air, layerAxis, layerIndex);
         }
+        if (section != null && blockLight) {
+            blockLight(section, level, ox, oy, oz, cache, mask, layerAxis, layerIndex);
+        }
         if (section != null) {
             for (int cz = 0; cz < LodSection.BIOME_CELLS_PER_AXIS; cz++) {
                 for (int cx = 0; cx < LodSection.BIOME_CELLS_PER_AXIS; cx++) {
@@ -289,6 +312,78 @@ public final class PreviewVoxels {
             }
         }
         return section;
+    }
+
+    /** Lights the section's voxels from the light sources of the tiles around (see the class comment). */
+    private static void blockLight(LodSection section, int level, int ox, int oy, int oz, TileCache cache, Mask mask,
+                                   int layerAxis, int layerIndex) {
+        int s = 1 << level;
+        int size = S * s;
+        // A source of 15 lights blocks up to 14 away; its tile holds it up to its margin out.
+        int reach = 14 + PreviewTile.FEATURE_MARGIN;
+        for (int tz = Math.floorDiv(oz - reach, PreviewTile.BLOCKS); tz <= Math.floorDiv(oz + size - 1 + reach, PreviewTile.BLOCKS); tz++) {
+            for (int tx = Math.floorDiv(ox - reach, PreviewTile.BLOCKS); tx <= Math.floorDiv(ox + size - 1 + reach, PreviewTile.BLOCKS); tx++) {
+                PreviewTile tile = cache.tile(tx, tz);
+                if (tile == null) {
+                    continue;
+                }
+                int[] lights = tile.lights();
+                for (int j = 0; j < lights.length; j += 2) {
+                    int word = lights[j];
+                    int emission = PreviewTile.lightEmission(word);
+                    int x = tx * PreviewTile.BLOCKS + PreviewTile.lightX(word);
+                    int y = lights[j + 1];
+                    int z = tz * PreviewTile.BLOCKS + PreviewTile.lightZ(word);
+                    if (gap(x, ox, ox + size - 1) + gap(y, oy, oy + size - 1) + gap(z, oz, oz + size - 1) >= emission
+                            || mask != null && mask.real(x >> 4, z >> 4)) {
+                        continue;
+                    }
+                    light(section.blockLight(), level, ox, oy, oz, x, y, z, emission, layerAxis, layerIndex);
+                }
+            }
+        }
+    }
+
+    /** Raises the voxels within reach of a source at block (x, y, z) to its light there. */
+    static void light(NibbleBricks light, int level, int ox, int oy, int oz, int x, int y, int z, int emission,
+                      int layerAxis, int layerIndex) {
+        int s = 1 << level;
+        int r = emission - 1;
+        int vy0 = Math.max(0, Math.floorDiv(y - r - oy, s));
+        int vy1 = Math.min(S - 1, Math.floorDiv(y + r - oy, s));
+        int vz0 = Math.max(0, Math.floorDiv(z - r - oz, s));
+        int vz1 = Math.min(S - 1, Math.floorDiv(z + r - oz, s));
+        int vx0 = Math.max(0, Math.floorDiv(x - r - ox, s));
+        int vx1 = Math.min(S - 1, Math.floorDiv(x + r - ox, s));
+        for (int vy = vy0; vy <= vy1; vy++) {
+            if (layerAxis == 1 && vy != layerIndex) {
+                continue;
+            }
+            int dy = gap(y, oy + vy * s, oy + vy * s + s - 1);
+            for (int vz = vz0; vz <= vz1; vz++) {
+                if (layerAxis == 2 && vz != layerIndex) {
+                    continue;
+                }
+                int dyz = dy + gap(z, oz + vz * s, oz + vz * s + s - 1);
+                if (dyz >= emission) {
+                    continue;
+                }
+                for (int vx = vx0; vx <= vx1; vx++) {
+                    if (layerAxis == 0 && vx != layerIndex) {
+                        continue;
+                    }
+                    int value = emission - dyz - gap(x, ox + vx * s, ox + vx * s + s - 1);
+                    if (value > light.get(vx, vy, vz)) {
+                        light.set(vx, vy, vz, value);
+                    }
+                }
+            }
+        }
+    }
+
+    /** Blocks from {@code p} to the nearest of [lo, hi], 0 inside. */
+    private static int gap(int p, int lo, int hi) {
+        return p < lo ? lo - p : p > hi ? p - hi : 0;
     }
 
     /** Share of a chunk's ground its plants cover: each of {@code count} per chunk lands on a random block. */

@@ -112,6 +112,8 @@ final class PreviewFeatures {
     private final Long2ObjectOpenHashMap<Int2IntOpenHashMap> voxels = new Long2ObjectOpenHashMap<>();
     /** Per column of the tile ({@code BlockPos.asLong(x, 0, z)}): its plants under the sea, {lowest y, blocks, lowest block's material}. */
     private final Long2ObjectOpenHashMap<int[]> seaColumns = new Long2ObjectOpenHashMap<>();
+    /** Per block ({@code BlockPos.asLong}): the light emission of the features' light sources (ADR-117). */
+    private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap lights = new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
     /** Per chunk of the tile: plant blocks set in it, by material. */
     private final Int2IntOpenHashMap[] plants = new Int2IntOpenHashMap[PreviewTile.CHUNKS * PreviewTile.CHUNKS];
     private int failures;
@@ -654,6 +656,12 @@ final class PreviewFeatures {
                     || z >= z0 + PreviewTile.BLOCKS + margin || y < ground(x, z) || bare.test(x, z)) {
                 continue;
             }
+            int emission = state.getLightEmission();
+            if (emission > 0) {
+                // Kept whatever the block becomes below (water, nothing, a voxel too empty to
+                // show): its light is what the LODs show of a sea pickle or a torch (ADR-117).
+                lights.put(pos, Math.max(lights.get(pos), Math.min(15, emission)));
+            }
             if (y < seaLevel && BlockKeys.isSubmergedPlant(state)) {
                 // Kelp and seagrass: counted per column, drawn in the tile's water (ADR-105).
                 if (x >= x0 && z >= z0 && x < x0 + PreviewTile.BLOCKS && z < z0 + PreviewTile.BLOCKS) {
@@ -772,6 +780,14 @@ final class PreviewFeatures {
             tile.setPlants(c % PreviewTile.CHUNKS, c / PreviewTile.CHUNKS, java.util.Arrays.copyOf(entries, n));
         }
         storeSeaPlants();
+        int[] pairs = new int[lights.size() * 2];
+        int n = 0;
+        for (var e : lights.long2IntEntrySet()) {
+            long pos = e.getLongKey();
+            pairs[n++] = PreviewTile.lightWord(BlockPos.getX(pos) - x0, BlockPos.getZ(pos) - z0, e.getIntValue());
+            pairs[n++] = BlockPos.getY(pos);
+        }
+        tile.setLights(pairs);
     }
 
     /** Per chunk and lowest block's material: the columns of plants under the sea and their mean height. */

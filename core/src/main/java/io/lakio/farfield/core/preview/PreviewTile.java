@@ -46,10 +46,10 @@ public final class PreviewTile {
      * guessed trees, 12 vines-like plants as plants and nothing LODs leave
      * out among the features (ADR-080), 13 the trees of snowy forests
      * (ADR-086), 14 and 15 the ground from the surface rules (ADR-101,
-     * ADR-104), 16 the plants under the sea (ADR-105); older tiles are
-     * built again.
+     * ADR-104), 16 the plants under the sea (ADR-105), 17 the light sources
+     * of the features (ADR-117); older tiles are built again.
      */
-    private static final int FORMAT = 16;
+    private static final int FORMAT = 17;
     /** Blocks a side of a feature voxel. */
     public static final int FEATURE_VOXEL = 2;
     /** Blocks around the tile its features may reach. */
@@ -93,6 +93,8 @@ public final class PreviewTile {
      * for none.
      */
     private final int[][] features = new int[FEATURE_SIDE * FEATURE_SIDE][];
+    /** Light sources of the features (ADR-117): pairs of {@link #lightWord} and block y. */
+    private int[] lights = new int[0];
 
     /** Crown shapes of a {@link TreeKind}. */
     public static final int BLOB = 0;
@@ -203,6 +205,39 @@ public final class PreviewTile {
     /** The blocks a run spans upward. */
     public static int featureRunBlocks(int word) {
         return (word & 0xFF) * FEATURE_VOXEL;
+    }
+
+    /**
+     * Sets the features' light sources: pairs of {@link #lightWord} and
+     * block y, one per block, with the block's light emission (1 to 15).
+     */
+    public void setLights(int[] pairs) {
+        lights = pairs == null ? new int[0] : pairs.clone();
+    }
+
+    /** The features' light sources ({@link #setLights}); never null. Do not modify. */
+    public int[] lights() {
+        return lights;
+    }
+
+    /**
+     * A light source's word: block (x, z) of the tile ({@code -FEATURE_MARGIN}
+     * to {@code BLOCKS + FEATURE_MARGIN - 1}) and its emission (1 to 15).
+     */
+    public static int lightWord(int x, int z, int emission) {
+        return (x + FEATURE_MARGIN) | (z + FEATURE_MARGIN) << 10 | emission << 20;
+    }
+
+    public static int lightX(int word) {
+        return (word & 0x3FF) - FEATURE_MARGIN;
+    }
+
+    public static int lightZ(int word) {
+        return (word >> 10 & 0x3FF) - FEATURE_MARGIN;
+    }
+
+    public static int lightEmission(int word) {
+        return word >> 20 & 15;
     }
 
     /** The index of a plant material, added when new; -1 when the tile holds {@link #MAX_PLANT_KINDS} already. */
@@ -658,6 +693,11 @@ public final class PreviewTile {
                 y = (word >> 8) + (word & 0xFF);
             }
         }
+        out.writeVarInt(lights.length / 2);
+        for (int i = 0; i < lights.length; i += 2) {
+            out.writeVarInt(lights[i]);
+            out.writeVarInt(zigZag(lights[i + 1]));
+        }
     }
 
     public static PreviewTile decode(ByteReader in) {
@@ -754,6 +794,15 @@ public final class PreviewTile {
                 }
                 t.features[c] = runs;
             }
+        }
+        int lights = in.readVarInt();
+        if (lights < 0 || lights > FEATURE_SIDE * FEATURE_SIDE * 64) {
+            throw new IllegalArgumentException("bad light source count " + lights);
+        }
+        t.lights = new int[lights * 2];
+        for (int i = 0; i < t.lights.length; i += 2) {
+            t.lights[i] = in.readVarInt();
+            t.lights[i + 1] = unZigZag(in.readVarInt());
         }
         return t;
     }
