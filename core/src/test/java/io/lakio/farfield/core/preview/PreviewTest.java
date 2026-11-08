@@ -1215,4 +1215,22 @@ class PreviewTest {
         assertEquals(LAVA, pit[2]);
         assertTrue(!PreviewVoxels.pitAt(tiles, 508, 8, pit));
     }
+
+    @Test
+    void aSectionLooksUpItsTilesAFewTimesNotOncePerColumn() {
+        // The client's tile source takes a shared lock per read: reading the lakes per column through it
+        // made the mesh jobs 3 to 10 times slower (2026-11-08). Every tile here has a lake.
+        PreviewTile t = dugTile(8, 11, 8, 11, 61, 64);
+        int[] reads = new int[1];
+        PreviewVoxels.Tiles tiles = (tx, tz) -> {
+            reads[0]++;
+            return t;
+        };
+        for (int level = 0; level <= 4; level++) {
+            reads[0] = 0;
+            PreviewVoxels.build(level, 0, 64 >> level >> 5, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
+            System.out.println("tile reads at level " + level + ": " + reads[0]);
+            assertTrue(reads[0] < 400, "level " + level + ": " + reads[0] + " tile reads");
+        }
+    }
 }

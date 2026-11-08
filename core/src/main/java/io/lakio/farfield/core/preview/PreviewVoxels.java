@@ -152,6 +152,9 @@ public final class PreviewVoxels {
         java.util.Arrays.fill(lake, -1);
         int[] cell = new int[2];
         int[] pit = new int[3];
+        // The lakes are read per column, so the few tiles around the section are looked up once each.
+        Tiles near = new NearTiles(tiles, ox - s - PreviewTile.FEATURE_MARGIN, oz - s - PreviewTile.FEATURE_MARGIN,
+                ox + size + s + PreviewTile.FEATURE_MARGIN, oz + size + s + PreviewTile.FEATURE_MARGIN);
         // A layer along X or Z needs only its own row of columns and the two beside it.
         int iMin = layerAxis == 0 ? layerIndex - 1 : -1;
         int iMax = layerAxis == 0 ? layerIndex + 1 : S;
@@ -170,7 +173,7 @@ public final class PreviewVoxels {
                     ground[c] = mask.ground(bx >> 4, bz >> 4);
                     fluid[c] = mask.fluidTop(bx >> 4, bz >> 4);
                 } else if (h[c] != NONE) {
-                    dug[c] = dig(tiles, bx, bz, s, c, h, low, lake, lakeTop, pit);
+                    dug[c] = dig(near, bx, bz, s, c, h, low, lake, lakeTop, pit);
                 }
             }
         }
@@ -1233,6 +1236,47 @@ public final class PreviewVoxels {
     }
 
     /** Remembers the last tile asked for: columns come in runs over one tile. */
+    /**
+     * The tiles of a block area, each looked up from the source once, on
+     * first use (ADR-118: a section reads its lakes per column, and the
+     * client's store takes a shared lock on every read). Tiles outside the
+     * area go to the source.
+     */
+    static final class NearTiles implements Tiles {
+        private final Tiles tiles;
+        private final int minX;
+        private final int minZ;
+        private final int width;
+        private final int depth;
+        private final PreviewTile[] near;
+        private final boolean[] read;
+
+        NearTiles(Tiles tiles, int minBlockX, int minBlockZ, int maxBlockX, int maxBlockZ) {
+            this.tiles = tiles;
+            minX = Math.floorDiv(minBlockX, PreviewTile.BLOCKS);
+            minZ = Math.floorDiv(minBlockZ, PreviewTile.BLOCKS);
+            width = Math.floorDiv(maxBlockX, PreviewTile.BLOCKS) - minX + 1;
+            depth = Math.floorDiv(maxBlockZ, PreviewTile.BLOCKS) - minZ + 1;
+            near = new PreviewTile[width * depth];
+            read = new boolean[width * depth];
+        }
+
+        @Override
+        public PreviewTile tile(int tileX, int tileZ) {
+            int x = tileX - minX;
+            int z = tileZ - minZ;
+            if (x < 0 || z < 0 || x >= width || z >= depth) {
+                return tiles.tile(tileX, tileZ);
+            }
+            int i = z * width + x;
+            if (!read[i]) {
+                near[i] = tiles.tile(tileX, tileZ);
+                read[i] = true;
+            }
+            return near[i];
+        }
+    }
+
     static final class TileCache {
         private final Tiles tiles;
         private int lastX = Integer.MIN_VALUE;
