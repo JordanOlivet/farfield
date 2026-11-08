@@ -77,11 +77,15 @@ def prepare(shader):
         if (f.endswith('.jar') and not f.startswith(('farfield-', 'CrashAssistant-'))
                 and (not only or f.startswith(only))):
             shutil.copy2(os.path.join(PACK, 'mods', f), mods)
-    libs = os.path.join(ROOT, 'fabric', 'build', 'libs')
-    jars = [f for f in os.listdir(libs) if f.startswith('farfield-fabric-') and f.endswith('.jar')
-            and 'sources' not in f]
-    jar = max(jars, key=lambda f: os.path.getmtime(os.path.join(libs, f)))
-    shutil.copy2(os.path.join(libs, jar), mods)
+    # FARFIELD_WITHOUT=1 runs the pack without Farfield, the baseline of a
+    # memory or cost comparison (no agent inbox then: no scripted commands).
+    jar = 'no Farfield jar'
+    if not os.environ.get('FARFIELD_WITHOUT'):
+        libs = os.path.join(ROOT, 'fabric', 'build', 'libs')
+        jars = [f for f in os.listdir(libs) if f.startswith('farfield-fabric-') and f.endswith('.jar')
+                and 'sources' not in f]
+        jar = max(jars, key=lambda f: os.path.getmtime(os.path.join(libs, f)))
+        shutil.copy2(os.path.join(libs, jar), mods)
     for folder in ('config', 'shaderpacks', 'resourcepacks'):
         if os.path.isdir(os.path.join(PREPARED, folder)):
             shutil.copytree(os.path.join(PREPARED, folder), os.path.join(RUN, folder), dirs_exist_ok=True)

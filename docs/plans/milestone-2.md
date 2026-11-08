@@ -248,3 +248,14 @@ from there: D.2, then the sea floor's plants and corals in the preview.
   teleport at today's 5 to 7 s a tile, about 250 MB a world and as much
   for each client). Heights every 32 or 64 blocks there and no feature
   voxels (a canopy cover per chunk instead), measured before choosing.
+
+## M2.F — Tooling
+
+- [ ] F.1 The user (2026-11-08): move the agent test harness (the agent
+  inbox of ADR-095 and its verbs, window handling, screenshots, scripted
+  teleports and waits) out of Farfield into a mod of its own, loaded only in
+  test runs. Instrumentation and probes then go into that mod rather than
+  into Farfield (unless they need Farfield's internals), a run without
+  Farfield keeps the harness (today a baseline run has no inbox and no
+  window handling), and the harness serves the user's other mods. Seen
+  while measuring Farfield's memory against a pack run without it.
