@@ -84,6 +84,44 @@ final class GlProgram implements AutoCloseable {
         }
     }
 
+    /**
+     * A program linked from source units already read: several units per
+     * stage are linked together (a shader pack's code and ours, ADR-119).
+     */
+    GlProgram(String name, String[] vertexUnits, String[] fragmentUnits) {
+        int[] shaders = new int[vertexUnits.length + fragmentUnits.length];
+        int n = 0;
+        try {
+            for (int i = 0; i < vertexUnits.length; i++) {
+                shaders[n++] = compile(GL_VERTEX_SHADER, vertexUnits[i], name + " (vertex unit " + i + ")");
+            }
+            for (int i = 0; i < fragmentUnits.length; i++) {
+                shaders[n++] = compile(GL_FRAGMENT_SHADER, fragmentUnits[i], name + " (fragment unit " + i + ")");
+            }
+        } catch (RuntimeException e) {
+            for (int shader : shaders) {
+                if (shader != 0) {
+                    glDeleteShader(shader);
+                }
+            }
+            throw e;
+        }
+        id = glCreateProgram();
+        for (int shader : shaders) {
+            glAttachShader(id, shader);
+        }
+        glLinkProgram(id);
+        for (int shader : shaders) {
+            glDeleteShader(shader);
+        }
+        if (glGetProgrami(id, GL_LINK_STATUS) == 0) {
+            String log = glGetProgramInfoLog(id);
+            glDeleteProgram(id);
+            id = 0;
+            throw new IllegalStateException("cannot link " + name + ": " + log);
+        }
+    }
+
     /** A shader source of the class path, its includes expanded. */
     static String resource(String resource) {
         return read(resource);

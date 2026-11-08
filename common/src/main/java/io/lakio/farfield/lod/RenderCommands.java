@@ -97,6 +97,13 @@ public final class RenderCommands {
                                                 0, LodWorld.LEVELS - 1))
                                         .executes(c -> run.run(c.getSource(),
                                                 () -> forcedLevel(IntegerArgumentType.getInteger(c, "level"))))))
+                        .then(LiteralArgumentBuilder.<S>literal("shaderpack")
+                                .then(LiteralArgumentBuilder.<S>literal("auto").executes(c -> run.run(c.getSource(),
+                                        () -> io.lakio.farfield.client.render.LodRenderer.forcePackContract(0))))
+                                .then(LiteralArgumentBuilder.<S>literal("voxy").executes(c -> run.run(c.getSource(),
+                                        () -> io.lakio.farfield.client.render.LodRenderer.forcePackContract(1))))
+                                .then(LiteralArgumentBuilder.<S>literal("dh").executes(c -> run.run(c.getSource(),
+                                        () -> io.lakio.farfield.client.render.LodRenderer.forcePackContract(2)))))
                         .then(LiteralArgumentBuilder.<S>literal("ao")
                                 .executes(c -> run.run(c.getSource(), () -> debugAo(!RenderSettings.ambientOcclusion())))
                                 .then(LiteralArgumentBuilder.<S>literal("on").executes(c -> run.run(c.getSource(),

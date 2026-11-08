@@ -5,9 +5,9 @@ import net.irisshaders.iris.gl.uniform.UniformUpdateFrequency;
 import org.joml.Matrix4f;
 
 /**
- * The values the Voxy contract gives every Iris program (ADR-113): the LOD
- * depth textures and matrices of the last frame, set by {@link IrisLink}.
- * Read by the Iris mixins. Render thread only.
+ * The values the Voxy and DH contracts give every Iris program (ADR-113,
+ * ADR-119): the LOD depth textures and matrices of the last frame, set by
+ * {@link IrisLink}. Read by the Iris mixins. Render thread only.
  */
 public final class IrisLod {
 
@@ -37,7 +37,34 @@ public final class IrisLod {
     static final Matrix4f viewProj = new Matrix4f();
     static final Matrix4f viewProjInv = new Matrix4f();
 
+    /** The pack's DH contract is followed (ADR-119): Iris's DH values are the LODs' own. */
+    static boolean dh;
+    static float near;
+    static float far;
+    static int distanceBlocks;
+
     private IrisLod() {
+    }
+
+    public static boolean dhActive() {
+        return dh && opaqueDepth != 0;
+    }
+
+    public static float dhNear() {
+        return near;
+    }
+
+    public static float dhFar() {
+        return far;
+    }
+
+    public static int dhRenderDistanceBlocks() {
+        return distanceBlocks;
+    }
+
+    /** A copy of the LODs' projection, as Iris hands its DH projection out. */
+    public static Matrix4f dhProjection() {
+        return new Matrix4f(proj);
     }
 
     public static int opaqueDepthTexture() {
@@ -63,7 +90,10 @@ public final class IrisLod {
     }
 
     /** The matrices of a new frame: the previous ones kept for the packs' reprojection. */
-    static void setFrame(Matrix4f projection, Matrix4f view, int distanceChunks) {
+    static void setFrame(Matrix4f projection, Matrix4f view, int distanceChunks, float nearPlane, float farPlane) {
+        near = nearPlane;
+        far = farPlane;
+        distanceBlocks = distanceChunks << 4;
         projPrev.set(proj);
         modelViewPrev.set(modelView);
         proj.set(projection);

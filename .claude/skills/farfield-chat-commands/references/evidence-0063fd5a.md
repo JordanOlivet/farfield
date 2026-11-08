@@ -1,0 +1,1 @@
+Tool input (Bash, python edit): "// Iris loads packs on the render thread; /farfield runs on the server thread in single player.\n        ShaderPackLink link = r.packLink;\n        Minecraft.getInstance().execute(link::reloadPack);" and the Write of RenderCommands: ".then(LiteralArgumentBuilder.<S>literal(\"shaderpack\")" with "literal(\"auto\")" and forcePackContract(0).

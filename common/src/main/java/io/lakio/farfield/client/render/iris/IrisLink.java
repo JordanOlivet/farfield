@@ -5,10 +5,13 @@ import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import io.lakio.farfield.Farfield;
 import io.lakio.farfield.client.render.ShaderPackLink;
+import io.lakio.farfield.core.shader.DhPatch;
 import io.lakio.farfield.mixin.iris.IrisRenderingPipelineAccessor;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import net.irisshaders.iris.Iris;
+import net.irisshaders.iris.gl.blending.BlendModeOverride;
 import net.irisshaders.iris.gl.blending.BlendModeStorage;
+import net.irisshaders.iris.gl.blending.BufferBlendInformation;
 import net.irisshaders.iris.gl.blending.DepthColorStorage;
 import net.irisshaders.iris.gl.framebuffer.GlFramebuffer;
 import net.irisshaders.iris.gl.program.ProgramImages;
@@ -25,6 +28,9 @@ import net.irisshaders.iris.gl.uniform.UniformType;
 import net.irisshaders.iris.gl.uniform.UniformUpdateFrequency;
 import net.irisshaders.iris.pipeline.IrisRenderingPipeline;
 import net.irisshaders.iris.pipeline.WorldRenderingPipeline;
+import net.irisshaders.iris.pipeline.transform.PatchShaderType;
+import net.irisshaders.iris.pipeline.transform.TransformPatcher;
+import net.irisshaders.iris.shaderpack.programs.ProgramSource;
 import net.irisshaders.iris.samplers.IrisSamplers;
 import net.irisshaders.iris.shaderpack.ShaderPack;
 import net.irisshaders.iris.targets.DepthTexture;
@@ -32,6 +38,8 @@ import net.irisshaders.iris.targets.RenderTargets;
 import net.irisshaders.iris.uniforms.CommonUniforms;
 import net.irisshaders.iris.uniforms.builtin.BuiltinReplacementUniforms;
 import net.irisshaders.iris.uniforms.custom.CustomUniforms;
+import net.minecraft.client.Minecraft;
+import org.joml.Matrix3f;
 import org.joml.Matrix4f;
 
 import java.util.HashMap;
@@ -41,6 +49,11 @@ import java.util.OptionalInt;
 import java.util.Set;
 
 import static org.lwjgl.opengl.GL11C.GL_VIEWPORT;
+import static org.lwjgl.opengl.GL20C.glGetUniformLocation;
+import static org.lwjgl.opengl.GL20C.glUniform1f;
+import static org.lwjgl.opengl.GL20C.glUniform3f;
+import static org.lwjgl.opengl.GL20C.glUniformMatrix3fv;
+import static org.lwjgl.opengl.GL20C.glUniformMatrix4fv;
 import static org.lwjgl.opengl.GL11C.glGetIntegerv;
 import static org.lwjgl.opengl.GL11C.glViewport;
 import static org.lwjgl.opengl.GL30C.GL_DRAW_FRAMEBUFFER;
@@ -92,7 +105,10 @@ import static org.lwjgl.opengl.GL45C.glNamedFramebufferTexture;
  * The LOD passes through a shader pack's Voxy contract, over Iris
  * (ADR-113): the pack's opaque snippet linked into {@code lod.frag}, its
  * draw buffers, a depth texture of the LODs' own that the pack's composites
- * read as {@code vxDepthTexOpaque}. Render thread only.
+ * read as {@code vxDepthTexOpaque}. Or through its Distant Horizons
+ * contract (ADR-119): its {@code dh_terrain} and {@code dh_water} programs
+ * as Iris transforms them, run on the LOD quads by a bridge of ours, the
+ * same depth textures read as {@code dhDepthTex}. Render thread only.
  */
 public final class IrisLink implements ShaderPackLink {
 
@@ -116,11 +132,26 @@ public final class IrisLink implements ShaderPackLink {
     private final int[] previousViewport = new int[4];
     private static final float[] ONE = {1f};
     private final Matrix4f lodProjection = new Matrix4f();
+    private final Matrix4f lodView = new Matrix4f();
     private final Int2ObjectOpenHashMap<Bound> bound = new Int2ObjectOpenHashMap<>();
+    /** The pack's DH programs when its DH contract is followed (ADR-119), else null. */
+    private DhProgram dhTerrain;
+    private DhProgram dhWater;
 
-    /** A program's Iris uniforms, samplers and images. */
-    private record Bound(ProgramUniforms uniforms, ProgramSamplers samplers, ProgramImages images, Object pass) {
+    /** A program's Iris uniforms, samplers and images, and the DH program uniforms Iris sets itself (null outside DH). */
+    private record Bound(ProgramUniforms uniforms, ProgramSamplers samplers, ProgramImages images, Object pass,
+                         int[] dhUniforms) {
     }
+
+    /** A DH program of the pack, transformed by Iris and patched for the bridge. */
+    private record DhProgram(String name, String vertex, String fragment, int[] drawBuffers, BlendModeOverride blend,
+                             java.util.List<BufferBlendInformation> bufferBlends) {
+    }
+
+    /** Uniforms Iris's IrisLodRenderProgram sets on a DH program, in {@link Bound#dhUniforms} order. */
+    private static final String[] DH_UNIFORMS = {"iris_ProjectionMatrix", "iris_ProjectionMatrixInverse",
+            "iris_ModelViewMatrix", "iris_ModelViewMatrixInverse", "iris_NormalMatrix", "modelOffset", "mircoOffset",
+            "worldYOffset", "clipDistance"};
 
     /**
      * @param ownUnits the texture units the LOD program binds itself (atlas,
@@ -177,7 +208,8 @@ public final class IrisLink implements ShaderPackLink {
         lodProjection.set(projection);
         lodProjection.m22(-(far + near) / (far - near));
         lodProjection.m32(-2f * far * near / (far - near));
-        IrisLod.setFrame(lodProjection, viewRotation, distance >> 4);
+        IrisLod.setFrame(lodProjection, viewRotation, distance >> 4, near, far);
+        lodView.set(viewRotation);
         IrisLod.opaqueDepth = depth.getTextureId();
         IrisLod.translucentDepth = translucentDepth.getTextureId();
         if (off != null) {
@@ -190,14 +222,24 @@ public final class IrisLink implements ShaderPackLink {
             }
             destroy(translucentFramebuffer);
             translucentFramebuffer = null;
-            createExtraTargets(targets.getRenderTargetCount(), w, h);
-            framebuffer = target(targets, iris.getFlippedAfterPrepare(), contract.opaqueDrawBuffers, depth);
-            // Translucent LODs draw before the pack's deferred passes, as Voxy's: the buffers as after prepare.
-            translucentFramebuffer = target(targets, iris.getFlippedAfterPrepare(), contract.translucentDrawBuffers,
-                    translucentDepth);
+            int[] opaqueBuffers;
+            if (dhTerrain != null) {
+                // As Iris's DH programs: the water after the pack's deferred passes, on the buffers as after translucent.
+                opaqueBuffers = dhTerrain.drawBuffers;
+                framebuffer = target(targets, iris.getFlippedAfterPrepare(), opaqueBuffers, depth);
+                translucentFramebuffer = target(targets, iris.getFlippedAfterTranslucent(), dhWater.drawBuffers,
+                        translucentDepth);
+            } else {
+                opaqueBuffers = contract.opaqueDrawBuffers;
+                createExtraTargets(targets.getRenderTargetCount(), w, h);
+                framebuffer = target(targets, iris.getFlippedAfterPrepare(), opaqueBuffers, depth);
+                // Translucent LODs draw before the pack's deferred passes, as Voxy's: the buffers as after prepare.
+                translucentFramebuffer = target(targets, iris.getFlippedAfterPrepare(), contract.translucentDrawBuffers,
+                        translucentDepth);
+            }
             framebufferTargets = targets;
             if (framebuffer == null) {
-                fail("its opaque draw buffers " + java.util.Arrays.toString(contract.opaqueDrawBuffers)
+                fail("its opaque draw buffers " + java.util.Arrays.toString(opaqueBuffers)
                         + " name no render target of Iris");
                 mode = NONE;
                 return;
@@ -207,16 +249,21 @@ public final class IrisLink implements ShaderPackLink {
                     translucentFramebuffer == null ? "none"
                             : Integer.toHexString(glCheckNamedFramebufferStatus(translucentFramebuffer.getId(), GL_DRAW_FRAMEBUFFER)));
         }
-        mode = VOXY;
+        mode = dhTerrain != null ? DH : VOXY;
+    }
+
+    @Override
+    public int mode() {
+        return mode;
     }
 
     @Override
     public int begin() {
-        if (mode != VOXY) {
+        if (mode != VOXY && mode != DH) {
             return mode;
         }
         bindTarget(framebuffer);
-        return VOXY;
+        return mode;
     }
 
     /**
@@ -325,8 +372,9 @@ public final class IrisLink implements ShaderPackLink {
         glGetIntegerv(GL_VIEWPORT, previousViewport);
         fb.bind();
         // Under TAAU the pack draws its terrain into the scaled part of its buffers.
-        glViewport(0, 0, Math.max(1, Math.round(width * contract.renderScale[0])),
-                Math.max(1, Math.round(height * contract.renderScale[1])));
+        float sx = contract != null ? contract.renderScale[0] : 1f;
+        float sy = contract != null ? contract.renderScale[1] : 1f;
+        glViewport(0, 0, Math.max(1, Math.round(width * sx)), Math.max(1, Math.round(height * sy)));
     }
 
     private void restoreTarget() {
@@ -336,6 +384,11 @@ public final class IrisLink implements ShaderPackLink {
 
     @Override
     public boolean beginTranslucent() {
+        if (mode == DH && translucentFramebuffer != null) {
+            bindTarget(translucentFramebuffer);
+            dhBlend(dhWater);
+            return true;
+        }
         if (mode != VOXY || contract.translucent == null || translucentFramebuffer == null) {
             return false;
         }
@@ -349,6 +402,45 @@ public final class IrisLink implements ShaderPackLink {
             blend(i, contract.blending.getOrDefault(i, all));
         }
         return true;
+    }
+
+    /**
+     * The blending of a DH program, as Iris's IrisLodRenderProgram binds it:
+     * the pack's override and per-buffer ones, else the usual alpha blending.
+     */
+    private void dhBlend(DhProgram program) {
+        if (program.blend != null) {
+            program.blend.apply();
+            dhBlendApplied = true;
+        } else {
+            for (int i = 0; i < program.drawBuffers.length; i++) {
+                blend(i, "SRC_ALPHA ONE_MINUS_SRC_ALPHA ONE ONE_MINUS_SRC_ALPHA");
+            }
+        }
+        for (BufferBlendInformation info : program.bufferBlends) {
+            int i = indexOf(program.drawBuffers, info.index());
+            if (i < 0) {
+                continue;
+            }
+            if (info.blendMode() == null) {
+                glDisablei(GL_BLEND, i);
+            } else {
+                glEnablei(GL_BLEND, i);
+                glBlendFuncSeparatei(i, info.blendMode().srcRgb(), info.blendMode().dstRgb(),
+                        info.blendMode().srcAlpha(), info.blendMode().dstAlpha());
+            }
+        }
+    }
+
+    private boolean dhBlendApplied;
+
+    private static int indexOf(int[] values, int value) {
+        for (int i = 0; i < values.length; i++) {
+            if (values[i] == value) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /** One draw buffer's blending: "off", or four GL factor names. */
@@ -382,6 +474,10 @@ public final class IrisLink implements ShaderPackLink {
     @Override
     public void endTranslucent() {
         restoreTarget();
+        if (dhBlendApplied) {
+            BlendModeOverride.restore();
+            dhBlendApplied = false;
+        }
         // The indexed calls went around the game's state cache: every buffer
         // back off with the default factors, then the cache set through calls
         // that differ from what it holds, so they reach GL.
@@ -395,6 +491,9 @@ public final class IrisLink implements ShaderPackLink {
 
     @Override
     public int customId(net.minecraft.world.level.block.state.BlockState state) {
+        if (dhTerrain != null) {
+            return DhMaterials.of(state); // DH's material class, the pack's dhMaterialId
+        }
         // The map Iris built from the pack's block.properties for its own terrain.
         it.unimi.dsi.fastutil.objects.Object2IntMap<net.minecraft.world.level.block.state.BlockState> ids =
                 net.irisshaders.iris.shaderpack.materialmap.WorldRenderingSettings.INSTANCE.getBlockStateIds();
@@ -498,10 +597,21 @@ public final class IrisLink implements ShaderPackLink {
         BuiltinReplacementUniforms.addBuiltinReplacementUniforms(uniforms);
         ProgramSamplers.Builder samplers = ProgramSamplers.builder(program, reservedUnits);
         ProgramImages.Builder images = ProgramImages.builder(program);
-        // Both LOD stages run before the pack's deferred passes: the buffers as after prepare.
-        iris.addGbufferOrShadowSamplers(samplers, images, iris::getFlippedAfterPrepare, false, false, true, false);
+        // Voxy's stages both run before the pack's deferred passes: the buffers as after prepare;
+        // DH's water after them, as Iris's DH programs.
+        boolean afterTranslucent = dhTerrain != null && translucent;
+        iris.addGbufferOrShadowSamplers(samplers, images,
+                afterTranslucent ? iris::getFlippedAfterTranslucent : iris::getFlippedAfterPrepare,
+                false, false, true, false);
         custom.mapholderToPass(uniforms, pass);
-        bound.put(program, new Bound(uniforms.buildUniforms(), samplers.build(), images.build(), pass));
+        int[] dhUniforms = null;
+        if (dhTerrain != null) {
+            dhUniforms = new int[DH_UNIFORMS.length];
+            for (int i = 0; i < DH_UNIFORMS.length; i++) {
+                dhUniforms[i] = glGetUniformLocation(program, DH_UNIFORMS[i]);
+            }
+        }
+        bound.put(program, new Bound(uniforms.buildUniforms(), samplers.build(), images.build(), pass, dhUniforms));
     }
 
     @Override
@@ -514,11 +624,71 @@ public final class IrisLink implements ShaderPackLink {
         ((IrisRenderingPipeline) pipeline).getCustomUniforms().push(b.pass);
         b.samplers.update();
         b.images.update();
+        if (b.dhUniforms != null) {
+            dhUniforms(b.dhUniforms);
+        }
+    }
+
+    private final float[] matrix16 = new float[16];
+    private final float[] matrix9 = new float[9];
+    private final Matrix4f scratch = new Matrix4f();
+    private final Matrix3f normal = new Matrix3f();
+
+    /**
+     * What Iris's IrisLodRenderProgram.fillUniformData sets on a DH program:
+     * the LODs' projection and the view (positions come from the camera,
+     * modelOffset 0), and the game's lightmap on Iris's lightmap unit.
+     */
+    private void dhUniforms(int[] at) {
+        matrix(at[0], lodProjection);
+        matrix(at[1], lodProjection.invert(scratch));
+        matrix(at[2], lodView);
+        matrix(at[3], lodView.invert(scratch));
+        if (at[4] >= 0) {
+            lodView.invert(scratch).transpose3x3(normal);
+            glUniformMatrix3fv(at[4], false, normal.get(matrix9));
+        }
+        if (at[5] >= 0) {
+            glUniform3f(at[5], 0f, 0f, 0f);
+        }
+        if (at[6] >= 0) {
+            glUniform1f(at[6], 0.01f);
+        }
+        if (at[7] >= 0) {
+            glUniform1f(at[7], -1000f); // as Iris
+        }
+        if (at[8] >= 0) {
+            glUniform1f(at[8], 0f); // the LODs give way to the game's terrain themselves (dh_bridge.frag)
+        }
+        Minecraft.getInstance().gameRenderer.lightTexture().turnOnLightLayer();
+        net.irisshaders.iris.gl.IrisRenderSystem.bindTextureToUnit(GL_TEXTURE_2D, IrisSamplers.LIGHTMAP_TEXTURE_UNIT,
+                RenderSystem.getShaderTexture(2));
+    }
+
+    private void matrix(int location, Matrix4f m) {
+        if (location >= 0) {
+            glUniformMatrix4fv(location, false, m.get(matrix16));
+        }
+    }
+
+    @Override
+    public String[] dhSources(boolean translucent) {
+        DhProgram p = translucent ? dhWater : dhTerrain;
+        return p == null ? null : new String[]{p.vertex, p.fragment, p.name};
     }
 
     @Override
     public void detach(int program) {
         bound.remove(program);
+    }
+
+    @Override
+    public void reloadPack() {
+        try {
+            Iris.reload();
+        } catch (java.io.IOException e) {
+            Farfield.LOG.warn("Shader pack LODs: the pack did not load again ({})", e.toString());
+        }
     }
 
     @Override
@@ -531,9 +701,19 @@ public final class IrisLink implements ShaderPackLink {
         generation++;
         off = null;
         contract = null;
+        dhTerrain = dhWater = null;
+        IrisLod.dh = false;
         ShaderPack pack = Iris.getCurrentPack().orElse(null);
         if (pack == null) {
             fail("no pack loaded");
+            return;
+        }
+        if (!PackContract.applied()) {
+            fail("the pack was loaded without a LOD contract's macro (Farfield's Iris mixin did not apply)");
+            return;
+        }
+        if (PackContract.chosen() == PackContract.DH) {
+            loadDh();
             return;
         }
         try {
@@ -557,9 +737,52 @@ public final class IrisLink implements ShaderPackLink {
                 java.util.Arrays.toString(contract.renderScale));
     }
 
+    /** The pack's DH programs, transformed by Iris as for Distant Horizons, then patched for the bridge. */
+    private void loadDh() {
+        IrisRenderingPipeline iris = (IrisRenderingPipeline) pipeline;
+        try {
+            ProgramSource terrain = iris.getDHTerrainShader().orElse(null);
+            if (terrain == null) {
+                fail("the pack has no dh_terrain program for " + Iris.getCurrentDimension());
+                return;
+            }
+            dhTerrain = dhProgram(iris, terrain);
+            ProgramSource water = iris.getDHWaterShader().orElse(null);
+            dhWater = water != null ? dhProgram(iris, water) : dhTerrain;
+        } catch (RuntimeException e) {
+            dhTerrain = dhWater = null;
+            fail("its DH programs do not fit the LOD bridge (" + e.getMessage() + ")");
+            return;
+        }
+        IrisLod.dh = true;
+        Farfield.LOG.info("Shader pack LODs: {} through its Distant Horizons contract, opaque draw buffers {} ({}),"
+                        + " translucent {} ({})", Iris.getCurrentPackName(),
+                java.util.Arrays.toString(dhTerrain.drawBuffers), dhTerrain.name,
+                java.util.Arrays.toString(dhWater.drawBuffers), dhWater.name);
+    }
+
+    private static DhProgram dhProgram(IrisRenderingPipeline iris, ProgramSource source) {
+        if (source.getGeometrySource().isPresent() || source.getTessControlSource().isPresent()
+                || source.getTessEvalSource().isPresent()) {
+            throw new IllegalStateException(source.getName() + " has geometry or tessellation stages");
+        }
+        String vertex = source.getVertexSource()
+                .orElseThrow(() -> new IllegalStateException(source.getName() + " has no vertex shader"));
+        String fragment = source.getFragmentSource()
+                .orElseThrow(() -> new IllegalStateException(source.getName() + " has no fragment shader"));
+        java.util.Map<PatchShaderType, String> transformed = TransformPatcher.patchDHTerrain(source.getName(),
+                vertex, null, null, null, fragment, iris.getTextureMap());
+        return new DhProgram(source.getName(), DhPatch.vertex(transformed.get(PatchShaderType.VERTEX)),
+                DhPatch.fragment(transformed.get(PatchShaderType.FRAGMENT)), source.getDirectives().getDrawBuffers(),
+                source.getDirectives().getBlendModeOverride().orElse(null),
+                source.getDirectives().getBufferBlendOverrides());
+    }
+
     private void release() {
         releaseTargets();
         bound.clear();
+        dhTerrain = dhWater = null;
+        IrisLod.dh = false;
         IrisLod.opaqueDepth = 0;
         IrisLod.translucentDepth = 0;
     }

@@ -171,6 +171,25 @@ message).
   (Iris parses it into its id map).
 - Turn the path off when Voxy itself is loaded.
 
+## Without Distant Horizons (ADR-119, 2026-11-08)
+
+Read in Iris 1.8.8 (Fabric) and 1.8.14-beta.1 (NeoForge) jars and the
+`1.21.1` branch: `ProgramSet` parses the `dh_*` programs of every pack;
+`IrisRenderingPipeline.getDHTerrainShader`, `getDHWaterShader`,
+`createDHFramebuffer`, `getTextureMap` and the static
+`TransformPatcher.patchDHTerrain` are public; the transformed vertex
+shader defines `void _vert_init()` (text checked in both jars) and calls it
+first in `main`. `DHCompat`'s static getters return placeholders without
+DH (near and far 0.01, the game's render distance, the game's projection),
+its instance `getDepthTex`/`getDepthTexNoTranslucent` 0. Iris's own DH
+programs set `iris_ProjectionMatrix`, `iris_ModelViewMatrix` (the game's
+view, positions from the camera through `modelOffset`), their inverses,
+`iris_NormalMatrix`, `mircoOffset` 0.01, `worldYOffset` -1000,
+`clipDistance`, and bind the lightmap on `LIGHTMAP_TEXTURE_UNIT`.
+Complementary under `DISTANT_HORIZONS` dithers its own terrain away near
+`far` (`DH_BLENDING`, with TAA) and fades the DH LODs in from 0.4 to 0.6
+`far` in `dh_terrain`: the LODs must exist under the game's terrain.
+
 ## Choice (ADR-113)
 
 Voxy first: our textures, tints and the pack's block ids survive, and our

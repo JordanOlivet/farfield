@@ -245,6 +245,15 @@ public final class LodRenderer {
     private Shader packDepthOnly;
     /** The pack generation whose TAA jitter did not build: its programs go without it. */
     private int packNoTaa = -1;
+    /**
+     * Under a pack's DH contract (ADR-119): its dh_terrain and dh_water linked
+     * with the bridge (dh_bridge.vert, dh_bridge.frag), for {@link #dhGeneration}.
+     */
+    private Shader dhOpaque;
+    /** A contract was forced before the pack link existed: load the pack again once it does. */
+    private boolean pendingPackReload;
+    private Shader dhTranslucent;
+    private int dhGeneration = -1;
     /** Per material, the shader pack's block id (Voxy's customId), for the pack's snippets. */
     private GlBuffer packIds;
     private int packIdsCount = -1;
@@ -252,6 +261,9 @@ public final class LodRenderer {
     private int[] packIdsScratch = new int[0];
     /** The translucent LODs of this frame wait for the game's translucent stage (under a pack). */
     private boolean translucentPending;
+    /** Their program, and whether they wait for the pack's deferred passes to have run (DH's water). */
+    private Shader translucentShader;
+    private boolean translucentAfterDeferred;
     private Vec3 translucentCam;
     private long translucentOffset;
     private int translucentCount;
@@ -561,8 +573,13 @@ public final class LodRenderer {
         }
 
         Shader(String defines, String packVertex, String packUnit, String packName) {
-            program = new GlProgram("lod.vert", "lod.frag", defines, packVertex, packUnit, packName);
-            pack = packUnit != null || packVertex != null;
+            this(new GlProgram("lod.vert", "lod.frag", defines, packVertex, packUnit, packName),
+                    packUnit != null || packVertex != null);
+        }
+
+        Shader(GlProgram program, boolean pack) {
+            this.program = program;
+            this.pack = pack;
             viewProj = program.uniform("u_viewProj");
             cameraBlock = program.uniform("u_cameraBlock");
             cameraFrac = program.uniform("u_cameraFrac");
@@ -947,6 +964,11 @@ public final class LodRenderer {
                 || classExists("me.jellysquid.mods.sodium.client.SodiumClientMod");
         Farfield.LOG.info("LOD hand-off follows the {} section rule", sodiumRule ? "Sodium" : "vanilla");
         packLink = createPackLink();
+        if (packLink != null && pendingPackReload) {
+            // A contract forced before the renderer started: the pack loads again with it.
+            pendingPackReload = false;
+            Minecraft.getInstance().execute(packLink::reloadPack);
+        }
         glGenQueries(timerQueries);
         glGenQueries(packTranslucentQueries);
         quads = new GlBuffer(INITIAL_QUADS * 8);
@@ -990,7 +1012,7 @@ public final class LodRenderer {
         try {
             ShaderPackLink link = (ShaderPackLink) Class.forName("io.lakio.farfield.client.render.iris.IrisLink")
                     .getConstructor(int[].class).newInstance((Object) new int[]{ATLAS_UNIT, LIGHTMAP_UNIT, GAME_DEPTH_UNIT});
-            Farfield.LOG.info("Shader pack LODs: Iris found, the packs' Voxy contract is read");
+            Farfield.LOG.info("Shader pack LODs: Iris found, the packs' Voxy or Distant Horizons contract is read");
             return link;
         } catch (ReflectiveOperationException | LinkageError e) {
             Farfield.LOG.warn("Shader pack LODs off: this Iris does not fit ({})", e.toString());
@@ -1056,6 +1078,84 @@ public final class LodRenderer {
         Farfield.LOG.info("Shader pack LODs: programs built, translucent LODs {}, TAA jitter {}",
                 packTranslucent != null ? "on" : "off", vertex != null ? "on" : "off");
         return true;
+    }
+
+    /**
+     * Forces a shader pack's LOD contract (/farfield debug shaderpack, not
+     * saved) and loads the pack again so it takes effect: a pack shipping
+     * both is then tested through its DH contract (ADR-119).
+     *
+     * @return the reply line
+     */
+    public static String forcePackContract(int contract) {
+        LodRenderer r = INSTANCE;
+        if (!Services.PLATFORM.isModLoaded("iris") || Services.PLATFORM.isModLoaded("voxy")) {
+            return "No shader pack path here (Iris missing, or Voxy installed).";
+        }
+        io.lakio.farfield.client.render.iris.PackContract.force(contract);
+        if (r.packLink == null) {
+            r.pendingPackReload = true;
+            Farfield.LOG.info("Shader pack LODs: contract forced to {} by command, applied when the LOD renderer starts",
+                    io.lakio.farfield.client.render.iris.PackContract.name(contract));
+            return "Shader pack LOD contract forced: " + io.lakio.farfield.client.render.iris.PackContract.name(contract)
+                    + " (not saved), applied when the LOD renderer starts.";
+        }
+        Farfield.LOG.info("Shader pack LODs: contract forced to {} by command, the pack loads again",
+                io.lakio.farfield.client.render.iris.PackContract.name(contract));
+        // Iris loads packs on the render thread; /farfield runs on the server thread in single player.
+        ShaderPackLink link = r.packLink;
+        Minecraft.getInstance().execute(link::reloadPack);
+        return "Shader pack LOD contract forced: " + io.lakio.farfield.client.render.iris.PackContract.name(contract)
+                + " (not saved). The pack loads again; the log names the contract followed.";
+    }
+
+    /** The pack's DH programs linked with the bridge, built again when the pack's sources change. */
+    private boolean dhShaders() {
+        if (dhGeneration == packLink.generation() && dhOpaque != null) {
+            return true;
+        }
+        closeDhShaders();
+        dhGeneration = packLink.generation();
+        String[] opaque = packLink.dhSources(false);
+        if (opaque == null) {
+            return false;
+        }
+        String bridgeVertex = GlProgram.resource("dh_bridge.vert");
+        String bridgeFragment = GlProgram.resource("dh_bridge.frag");
+        try {
+            dhOpaque = new Shader(new GlProgram("the shader pack's " + opaque[2] + " with the LOD bridge",
+                    new String[]{opaque[0], bridgeVertex}, new String[]{opaque[1], bridgeFragment}), true);
+            packLink.attach(dhOpaque.program.id(), "farfield_" + opaque[2], false);
+        } catch (RuntimeException e) {
+            Farfield.LOG.error("Shader pack LODs: the pack's {} does not build with the LOD bridge", opaque[2], e);
+            closeDhShaders();
+            packLink.fail("its " + opaque[2] + " does not build with the LOD bridge ("
+                    + e.getMessage().lines().findFirst().orElse("") + ")");
+            return false;
+        }
+        String[] water = packLink.dhSources(true);
+        try {
+            dhTranslucent = new Shader(new GlProgram("the shader pack's " + water[2] + " with the LOD bridge",
+                    new String[]{water[0], bridgeVertex}, new String[]{water[1], bridgeFragment}), true);
+            packLink.attach(dhTranslucent.program.id(), "farfield_" + water[2] + "_translucent", true);
+        } catch (RuntimeException e) {
+            Farfield.LOG.error("Shader pack LODs: the pack's {} does not build with the LOD bridge,"
+                    + " translucent LODs off under it", water[2], e);
+            dhTranslucent = null;
+        }
+        Farfield.LOG.info("Shader pack LODs: DH programs built with the LOD bridge ({} and {}), translucent LODs {}",
+                opaque[2], water[2], dhTranslucent != null ? "on" : "off");
+        return true;
+    }
+
+    private void closeDhShaders() {
+        for (Shader s : new Shader[]{dhOpaque, dhTranslucent}) {
+            if (s != null) {
+                packLink.detach(s.program.id());
+                s.program.close();
+            }
+        }
+        dhOpaque = dhTranslucent = null;
     }
 
     private void closePackShaders() {
@@ -3106,6 +3206,9 @@ public final class LodRenderer {
         if (level > 1 || gridWidth <= 0 || selector.forcedLevel() >= 0) {
             return false; // under a level lock the LODs draw over the game's terrain
         }
+        if (packLink != null && packLink.mode() == ShaderPackLink.DH) {
+            return false; // under a pack's DH contract the LODs lie under the game's terrain too (ADR-119)
+        }
         int chunks = 2 << level;
         int sx0 = LodKey.x(key) * chunks;
         int sy0 = LodKey.y(key) * chunks;
@@ -3362,12 +3465,15 @@ public final class LodRenderer {
      */
     public static void renderTranslucent(boolean beforeDeferred) {
         LodRenderer r = INSTANCE;
-        if (r.translucentPending) {
+        // DH's water draws after the pack's deferred passes, as Iris draws Distant Horizons' (ADR-119).
+        if (r.translucentPending && !(beforeDeferred && r.translucentAfterDeferred)) {
             r.translucentPending = false;
             if (r.translucentStage != (beforeDeferred ? 1 : 2)) {
                 r.translucentStage = beforeDeferred ? 1 : 2;
                 Farfield.LOG.info("Shader pack LODs: translucent LODs drawn {}", beforeDeferred
-                        ? "before the pack's deferred passes" : "at the game's translucent stage (Iris's hook missing)");
+                        ? "before the pack's deferred passes" : r.translucentAfterDeferred
+                        ? "at the game's translucent stage, after the pack's deferred passes (DH contract)"
+                        : "at the game's translucent stage (Iris's hook missing)");
             }
             try {
                 r.drawPackTranslucent(Minecraft.getInstance());
@@ -3391,6 +3497,7 @@ public final class LodRenderer {
         GlStateManager._bindTexture(lightmap(mc));
         GlStateManager._activeTexture(previousUnit);
         org.lwjgl.opengl.GL45C.glBindTextureUnit(GAME_DEPTH_UNIT, packLink.gameDepthTexture());
+        boolean dh = translucentShader == dhTranslucent;
 
         GlStateManager._glBindVertexArray(vao);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, quads.id());
@@ -3409,15 +3516,22 @@ public final class LodRenderer {
         RenderSystem.depthFunc(GL_LEQUAL);
         // The pack reads the nearest LOD surface, translucent ones included.
         RenderSystem.depthMask(true);
-        RenderSystem.enableCull();
+        if (dh) {
+            RenderSystem.disableCull(); // as Iris draws DH's water
+        } else {
+            RenderSystem.enableCull();
+        }
         RenderSystem.colorMask(true, true, true, true);
         int slot = packTranslucentSlot;
         boolean timed = !packTranslucentPending[slot];
         if (timed) {
             glQueryCounter(packTranslucentQueries[slot * 2], GL_TIMESTAMP);
         }
-        use(packTranslucent, translucentCam, mc, true);
+        use(translucentShader, translucentCam, mc, true);
         glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, translucentOffset, translucentCount, 0);
+        if (dh) {
+            RenderSystem.enableCull();
+        }
         if (timed) {
             glQueryCounter(packTranslucentQueries[slot * 2 + 1], GL_TIMESTAMP);
             packTranslucentPending[slot] = true;
@@ -3464,11 +3578,12 @@ public final class LodRenderer {
             return;
         }
         boolean packed = packMode == ShaderPackLink.VOXY;
-        if (packed && !packShaders()) {
+        boolean dh = packMode == ShaderPackLink.DH;
+        if (packed && !packShaders() || dh && !dhShaders()) {
             packLink.end();
             return;
         }
-        if (packed) {
+        if (packed || dh) {
             updatePackIds();
         }
 
@@ -3497,7 +3612,7 @@ public final class LodRenderer {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, biomeColumns.id());
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 8, previewHidden.id());
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, blendedTints.id());
-        if (packed) {
+        if (packed || dh) {
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, packIds.id());
         }
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirect.id());
@@ -3513,8 +3628,10 @@ public final class LodRenderer {
         // off the early depth test. Sections that cannot discard go first,
         // with a shader without discard, so the pre-pass keeps early tests
         // for them and the others mostly land behind depth already written.
-        boolean prepass = RenderSettings.depthPrepass();
-        Shader shaded = packed ? (prepass ? packShaded : packPlain) : (prepass ? earlyZ : plain);
+        // Under DH's contract the pack's own vertex shader places the faces: a
+        // pre-pass of ours would not match its depth to the bit (GL_EQUAL).
+        boolean prepass = RenderSettings.depthPrepass() && !dh;
+        Shader shaded = dh ? dhOpaque : packed ? (prepass ? packShaded : packPlain) : (prepass ? earlyZ : plain);
         int opaqueDraws = solidDraws + discardDraws;
         if (prepass && opaqueDraws > 0) {
             RenderSystem.colorMask(false, false, false, false);
@@ -3545,7 +3662,8 @@ public final class LodRenderer {
         if (timed) {
             glQueryCounter(timerQueries[slot * TIMESTAMPS + 2], GL_TIMESTAMP);
         }
-        if (plantDraws > 0) {
+        // Under DH's contract plants are left out: without their texture to cut, each would be a solid rectangle.
+        if (plantDraws > 0 && !dh) {
             // Plants: once, depth-tested against the opaque faces and writing their own,
             // holes cut out; the pre-pass would draw their thin quads twice.
             use(packed ? packPlants : plants, cam, mc, false);
@@ -3555,7 +3673,7 @@ public final class LodRenderer {
             glQueryCounter(timerQueries[slot * TIMESTAMPS + 3], GL_TIMESTAMP);
         }
         // Under a shader pack, translucent LODs wait for voxy_translucent (C.1b).
-        if (translucentDraws > 0 && RenderSettings.drawTranslucent() && !packed) {
+        if (translucentDraws > 0 && RenderSettings.drawTranslucent() && !packed && !dh) {
             use(shaded, cam, mc, true);
             RenderSystem.enableBlend();
             RenderSystem.blendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
@@ -3575,11 +3693,13 @@ public final class LodRenderer {
         GlStateManager._glBindVertexArray(0);
         BufferUploader.invalidate();
         GlStateManager._glUseProgram(0);
-        if (packed) {
+        if (packed || dh) {
             // The LODs drew into their own depth texture: the game's depth is untouched.
             packLink.end();
-            // Translucent LODs at the game's translucent stage, after the pack's deferred passes.
-            translucentPending = translucentDraws > 0 && RenderSettings.drawTranslucent() && packTranslucent != null;
+            // Translucent LODs at the game's translucent stage: Voxy's before the pack's deferred passes, DH's after.
+            translucentShader = dh ? dhTranslucent : packTranslucent;
+            translucentAfterDeferred = dh;
+            translucentPending = translucentDraws > 0 && RenderSettings.drawTranslucent() && translucentShader != null;
             translucentCam = cam;
             translucentOffset = opaqueBytes;
             translucentCount = translucentDraws;

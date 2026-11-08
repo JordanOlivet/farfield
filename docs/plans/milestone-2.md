@@ -173,7 +173,13 @@ Items:
     `preview_light` setting (default on). Verified on the Fabric pack, no
     pack and Complementary, warm ocean at night. Remains: the user's eye,
     NeoForge, a dedicated server (tiles streamed).
-  - [ ] C.1e DH's contract for packs without Voxy's.
+  - [~] C.1e DH's contract for packs without Voxy's (ADR-119). Done: the
+    contract chosen per pack at load (one macro), the pack's DH programs
+    run on the LOD quads over a bridge, `/farfield debug shaderpack`.
+    Verified on the Fabric pack under Complementary Reimagined forced to
+    DH (day, night, sea). Remains: a pack that ships only DH's contract,
+    NeoForge, the user's eye, the other packs of his instance forced to
+    DH, the GPU cost (about +200 us at 1080p).
   - Later, outside C.1 (the user, 2026-11-03): packs with neither
     contract (LODs off with a message meanwhile), our own contract, LOD
     shadows.

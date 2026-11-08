@@ -3311,3 +3311,59 @@ and the stream protocol (9). Plan item D.7.
   the crowns by day, glows at midnight with the preview light on, stays
   dark with it off; from 400 blocks (coarse levels) a glow remains. Minute
   lines: 1,744 to 6,147 dug columns per minute of tiles.
+
+## ADR-119 — Shader packs through their DH contract, without Distant Horizons
+
+Status: accepted, 2026-11-08. Details ADR-113 (DH second). Plan item C.1e.
+
+- **Context**: ADR-113 follows a pack's Voxy contract first and DH's for
+  packs that ship only DH's. Iris (1.8.8 Fabric, 1.8.14 NeoForge, read
+  in the jars the build pins and in its 1.21.1 sources, LGPL) loads every
+  pack's `dh_terrain` and `dh_water` sources whether DH is installed or
+  not, and its DH path is reachable without DH: `getDHTerrainShader`,
+  `TransformPatcher.patchDHTerrain`, `createDHFramebuffer`. Its transform
+  adds a `_vert_init()` to the vertex shader that fills globals
+  (`_vert_position`, `_vert_color`, `_vert_normal`,
+  `_vert_tex_light_coord`, `dhMaterialId`) from DH's vertex attributes,
+  called first in `main`. The composite side reads `DHCompat`
+  (`dhDepthTex0`/`1`, `dhNearPlane`, `dhFarPlane`, `dhRenderDistance`,
+  `dhProjection`), which answers placeholders without DH.
+- **Decision**:
+  - The contract is chosen when Iris loads the pack (a `@ModifyArg` on the
+    `ShaderPack` constructor call in `Iris.loadExternalShaderpack`), from
+    the pack's files: `voxy.json` means Voxy's, else `dh_terrain.*` means
+    DH's. Only that contract's macro is defined (`VOXY` or
+    `DISTANT_HORIZONS`), never both, since packs switch their composites
+    on it. `/farfield debug shaderpack auto|voxy|dh` forces one (not
+    saved; the pack loads again), to test DH on packs that ship both.
+  - The pack's DH programs, as Iris transforms them, run on the LOD quads:
+    `_vert_init`'s body is cut and a vertex unit of ours
+    (`dh_bridge.vert`) defines it from the quads (the geometry shared with
+    `lod.vert` in `lod_geometry.glsl`): positions from the camera with
+    `modelOffset` 0, the face color with its biome tint blended at the
+    corner and no texture, the normal, the light levels, and DH's material
+    class from block tags and sound types (`DhMaterials`, our rules). The
+    pack's fragment `main` first calls `farfield_clip()`
+    (`dh_bridge.frag`): the preview's fragments where real chunks took
+    over, and translucent LODs behind the game's opaque terrain.
+  - DH's model, not ours: the LODs are drawn under the game's terrain too
+    and do not give way to it, because packs fade their terrain into the
+    LODs near the render distance (Complementary's dithered
+    `DH_BLENDING`); giving way left that band black. Sections the game
+    draws entirely are drawn too.
+  - Opaque LODs draw into the pack's `dh_terrain` draw buffers with the
+    LODs' own depth (`dhDepthTex1`); the water draws at the game's
+    translucent stage after the pack's deferred passes, on the buffers as
+    after translucent, cull face off, the pack's blend directives
+    (`dhDepthTex0` holds both). Iris's DH uniforms are set as its
+    `IrisLodRenderProgram` does, with the LODs' projection; `DHCompat`'s
+    getters answer the LODs' values while DH's contract is followed.
+  - Left out under DH: textures (the contract has none), plants (a plant
+    without its texture is a solid rectangle), the depth pre-pass (the
+    pack's vertex shader places the faces, not bit-identical to ours),
+    LOD shadows.
+- **Result**: Fabric pack, Complementary Reimagined r5.9.3 forced to DH,
+  1080p: the far plains and sea shaded by the pack by day and night, the
+  game's terrain blending into the LODs, no seam (after the fix above).
+  GPU 850 to 910 us per frame against 680 to 730 us through Voxy's
+  contract at the same spot.

@@ -15,6 +15,8 @@ public interface ShaderPackLink {
     int NONE = 1;
     /** Draw through the pack's Voxy contract. */
     int VOXY = 2;
+    /** Draw through the pack's Distant Horizons contract (ADR-119): its own DH programs over a bridge of ours. */
+    int DH = 3;
 
     /**
      * At the start of each level frame, LODs drawn or not: follows a pack
@@ -30,9 +32,14 @@ public interface ShaderPackLink {
 
     /**
      * Before the LOD passes: {@link #VANILLA}, {@link #NONE}, or
-     * {@link #VOXY} with the pack's LOD target bound.
+     * {@link #VOXY} or {@link #DH} with the pack's LOD target bound.
      */
     int begin();
+
+    /** The mode the last {@link #frame} found: {@link #VANILLA}, {@link #NONE}, {@link #VOXY} or {@link #DH}. */
+    default int mode() {
+        return VANILLA;
+    }
 
     /** Bumped each time the pack's sources change: the programs below are built again. */
     int generation();
@@ -92,6 +99,22 @@ public interface ShaderPackLink {
      * translucent stage): translucent LODs give way where it is written.
      */
     int gameDepthTexture();
+
+    /**
+     * Under the DH contract (ADR-119): the pack's {@code dh_terrain} (or, for
+     * the translucent pass, {@code dh_water}) as Iris transforms it and
+     * patched for the bridge, as {vertex, fragment, program name}; null
+     * otherwise. The vertex shader declares {@code _vert_init} and the
+     * fragment shader calls {@code farfield_clip}: {@code dh_bridge.vert} and
+     * {@code dh_bridge.frag} define them.
+     */
+    default String[] dhSources(boolean translucent) {
+        return null;
+    }
+
+    /** Loads the current pack again (a contract forced by command takes effect then). */
+    default void reloadPack() {
+    }
 
     /** After {@code glUseProgram} of an attached program: the pack's uniforms and samplers for this frame. */
     void bind(int program);
