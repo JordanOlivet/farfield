@@ -3390,3 +3390,34 @@ Status: accepted, 2026-11-09.
   factor of two on both sides, so growth and shrinking cannot alternate
   on a steady view; 10 s is the unused-section eviction delay, so a zoom
   shrinks once its sections are gone. Never below the first 64 MB.
+
+## ADR-121 — The player chooses the preview's trees, plants and other features
+
+Status: accepted, 2026-11-09. Plan item D.3.
+
+- **Context**: the preview grows the world's own features (ADR-079) and
+  plants (ADR-060, ADR-105); the user wanted a way to switch off what
+  bothers them, per kind. The tiles keep the features as blocks in runs,
+  with no kind; plants and villages are stored apart.
+- **Decision**:
+  - Three client settings, on by default: trees, plants, rocks and others
+    (`preview_trees`, `preview_plants`, `preview_others` in
+    `farfield-client.properties`; the Preview tab; `/farfield preview
+    trees|plants|others [on|off]`). The preview only: real terrain keeps
+    what it has.
+  - Applied when the client meshes the preview (`PreviewVoxels.Shown`): no
+    tile format or protocol change, nothing for a server to rebuild. A
+    change meshes the resident preview again, as the preview light does.
+  - A feature block's kind comes from its block, by tags, not by mod:
+    trees are logs and stems, leaves, wart blocks, shroomlights, huge
+    mushroom blocks, mangrove roots and bee nests (`TreeMaterials`);
+    everything else is "others", and so are villages. Plants are the
+    plants without collision on the ground and kelp and seagrass.
+  - Snow and ice laid on top of a feature (the freeze feature: snow layers
+    on crowns) follow the run they touch below; on no run they always
+    show. Without it, hidden trees left floating snow crowns and hidden
+    rocks took the snow off the trees (seen in a run, 2026-11-09).
+  - A light source shows with the run holding it; one in no run (a dug
+    lake's lava) always does.
+- **Not done**: a mod's tree whose logs or leaves carry neither tag counts
+  as "others".

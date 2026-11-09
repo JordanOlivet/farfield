@@ -75,7 +75,10 @@ public final class RenderCommands {
                                 .then(LiteralArgumentBuilder.<S>literal("on").executes(c -> run.run(c.getSource(),
                                         () -> previewLight(true))))
                                 .then(LiteralArgumentBuilder.<S>literal("off").executes(c -> run.run(c.getSource(),
-                                        () -> previewLight(false))))))
+                                        () -> previewLight(false)))))
+                        .then(previewFeature(run, "trees", RenderConfig.FEATURE_TREES))
+                        .then(previewFeature(run, "plants", RenderConfig.FEATURE_PLANTS))
+                        .then(previewFeature(run, "others", RenderConfig.FEATURE_OTHERS)))
                 .then(LiteralArgumentBuilder.<S>literal("debug")
                         .then(LiteralArgumentBuilder.<S>literal("levels")
                                 .executes(c -> run.run(c.getSource(), () -> debugLevels(!RenderSettings.debugLevels())))
@@ -201,6 +204,24 @@ public final class RenderCommands {
         RenderSettings.save();
         Farfield.LOG.info("LOD noise preview switched {} by command", on ? "on" : "off");
         return on ? "Noise preview on: terrain not generated yet shows coarsely." : "Noise preview off.";
+    }
+
+    /** {@code preview <trees|plants|others> [on|off]}: one kind of the preview's features (plan item D.3). */
+    private static <S> LiteralArgumentBuilder<S> previewFeature(Runner<S> run, String name, int feature) {
+        return LiteralArgumentBuilder.<S>literal(name)
+                .executes(c -> run.run(c.getSource(), () -> previewFeature(name, feature,
+                        !RenderSettings.previewShows(feature))))
+                .then(LiteralArgumentBuilder.<S>literal("on").executes(c -> run.run(c.getSource(),
+                        () -> previewFeature(name, feature, true))))
+                .then(LiteralArgumentBuilder.<S>literal("off").executes(c -> run.run(c.getSource(),
+                        () -> previewFeature(name, feature, false))));
+    }
+
+    private static String previewFeature(String name, int feature, boolean on) {
+        RenderSettings.setPreviewShows(feature, on);
+        RenderSettings.save();
+        Farfield.LOG.info("LOD preview {} switched {} by command", name, on ? "on" : "off");
+        return "Preview " + name + " " + (on ? "shown" : "hidden") + ": the preview is meshed again.";
     }
 
     /** The light of the preview's light sources (ADR-117), saved like the settings screen's. */

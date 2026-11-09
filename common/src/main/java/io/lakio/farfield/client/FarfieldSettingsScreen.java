@@ -205,6 +205,18 @@ public final class FarfieldSettingsScreen extends OptionsSubScreen {
         list.addBig(OptionInstance.createBoolean("farfield.options.preview_light",
                 OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.preview_light.tooltip")),
                 RenderSettings.previewLight(), RenderSettings::setPreviewLight));
+        list.addBig(previewFeature("farfield.options.preview_trees", RenderConfig.FEATURE_TREES));
+        list.addBig(previewFeature("farfield.options.preview_plants", RenderConfig.FEATURE_PLANTS));
+        list.addBig(previewFeature("farfield.options.preview_others", RenderConfig.FEATURE_OTHERS));
+    }
+
+    /** Shown or hidden: one kind of the preview's features (plan item D.3). */
+    private static OptionInstance<Boolean> previewFeature(String key, int feature) {
+        return OptionInstance.createBoolean(key,
+                OptionInstance.cachedConstantTooltip(Component.translatable(key + ".tooltip")),
+                (caption, shown) -> Component.translatable(
+                        shown ? "farfield.options.preview_feature.shown" : "farfield.options.preview_feature.hidden"),
+                RenderSettings.previewShows(feature), shown -> RenderSettings.setPreviewShows(feature, shown));
     }
 
     private static void addPerformance(OptionsList list) {

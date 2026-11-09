@@ -906,7 +906,34 @@ final class PreviewLayer {
         };
         return PreviewVoxels.build(drawLevel(key), LodKey.x(key), LodKey.y(key), LodKey.z(key), tiles, maskOf(w),
                 w.air(), minY, maskGround(w), maskFluid(w), layerAxis, layerIndex, w.materials(),
-                RenderSettings.previewLight());
+                RenderSettings.previewLight(), shown(w));
+    }
+
+    /** The world's tree blocks, asked per id by the mesher threads; made again for another world. */
+    private volatile TreeMaterials treeMaterials;
+
+    /** The kinds of features the player chose to see (plan item D.3). */
+    private PreviewVoxels.Shown shown(LodWorld w) {
+        int features = RenderSettings.previewFeatures();
+        if (features == io.lakio.farfield.core.config.RenderConfig.ALL_FEATURES) {
+            return PreviewVoxels.Shown.ALL;
+        }
+        TreeMaterials trees = treeMaterials;
+        if (trees == null || trees.world() != w) {
+            trees = new TreeMaterials(w);
+            treeMaterials = trees;
+        }
+        return new PreviewVoxels.Shown((features & io.lakio.farfield.core.config.RenderConfig.FEATURE_TREES) != 0,
+                (features & io.lakio.farfield.core.config.RenderConfig.FEATURE_PLANTS) != 0,
+                (features & io.lakio.farfield.core.config.RenderConfig.FEATURE_OTHERS) != 0, trees.tree(),
+                trees.cover());
+    }
+
+    /** "trees on, plants off, others on", for the log. */
+    static String featuresText(int features) {
+        return "trees " + ((features & io.lakio.farfield.core.config.RenderConfig.FEATURE_TREES) != 0 ? "on" : "off")
+                + ", plants " + ((features & io.lakio.farfield.core.config.RenderConfig.FEATURE_PLANTS) != 0 ? "on" : "off")
+                + ", others " + ((features & io.lakio.farfield.core.config.RenderConfig.FEATURE_OTHERS) != 0 ? "on" : "off");
     }
 
     /** The material ids of real columns, whose quads {@code LodRenderer} drops. */

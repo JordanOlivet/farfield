@@ -17,14 +17,23 @@ import java.util.Properties;
  * dimensions and of dimensions with thick fog such as the Nether (ADR-034),
  * the noise preview of terrain not generated yet (ADR-038), the
  * threads that mesh LOD sections and build the preview, or {@link #AUTO},
- * the performance log lines (off by default: no log flood in play), and
- * the light of the preview's light sources (ADR-117).
+ * the performance log lines (off by default: no log flood in play), the
+ * light of the preview's light sources (ADR-117), and the kinds of features
+ * the preview shows (plan item D.3, {@link #FEATURE_TREES} and the others,
+ * a bit each).
  * Missing or invalid keys take their default, out-of-range values are
  * clamped, so a hand-edited file never stops the game.
  */
 public record RenderConfig(boolean enabled, float voxelPixels, int textureDistance, boolean levelColors,
                            int fogDistance, int thickFogDistance, boolean noisePreview, int meshThreads,
-                           int previewThreads, boolean performanceLogs, boolean previewLight) {
+                           int previewThreads, boolean performanceLogs, boolean previewLight,
+                           int previewFeatures) {
+
+    /** Bits of {@link #previewFeatures}: the preview's trees, plants, and its other features and villages. */
+    public static final int FEATURE_TREES = 1;
+    public static final int FEATURE_PLANTS = 2;
+    public static final int FEATURE_OTHERS = 4;
+    public static final int ALL_FEATURES = FEATURE_TREES | FEATURE_PLANTS | FEATURE_OTHERS;
 
     /** Default target size of an LOD voxel on screen, in pixels, where a level hands over to the next. */
     public static final float DEFAULT_VOXEL_PIXELS = 6f;
@@ -52,7 +61,7 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
     public static final int MAX_THREADS = 8;
 
     public static final RenderConfig DEFAULTS = new RenderConfig(true, DEFAULT_VOXEL_PIXELS, DEFAULT_TEXTURE_DISTANCE,
-            false, DEFAULT_FOG_DISTANCE, DEFAULT_THICK_FOG_DISTANCE, true, AUTO, AUTO, false, true);
+            false, DEFAULT_FOG_DISTANCE, DEFAULT_THICK_FOG_DISTANCE, true, AUTO, AUTO, false, true, ALL_FEATURES);
 
     static final String ENABLED = "lod_rendering";
     static final String VOXEL_PIXELS = "detail_pixels_per_voxel";
@@ -65,6 +74,9 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
     static final String PREVIEW_THREADS = "preview_threads";
     static final String PERFORMANCE_LOGS = "performance_logs";
     static final String PREVIEW_LIGHT = "preview_light";
+    static final String PREVIEW_TREES = "preview_trees";
+    static final String PREVIEW_PLANTS = "preview_plants";
+    static final String PREVIEW_OTHERS = "preview_others";
     /** Before ADR-034: true meant thick fog pushed back to the LOD horizon. Read only. */
     static final String EXTEND_DIMENSION_FOG = "extend_dimension_fog";
     private static final String ALL = "all";
@@ -79,6 +91,20 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
         thickFogDistance = clampThickFogDistance(thickFogDistance);
         meshThreads = clampThreads(meshThreads);
         previewThreads = clampThreads(previewThreads);
+        previewFeatures &= ALL_FEATURES;
+    }
+
+    /** The settings with every kind of feature in the preview. */
+    public RenderConfig(boolean enabled, float voxelPixels, int textureDistance, boolean levelColors,
+                        int fogDistance, int thickFogDistance, boolean noisePreview, int meshThreads,
+                        int previewThreads, boolean performanceLogs, boolean previewLight) {
+        this(enabled, voxelPixels, textureDistance, levelColors, fogDistance, thickFogDistance, noisePreview,
+                meshThreads, previewThreads, performanceLogs, previewLight, ALL_FEATURES);
+    }
+
+    /** Whether the preview shows a kind of feature ({@link #FEATURE_TREES} and the others). */
+    public boolean previewShows(int feature) {
+        return (previewFeatures & feature) != 0;
     }
 
     /** The settings with the preview's light on. */
@@ -178,7 +204,10 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
                 parseThreads(p, MESH_THREADS),
                 parseThreads(p, PREVIEW_THREADS),
                 bool(p, PERFORMANCE_LOGS, DEFAULTS.performanceLogs),
-                bool(p, PREVIEW_LIGHT, DEFAULTS.previewLight));
+                bool(p, PREVIEW_LIGHT, DEFAULTS.previewLight),
+                (bool(p, PREVIEW_TREES, true) ? FEATURE_TREES : 0)
+                        | (bool(p, PREVIEW_PLANTS, true) ? FEATURE_PLANTS : 0)
+                        | (bool(p, PREVIEW_OTHERS, true) ? FEATURE_OTHERS : 0));
     }
 
     /** Writes the file through a temporary file, so a crash mid-write keeps the previous one. */
@@ -210,6 +239,11 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
             out.write("# Light around the preview's light sources (sea pickles, lava, glowing blocks)."
                     + " Default true.\n");
             out.write(PREVIEW_LIGHT + "=" + previewLight + "\n");
+            out.write("# What the preview shows of the world's features: its trees, its plants, and the rest\n");
+            out.write("# (rocks, ice spikes, mods' other features, villages). Default true each.\n");
+            out.write(PREVIEW_TREES + "=" + previewShows(FEATURE_TREES) + "\n");
+            out.write(PREVIEW_PLANTS + "=" + previewShows(FEATURE_PLANTS) + "\n");
+            out.write(PREVIEW_OTHERS + "=" + previewShows(FEATURE_OTHERS) + "\n");
             out.write("# Threads that build LOD meshes, 1 to " + MAX_THREADS + ", or auto (one per four logical\n");
             out.write("# processors, 1 to 4). Default auto.\n");
             out.write(MESH_THREADS + "=" + threadsText(meshThreads) + "\n");

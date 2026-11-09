@@ -31,7 +31,11 @@ class RenderConfigTest {
                 new RenderConfig(true, 6f, 0, false, 4096, RenderConfig.FOG_VANILLA),
                 new RenderConfig(true, 6f, 0, false, 4096, RenderConfig.FOG_VANILLA, false),
                 new RenderConfig(true, 6f, 0, false, 4096, RenderConfig.FOG_VANILLA, true, 3, RenderConfig.AUTO),
-                new RenderConfig(true, 6f, 0, false, 4096, RenderConfig.FOG_VANILLA, true, 3, RenderConfig.AUTO, true)}) {
+                new RenderConfig(true, 6f, 0, false, 4096, RenderConfig.FOG_VANILLA, true, 3, RenderConfig.AUTO, true),
+                new RenderConfig(true, 6f, 0, false, 4096, RenderConfig.FOG_VANILLA, true, 3, RenderConfig.AUTO, true,
+                        false, RenderConfig.FEATURE_PLANTS),
+                new RenderConfig(true, 6f, 0, false, 4096, RenderConfig.FOG_VANILLA, true, 3, RenderConfig.AUTO, true,
+                        true, RenderConfig.FEATURE_TREES | RenderConfig.FEATURE_OTHERS)}) {
             config.write(file);
             assertEquals(config, RenderConfig.read(file));
         }
@@ -79,6 +83,11 @@ class RenderConfigTest {
 
         Files.writeString(file, "noise_preview=off\n", StandardCharsets.UTF_8);
         assertFalse(RenderConfig.read(file).noisePreview());
+
+        // A file from before D.3 shows every kind of feature; one key off leaves the others on.
+        assertEquals(RenderConfig.ALL_FEATURES, RenderConfig.read(file).previewFeatures());
+        Files.writeString(file, "preview_trees=false\n", StandardCharsets.UTF_8);
+        assertEquals(RenderConfig.FEATURE_PLANTS | RenderConfig.FEATURE_OTHERS, RenderConfig.read(file).previewFeatures());
 
         Files.writeString(file, "fog_distance=OFF\nthick_fog_distance=vanilla\n", StandardCharsets.UTF_8);
         assertEquals(new RenderConfig(true, RenderConfig.DEFAULT_VOXEL_PIXELS, RenderConfig.DEFAULT_TEXTURE_DISTANCE,

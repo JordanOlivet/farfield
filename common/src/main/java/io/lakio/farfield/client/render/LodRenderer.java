@@ -449,6 +449,8 @@ public final class LodRenderer {
     private boolean selectedPreview;
     /** The preview light setting the resident preview meshes were built with (ADR-117). */
     private boolean meshedPreviewLight = RenderSettings.previewLight();
+    /** The kinds of features the resident preview meshes were built with (plan item D.3). */
+    private int meshedPreviewFeatures = RenderSettings.previewFeatures();
     private final PreviewLayer previewLayer = new PreviewLayer(meshers);
     /** Preview tiles changed since the last frame, with the chunks whose sections must be meshed again. */
     private final Map<Long, int[]> changedTiles = new java.util.HashMap<>();
@@ -1229,9 +1231,13 @@ public final class LodRenderer {
         if (RenderSettings.noisePreview() != selectedPreview) {
             selectionDirty = true;
         }
-        if (RenderSettings.previewLight() != meshedPreviewLight) {
-            // The preview's light is in its sections: mesh them again, the old meshes drawn meanwhile.
+        if (RenderSettings.previewLight() != meshedPreviewLight
+                || RenderSettings.previewFeatures() != meshedPreviewFeatures) {
+            // The preview's light and features are in its sections: mesh them again, the old meshes
+            // drawn meanwhile.
+            boolean light = RenderSettings.previewLight() != meshedPreviewLight;
             meshedPreviewLight = RenderSettings.previewLight();
+            meshedPreviewFeatures = RenderSettings.previewFeatures();
             int n = 0;
             for (long key : resident.keySet()) {
                 if (PreviewLayer.isPreview(key)) {
@@ -1240,8 +1246,13 @@ public final class LodRenderer {
                 }
             }
             selectionDirty = true;
-            Farfield.LOG.info("LOD preview light switched {}: {} preview sections meshed again",
-                    meshedPreviewLight ? "on" : "off", n);
+            if (light) {
+                Farfield.LOG.info("LOD preview light switched {}: {} preview sections meshed again",
+                        meshedPreviewLight ? "on" : "off", n);
+            } else {
+                Farfield.LOG.info("LOD preview features now {}: {} preview sections meshed again",
+                        PreviewLayer.featuresText(meshedPreviewFeatures), n);
+            }
         }
         updateFrustum(viewRotation, projection);
         if (selectionDirty || turned || dx * dx + dy * dy + dz * dz > RESELECT_DISTANCE_SQ

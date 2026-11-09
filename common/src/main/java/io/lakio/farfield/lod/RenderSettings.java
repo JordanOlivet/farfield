@@ -39,6 +39,7 @@ public final class RenderSettings {
     private static volatile int thickFogDistance = RenderConfig.DEFAULTS.thickFogDistance();
     private static volatile boolean noisePreview = RenderConfig.DEFAULTS.noisePreview();
     private static volatile boolean previewLight = RenderConfig.DEFAULTS.previewLight();
+    private static volatile int previewFeatures = RenderConfig.DEFAULTS.previewFeatures();
     private static volatile boolean depthPrepass = true;
     private static volatile boolean drawPlants = true;
     private static volatile boolean ambientOcclusion = true;
@@ -255,6 +256,22 @@ public final class RenderSettings {
     }
 
     /**
+     * The kinds of features the preview shows (plan item D.3), as
+     * {@link RenderConfig#FEATURE_TREES} and the other bits.
+     */
+    public static int previewFeatures() {
+        return previewFeatures;
+    }
+
+    public static boolean previewShows(int feature) {
+        return (previewFeatures & feature) != 0;
+    }
+
+    public static void setPreviewShows(int feature, boolean shown) {
+        previewFeatures = shown ? previewFeatures | feature : previewFeatures & ~feature;
+    }
+
+    /**
      * Whether the performance lines go to the log (stat lines, fill and build
      * times): the client setting, or the {@code farfield.perfLogs} system
      * property. Lifecycle lines (stores opened and closed, settings) always do.
@@ -286,6 +303,7 @@ public final class RenderSettings {
             previewThreads = config.previewThreads();
             performanceLogs = config.performanceLogs();
             previewLight = config.previewLight();
+            previewFeatures = config.previewFeatures();
             Farfield.LOG.info(Files.exists(file) ? "LOD settings loaded from {}: {}" : "No {} yet, LOD settings at their defaults: {}",
                     file.getFileName(), config);
         } catch (IOException | RuntimeException e) {
@@ -300,7 +318,8 @@ public final class RenderSettings {
         }
         Path file = file();
         RenderConfig config = new RenderConfig(enabled, voxelPixels, textureDistance, debugLevels, fogDistance,
-                thickFogDistance, noisePreview, meshThreads, previewThreads, performanceLogs, previewLight);
+                thickFogDistance, noisePreview, meshThreads, previewThreads, performanceLogs, previewLight,
+                previewFeatures);
         try {
             config.write(file);
             Farfield.LOG.info("LOD settings saved to {}: {}", file.getFileName(), config);

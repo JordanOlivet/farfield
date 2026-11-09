@@ -370,6 +370,17 @@ class PreviewTest {
         LodSection coarse = PreviewVoxels.build(2, 0, 0, 0, tiles, null, AIR, -64, -1, -1, -1, 0, covers);
         assertEquals(1000 + 300 + GRASS * 10 + shortGrass, coarse.material(0, 17, 0));
         assertEquals(DIRT, coarse.material(0, 16, 0));
+        // Plants hidden (plan item D.3): bare ground on every level.
+        PreviewVoxels.Shown noPlants = new PreviewVoxels.Shown(true, false, true, m -> false, m -> false);
+        LodSection bare = PreviewVoxels.build(0, 0, 2, 0, tiles, null, AIR, -64, -1, -1, -1, 0, null, false, noPlants);
+        for (int z = 0; z < 32; z++) {
+            for (int x = 0; x < 32; x++) {
+                assertEquals(AIR, bare.material(x, 6, z));
+            }
+        }
+        LodSection bareCoarse = PreviewVoxels.build(2, 0, 0, 0, tiles, null, AIR, -64, -1, -1, -1, 0, covers, false,
+                noPlants);
+        assertEquals(GRASS, bareCoarse.material(0, 17, 0));
     }
 
     @Test
@@ -990,6 +1001,49 @@ class PreviewTest {
         // Level 1 (2-block voxels), section y 0 holding y 0 to 63: the reef's voxels too.
         LodSection coarse = PreviewVoxels.build(1, 0, 0, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
         assertEquals(coral, coarse.material(5, 20, 10)); // y 0..63 at level 1: voxel y 20 holds y 40, 41
+    }
+
+    @Test
+    void theShownKindsOfFeaturesLeaveTheOthersOut() {
+        int rock = 41;
+        PreviewTile t = featureTile();
+        // A boulder at blocks x 30..31, z 20..21, y 66 to 69, beside the tree at x 10.
+        int fx = (30 + PreviewTile.FEATURE_MARGIN) / PreviewTile.FEATURE_VOXEL;
+        int fz = (20 + PreviewTile.FEATURE_MARGIN) / PreviewTile.FEATURE_VOXEL;
+        t.setFeatureColumn(fx, fz, new int[]{PreviewTile.featureRun(33, 2), rock});
+        PreviewVoxels.Tiles tiles = (x, z) -> x == 0 && z == 0 ? t : null;
+        java.util.function.IntPredicate tree = m -> m == LOG || m == LEAVES;
+        int snow = 42;
+        java.util.function.IntPredicate cover = m -> m == snow;
+        // Snow on the crown (y 80, touching the leaves' run up to 79) and on the boulder's top (y 70).
+        int tfx = (10 + PreviewTile.FEATURE_MARGIN) / PreviewTile.FEATURE_VOXEL;
+        t.setFeatureColumn(tfx, fz, new int[]{PreviewTile.featureRun(33, 5), LOG, PreviewTile.featureRun(38, 2), LEAVES,
+                PreviewTile.featureRun(40, 1), snow});
+        t.setFeatureColumn(fx, fz, new int[]{PreviewTile.featureRun(33, 2), rock, PreviewTile.featureRun(35, 1), snow});
+        // Section y 2 holds blocks 64 to 95: the trunk at y 66, the boulder at y 66.
+        LodSection all = PreviewVoxels.build(0, 0, 2, 0, tiles, null, AIR, -64, -1, -1, -1, 0, null, false,
+                PreviewVoxels.Shown.ALL);
+        assertEquals(LOG, all.material(10, 2, 20));
+        assertEquals(rock, all.material(30, 2, 20));
+        assertEquals(snow, all.material(10, 16, 20), "snow on the crown");
+        LodSection noTrees = PreviewVoxels.build(0, 0, 2, 0, tiles, null, AIR, -64, -1, -1, -1, 0, null, false,
+                new PreviewVoxels.Shown(false, true, true, tree, cover));
+        assertEquals(AIR, noTrees.material(10, 2, 20));
+        assertEquals(AIR, noTrees.material(10, 12, 20), "leaves at y 76");
+        assertEquals(AIR, noTrees.material(10, 16, 20), "the crown's snow goes with it");
+        assertEquals(rock, noTrees.material(30, 2, 20));
+        assertEquals(snow, noTrees.material(30, 6, 20), "the boulder's snow stays");
+        LodSection noOthers = PreviewVoxels.build(0, 0, 2, 0, tiles, null, AIR, -64, -1, -1, -1, 0, null, false,
+                new PreviewVoxels.Shown(true, true, false, tree, cover));
+        assertEquals(LOG, noOthers.material(10, 2, 20));
+        assertEquals(snow, noOthers.material(10, 16, 20), "the crown keeps its snow");
+        assertEquals(AIR, noOthers.material(30, 2, 20));
+        assertEquals(AIR, noOthers.material(30, 6, 20), "the boulder's snow goes with it");
+        // A light source goes with the run holding it; one in no run stays.
+        PreviewVoxels.Shown noTreesShown = new PreviewVoxels.Shown(false, true, true, tree, cover);
+        assertFalse(PreviewVoxels.lightShown(t, 0, 0, 10, 77, 20, noTreesShown), "in the leaves");
+        assertTrue(PreviewVoxels.lightShown(t, 0, 0, 30, 67, 20, noTreesShown), "in the boulder");
+        assertTrue(PreviewVoxels.lightShown(t, 0, 0, 100, 60, 100, noTreesShown), "in no run");
     }
 
     @Test

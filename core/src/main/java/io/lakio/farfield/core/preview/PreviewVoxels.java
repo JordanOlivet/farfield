@@ -4,6 +4,8 @@ import io.lakio.farfield.core.lod.LodSection;
 import io.lakio.farfield.core.lod.MipBuilder;
 import io.lakio.farfield.core.lod.NibbleBricks;
 
+import java.util.function.IntPredicate;
+
 /**
  * Turns preview tiles into LOD sections of any level (ADR-039), on demand.
  * A voxel column of a level-L section ({@code s = 2^L} blocks wide) stands
@@ -40,6 +42,12 @@ import io.lakio.farfield.core.lod.NibbleBricks;
  * voxel of a run fills its blocks; on coarser levels a voxel takes a run's
  * material when runs fill a quarter of it, the trees' rule. Runs over real
  * chunks are left out.
+ *
+ * <p>The player chooses what the preview shows (plan item D.3,
+ * {@link Shown}): its trees (the features' tree blocks and the older tree
+ * lists), its plants (without collision and under the sea), and the rest
+ * (the features' other blocks, villages). A hidden kind's light sources
+ * go with it.
  *
  * <p>Plants without collision (ADR-060) grow on the tile's plant ground at
  * their chunk's density: on the finest level one in the block above the
@@ -133,6 +141,60 @@ public final class PreviewVoxels {
     public static LodSection build(int level, int sx, int sy, int sz, Tiles tiles, Mask mask, int air, int minY,
                                    int maskGround, int maskFluid, int layerAxis, int layerIndex,
                                    MipBuilder.Shapes covers, boolean blockLight) {
+        return build(level, sx, sy, sz, tiles, mask, air, minY, maskGround, maskFluid, layerAxis, layerIndex, covers,
+                blockLight, Shown.ALL);
+    }
+
+    /**
+     * What the preview shows of a tile's features (plan item D.3): its
+     * trees, its plants, and the rest (rocks, ice spikes, every mod's other
+     * features, villages).
+     *
+     * @param tree  whether a material id is a tree block (logs, leaves, huge
+     *              mushrooms): the tiles keep the features as blocks, not as kinds
+     * @param cover whether a material id is a cover (snow, ice) laid on top of
+     *              what is there: it shows with the run right under it, and on
+     *              no run always
+     */
+    public record Shown(boolean trees, boolean plants, boolean others, IntPredicate tree, IntPredicate cover) {
+
+        public static final Shown ALL = new Shown(true, true, true, material -> false, material -> false);
+
+        /** Whether a feature block of this material shows (a cover: see {@link #run}). */
+        public boolean feature(int material) {
+            return tree.test(material) ? trees : others;
+        }
+
+        /**
+         * Whether run {@code r} of a feature column shows: by its material, or
+         * for a cover, as the run right under it (touching it), shown on its own.
+         */
+        public boolean run(int[] runs, int r) {
+            int material = runs[r + 1];
+            if (!cover.test(material)) {
+                return feature(material);
+            }
+            if (r == 0) {
+                return true;
+            }
+            int below = r - 2;
+            boolean touching = PreviewTile.featureRunY(runs[below]) + PreviewTile.featureRunBlocks(runs[below])
+                    == PreviewTile.featureRunY(runs[r]);
+            return !touching || run(runs, below);
+        }
+
+        public boolean all() {
+            return trees && plants && others;
+        }
+    }
+
+    /**
+     * Like {@link #build(int, int, int, int, Tiles, Mask, int, int, int, int, int, int, MipBuilder.Shapes, boolean)};
+     * {@code shown} leaves out the kinds of features the player turned off.
+     */
+    public static LodSection build(int level, int sx, int sy, int sz, Tiles tiles, Mask mask, int air, int minY,
+                                   int maskGround, int maskFluid, int layerAxis, int layerIndex,
+                                   MipBuilder.Shapes covers, boolean blockLight, Shown shown) {
         int s = 1 << level;
         int size = S * s;
         int ox = sx * size;
@@ -243,7 +305,7 @@ public final class PreviewVoxels {
                         if (height - 1 < bottom + s) {
                             // A dug column's floor is the ground the lake laid bare: the filler.
                             material = level > 0 && lake[c] >= 0 ? lake[c] : level == 0 && dug[c] ? filler
-                                    : level > 0 && covers != null && top == tile.plantGround()
+                                    : level > 0 && covers != null && shown.plants() && top == tile.plantGround()
                                     ? coveredTop(tile, bx, bz, top, covers) : top;
                         } else if (bottom + s > height - 1 - PreviewTile.FILLER_DEPTH) {
                             material = filler;
@@ -276,7 +338,8 @@ public final class PreviewVoxels {
                         section.skyLight().set(i, vy, k, seaSkyLight(Math.min(bottom + s, sea) - 1, sea, bottom + s > sea));
                     }
                 }
-                if (level == 0 && top == tile.plantGround() && top >= 0 && (water < 0 || height >= sea) && lake[c] < 0
+                if (level == 0 && shown.plants() && top == tile.plantGround() && top >= 0 && (water < 0 || height >= sea)
+                        && lake[c] < 0
                         && height >= oy && height < oy + S && layerAxis < 0) { // plants hide no neighbor face
                     int plant = plantAt(tile, bx, bz);
                     if (plant >= 0) {
@@ -286,7 +349,7 @@ public final class PreviewVoxels {
                         section.set(i, height - oy, k, plant);
                     }
                 }
-                if (level == 0 && water >= 0 && height < sea - 1 && layerAxis < 0) {
+                if (level == 0 && shown.plants() && water >= 0 && height < sea - 1 && layerAxis < 0) {
                     // Kelp and seagrass on the sea floor, in the water they stand in (ADR-105).
                     int entry = seaPlantAt(tile, bx, bz);
                     if (entry >= 0) {
@@ -308,10 +371,10 @@ public final class PreviewVoxels {
         if (layerAxis < 0) {
             // Layers only hide a neighbor's water faces: trees there are left out (a
             // water face against a trunk on a section border stays, behind the trunk).
-            section = trees(section, level, ox, oy, oz, cache, mask, air, layerAxis, layerIndex);
+            section = trees(section, level, ox, oy, oz, cache, mask, air, layerAxis, layerIndex, shown);
         }
         if (section != null && blockLight) {
-            blockLight(section, level, ox, oy, oz, cache, mask, layerAxis, layerIndex);
+            blockLight(section, level, ox, oy, oz, cache, mask, layerAxis, layerIndex, shown);
         }
         if (section != null) {
             for (int cz = 0; cz < LodSection.BIOME_CELLS_PER_AXIS; cz++) {
@@ -427,7 +490,7 @@ public final class PreviewVoxels {
 
     /** Lights the section's voxels from the light sources of the tiles around (see the class comment). */
     private static void blockLight(LodSection section, int level, int ox, int oy, int oz, TileCache cache, Mask mask,
-                                   int layerAxis, int layerIndex) {
+                                   int layerAxis, int layerIndex, Shown shown) {
         int s = 1 << level;
         int size = S * s;
         // A source of 15 lights blocks up to 14 away; its tile holds it up to its margin out.
@@ -446,13 +509,37 @@ public final class PreviewVoxels {
                     int y = lights[j + 1];
                     int z = tz * PreviewTile.BLOCKS + PreviewTile.lightZ(word);
                     if (gap(x, ox, ox + size - 1) + gap(y, oy, oy + size - 1) + gap(z, oz, oz + size - 1) >= emission
-                            || mask != null && mask.real(x >> 4, z >> 4)) {
+                            || mask != null && mask.real(x >> 4, z >> 4)
+                            || !shown.all() && !lightShown(tile, tx * PreviewTile.BLOCKS, tz * PreviewTile.BLOCKS, x, y,
+                            z, shown)) {
                         continue;
                     }
                     light(section.blockLight(), level, ox, oy, oz, x, y, z, emission, layerAxis, layerIndex);
                 }
             }
         }
+    }
+
+    /**
+     * Whether a light source at block (x, y, z) of a tile (its west and north
+     * side at x0, z0) shows: the feature run holding it shows. A source in no
+     * run (a dug lake's lava) always does.
+     */
+    static boolean lightShown(PreviewTile tile, int x0, int z0, int x, int y, int z, Shown shown) {
+        int v = PreviewTile.FEATURE_VOXEL;
+        int fx = Math.floorDiv(x - x0 + PreviewTile.FEATURE_MARGIN, v);
+        int fz = Math.floorDiv(z - z0 + PreviewTile.FEATURE_MARGIN, v);
+        if (fx < 0 || fz < 0 || fx >= PreviewTile.FEATURE_SIDE || fz >= PreviewTile.FEATURE_SIDE) {
+            return true;
+        }
+        int[] runs = tile.featureColumn(fx, fz);
+        for (int r = 0; r < runs.length; r += 2) {
+            int from = PreviewTile.featureRunY(runs[r]);
+            if (y >= from && y < from + PreviewTile.featureRunBlocks(runs[r])) {
+                return shown.run(runs, r);
+            }
+        }
+        return true;
     }
 
     /** Raises the voxels within reach of a source at block (x, y, z) to its light there. */
@@ -590,7 +677,7 @@ public final class PreviewVoxels {
 
     /** Stamps the trees whose blocks fall in the section (see the class comment). */
     private static LodSection trees(LodSection section, int level, int ox, int oy, int oz, TileCache cache, Mask mask,
-                                    int air, int layerAxis, int layerIndex) {
+                                    int air, int layerAxis, int layerIndex, Shown shown) {
         int s = 1 << level;
         int size = S * s;
         Stamp stamp = new Stamp(section, level, ox, oy, oz, size, mask, air, layerAxis, layerIndex);
@@ -598,7 +685,7 @@ public final class PreviewVoxels {
         for (int chunkZ = (oz >> 4) - 1; chunkZ <= ((oz + size - 1) >> 4) + 1; chunkZ++) {
             for (int chunkX = (ox >> 4) - 1; chunkX <= ((ox + size - 1) >> 4) + 1; chunkX++) {
                 PreviewTile tile = cache.tile(Math.floorDiv(chunkX, PreviewTile.CHUNKS), Math.floorDiv(chunkZ, PreviewTile.CHUNKS));
-                if (tile == null || mask != null && mask.real(chunkX, chunkZ)) {
+                if (tile == null || !shown.trees() || mask != null && mask.real(chunkX, chunkZ)) {
                     continue;
                 }
                 for (int t : tile.trees(Math.floorMod(chunkX, PreviewTile.CHUNKS), Math.floorMod(chunkZ, PreviewTile.CHUNKS))) {
@@ -616,7 +703,8 @@ public final class PreviewVoxels {
             for (int tx = Math.floorDiv(ox - reach, PreviewTile.BLOCKS); tx <= Math.floorDiv(ox + size + reach, PreviewTile.BLOCKS); tx++) {
                 PreviewTile tile = cache.tile(tx, tz);
                 if (tile != null) {
-                    features(stamp, tile, tx * PreviewTile.BLOCKS, tz * PreviewTile.BLOCKS, ox, oy, oz, size, mask);
+                    features(stamp, tile, tx * PreviewTile.BLOCKS, tz * PreviewTile.BLOCKS, ox, oy, oz, size, mask,
+                            shown);
                 }
             }
         }
@@ -624,7 +712,7 @@ public final class PreviewVoxels {
         for (int tz = Math.floorDiv(oz - 16, PreviewTile.BLOCKS); tz <= Math.floorDiv(oz + size + 16, PreviewTile.BLOCKS); tz++) {
             for (int tx = Math.floorDiv(ox - 16, PreviewTile.BLOCKS); tx <= Math.floorDiv(ox + size + 16, PreviewTile.BLOCKS); tx++) {
                 PreviewTile tile = cache.tile(tx, tz);
-                if (tile == null) {
+                if (tile == null || !shown.others()) {
                     continue;
                 }
                 for (PreviewTile.Building b : tile.buildings()) {
@@ -642,7 +730,7 @@ public final class PreviewVoxels {
 
     /** Stamps the feature runs of one tile (its west and north side at x0, z0) that reach the section. */
     private static void features(Stamp stamp, PreviewTile tile, int x0, int z0, int ox, int oy, int oz, int size,
-                                 Mask mask) {
+                                 Mask mask, Shown shown) {
         stamp.water = tile.water();
         int v = PreviewTile.FEATURE_VOXEL;
         int margin = PreviewTile.FEATURE_MARGIN;
@@ -664,7 +752,7 @@ public final class PreviewVoxels {
                 for (int r = 0; r < runs.length; r += 2) {
                     int y = PreviewTile.featureRunY(runs[r]);
                     int blocks = PreviewTile.featureRunBlocks(runs[r]);
-                    if (y + blocks > oy && y < oy + size) {
+                    if (y + blocks > oy && y < oy + size && (shown.all() || shown.run(runs, r))) {
                         stamp.box(bx, y, bz, v, blocks, v, runs[r + 1]);
                     }
                 }
