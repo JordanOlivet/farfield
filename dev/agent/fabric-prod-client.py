@@ -77,6 +77,13 @@ def prepare(shader):
         if (f.endswith('.jar') and not f.startswith(('farfield-', 'CrashAssistant-'))
                 and (not only or f.startswith(only))):
             shutil.copy2(os.path.join(PACK, 'mods', f), mods)
+    # FARFIELD_EXTRA_MODS=<folder> adds that folder's jars to the run, mods the
+    # pack lacks for a test (Chunky, to generate chunks far out).
+    extra = os.environ.get('FARFIELD_EXTRA_MODS')
+    if extra:
+        for f in os.listdir(extra):
+            if f.endswith('.jar'):
+                shutil.copy2(os.path.join(extra, f), mods)
     # FARFIELD_WITHOUT=1 runs the pack without Farfield, the baseline of a
     # memory or cost comparison (no agent inbox then: no scripted commands).
     jar = 'no Farfield jar'
