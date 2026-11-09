@@ -1,5 +1,9 @@
 {
   "farfield.options.title": "Paramètres de Farfield",
+  "farfield.options.tab.rendering": "Rendu",
+  "farfield.options.tab.preview": "Aperçu",
+  "farfield.options.tab.performance": "Performances",
+  "farfield.options.tab.debug": "Débogage",
   "farfield.options.rendering": "Terrain lointain",
   "farfield.options.rendering.tooltip": "Dessine le terrain au-delà de la distance de rendu en niveaux de détail. Désactivé, seul ce que le jeu dessine reste visible.",
   "farfield.options.detail": "Détail",

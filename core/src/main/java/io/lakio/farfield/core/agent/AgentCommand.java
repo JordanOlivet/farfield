@@ -20,6 +20,7 @@ import java.util.Locale;
  * replay &lt;name&gt; [speed &lt;f&gt;] [every &lt;n&gt;]  flies that flight again, a screenshot every n ticks
  * frames on|off                  the frame probe: short glitches written to farfield/frames/
  * reload                         reloads the resource packs, as F3+T: every resident LOD section is meshed again
+ * settings &lt;tab&gt; | settings close  opens Farfield's settings screen on that tab (0 first), or closes it
  * quit                           closes the game as its window's close button does
  * </pre>
  */
@@ -60,6 +61,10 @@ public sealed interface AgentCommand {
     }
 
     record Reload() implements AgentCommand {
+    }
+
+    /** {@code tab} -1 closes the screen. */
+    record Settings(int tab) implements AgentCommand {
     }
 
     record Quit() implements AgentCommand {
@@ -165,12 +170,24 @@ public sealed interface AgentCommand {
                 expectWords(w, 1, "reload takes no argument");
                 yield new Reload();
             }
+            case "settings" -> {
+                String usage = "settings takes a tab number (0 first) or close";
+                expectWords(w, 2, usage);
+                if (w[1].equalsIgnoreCase("close")) {
+                    yield new Settings(-1);
+                }
+                double tab = number(w[1]);
+                if (tab != Math.rint(tab) || tab < 0 || tab > 15) {
+                    throw new IllegalArgumentException(usage);
+                }
+                yield new Settings((int) tab);
+            }
             case "quit" -> {
                 expectWords(w, 1, "quit takes no argument");
                 yield new Quit();
             }
             default -> throw new IllegalArgumentException("unknown command '" + w[0]
-                    + "' (command, tp, look, screenshot, state, wait, window, record, replay, frames, reload, quit)");
+                    + "' (command, tp, look, screenshot, state, wait, window, record, replay, frames, reload, settings, quit)");
         };
     }
 

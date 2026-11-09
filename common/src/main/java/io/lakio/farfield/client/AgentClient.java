@@ -190,6 +190,16 @@ public final class AgentClient {
                 mc.reloadResourcePacks();
                 reply(e, true, Map.of());
             }
+            case AgentCommand.Settings s -> {
+                if (s.tab() < 0) {
+                    if (mc.screen instanceof FarfieldSettingsScreen screen) {
+                        screen.onClose();
+                    }
+                } else {
+                    mc.setScreen(FarfieldSettingsScreen.onTab(null, s.tab()));
+                }
+                reply(e, true, Map.of());
+            }
             case AgentCommand.Quit ignored -> {
                 reply(e, true, Map.of());
                 Farfield.LOG.info("Agent inbox: closing the game");

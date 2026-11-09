@@ -11,6 +11,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AgentCommandTest {
 
     @Test
+    void settingsOpensATabOrCloses() {
+        assertEquals(new AgentCommand.Settings(2), AgentCommand.parse("settings 2"));
+        assertEquals(new AgentCommand.Settings(-1), AgentCommand.parse("settings close"));
+        assertThrows(IllegalArgumentException.class, () -> AgentCommand.parse("settings"));
+        assertThrows(IllegalArgumentException.class, () -> AgentCommand.parse("settings 1.5"));
+        assertThrows(IllegalArgumentException.class, () -> AgentCommand.parse("settings -1"));
+    }
+
+    @Test
     void blankAndCommentLinesAreNoCommand() {
         assertNull(AgentCommand.parse("   "));
         assertNull(AgentCommand.parse("# fly north"));

@@ -1,5 +1,9 @@
 {
   "farfield.options.title": "Farfield Settings",
+  "farfield.options.tab.rendering": "Rendering",
+  "farfield.options.tab.preview": "Preview",
+  "farfield.options.tab.performance": "Performance",
+  "farfield.options.tab.debug": "Debug",
   "farfield.options.rendering": "Distant Terrain",
   "farfield.options.rendering.tooltip": "Draw the terrain beyond the render distance as levels of detail. Off shows only what the game draws.",
   "farfield.options.detail": "Detail",
