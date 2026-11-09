@@ -27,7 +27,12 @@ import java.util.function.LongPredicate;
  * of the world and resume after a restart; the tiles already built are
  * skipped, so progress needs no saving. While players are online the tasks
  * pause ({@code pregen_when_players=pause}, the default) or go on behind
- * the players' own tiles. Tiles are built at the finest grid, whatever their
+ * the players' own tiles; an operator's {@code resume} or {@code start} while
+ * players hold them forces that task on until it ends or is paused, for this
+ * session only (a restart goes back to the setting), with half of the
+ * preview's queue kept for it (the players' tiles took every slot, and a
+ * forced task built nothing). Tiles are built at the
+ * finest grid, whatever their
  * distance: a player coming near does not build them again. Server thread.
  */
 final class PreviewPregen {
@@ -44,6 +49,8 @@ final class PreviewPregen {
     /** Per task, the tiles built when it was last reported and when. */
     private final Map<String, long[]> lastReport = new HashMap<>();
     private final Map<String, Long> started = new HashMap<>();
+    /** Tasks an operator started or resumed while players held them: they run anyway, this session. */
+    private final Set<String> forced = new java.util.HashSet<>();
     private boolean held;
 
     private PreviewPregen(Path file, boolean pausesForPlayers, PregenTasks tasks) {
@@ -117,12 +124,22 @@ final class PreviewPregen {
                         : "Noise preview pregen resumed: no player online");
             }
         }
-        return !held && tasks.tasks().stream().anyMatch(t -> t.state() == PregenTasks.State.RUNNING);
+        return tasks.tasks().stream().anyMatch(this::runs);
+    }
+
+    /** Running, and not held by players (or forced by an operator). */
+    private boolean runs(PregenTasks.Task t) {
+        return t.state() == PregenTasks.State.RUNNING && (!held || forced.contains(t.id()));
+    }
+
+    /** Whether an operator forced a task of this dimension while players hold the others. */
+    boolean forcedIn(String dimension) {
+        return held && tasks.tasks().stream().anyMatch(t -> runs(t) && forced.contains(t.id())
+                && t.dimension().equals(dimension));
     }
 
     boolean runningIn(String dimension) {
-        return tasks.tasks().stream().anyMatch(t -> t.state() == PregenTasks.State.RUNNING
-                && t.dimension().equals(dimension));
+        return tasks.tasks().stream().anyMatch(t -> runs(t) && t.dimension().equals(dimension));
     }
 
     /**
@@ -133,7 +150,7 @@ final class PreviewPregen {
     List<Long> next(String dimension, LongPredicate built, Set<Long> inFlight, int max) {
         List<Long> out = new ArrayList<>();
         for (PregenTasks.Task t : tasks.tasks()) {
-            if (t.state() != PregenTasks.State.RUNNING || !t.dimension().equals(dimension)) {
+            if (!runs(t) || !t.dimension().equals(dimension)) {
                 continue;
             }
             int[][] tiles = order(t);
@@ -160,6 +177,7 @@ final class PreviewPregen {
 
     private void finish(PregenTasks.Task t) {
         Long since = started.remove(t.id());
+        forced.remove(t.id());
         put(t.with(PregenTasks.State.DONE));
         Farfield.LOG.info("Noise preview pregen {}: done, {} tiles within {} blocks of {}, {}{}", t.id(),
                 order(t).length, t.radius(), t.centerX(), t.centerZ(),
@@ -170,7 +188,7 @@ final class PreviewPregen {
     /** One line per open task, once a minute while it runs: tiles built, pace and time left. */
     void report(LongPredicate builtIn, String dimension) {
         for (PregenTasks.Task t : tasks.tasks()) {
-            if (t.state() != PregenTasks.State.RUNNING || !t.dimension().equals(dimension) || held) {
+            if (!runs(t) || !t.dimension().equals(dimension)) {
                 continue;
             }
             int[][] tiles = order(t);
@@ -197,10 +215,14 @@ final class PreviewPregen {
         PregenTasks.Task t = new PregenTasks.Task(key, dimension, x, z, radius, PregenTasks.State.RUNNING);
         put(t);
         lastReport.remove(key);
-        Farfield.LOG.info("Noise preview pregen {} started: {} tiles within {} blocks of {}, {} in {}", key,
-                order(t).length, t.radius(), x, z, dimension);
+        if (held) {
+            forced.add(key); // an operator asked for it now: players online do not hold it
+        }
+        Farfield.LOG.info("Noise preview pregen {} started: {} tiles within {} blocks of {}, {} in {}{}", key,
+                order(t).length, t.radius(), x, z, dimension, held ? ", forced while players are online" : "");
         return "Preview pregeneration " + key + ": " + order(t).length + " tiles within " + t.radius() + " blocks of "
-                + x + ", " + z + " in " + dimension + (held ? " (paused while players are online)" : "") + ".";
+                + x + ", " + z + " in " + dimension + (held ? ", running even with players online (started by"
+                + " hand; pregen_when_players=pause applies again after a restart)" : "") + ".";
     }
 
     /** Pauses, resumes or cancels one task, or every open one for null. */
@@ -214,14 +236,22 @@ final class PreviewPregen {
         if (picked.isEmpty()) {
             return null;
         }
+        boolean force = state == PregenTasks.State.RUNNING && held;
         for (PregenTasks.Task t : picked) {
             put(t.with(state));
             started.remove(t.id());
-            Farfield.LOG.info("Noise preview pregen {}: {}", t.id(), state.name().toLowerCase(Locale.ROOT));
+            if (force) {
+                forced.add(t.id()); // resumed by hand while players hold the tasks: it runs anyway
+            } else if (state != PregenTasks.State.RUNNING) {
+                forced.remove(t.id());
+            }
+            Farfield.LOG.info("Noise preview pregen {}: {}{}", t.id(), state.name().toLowerCase(Locale.ROOT),
+                    force ? ", forced while players are online" : "");
         }
-        return picked.size() == 1 ? "Preview pregeneration " + picked.get(0).id() + ": "
-                + state.name().toLowerCase(Locale.ROOT) + "."
-                : picked.size() + " preview pregenerations: " + state.name().toLowerCase(Locale.ROOT) + ".";
+        String what = force ? "running even with players online (resumed by hand; pregen_when_players=pause"
+                + " applies again after a restart)" : state.name().toLowerCase(Locale.ROOT);
+        return picked.size() == 1 ? "Preview pregeneration " + picked.get(0).id() + ": " + what + "."
+                : picked.size() + " preview pregenerations: " + what + ".";
     }
 
     /** Every task with its progress, for {@code /farfield pregen list}. */
@@ -236,12 +266,17 @@ final class PreviewPregen {
                     done += built.test(PreviewStore.key(tile[0], tile[1])) ? 1 : 0;
                 }
             }
-            lines.add(String.format(Locale.ROOT, "%s: %s, %d blocks around %d, %d in %s, %s", t.id(),
-                    t.state().name().toLowerCase(Locale.ROOT), t.radius(), t.centerX(), t.centerZ(), t.dimension(),
+            String state = t.state().name().toLowerCase(Locale.ROOT);
+            if (t.state() == PregenTasks.State.RUNNING && held) {
+                state = forced.contains(t.id()) ? "running, forced by hand" : "waiting: players online";
+            }
+            lines.add(String.format(Locale.ROOT, "%s: %s, %d blocks around %d, %d in %s, %s", t.id(), state,
+                    t.radius(), t.centerX(), t.centerZ(), t.dimension(),
                     t.open() ? done + " of " + tiles.length + " tiles" : tiles.length + " tiles"));
         }
         if (held) {
-            lines.add("Paused while players are online (pregen_when_players=pause).");
+            lines.add("Players online hold the tasks (pregen_when_players=pause); /farfield pregen resume <id> runs"
+                    + " one anyway.");
         }
         return lines;
     }

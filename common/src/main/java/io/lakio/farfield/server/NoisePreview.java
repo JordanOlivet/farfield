@@ -337,8 +337,12 @@ final class NoisePreview {
         }
         candidates.sort((a, b) -> Long.compare(a[1], b[1]));
         int limit = Math.max(MAX_IN_FLIGHT, 2 * pool.getCorePoolSize());
+        // A task an operator forced while players are online keeps half the queue: the players'
+        // tiles alone filled it, and the forced task built nothing (2026-11-09).
+        int playerLimit = pregenHere && pregen.forcedIn(d.key.location().toString()) ? limit - Math.max(1, limit / 2)
+                : limit;
         for (long[] c : candidates) {
-            if (d.inFlight.size() >= limit) {
+            if (d.inFlight.size() >= playerLimit) {
                 break;
             }
             long tile = c[0];

@@ -3492,6 +3492,10 @@ Status: accepted, 2026-11-09. Plan item G.1.
   - One task at a time per dimension, in their order. One log line at a
     task's start, end and every minute (tiles built, seconds a tile, time
     left), and when players hold or free them.
+  - Amended the same day (the user, after a `resume` that did nothing
+    while they were online): an operator's `resume`, or `start` while
+    players are online, forces that task for the session, with half the
+    preview's queue kept for it; a restart goes back to the setting.
 - **Later** (the user): the LODs of a world that lived without Farfield
   imported at start the same way, unattended; to study first (region
   files, the import's checkpoints).
