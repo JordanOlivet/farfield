@@ -277,3 +277,20 @@ from there: D.2, then the sea floor's plants and corals in the preview.
   Farfield keeps the harness (today a baseline run has no inbox and no
   window handling), and the harness serves the user's other mods. Seen
   while measuring Farfield's memory against a pack run without it.
+
+## M2.G — Ideas to study (the user, 2026-11-09)
+
+Raw ideas, written down so they are not lost; each needs a study (what
+exists, what it would gain, measured) before any work. The user: "c'est
+vraiment que des idées jetées en vrac". The native-code ones are about
+thinking past a plain Java mod for speed; Rust is the user's first
+thought, not a fixed choice.
+
+- [ ] G.1 Build the noise preview around the spawn ahead of time on a
+  server (client-server mode), so the first player to join finds it
+  ready. Today (B.3) the server builds it around each player once they
+  are there.
+- [ ] G.2 A chunk pregenerator of our own, like Chunky, with the heavy
+  work offloaded to native code (Rust, if possible) for speed.
+- [ ] G.3 Native code (Rust, if possible) to speed up the LODs' build, the
+  preview's build, and the rendering of both.
