@@ -220,15 +220,17 @@ Items:
   client (redwood forest, badlands). ADR-102 (biome per quart column,
   7.9 s a tile in the pack), ADR-104 (ModernFix's lookup bypassed: the
   grid). The user, on their server (2026-10-30): "D.2 c'est ok".
-- [~] D.3 A client toggle per kind of feature (trees, plants, rocks).
+- [x] D.3 A client toggle per kind of feature (trees, plants, rocks).
   ADR-121: trees, plants, rocks and others, client settings in the
   settings screen's new Preview tab (the screen now in tabs, the user's
   pick) and `/farfield preview trees|plants|others`, applied when the
   preview is meshed. Verified on the Fabric pack: trees and others
   switched off and on over a snowy taiga (the crowns' snow follows the
   trees), the preview meshed again each time; plants by unit test only (at
-  854x480 the plains view changed 0.5 % of pixels). Remains: the user's
-  eye, NeoForge.
+  854x480 the plains view changed 0.5 % of pixels). The user, in their
+  NeoForge pack on the home server (2026-11-09): "C'est nikel, le menu
+  marche bien et le filtrage aussi" (the log: each kind switched off and
+  on, 2,032 to 2,202 preview sections meshed again).
 - [x] D.4 Vegetation without collision that grows like kelp or vines
   (`GrowingPlantBlock`: Biomes O' Plenty's `high_grass`) was drawn as
   nothing, in real LODs and in the preview. ADR-080: classed as plants,
