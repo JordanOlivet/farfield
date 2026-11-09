@@ -40,6 +40,10 @@ preview is built in the background, on threads you set; you choose
 whether it shows its trees, its plants and its other features. More
 biomes in the gallery.
 
+![One view: the LODs of the terrain explored so far](https://cdn.modrinth.com/data/3ToF1nXi/images/3e2be4b5c3b40b8a561fb516d43113520c999c92.jpg)
+
+![The same view: the preview fills the horizon](https://cdn.modrinth.com/data/3ToF1nXi/images/22f3cb52052473cab1dbdb617c331bbcfda080df.jpg)
+
 ![A world just created: almost all of it is the preview](https://cdn.modrinth.com/data/3ToF1nXi/images/3e7dd680ff8564ae8bd461fc657e2a700ebe926c.png)
 
 ![Badlands and a warm sea, in the preview](https://cdn.modrinth.com/data/3ToF1nXi/images/cc881c2cf1673a67bf6e434146a6355f6d4c48ed.png)
@@ -53,6 +57,10 @@ reflections included, through the contract the pack already ships for
 far terrain: Voxy's (Photon, Complementary, BSL, MakeUp: tested), or
 Distant Horizons' for packs that ship only that one. Farfield takes the
 place of those mods; do not install them beside it.
+
+![Under Photon: the LODs and the preview lit by the shader pack](https://cdn.modrinth.com/data/3ToF1nXi/images/f35168b81ee4190f5611bd683135971ba687782a.jpg)
+
+![The same view under Complementary](https://cdn.modrinth.com/data/3ToF1nXi/images/2b4aa6ad27aad3c1fc8d1ab9d22961e500699c9b.jpg)
 
 ## Single player and servers
 

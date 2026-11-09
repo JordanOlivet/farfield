@@ -8,7 +8,7 @@ category: minecraft-modding
 
 A release is a pushed tag `v<version>[-alpha.N]`. Do not tag until the user says every feature planned for the release is complete: finishing one work item is not a reason to tag. `.github/workflows/release.yml` builds both loader jars and publishes them. Never publish by hand, and never report a platform as published without its log line.
 
-1. Check `version=` in `gradle.properties` is the core of the tag (`0.1.0` for `v0.1.0-alpha.1`). A mismatch stops the Prepare job before any upload.
+1. Check `version=` in `gradle.properties` is the core of the tag (`0.1.0` for `v0.1.0-alpha.1`). A mismatch stops the Prepare job before any upload. Pick the bump from what changed since the last tag: a stream protocol version change makes it a minor bump (0.2.1 to 0.3.0), since servers and clients of different versions cannot stream; only same-protocol fixes are a patch.
 2. Check the ci-workflows PR that provides `publish-mod.yml@v1` is merged, and that the variables `MODRINTH_ID`, `CURSEFORGE_ID` and the secrets `MODRINTH_TOKEN`, `CURSEFORGE_TOKEN` exist (`gh variable list`, `gh secret list`). Missing ones: use the `git-github-config` skill.
 3. Lint the workflows before tagging: `actionlint .github/workflows/*.yml`. actionlint is not on PATH on this machine; use `uvx --from actionlint-py actionlint .github/workflows/*.yml` (it passed on 0.2.0). Then sweep the user-facing text for claims the release changes: the lang files' tooltips (`en_us.json` and `fr_fr.json`, where a stale "Single player only" survived until 0.2.0), `docs/listing/description.md`, the README status line and plan link, and `version=` in `gradle.properties`.
 4. Tag and push: `git tag vX.Y.Z-alpha.N && git push origin vX.Y.Z-alpha.N`.

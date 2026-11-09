@@ -6,7 +6,7 @@ it). Commands:
     python docs/listing/modrinth.py show                  # the page as Modrinth has it now
     python docs/listing/modrinth.py push-body             # description.md as the page's body
     python docs/listing/modrinth.py push-icon <png>       # the project icon
-    python docs/listing/modrinth.py add-image <png> <title> [--featured]  # a gallery image; prints its URL
+    python docs/listing/modrinth.py add-image <png|jpg> <title> [--featured]  # a gallery image; prints its URL
     python docs/listing/modrinth.py push-links            # source and issues links to GitHub
     python docs/listing/modrinth.py push-license          # the license of gradle.properties
 """
@@ -48,7 +48,7 @@ def show():
                 'source_url', 'issues_url', 'wiki_url', 'discord_url', 'license', 'icon_url'):
         print(f'{key}: {p.get(key)}')
     for image in p.get('gallery', []):
-        print(f"gallery: {image.get('title')} featured={image.get('featured')} {image.get('url')}")
+        print(f"gallery: {image.get('title')} featured={image.get('featured')} {image.get('raw_url') or image.get('url')}")
     print('--- body ---')
     print(p.get('body'))
 
@@ -78,9 +78,11 @@ def push_license():
     print(f'license pushed: HTTP {status}, {spdx}')
 
 
-def add_image(png, title, featured):
-    query = f'ext=png&featured={"true" if featured else "false"}&title={urllib.request.quote(title)}'
-    status, _ = call('POST', f'/project/{PROJECT}/gallery?{query}', Path(png).read_bytes(), 'image/png')
+def add_image(image, title, featured):
+    ext = Path(image).suffix.lower().lstrip('.')
+    mime = 'image/jpeg' if ext in ('jpg', 'jpeg') else f'image/{ext}'
+    query = f'ext={ext}&featured={"true" if featured else "false"}&title={urllib.request.quote(title)}'
+    status, _ = call('POST', f'/project/{PROJECT}/gallery?{query}', Path(image).read_bytes(), mime)
     _, p = call('GET', f'/project/{PROJECT}')
     urls = [g['url'] for g in p.get('gallery', []) if g.get('title') == title]
     print(f'gallery image added: HTTP {status}, {urls[-1] if urls else "URL not found"}')
