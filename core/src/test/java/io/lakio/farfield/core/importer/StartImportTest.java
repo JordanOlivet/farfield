@@ -30,17 +30,20 @@ class StartImportTest {
         Path played = region("r.0.0.mca", stop - 60_000);          // written while the server ran with Farfield
         Path atStop = region("r.1.0.mca", stop + 2_000);          // saved during the stop itself
         Path without = region("r.2.0.mca", stop + 3_600_000);     // changed an hour later, Farfield away
-        List<Path> all = List.of(played, atStop, without);
-        assertEquals(List.of(without), StartImport.select(all, true, new StartImport.Mark(true, stop)));
+        long started = stop + 7_200_000;
+        Path savedSinceStart = region("r.3.0.mca", started + 20_000); // the spawn area, saved by this start
+        List<Path> all = List.of(played, atStop, without, savedSinceStart);
+        assertEquals(List.of(without), StartImport.select(all, true, new StartImport.Mark(true, stop), started));
     }
 
     @Test
     void neverImportedOrAfterACrashEveryRegionIsOffered() throws IOException {
         long stop = 1_700_000_000_000L;
         List<Path> all = List.of(region("r.0.0.mca", stop - 1), region("r.0.1.mca", stop + 10_000_000));
-        assertEquals(all, StartImport.select(all, false, new StartImport.Mark(true, stop)), "no checkpoint");
-        assertEquals(all, StartImport.select(all, true, new StartImport.Mark(false, stop)), "crashed");
-        assertEquals(all, StartImport.select(all, true, null), "no mark");
+        long now = stop + 20_000_000;
+        assertEquals(all, StartImport.select(all, false, new StartImport.Mark(true, stop), now), "no checkpoint");
+        assertEquals(all, StartImport.select(all, true, new StartImport.Mark(false, stop), now), "crashed");
+        assertEquals(all, StartImport.select(all, true, null, now), "no mark");
     }
 
     @Test

@@ -52,6 +52,12 @@ public final class LodServer {
     /** A finished whole import of a dimension, beside its checkpoint. */
     private static final String IMPORT_COMPLETE = "import.complete";
     private boolean startPlanned;
+    /**
+     * When this server's process started: regions it saved since (its spawn
+     * area while loading) are its own, not changes made without Farfield. The
+     * process, not this object: the world loads and saves before mods start.
+     */
+    private final long startedMillis = java.lang.management.ManagementFactory.getRuntimeMXBean().getStartTime();
     private final java.util.ArrayDeque<Object[]> startQueue = new java.util.ArrayDeque<>();
     /** An operator's import pause holds the import; an operator's resume runs it with players online. */
     private boolean importManualPause;
@@ -204,10 +210,10 @@ public final class LodServer {
             try {
                 boolean complete = Files.exists(lod.dir().resolve(IMPORT_COMPLETE));
                 List<Path> all = RegionImporter.listRegions(regionDir, regionX, regionZ);
-                List<Path> regions = StartImport.select(all, complete, last);
+                List<Path> regions = StartImport.select(all, complete, last, startedMillis);
                 String why = !complete ? "never imported whole" : last == null || !last.clean()
                         ? "no clean stop recorded, the checkpoint skips what did not change"
-                        : "changed since the server's last stop";
+                        : "changed between the server's last stop and this start";
                 if (regions.isEmpty()) {
                     Farfield.LOG.info("LOD import at start of {}: up to date ({} regions)", lod.name(), all.size());
                 } else {

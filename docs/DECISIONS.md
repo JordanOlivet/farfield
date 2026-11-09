@@ -3514,8 +3514,9 @@ Status: accepted, 2026-11-09. Plan item G.1b; study in
   - On a dedicated server, at the first tick, every dimension with region
     files is planned: never imported whole (no `import.complete` beside the
     store's checkpoint) reads every region; after a clean stop, only the
-    regions modified after it (plus 5 s of slack), changed while Farfield
-    was away; after a crash or a cut import, every region, the checkpoint
+    regions modified after it (plus 5 s of slack) and before this server
+    started, changed while Farfield was away (the home server's first check
+    read again the spawn's region, saved by the start itself); after a crash or a cut import, every region, the checkpoint
     skipping the unchanged ones (`StartImport`, unit-tested). Regions
     nearest the spawn first (scaled to the dimension), the overworld first,
     one dimension at a time, half the processors.

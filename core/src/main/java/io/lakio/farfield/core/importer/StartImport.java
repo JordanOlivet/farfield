@@ -11,8 +11,9 @@ import java.util.Locale;
 /**
  * Which region files a server imports into its LODs at start (ADR-124): a
  * dimension never imported (no checkpoint) is read whole; after a clean
- * stop, only the regions changed since that stop, while Farfield was not
- * there (removed for a while, the world edited outside the game); after a
+ * stop, only the regions changed between that stop and this start, while
+ * Farfield was not there (removed for a while, the world edited outside the
+ * game; the server's own saves since it started are its live LODs); after a
  * crash, every region the checkpoint does not hold as unchanged.
  *
  * <p>The stop mark is one line in the world: {@code stopped <millis>} written
@@ -37,14 +38,18 @@ public final class StartImport {
      * @param regions        the dimension's region files, nearest the spawn first
      * @param imported       whether the dimension has an import checkpoint
      * @param mark           the stop mark read at start, null when there is none
+     * @param startedMillis  when this server started: a region it saved since (its spawn
+     *                       area, at start) is not a change made without Farfield
      */
-    public static List<Path> select(List<Path> regions, boolean imported, Mark mark) throws IOException {
+    public static List<Path> select(List<Path> regions, boolean imported, Mark mark, long startedMillis)
+            throws IOException {
         if (!imported || mark == null || !mark.clean()) {
             return regions; // never imported, or no clean stop to compare with: the checkpoint sorts them
         }
         List<Path> changed = new ArrayList<>();
         for (Path region : regions) {
-            if (Files.getLastModifiedTime(region).toMillis() > mark.millis() + SLACK_MILLIS) {
+            long modified = Files.getLastModifiedTime(region).toMillis();
+            if (modified > mark.millis() + SLACK_MILLIS && modified < startedMillis) {
                 changed.add(region);
             }
         }
