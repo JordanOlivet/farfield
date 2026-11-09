@@ -1,0 +1,1 @@
+shaders/shaders.properties:144:dhShadow.enabled = false (grep of photon-gotta-craft-em-all shaders). Pack scan: "== photon-gcea.zip: 0  dh_shadow files; 0 dhShadow lines;" for all six zips. Iris DhShadow lookup: "String DhShadow ... String shadow ... String Final". Photon settings: "shaders/settings.glsl:19:const float shadowDistance          = 128.0;".

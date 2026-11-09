@@ -194,6 +194,21 @@ Items:
   - Later, outside C.1 (the user, 2026-11-03): packs with neither
     contract (LODs off with a message meanwhile), our own contract, LOD
     shadows.
+  - LOD shadows, studied 2026-11-09 (Iris 1.8.14, the user's six packs,
+    their Photon fork), kept as a possible improvement (the user: "pas
+    dramatique", the pack's option fixes it): the shadow map covers the
+    pack's `shadowDistance` only (Photon 128, Complementary 256); no pack
+    of the user's ships `dh_shadow` (Photon sets `dhShadow.enabled =
+    false`) and Voxy's contract has no shadow pass, so under real DH their
+    LODs cast no shadow either. Photon shades past `shadowDistance` with
+    screen-space shadows (`SHADOW_SSRT`), which read the LODs' depth; the
+    gap is the band between the game's render distance and
+    `shadowDistance` (64 to 128 blocks at render distance 4). Fixes, by
+    reach: the player sets Photon's shadow distance to the render
+    distance; their fork uses the screen-space shadows on LOD pixels;
+    Farfield draws the LODs in that band into the shadow map through the
+    pack's own `shadow` program (a bridge like ADR-119's, 1 to 2 days, GPU
+    cost unmeasured).
 
 ## M2.D — Mod features in the noise preview
 
