@@ -2,6 +2,7 @@ package io.lakio.farfield.client;
 
 import io.lakio.farfield.client.render.FrameProbe;
 import io.lakio.farfield.client.render.LodRenderer;
+import io.lakio.farfield.lod.RenderSettings;
 import net.minecraft.client.Minecraft;
 
 import java.util.LinkedHashMap;
@@ -27,6 +28,7 @@ public final class FarfieldRehearsal {
     public Map<String, Object> state() {
         LodRenderer.Snapshot r = LodRenderer.snapshot();
         Map<String, Object> m = new LinkedHashMap<>();
+        m.put("enabled", RenderSettings.enabled());
         m.put("disabled", r.disabled());
         m.put("drawing", r.drawing());
         m.put("drawn", r.drawn());
@@ -40,10 +42,13 @@ public final class FarfieldRehearsal {
         return m;
     }
 
-    /** Busy while LODs are wanted in view, meshing or fetched; with LODs off, nothing to wait for. */
+    /**
+     * Busy while LODs are wanted in view, meshing or fetched; with LODs off
+     * (the setting, or no OpenGL 4.6), nothing to wait for.
+     */
     public Boolean quiet() {
         LodRenderer.Snapshot r = LodRenderer.snapshot();
-        if (r.disabled()) {
+        if (r.disabled() || !RenderSettings.enabled()) {
             return true;
         }
         return r.drawing() && r.wantedInView() == 0 && r.meshing() == 0 && StreamClient.pending() == 0;
