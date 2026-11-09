@@ -178,19 +178,23 @@ Items:
     pack and Complementary, warm ocean at night. The user's eye in their
     NeoForge pack on the home server (tiles streamed), a shader pack on
     (2026-11-08, confirmed 2026-11-09).
-  - [~] C.1e DH's contract for packs without Voxy's (ADR-119). Done: the
+  - [x] C.1e DH's contract for packs without Voxy's (ADR-119). Done: the
     contract chosen per pack at load (one macro), the pack's DH programs
     run on the LOD quads over a bridge, `/farfield debug shaderpack`.
     Verified on the Fabric pack under Complementary Reimagined forced to
     DH (day, night, sea), then by the user in their NeoForge pack under
     photon-gcea forced to DH (2026-11-09): drawn and lit, but flatter than
     through Voxy's contract, no ambient occlusion (confirmed by turning it
-    off under Voxy's). Remains: a pack that ships only DH's contract, the
-    other packs of the user's instance forced to DH, the GPU cost (about
-    +200 us at 1080p). Put off by the user (2026-11-09): the ambient
-    occlusion under DH (the pack's shader gets one color per vertex and
-    the quads are merged: it needs quads split where the occlusion
-    changes, more geometry under DH only).
+    off under Voxy's). Closed with the user (2026-11-09): a pack forced to
+    DH runs the same path as one that ships DH's contract only (the same
+    macro, programs and bridge), so the one difference, the automatic
+    choice, is unit-tested (`ContractChoiceTest`: a DH-only pack, both, a
+    forced contract, neither, a zipped pack). Left out: the DH code of
+    packs not tried (each pack's own, looked at when a player reports
+    one), the GPU cost (about +200 us at 1080p, measured once). Put off by
+    the user: the ambient occlusion under DH (the pack's shader gets one
+    color per vertex and the quads are merged: it needs quads split where
+    the occlusion changes, more geometry under DH only).
   - Later, outside C.1 (the user, 2026-11-03): packs with neither
     contract (LODs off with a message meanwhile), our own contract, LOD
     shadows.

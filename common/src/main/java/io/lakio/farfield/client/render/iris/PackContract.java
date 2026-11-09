@@ -1,11 +1,10 @@
 package io.lakio.farfield.client.render.iris;
 
 import io.lakio.farfield.Farfield;
+import io.lakio.farfield.core.shader.ContractChoice;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.stream.Stream;
 
 /**
  * Which LOD contract of a shader pack Farfield follows (ADR-113, ADR-119):
@@ -16,9 +15,9 @@ import java.util.stream.Stream;
  */
 public final class PackContract {
 
-    public static final int AUTO = 0;
-    public static final int VOXY = 1;
-    public static final int DH = 2;
+    public static final int AUTO = ContractChoice.AUTO;
+    public static final int VOXY = ContractChoice.VOXY;
+    public static final int DH = ContractChoice.DH;
 
     private static volatile int forced = AUTO;
     private static volatile int chosen = VOXY;
@@ -60,28 +59,16 @@ public final class PackContract {
      * @param root the pack's {@code shaders} folder (inside its zip or not)
      */
     public static String choose(Path root) {
-        boolean voxy = false;
-        boolean dh = false;
-        try (Stream<Path> files = Files.walk(root, 4)) {
-            for (Path p : (Iterable<Path>) files::iterator) {
-                Path name = p.getFileName();
-                if (name == null) {
-                    continue;
-                }
-                String n = name.toString();
-                voxy |= n.equals("voxy.json");
-                dh |= n.equals("dh_terrain.fsh") || n.equals("dh_terrain.vsh");
-            }
+        ContractChoice.Shipped shipped;
+        try {
+            shipped = ContractChoice.scan(root);
         } catch (IOException | RuntimeException e) {
             Farfield.LOG.warn("Shader pack LODs: cannot list the pack's files ({}), Voxy's contract assumed", e.toString());
-            voxy = true;
+            shipped = new ContractChoice.Shipped(true, false);
         }
-        int pick;
-        if (forced == DH && dh || forced == AUTO && !voxy && dh) {
-            pick = DH;
-        } else {
-            pick = VOXY;
-        }
+        boolean voxy = shipped.voxy();
+        boolean dh = shipped.dh();
+        int pick = ContractChoice.pick(shipped, forced);
         chosen = pick;
         applied = true;
         Farfield.LOG.info("Shader pack LODs: the pack ships {}{}, {} contract followed{}",
