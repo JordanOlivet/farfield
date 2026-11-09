@@ -1,0 +1,6 @@
+static final String IMPORT_ON_START = "import_on_start";
+...
+public static final ServerConfig DEFAULTS = new ServerConfig(true, 4096, 1024, 10240, AUTO, false, true, true, "",
+            4096, true, true);
+...
+assertEquals(true, ServerConfig.read(file).importOnStart(), "the import at start defaults to on");

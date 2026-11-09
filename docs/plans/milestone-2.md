@@ -329,11 +329,14 @@ thought, not a fixed choice.
   start, spawn, pause, resume, cancel, list), saved in the world and
   resumed, paused while players are online by default
   (`pregen_when_players`). Remains: see the progress log of 2026-11-09.
-- [ ] G.1b The user (2026-11-09): import the LODs of a world that lived
+- [~] G.1b The user (2026-11-09): import the LODs of a world that lived
   without Farfield at start, unattended, with the same player rule.
   Studied (`docs/analysis/auto-import.md`); the user picked: once, then the
   regions changed without Farfield (a stop mark), every dimension, on by
   default, the pregeneration held past 1,024 blocks while it runs.
+  ADR-124, built and checked on the Fabric dev server (never imported, a
+  clean restart, a region changed after the stop, a crash). Remains: the
+  player hold in a run, NeoForge, the user's server.
 - [ ] G.2 A chunk pregenerator of our own, like Chunky, with the heavy
   work offloaded to native code (Rust, if possible) for speed.
 - [ ] G.3 Native code (Rust, if possible) to speed up the LODs' build, the

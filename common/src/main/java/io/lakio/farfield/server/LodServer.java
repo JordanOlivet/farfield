@@ -7,6 +7,7 @@ import io.lakio.farfield.core.importer.ImportListener;
 import io.lakio.farfield.core.importer.ImportOptions;
 import io.lakio.farfield.core.importer.ImportStats;
 import io.lakio.farfield.core.importer.RegionImporter;
+import io.lakio.farfield.core.importer.StartImport;
 import io.lakio.farfield.core.world.LodWorld;
 import io.lakio.farfield.lod.LodLevel;
 import io.lakio.farfield.lod.LodPipeline;
@@ -37,11 +38,25 @@ import java.util.function.Consumer;
 public final class LodServer {
 
     private static volatile LodServer instance;
+    /** Set at a stop that may leave a clean stop mark, written once the game has saved its regions. */
+    private static volatile boolean cleanStop;
 
     private final LodPipeline pipeline;
     /** Null on a dedicated server that does not stream the preview to its players (ADR-068). */
     private final NoisePreview preview;
     private volatile ImportJob importJob;
+
+    // ---- the import at start (ADR-124), server thread
+    /** The world's stop mark, {@code farfield-stop.txt}. */
+    private static final String STOP_MARK = "farfield-stop.txt";
+    /** A finished whole import of a dimension, beside its checkpoint. */
+    private static final String IMPORT_COMPLETE = "import.complete";
+    private boolean startPlanned;
+    private final java.util.ArrayDeque<Object[]> startQueue = new java.util.ArrayDeque<>();
+    /** An operator's import pause holds the import; an operator's resume runs it with players online. */
+    private boolean importManualPause;
+    private boolean importForced;
+    private boolean importHeldForPlayers;
 
     private LodServer(boolean preview) {
         this.preview = preview ? new NoisePreview() : null;
@@ -67,7 +82,31 @@ public final class LodServer {
         LodServer s = instance;
         instance = null;
         if (s != null) {
+            boolean importsLeft = s.importJob != null || !s.startQueue.isEmpty();
+            cleanStop = s.startPlanned && !importsLeft;
             s.stop();
+        }
+    }
+
+    /**
+     * After the game saved its regions at a stop: a clean stop with nothing
+     * left to import leaves the mark, so the next start reads only the regions
+     * changed after it (Farfield away). Written here, not at the stop's start:
+     * the final save rewrites regions after that, and a long save would have
+     * made them look changed. With an import cut short, the "running" mark
+     * stays and the next start offers every region again (the checkpoint
+     * skips the finished ones).
+     */
+    public static void onServerStopped(MinecraftServer server) {
+        if (!cleanStop) {
+            return;
+        }
+        cleanStop = false;
+        try {
+            StartImport.write(server.getWorldPath(LevelResource.ROOT).resolve(STOP_MARK), true,
+                    System.currentTimeMillis());
+        } catch (IOException e) {
+            Farfield.LOG.warn("Could not write the stop mark", e);
         }
     }
 
@@ -90,10 +129,133 @@ public final class LodServer {
         LodServer s = instance;
         if (s != null) {
             s.pipeline.tick();
+            if (server.isDedicatedServer()) {
+                s.tickStartImport(server);
+            }
             if (s.preview != null) {
-                s.preview.tick(server, s.pipeline);
+                s.preview.tick(server, s.pipeline, s.importJob != null || !s.startQueue.isEmpty());
             }
         }
+    }
+
+    /**
+     * The import at start (ADR-124): on the first tick, the dimensions whose
+     * region files the LODs have not seen are queued (never imported, or
+     * changed since the last clean stop); one runs at a time, nearest the
+     * spawn first, held while players are online unless an operator resumed
+     * it.
+     */
+    private void tickStartImport(MinecraftServer server) {
+        if (!startPlanned) {
+            startPlanned = true;
+            planStartImport(server);
+        }
+        ImportJob job = importJob;
+        if (job == null && !startQueue.isEmpty()) {
+            Object[] next = startQueue.poll();
+            ServerLevel level = (ServerLevel) next[0];
+            @SuppressWarnings("unchecked")
+            List<Path> regions = (List<Path>) next[1];
+            int threads = Math.max(1, Runtime.getRuntime().availableProcessors() / 2);
+            startImport(level, threads, line -> { }, regions, true);
+            job = importJob;
+        }
+        if (job == null || !job.auto()) {
+            return;
+        }
+        boolean players = StreamServer.settings().pregenPausesForPlayers() && server.getPlayerCount() > 0;
+        boolean hold = importManualPause || players && !importForced;
+        if (hold != importHeldForPlayers) {
+            importHeldForPlayers = hold;
+            if (hold) {
+                job.importer().pause();
+            } else {
+                job.importer().resume();
+            }
+            Farfield.LOG.info(hold ? (importManualPause ? "LOD import paused by an operator"
+                    : "LOD import paused: players online (pregen_when_players=pause)")
+                    : "LOD import resumed");
+        }
+    }
+
+    private void planStartImport(MinecraftServer server) {
+        Path mark = server.getWorldPath(LevelResource.ROOT).resolve(STOP_MARK);
+        StartImport.Mark last = null;
+        try {
+            last = StartImport.read(mark);
+            StartImport.write(mark, false, System.currentTimeMillis());
+        } catch (IOException e) {
+            Farfield.LOG.warn("Could not read or write the stop mark {}", mark, e);
+        }
+        if (!StreamServer.settings().importOnStart()) {
+            Farfield.LOG.info("LOD import at start: off (import_on_start=false)");
+            return;
+        }
+        net.minecraft.core.BlockPos spawn = server.overworld().getSharedSpawnPos();
+        for (ServerLevel level : server.getAllLevels()) {
+            Path regionDir = dimensionFolder(level).resolve("region");
+            LodLevel lod = pipeline.level(level);
+            if (lod == null || !Files.isDirectory(regionDir)) {
+                continue;
+            }
+            double scale = level.dimensionType().coordinateScale();
+            int regionX = Math.floorDiv((int) Math.floor(spawn.getX() / scale), 512);
+            int regionZ = Math.floorDiv((int) Math.floor(spawn.getZ() / scale), 512);
+            try {
+                boolean complete = Files.exists(lod.dir().resolve(IMPORT_COMPLETE));
+                List<Path> all = RegionImporter.listRegions(regionDir, regionX, regionZ);
+                List<Path> regions = StartImport.select(all, complete, last);
+                String why = !complete ? "never imported whole" : last == null || !last.clean()
+                        ? "no clean stop recorded, the checkpoint skips what did not change"
+                        : "changed since the server's last stop";
+                if (regions.isEmpty()) {
+                    Farfield.LOG.info("LOD import at start of {}: up to date ({} regions)", lod.name(), all.size());
+                } else {
+                    Farfield.LOG.info("LOD import at start of {}: {} of {} regions queued ({})", lod.name(),
+                            regions.size(), all.size(), why);
+                    startQueue.add(new Object[]{level, regions});
+                }
+            } catch (IOException | RuntimeException e) {
+                Farfield.LOG.warn("LOD import at start of {}: cannot list its regions", lod.name(), e);
+            }
+        }
+    }
+
+    /** {@code /farfield import pause}: holds the running import until an operator resumes it. */
+    synchronized boolean pauseImport() {
+        ImportJob job = importJob;
+        if (job == null) {
+            return false;
+        }
+        importManualPause = true;
+        importForced = false;
+        job.importer().pause();
+        importHeldForPlayers = true;
+        Farfield.LOG.info("LOD import paused by an operator");
+        return true;
+    }
+
+    /** {@code /farfield import resume}: runs the import, players online or not, until it ends. */
+    synchronized boolean resumeImport() {
+        ImportJob job = importJob;
+        if (job == null) {
+            return false;
+        }
+        importManualPause = false;
+        importForced = true;
+        job.importer().resume();
+        importHeldForPlayers = false;
+        Farfield.LOG.info("LOD import resumed by an operator");
+        return true;
+    }
+
+    /** The dimensions the import at start still has to read. */
+    List<String> importQueue() {
+        List<String> names = new ArrayList<>();
+        for (Object[] q : startQueue) {
+            names.add(((ServerLevel) q[0]).dimension().location() + " (" + ((List<?>) q[1]).size() + " regions)");
+        }
+        return names;
     }
 
     /** The pregeneration tasks (ADR-123): null without a preview here or before the first update. */
@@ -226,7 +388,7 @@ public final class LodServer {
     // ---------------------------------------------------------------- import
 
     /** A running region-file import. */
-    record ImportJob(LodLevel level, RegionImporter importer, Thread thread, long startNanos) {
+    record ImportJob(LodLevel level, RegionImporter importer, Thread thread, long startNanos, boolean auto) {
     }
 
     ImportJob importJob() {
@@ -239,6 +401,16 @@ public final class LodServer {
      * an import already runs or the level has no region folder.
      */
     synchronized boolean startImport(ServerLevel level, int threads, Consumer<String> report) {
+        return startImport(level, threads, report, null, false);
+    }
+
+    /**
+     * As {@link #startImport(ServerLevel, int, Consumer)}, on the given regions
+     * (null: all of them, nearest the origin first); {@code auto} for the
+     * import at start, which the player rule holds.
+     */
+    synchronized boolean startImport(ServerLevel level, int threads, Consumer<String> report, List<Path> regions,
+                                     boolean auto) {
         if (importJob != null) {
             return false;
         }
@@ -271,20 +443,29 @@ public final class LodServer {
                         error.toString());
             }
         });
-        Thread thread = new Thread(() -> runImport(lod, regionDir, importer, report), "farfield-import");
+        Thread thread = new Thread(() -> runImport(lod, regionDir, importer, report, regions), "farfield-import");
         thread.setDaemon(true);
         thread.setPriority(Thread.MIN_PRIORITY);
-        importJob = new ImportJob(lod, importer, thread, System.nanoTime());
+        importJob = new ImportJob(lod, importer, thread, System.nanoTime(), auto);
+        importManualPause = false;
+        importForced = !auto;
+        importHeldForPlayers = false;
         thread.start();
-        Farfield.LOG.info("LOD import of {} started from {} ({} threads)", lod.name(), regionDir, threads);
+        Farfield.LOG.info("LOD import of {} started from {} ({} threads{})", lod.name(), regionDir, threads,
+                auto ? ", at start, " + regions.size() + " regions" : "");
         return true;
     }
 
-    private void runImport(LodLevel lod, Path regionDir, RegionImporter importer, Consumer<String> report) {
+    private void runImport(LodLevel lod, Path regionDir, RegionImporter importer, Consumer<String> report,
+                           List<Path> regions) {
         long start = System.nanoTime();
         String line;
         try {
-            ImportStats stats = importer.run(regionDir);
+            ImportStats stats = regions == null ? importer.run(regionDir) : importer.run(regions);
+            if (!importer.isCancelled() && stats.regionsFailed() == 0) {
+                // Every region read: later starts only read what changed after a clean stop.
+                Files.writeString(lod.dir().resolve(IMPORT_COMPLETE), "complete " + System.currentTimeMillis() + "\n");
+            }
             double seconds = (System.nanoTime() - start) / 1e9;
             line = String.format(Locale.ROOT,
                     "LOD import of %s %s: %,d chunks in %.0f s (%,.0f/s), %,d regions (%,d already done, %,d failed)",

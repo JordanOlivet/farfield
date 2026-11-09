@@ -200,7 +200,8 @@ final class NoisePreview {
         }
     }
 
-    void tick(MinecraftServer server, LodPipeline pipeline) {
+    /** @param importing an LOD import runs or waits: the pregeneration holds past its near area (ADR-124) */
+    void tick(MinecraftServer server, LodPipeline pipeline, boolean importing) {
         if (++ticks % UPDATE_TICKS != 0 || stopped || !RenderSettings.noisePreview()) {
             return;
         }
@@ -219,6 +220,7 @@ final class NoisePreview {
         if (pregen == null) {
             pregen = PreviewPregen.open(server, StreamServer.settings());
         }
+        pregen.setImporting(importing);
         boolean pregenOn = pregen.active(server);
         for (ServerLevel level : server.getAllLevels()) {
             List<ServerPlayer> players = level.players();

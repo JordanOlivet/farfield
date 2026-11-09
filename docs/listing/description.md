@@ -77,6 +77,10 @@ same Farfield version (0.2.x) to stream. Settings in
   (`pause`, `resume`, `cancel`, `list`); tasks resume after a restart.
   `pregen_when_players=pause` (default) holds them while players are
   online, `run` keeps them going behind the players' own preview.
+- `import_on_start` (default true): at start, the server reads into its
+  LODs the region files they never saw, a world that lived without
+  Farfield or regions changed while it was away, nearest the spawn first,
+  under the same player rule (`/farfield import pause|resume|status`).
 
 ## Compatibility
 

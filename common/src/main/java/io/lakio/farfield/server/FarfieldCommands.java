@@ -20,8 +20,10 @@ import java.util.function.Supplier;
 
 /**
  * {@code /farfield import [threads]}, {@code /farfield import stop},
- * {@code /farfield import status}: build the LODs of the current dimension
- * from its region files. The drawing settings ({@link RenderCommands}) act
+ * {@code /farfield import pause|resume}, {@code /farfield import status}:
+ * build the LODs of the current dimension from its region files (a
+ * dedicated server also does it at start for the regions its LODs never
+ * saw, ADR-124). The drawing settings ({@link RenderCommands}) act
  * in single player only; players elsewhere use {@code /farfieldclient}.
  * {@code /farfield pregen start|spawn|pause|resume|cancel|list}: the
  * preview built ahead within a radius, while the server is free (ADR-123).
@@ -43,6 +45,8 @@ public final class FarfieldCommands {
                         .then(Commands.argument("threads", IntegerArgumentType.integer(1, 64))
                                 .executes(c -> start(c, IntegerArgumentType.getInteger(c, "threads"))))
                         .then(Commands.literal("stop").executes(FarfieldCommands::stop))
+                        .then(Commands.literal("pause").executes(c -> importHold(c, true)))
+                        .then(Commands.literal("resume").executes(c -> importHold(c, false)))
                         .then(Commands.literal("status").executes(FarfieldCommands::status)))
                 .then(Commands.literal("rebuild")
                         .executes(FarfieldCommands::rebuild)
@@ -392,9 +396,27 @@ public final class FarfieldCommands {
         return 1;
     }
 
+    /** {@code import pause}: holds the import; {@code import resume}: runs it, players online or not. */
+    private static int importHold(CommandContext<CommandSourceStack> c, boolean pause) {
+        LodServer server = LodServer.get();
+        boolean done = server != null && (pause ? server.pauseImport() : server.resumeImport());
+        if (!done) {
+            c.getSource().sendFailure(Component.literal("No LOD import is running."));
+            return 0;
+        }
+        c.getSource().sendSuccess(() -> Component.literal(pause ? "LOD import paused until /farfield import resume."
+                : "LOD import resumed, even with players online, until it ends."), true);
+        return 1;
+    }
+
     private static int status(CommandContext<CommandSourceStack> c) {
         LodServer server = LodServer.get();
         LodServer.ImportJob job = server == null ? null : server.importJob();
+        List<String> queued = server == null ? List.of() : server.importQueue();
+        if (!queued.isEmpty()) {
+            String waiting = "LOD import at start, waiting: " + String.join(", ", queued);
+            c.getSource().sendSuccess(() -> Component.literal(waiting), false);
+        }
         if (job == null) {
             c.getSource().sendSuccess(() -> Component.literal("No LOD import is running."), false);
             return 1;

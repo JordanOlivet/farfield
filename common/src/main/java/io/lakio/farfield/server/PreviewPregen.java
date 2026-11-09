@@ -40,6 +40,12 @@ final class PreviewPregen {
     private static final String FILE = "farfield-pregen.txt";
     /** How far past its cursor a task looks for tiles to build in one update. */
     private static final int LOOK_AHEAD = 64;
+    /**
+     * While an LOD import runs, tasks build only this near their center (the
+     * user's order, ADR-124): what a player joining early sees, then the
+     * import finishes, then the rest.
+     */
+    static final int NEAR_WHILE_IMPORTING = 1024;
 
     private final Path file;
     private final boolean pausesForPlayers;
@@ -52,6 +58,7 @@ final class PreviewPregen {
     /** Tasks an operator started or resumed while players held them: they run anyway, this session. */
     private final Set<String> forced = new java.util.HashSet<>();
     private boolean held;
+    private boolean importing;
 
     private PreviewPregen(Path file, boolean pausesForPlayers, PregenTasks tasks) {
         this.file = file;
@@ -114,6 +121,36 @@ final class PreviewPregen {
         return order.computeIfAbsent(t.id(), k -> PregenTasks.tiles(t.centerX(), t.centerZ(), t.radius()));
     }
 
+    /** An LOD import runs or waits: tasks keep to their near area until it ends. */
+    void setImporting(boolean now) {
+        if (now != importing) {
+            importing = now;
+            if (tasks.tasks().stream().anyMatch(PregenTasks.Task::open)) {
+                Farfield.LOG.info(now ? "Noise preview pregen: within " + NEAR_WHILE_IMPORTING
+                        + " blocks of each task's center while the LOD import runs"
+                        : "Noise preview pregen: the LOD import ended, building out to each task's radius");
+            }
+        }
+    }
+
+    /** Blocks between a task's center and the nearest point of tile (tx, tz). */
+    private static double distance(PregenTasks.Task t, int tx, int tz) {
+        int size = io.lakio.farfield.core.preview.PreviewTile.BLOCKS;
+        double dx = Math.max(0, Math.max((double) tx * size - t.centerX(), t.centerX() - ((double) tx + 1) * size));
+        double dz = Math.max(0, Math.max((double) tz * size - t.centerZ(), t.centerZ() - ((double) tz + 1) * size));
+        return Math.sqrt(dx * dx + dz * dz);
+    }
+
+    /** Whether a running task waits for the LOD import: its near area is built. */
+    private boolean waitsForImport(PregenTasks.Task t) {
+        if (!importing) {
+            return false;
+        }
+        int[][] tiles = order(t);
+        int at = cursor.getOrDefault(t.id(), 0);
+        return at < tiles.length && distance(t, tiles[at][0], tiles[at][1]) > NEAR_WHILE_IMPORTING;
+    }
+
     /** Whether tasks may run now: some running, and no player holds them. */
     boolean active(MinecraftServer server) {
         boolean players = pausesForPlayers && server.getPlayerCount() > 0;
@@ -165,6 +202,9 @@ final class PreviewPregen {
             }
             started.putIfAbsent(t.id(), System.nanoTime());
             for (int i = at; i < Math.min(tiles.length, at + LOOK_AHEAD) && out.size() < max; i++) {
+                if (importing && distance(t, tiles[i][0], tiles[i][1]) > NEAR_WHILE_IMPORTING) {
+                    break; // tiles come nearest first: the rest waits for the import's end
+                }
                 long key = PreviewStore.key(tiles[i][0], tiles[i][1]);
                 if (!inFlight.contains(key) && !built.test(key)) {
                     out.add(key);
@@ -269,6 +309,8 @@ final class PreviewPregen {
             String state = t.state().name().toLowerCase(Locale.ROOT);
             if (t.state() == PregenTasks.State.RUNNING && held) {
                 state = forced.contains(t.id()) ? "running, forced by hand" : "waiting: players online";
+            } else if (t.state() == PregenTasks.State.RUNNING && waitsForImport(t)) {
+                state = "near area built, waiting for the LOD import";
             }
             lines.add(String.format(Locale.ROOT, "%s: %s, %d blocks around %d, %d in %s, %s", t.id(), state,
                     t.radius(), t.centerX(), t.centerZ(), t.dimension(),

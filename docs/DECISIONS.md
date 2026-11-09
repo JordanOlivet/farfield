@@ -3499,3 +3499,36 @@ Status: accepted, 2026-11-09. Plan item G.1.
 - **Later** (the user): the LODs of a world that lived without Farfield
   imported at start the same way, unattended; to study first (region
   files, the import's checkpoints).
+
+## ADR-124 — A dedicated server imports at start the regions its LODs never saw
+
+Status: accepted, 2026-11-09. Plan item G.1b; study in
+`docs/analysis/auto-import.md`.
+
+- **Context**: a world that lived without Farfield (installed late,
+  removed for a while, edited outside the game) has region files the LOD
+  store never saw; an operator had to run `/farfield import` per
+  dimension. The user: the server should do it at start, as it pregenerates
+  the preview (ADR-123).
+- **Decision** (the user's picks):
+  - On a dedicated server, at the first tick, every dimension with region
+    files is planned: never imported whole (no `import.complete` beside the
+    store's checkpoint) reads every region; after a clean stop, only the
+    regions modified after it (plus 5 s of slack), changed while Farfield
+    was away; after a crash or a cut import, every region, the checkpoint
+    skipping the unchanged ones (`StartImport`, unit-tested). Regions
+    nearest the spawn first (scaled to the dimension), the overworld first,
+    one dimension at a time, half the processors.
+  - The stop mark `farfield-stop.txt` in the world: `running <time>` at
+    start, `stopped <time>` once the server has stopped and saved its
+    regions (the final save comes after the stopping event: a mark written
+    there made the regions saved at stop look changed), at a clean stop
+    with nothing left to import.
+  - `import_on_start` in `farfield-server.properties`, on by default; the
+    pregeneration's player rule holds it (`pregen_when_players`);
+    `/farfield import pause` holds it, `import resume` runs it with players
+    online until it ends; `import status` lists what waits.
+  - With the pregeneration, the user's order: while an import runs or
+    waits, tasks build within 1,024 blocks of their center only (what a
+    player joining early sees), then the import ends, then they build out
+    to their radius.

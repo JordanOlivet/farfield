@@ -1,0 +1,1 @@
+On peut peut être faire rapidement E.1 et E.2 ? Enfin, de mémoire tu m'avais dis que ça serait rapide. Tu me diras.

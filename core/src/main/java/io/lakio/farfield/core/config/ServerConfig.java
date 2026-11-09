@@ -21,14 +21,15 @@ import java.util.Properties;
  * whether that preview runs the world's own features (trees, plants,
  * rocks, ADR-079) and which of them it leaves out ({@link #excludesFeature}),
  * the radius around the world's spawn its preview is built in ahead of the
- * players (0: none, ADR-123), and whether that pregeneration pauses while
- * players are online.
+ * players (0: none, ADR-123), whether that pregeneration (and the import
+ * at start) pauses while players are online, and whether the server
+ * imports its region files into its LODs at start (ADR-124).
  * Defaults from Neo-Voxy, whose streaming worked at these values. Missing
  * or invalid keys take their default.
  */
 public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, int totalKBps, int threads,
                            boolean fullData, boolean preview, boolean previewFeatures, String previewFeatureExclude,
-                           int previewSpawnRadius, boolean pregenPausesForPlayers) {
+                           int previewSpawnRadius, boolean pregenPausesForPlayers, boolean importOnStart) {
 
     public static final int AUTO = 0;
     public static final int MAX_RADIUS = 30_000_000;
@@ -37,7 +38,7 @@ public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, 
     public static final int MAX_PREGEN_RADIUS = 16_384;
 
     public static final ServerConfig DEFAULTS = new ServerConfig(true, 4096, 1024, 10240, AUTO, false, true, true, "",
-            4096, true);
+            4096, true, true);
 
     static final String STREAMING = "streaming";
     static final String RADIUS = "streaming_radius";
@@ -50,6 +51,7 @@ public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, 
     static final String PREVIEW_FEATURE_EXCLUDE = "preview_feature_exclude";
     static final String PREVIEW_SPAWN_RADIUS = "preview_spawn_radius";
     static final String PREGEN_WHEN_PLAYERS = "pregen_when_players";
+    static final String IMPORT_ON_START = "import_on_start";
 
     public ServerConfig {
         radiusBlocks = Math.max(0, Math.min(MAX_RADIUS, radiusBlocks));
@@ -65,6 +67,14 @@ public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, 
                         boolean fullData, boolean preview, boolean previewFeatures, String previewFeatureExclude) {
         this(streaming, radiusBlocks, playerKBps, totalKBps, threads, fullData, preview, previewFeatures,
                 previewFeatureExclude, 4096, true);
+    }
+
+    /** The settings before ADR-124: the import at start on. */
+    public ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, int totalKBps, int threads,
+                        boolean fullData, boolean preview, boolean previewFeatures, String previewFeatureExclude,
+                        int previewSpawnRadius, boolean pregenPausesForPlayers) {
+        this(streaming, radiusBlocks, playerKBps, totalKBps, threads, fullData, preview, previewFeatures,
+                previewFeatureExclude, previewSpawnRadius, pregenPausesForPlayers, true);
     }
 
     /**
@@ -129,7 +139,8 @@ public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, 
                 bool(p, PREVIEW_FEATURES, DEFAULTS.previewFeatures),
                 p.getProperty(PREVIEW_FEATURE_EXCLUDE, DEFAULTS.previewFeatureExclude),
                 integer(p, PREVIEW_SPAWN_RADIUS, DEFAULTS.previewSpawnRadius),
-                !"run".equalsIgnoreCase(p.getProperty(PREGEN_WHEN_PLAYERS, "pause").trim()));
+                !"run".equalsIgnoreCase(p.getProperty(PREGEN_WHEN_PLAYERS, "pause").trim()),
+                bool(p, IMPORT_ON_START, DEFAULTS.importOnStart));
     }
 
     /** Writes the file through a temporary file. */
@@ -171,6 +182,10 @@ public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, 
             out.write("# While players are online, preview pregeneration pauses (pause), or goes on at low\n");
             out.write("# priority (run). The preview around the players themselves is always built. Default pause.\n");
             out.write(PREGEN_WHEN_PLAYERS + "=" + (pregenPausesForPlayers ? "pause" : "run") + "\n");
+            out.write("# At start, read into the LODs the region files they have never seen: a world that\n");
+            out.write("# lived without Farfield, regions changed while it was away. Every dimension, nearest\n");
+            out.write("# the spawn first; paused while players are online as above. Default true.\n");
+            out.write(IMPORT_ON_START + "=" + importOnStart + "\n");
         }
         Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
     }

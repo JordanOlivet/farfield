@@ -17,6 +17,7 @@ public final class FarfieldFabric implements ModInitializer {
         FabricNetwork.registerCommon();
         ServerLifecycleEvents.SERVER_STARTING.register(LodServer::onServerStarting);
         ServerLifecycleEvents.SERVER_STOPPING.register(LodServer::onServerStopping);
+        ServerLifecycleEvents.SERVER_STOPPED.register(LodServer::onServerStopped);
         ServerTickEvents.END_SERVER_TICK.register(LodServer::onServerTick);
         ServerChunkEvents.CHUNK_LOAD.register(LodServer::onChunkLoad);
         ServerChunkEvents.CHUNK_UNLOAD.register(LodServer::onChunkUnload);
