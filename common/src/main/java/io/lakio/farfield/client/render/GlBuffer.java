@@ -57,6 +57,11 @@ final class GlBuffer implements AutoCloseable {
         glNamedBufferSubData(id, offset, data);
     }
 
+    /** Copies {@code bytes} bytes from this buffer at {@code from} into {@code target} at {@code to}, on the GPU. */
+    void copyTo(GlBuffer target, long from, long to, long bytes) {
+        glCopyNamedBufferSubData(id, target.id, from, to, bytes);
+    }
+
     /** Reallocates to {@code newSize} bytes, keeping the first {@code keep} bytes. */
     void grow(long newSize, long keep) {
         if (newSize <= size) {

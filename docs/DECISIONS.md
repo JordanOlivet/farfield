@@ -3367,3 +3367,26 @@ Status: accepted, 2026-11-08. Details ADR-113 (DH second). Plan item C.1e.
   game's terrain blending into the LODs, no seam (after the fix above).
   GPU 850 to 910 us per frame against 680 to 730 us through Voxy's
   contract at the same spot.
+
+## ADR-120 — The quad buffer shrinks back after a zoom
+
+Status: accepted, 2026-11-09.
+
+- **Context**: the LOD quads live in one GPU buffer, 64 MB at first,
+  doubled when full up to 1 GB, never made smaller. In the user's
+  NeoForge pack a spyglass zoom on 2026-11-08 meshed about 18,000
+  sections in 20 s and grew it from 64 to 256 MB; 32 MB stayed used after,
+  the rest held for the whole session.
+- **Decision**: every 60 frames, after the unused sections are evicted, a
+  buffer at most a quarter used for 10 s in a row is compacted into a new
+  one: the smallest 64 MB times a power of two that holds twice what is
+  used (`RangeAllocator.shrunkCapacity`), so it is at most half full and
+  the next doubling is not right behind. The residents' quads are copied
+  on the GPU (`glCopyNamedBufferSubData`) one after another, and each
+  section's record gets its new start; draw commands address quads from
+  that start, so they are unchanged. The old buffer is deleted. One `info`
+  line per compaction.
+- **Why these bounds**: a quarter with a target of twice the use leaves a
+  factor of two on both sides, so growth and shrinking cannot alternate
+  on a steady view; 10 s is the unused-section eviction delay, so a zoom
+  shrinks once its sections are gone. Never below the first 64 MB.

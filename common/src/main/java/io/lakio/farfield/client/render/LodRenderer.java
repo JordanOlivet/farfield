@@ -89,7 +89,7 @@ import static org.lwjgl.opengl.GL46C.*;
  *   <li>Steady frames allocate nothing (primitive collections, reused
  *       matrices and buffers), so they add no garbage-collection pauses.</li>
  *   <li>GPU: quads in one storage buffer (first-fit ranges, grown on
- *       demand), one 32-byte record per resident section, baked face
+ *       demand, compacted down once mostly empty), one 32-byte record per resident section, baked face
  *       textures and their mean colors per block state and face
  *       ({@link MaterialColors}, {@link FaceTextures}), tints per biome
  *       ({@link BiomeTints}). Textures show up to
@@ -141,6 +141,8 @@ public final class LodRenderer {
     private static final long UPLOAD_BUDGET_QUADS = 1 << 20;
     private static final long INITIAL_QUADS = 8L << 20;
     private static final long MAX_QUADS = 128L << 20;
+    /** The quad buffer is compacted down after staying at most a quarter used this long (a spyglass zoom grows it). */
+    private static final long SHRINK_AFTER_NANOS = 10_000_000_000L;
     private static final int SECTION_BYTES = 32;
     /** The compiled-sections grid is rebuilt every this many frames. */
     private static final int DRAWN_SECTIONS_EVERY = 8;
@@ -268,6 +270,8 @@ public final class LodRenderer {
     private long translucentOffset;
     private int translucentCount;
     private GlBuffer quads;
+    /** Since when the quad buffer has been at most a quarter used, -1 when it is not. */
+    private long arenaLowSince = -1;
     private GlBuffer sectionInfo;
     private GlBuffer colorBuffer;
     private GlBuffer biomeBuffer;
@@ -1307,6 +1311,7 @@ public final class LodRenderer {
         }
         if (frame % 60 == 0) {
             evictUnused(frameStart);
+            shrinkArena(frameStart);
         }
         lastDrawn = count;
         if (count > 0) {
@@ -2811,6 +2816,53 @@ public final class LodRenderer {
         arena.grow(target);
         Farfield.LOG.info("LOD quad buffer grown to {} MB", target * 8 >> 20);
         return true;
+    }
+
+    /**
+     * Compacts the quad buffer into a smaller one once it has stayed mostly
+     * empty for {@link #SHRINK_AFTER_NANOS}: a zoom grows it to hold a view's
+     * worth of finer sections, which are freed after it. The residents' quads
+     * are copied on the GPU one after another and their records point at
+     * their new start; draw commands address quads from that start, so they
+     * stay as they are.
+     */
+    private void shrinkArena(long now) {
+        long capacity = arena.capacity();
+        long used = arena.used();
+        long target = RangeAllocator.shrunkCapacity(capacity, used, INITIAL_QUADS);
+        if (target < 0) {
+            arenaLowSince = -1;
+            return;
+        }
+        if (arenaLowSince < 0) {
+            arenaLowSince = now;
+            return;
+        }
+        if (now - arenaLowSince < SHRINK_AFTER_NANOS) {
+            return;
+        }
+        arenaLowSince = -1;
+        GlBuffer smaller = new GlBuffer(target * 8);
+        RangeAllocator packed = new RangeAllocator(target);
+        int moved = 0;
+        ObjectIterator<Long2ObjectOpenHashMap.Entry<Resident>> it = resident.long2ObjectEntrySet().fastIterator();
+        while (it.hasNext()) {
+            Long2ObjectOpenHashMap.Entry<Resident> e = it.next();
+            Resident r = e.getValue();
+            if (r.quadCount == 0) {
+                continue;
+            }
+            long start = packed.allocate(r.quadCount);
+            quads.copyTo(smaller, r.start * 8, start * 8, (long) r.quadCount * 8);
+            r.start = start;
+            writeSection(e.getLongKey(), r);
+            moved++;
+        }
+        quads.close();
+        quads = smaller;
+        arena = packed;
+        Farfield.LOG.info("LOD quad buffer shrunk from {} to {} MB ({} MB used, {} sections moved)",
+                capacity * 8 >> 20, target * 8 >> 20, used * 8 >> 20, moved);
     }
 
     private int allocateSlot() {

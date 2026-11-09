@@ -83,6 +83,24 @@ public final class RangeAllocator {
         return capacity;
     }
 
+    /**
+     * The capacity a mostly empty space can be compacted down to, or -1 to
+     * keep it: when at most a quarter of {@code capacity} is used, the
+     * smallest {@code minimum} times a power of two that holds twice
+     * {@code used}, so the compacted space is at most half full and the next
+     * doubling is not right behind.
+     */
+    public static long shrunkCapacity(long capacity, long used, long minimum) {
+        if (capacity <= minimum || used * 4 > capacity) {
+            return -1;
+        }
+        long target = minimum;
+        while (target < used * 2) {
+            target *= 2;
+        }
+        return target < capacity ? target : -1;
+    }
+
     public long used() {
         return used;
     }

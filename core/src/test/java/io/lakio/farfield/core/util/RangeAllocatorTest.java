@@ -32,6 +32,24 @@ class RangeAllocatorTest {
     }
 
     @Test
+    void aMostlyEmptySpaceShrinksToTwiceItsUse() {
+        long mb64 = 8L << 20; // the quad buffer's first size, in quads
+        assertEquals(mb64, RangeAllocator.shrunkCapacity(4 * mb64, mb64 / 2, mb64), "256 MB with 32 MB used: 64 MB");
+        assertEquals(2 * mb64, RangeAllocator.shrunkCapacity(8 * mb64, mb64, mb64), "512 MB with 64 MB used: 128 MB");
+        assertEquals(-1, RangeAllocator.shrunkCapacity(4 * mb64, mb64 + 1, mb64), "more than a quarter used");
+        assertEquals(-1, RangeAllocator.shrunkCapacity(mb64, 0, mb64), "never below the first size");
+        assertEquals(mb64, RangeAllocator.shrunkCapacity(2 * mb64, 0, mb64));
+        for (long capacity = mb64; capacity <= 16 * mb64; capacity += mb64 / 2) {
+            for (long used = 0; used <= capacity; used += mb64 / 8) {
+                long target = RangeAllocator.shrunkCapacity(capacity, used, mb64);
+                if (target >= 0) {
+                    assertTrue(target < capacity && target >= mb64 && used * 2 <= target, capacity + " " + used);
+                }
+            }
+        }
+    }
+
+    @Test
     void randomAllocationsNeverOverlap() {
         RangeAllocator a = new RangeAllocator(10_000);
         SplittableRandom random = new SplittableRandom(3);
