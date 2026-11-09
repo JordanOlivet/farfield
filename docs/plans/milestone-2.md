@@ -127,10 +127,12 @@ Items:
   (1 to 16) since 2026-10-26: at 64 KB/s per player it went 16, 8, 6,
   5, 3 and the server's longest queue stayed at 7 to 10 messages (20 to
   31 before)
-- [ ] B.4 The user's NeoForge pack on a server: fill times and bandwidth
+- [-] B.4 The user's NeoForge pack on a server: fill times and bandwidth
   from the log lines. The highest ping during a fill (server stat line)
   needs a player away from the server: the user's server is on their
-  home network, where it reads 0 ms as on the dev runs.
+  home network, where it reads 0 ms as on the dev runs. Set aside by the
+  user (2026-11-09): "on verra si à l'usage, le besoin se fait ressentir
+  de nouveau. Pour le moment, on va dire qu'on est bon sur ce sujet."
 
 ## M2.C — Shader packs
 
@@ -338,6 +340,13 @@ thought, not a fixed choice.
   clean restart, a region changed after the stop, a crash). Remains: the
   player hold in a run, NeoForge, the user's server.
 - [ ] G.2 A chunk pregenerator of our own, like Chunky, with the heavy
-  work offloaded to native code (Rust, if possible) for speed.
+  work offloaded to native code (Rust, if possible) for speed. Explored
+  (`docs/analysis/native-code-and-pregen.md`, 2026-11-09): generation is
+  the game's and the mods' Java, so native code cannot speed it for a
+  modded world; a Java pregenerator sharing ADR-123's tasks is possible,
+  its gain the integration. The user's call pending.
 - [ ] G.3 Native code (Rust, if possible) to speed up the LODs' build, the
-  preview's build, and the rendering of both.
+  preview's build, and the rendering of both. Explored (same file): the
+  preview's cost is the features (85 to 90 %, mod Java code), the
+  rendering is GPU-bound; ranked ideas there (the features in Java first,
+  compiled density functions, a native meshing spike later on 26.x).
