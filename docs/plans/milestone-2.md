@@ -200,6 +200,12 @@ Items:
   - Later, outside C.1 (the user, 2026-11-03): packs with neither
     contract (LODs off with a message meanwhile), our own contract, LOD
     shadows.
+  - [ ] C.2 Farfield's own shader pack contract (the user, 2026-11-09,
+    for a version after 0.3.0): what Voxy's and DH's contracts do not
+    carry (LOD shadows, our ambient occlusion, textures and block ids on
+    the DH path) and a path for packs with neither. Starts with a spec
+    and its implementation in the user's Photon fork as the proof; Iris
+    knows only DH, so it goes through our mixins as Voxy's does.
   - LOD shadows, studied 2026-11-09 (Iris 1.8.14, the user's six packs,
     their Photon fork), kept as a possible improvement (the user: "pas
     dramatique", the pack's option fixes it): the shadow map covers the
