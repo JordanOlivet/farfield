@@ -321,10 +321,17 @@ vraiment que des idées jetées en vrac". The native-code ones are about
 thinking past a plain Java mod for speed; Rust is the user's first
 thought, not a fixed choice.
 
-- [ ] G.1 Build the noise preview around the spawn ahead of time on a
+- [~] G.1 Build the noise preview around the spawn ahead of time on a
   server (client-server mode), so the first player to join finds it
   ready. Today (B.3) the server builds it around each player once they
-  are there.
+  are there. ADR-123: pregeneration tasks (the spawn's at start,
+  `preview_spawn_radius`, up to 16,384 blocks; `/farfield pregen`
+  start, spawn, pause, resume, cancel, list), saved in the world and
+  resumed, paused while players are online by default
+  (`pregen_when_players`). Remains: see the progress log of 2026-11-09.
+- [ ] G.1b The user (2026-11-09): import the LODs of a world that lived
+  without Farfield at start, unattended, with the same player rule. To
+  study first (region files, the import's checkpoints).
 - [ ] G.2 A chunk pregenerator of our own, like Chunky, with the heavy
   work offloaded to native code (Rust, if possible) for speed.
 - [ ] G.3 Native code (Rust, if possible) to speed up the LODs' build, the

@@ -52,7 +52,9 @@ import java.util.function.IntBinaryOperator;
  * Noise preview of terrain not generated yet (ADR-038, ADR-039), built by
  * the integrated server: every {@link #UPDATE_TICKS} ticks, the tiles
  * (512 x 512 blocks) within {@link #RANGE} blocks of a player, nearest and
- * in front first, on low-priority threads (the preview threads setting). A tile holds the surface every 4
+ * in front first, on low-priority threads (the preview threads setting),
+ * then the tiles of the pregeneration tasks ({@link PreviewPregen}, ADR-123)
+ * in the threads the players leave free. A tile holds the surface every 4
  * blocks from the noise router's final density (each search starts from
  * the neighbor sample's height, then bisects to the block), the biome per
  * chunk and the surface blocks per 4-block cell, guessed from the biome and
@@ -93,6 +95,8 @@ final class NoisePreview {
     private final Map<ResourceKey<Level>, Optional<Dimension>> dimensions = new ConcurrentHashMap<>();
     private volatile boolean stopped;
     private long ticks;
+    /** Opened on the first update, once the server and its settings are there. */
+    private PreviewPregen pregen;
     /** When the pipeline last took in new chunks; the preview keeps half its threads until {@link #YIELD_NANOS} after. */
     private long lastIngest;
     private static final long YIELD_NANOS = 5_000_000_000L;
@@ -212,9 +216,15 @@ final class NoisePreview {
                 : usual;
         RenderSettings.resize(pool, threads, "Noise preview");
         boolean report = ticks % REPORT_TICKS == 0;
+        if (pregen == null) {
+            pregen = PreviewPregen.open(server, StreamServer.settings());
+        }
+        boolean pregenOn = pregen.active(server);
         for (ServerLevel level : server.getAllLevels()) {
             List<ServerPlayer> players = level.players();
-            if (players.isEmpty()) {
+            String name = level.dimension().location().toString();
+            boolean pregenHere = pregenOn && pregen.runningIn(name);
+            if (players.isEmpty() && !pregenHere) {
                 continue;
             }
             Optional<Dimension> d = dimensions.computeIfAbsent(level.dimension(), k -> open(level));
@@ -224,11 +234,44 @@ final class NoisePreview {
             }
             Dimension dim = d.get();
             dim.world = lod.world();
-            schedule(dim, players);
+            schedule(dim, players, pregenHere);
             if (report) {
                 report(dim);
+                if (pregenHere) {
+                    pregen.report(tile -> builtFine(dim, tile), name);
+                }
             }
         }
+    }
+
+    /** The pregeneration tasks; null before the server's first update. */
+    PreviewPregen pregen() {
+        return pregen;
+    }
+
+    /** Whether a tile of a dimension is built at the finest grid; null when its preview is not open. */
+    java.util.function.LongPredicate builtIn(String dimension) {
+        for (Optional<Dimension> d : dimensions.values()) {
+            if (d.isPresent() && d.get().world != null && d.get().key.location().toString().equals(dimension)) {
+                Dimension dim = d.get();
+                return tile -> builtFine(dim, tile);
+            }
+        }
+        return null;
+    }
+
+    private static boolean builtFine(Dimension d, long tile) {
+        Integer built = d.done.get(tile);
+        if (built == null) {
+            PreviewStore store = d.world.preview();
+            int x = PreviewStore.tileX(tile);
+            int z = PreviewStore.tileZ(tile);
+            if (store.contains(x, z)) {
+                built = store.summary(x, z).grid();
+                d.done.put(tile, built);
+            }
+        }
+        return built != null && built <= PreviewTile.GRID;
     }
 
     private static Optional<Dimension> open(ServerLevel level) {
@@ -248,7 +291,7 @@ final class NoisePreview {
      * farther ({@link WantOrder#score}, ADR-056), up to {@link #MAX_IN_FLIGHT}
      * (or two per thread) at a time.
      */
-    private void schedule(Dimension d, List<ServerPlayer> players) {
+    private void schedule(Dimension d, List<ServerPlayer> players, boolean pregenHere) {
         PreviewStore store = d.world.preview();
         List<long[]> candidates = new ArrayList<>();
         Set<Long> seen = new HashSet<>();
@@ -288,17 +331,29 @@ final class NoisePreview {
                 }
             }
         }
-        d.left = candidates.size();
-        trackFill(d, players.get(0), candidates);
+        if (!players.isEmpty()) {
+            d.left = candidates.size();
+            trackFill(d, players.get(0), candidates);
+        }
         candidates.sort((a, b) -> Long.compare(a[1], b[1]));
+        int limit = Math.max(MAX_IN_FLIGHT, 2 * pool.getCorePoolSize());
         for (long[] c : candidates) {
-            if (d.inFlight.size() >= Math.max(MAX_IN_FLIGHT, 2 * pool.getCorePoolSize())) {
+            if (d.inFlight.size() >= limit) {
                 break;
             }
             long tile = c[0];
             int grid = (int) c[2];
             if (d.inFlight.add(tile)) {
                 pool.execute(() -> build(d, tile, grid));
+            }
+        }
+        // Then the pregeneration's tiles, at the finest grid, in what the players leave free.
+        if (pregenHere && d.inFlight.size() < limit) {
+            for (long tile : pregen.next(d.key.location().toString(), t -> builtFine(d, t), d.inFlight,
+                    limit - d.inFlight.size())) {
+                if (d.inFlight.add(tile)) {
+                    pool.execute(() -> build(d, tile, PreviewTile.GRID));
+                }
             }
         }
     }

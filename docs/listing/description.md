@@ -71,6 +71,12 @@ same Farfield version (0.2.x) to stream. Settings in
   the world's features, built on low-priority threads (on by default).
   `preview_feature_exclude` leaves out features by id
   (`biomesoplenty:*`, `*:patch_*`).
+- `preview_spawn_radius` (default 4096, up to 16384, 0 off): the preview
+  around the world's spawn is built from the server's start, before anyone
+  joins. `/farfield pregen start <x> <z> <radius>` prepares any other area
+  (`pause`, `resume`, `cancel`, `list`); tasks resume after a restart.
+  `pregen_when_players=pause` (default) holds them while players are
+  online, `run` keeps them going behind the players' own preview.
 
 ## Compatibility
 

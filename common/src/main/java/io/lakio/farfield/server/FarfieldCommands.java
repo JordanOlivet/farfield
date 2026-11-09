@@ -23,6 +23,8 @@ import java.util.function.Supplier;
  * {@code /farfield import status}: build the LODs of the current dimension
  * from its region files. The drawing settings ({@link RenderCommands}) act
  * in single player only; players elsewhere use {@code /farfieldclient}.
+ * {@code /farfield pregen start|spawn|pause|resume|cancel|list}: the
+ * preview built ahead within a radius, while the server is free (ADR-123).
  * {@code /farfield spike generation [side]}: measures the
  * cost of showing terrain not generated yet ({@link GenerationSpike}; test
  * worlds only). Operators, or the owner of a single-player world (cheats off
@@ -46,6 +48,27 @@ public final class FarfieldCommands {
                         .executes(FarfieldCommands::rebuild)
                         .then(Commands.literal("status").executes(FarfieldCommands::rebuildStatus))
                         .then(Commands.literal("cancel").executes(FarfieldCommands::rebuildCancel)))
+                .then(Commands.literal("pregen")
+                        .then(Commands.literal("start")
+                                .then(Commands.argument("x", IntegerArgumentType.integer())
+                                        .then(Commands.argument("z", IntegerArgumentType.integer())
+                                                .then(Commands.argument("radius", IntegerArgumentType.integer(0,
+                                                                io.lakio.farfield.core.preview.PregenTasks.MAX_RADIUS))
+                                                        .executes(c -> pregenStart(c, null))
+                                                        .then(Commands.argument("dimension",
+                                                                        net.minecraft.commands.arguments.DimensionArgument.dimension())
+                                                                .executes(c -> pregenStart(c,
+                                                                        net.minecraft.commands.arguments.DimensionArgument
+                                                                                .getDimension(c, "dimension"))))))))
+                        .then(Commands.literal("spawn")
+                                .executes(c -> pregenSpawn(c, -1))
+                                .then(Commands.argument("radius", IntegerArgumentType.integer(0,
+                                                io.lakio.farfield.core.preview.PregenTasks.MAX_RADIUS))
+                                        .executes(c -> pregenSpawn(c, IntegerArgumentType.getInteger(c, "radius")))))
+                        .then(pregenSet("pause", io.lakio.farfield.core.preview.PregenTasks.State.PAUSED))
+                        .then(pregenSet("resume", io.lakio.farfield.core.preview.PregenTasks.State.RUNNING))
+                        .then(pregenSet("cancel", io.lakio.farfield.core.preview.PregenTasks.State.CANCELLED))
+                        .then(Commands.literal("list").executes(FarfieldCommands::pregenList)))
                 .then(Commands.literal("spike")
                         .then(Commands.literal("generation")
                                 .executes(c -> generationSpike(c, 16))
@@ -73,6 +96,91 @@ public final class FarfieldCommands {
                                         .then(Commands.argument("side", IntegerArgumentType.integer(1, 64))
                                                 .executes(c -> featureSpike(c, IntegerArgumentType.getInteger(c, "side")))))));
         dispatcher.register(RenderCommands.addTo(root, "farfield", FarfieldCommands::clientSetting));
+    }
+
+    /** The pregeneration tasks, or a failure reply when there are none here. */
+    private static PreviewPregen pregenOrFail(CommandSourceStack source) {
+        PreviewPregen p = LodServer.pregen();
+        if (p == null) {
+            source.sendFailure(Component.literal(LodServer.get() == null ? "Farfield's server side is not running."
+                    : "No preview here (preview=false in farfield-server.properties), or the server is still starting."));
+        }
+        return p;
+    }
+
+    private static int pregenStart(CommandContext<CommandSourceStack> c,
+                                   net.minecraft.server.level.ServerLevel level) {
+        CommandSourceStack source = c.getSource();
+        PreviewPregen p = pregenOrFail(source);
+        if (p == null) {
+            return 0;
+        }
+        net.minecraft.server.level.ServerLevel in = level != null ? level : source.getLevel();
+        String line = p.start(null, in.dimension().location().toString(), IntegerArgumentType.getInteger(c, "x"),
+                IntegerArgumentType.getInteger(c, "z"), IntegerArgumentType.getInteger(c, "radius"));
+        source.sendSuccess(() -> Component.literal(line), true);
+        return 1;
+    }
+
+    /** The world's spawn, with the given radius or the setting's (4,096 when the setting is off). */
+    private static int pregenSpawn(CommandContext<CommandSourceStack> c, int radius) {
+        CommandSourceStack source = c.getSource();
+        PreviewPregen p = pregenOrFail(source);
+        if (p == null) {
+            return 0;
+        }
+        int r = radius >= 0 ? radius : StreamServer.settings().previewSpawnRadius() > 0
+                ? StreamServer.settings().previewSpawnRadius() : 4096;
+        net.minecraft.core.BlockPos spawn = source.getServer().overworld().getSharedSpawnPos();
+        String line = p.start(io.lakio.farfield.core.preview.PregenTasks.SPAWN, "minecraft:overworld", spawn.getX(),
+                spawn.getZ(), r);
+        source.sendSuccess(() -> Component.literal(line), true);
+        return 1;
+    }
+
+    /** {@code pause|resume|cancel [id|all]}: one task, or every open one. */
+    private static LiteralArgumentBuilder<CommandSourceStack> pregenSet(String verb,
+                                                                       io.lakio.farfield.core.preview.PregenTasks.State state) {
+        return Commands.literal(verb)
+                .executes(c -> pregenSet(c, null, state))
+                .then(Commands.argument("id", com.mojang.brigadier.arguments.StringArgumentType.word())
+                        .executes(c -> {
+                            String id = com.mojang.brigadier.arguments.StringArgumentType.getString(c, "id");
+                            return pregenSet(c, id.equalsIgnoreCase("all") ? null : id, state);
+                        }));
+    }
+
+    private static int pregenSet(CommandContext<CommandSourceStack> c, String id,
+                                 io.lakio.farfield.core.preview.PregenTasks.State state) {
+        CommandSourceStack source = c.getSource();
+        PreviewPregen p = pregenOrFail(source);
+        if (p == null) {
+            return 0;
+        }
+        String line = p.set(id, state);
+        if (line == null) {
+            source.sendFailure(Component.literal(id == null ? "No open preview pregeneration."
+                    : "No open preview pregeneration " + id + " (/farfield pregen list)."));
+            return 0;
+        }
+        source.sendSuccess(() -> Component.literal(line), true);
+        return 1;
+    }
+
+    private static int pregenList(CommandContext<CommandSourceStack> c) {
+        CommandSourceStack source = c.getSource();
+        PreviewPregen p = pregenOrFail(source);
+        if (p == null) {
+            return 0;
+        }
+        List<String> lines = p.list(LodServer::previewBuilt);
+        if (lines.isEmpty()) {
+            source.sendSuccess(() -> Component.literal("No preview pregeneration."), false);
+        }
+        for (String line : lines) {
+            source.sendSuccess(() -> Component.literal(line), false);
+        }
+        return 1;
     }
 
     /**

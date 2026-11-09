@@ -32,6 +32,17 @@ class ServerConfigTest {
         assertEquals(16, odd.threads());
         assertEquals(false, odd.fullData());
         assertEquals(true, odd.preview());
+        assertEquals(4096, odd.previewSpawnRadius());
+        assertEquals(true, odd.pregenPausesForPlayers());
+
+        // Preview pregeneration (ADR-123): radius clamped, "run" keeps it going with players online.
+        ServerConfig pregen = new ServerConfig(true, 4096, 1024, 10240, 0, false, true, true, "", 99_999, false);
+        assertEquals(ServerConfig.MAX_PREGEN_RADIUS, pregen.previewSpawnRadius());
+        pregen.write(file);
+        assertEquals(pregen, ServerConfig.read(file));
+        Files.writeString(file, "preview_spawn_radius=0\npregen_when_players=RUN\n");
+        assertEquals(0, ServerConfig.read(file).previewSpawnRadius());
+        assertEquals(false, ServerConfig.read(file).pregenPausesForPlayers());
         assertEquals(4, ServerConfig.DEFAULTS.effectiveThreads(16));
         assertEquals(1, ServerConfig.DEFAULTS.effectiveThreads(1));
     }

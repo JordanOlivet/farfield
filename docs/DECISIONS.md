@@ -3458,3 +3458,40 @@ out of Farfield.
   `farfield-agent/`), flights to replay go to `rehearsal/flights/`, the log
   line to wait for is `Rehearsal inbox on`, and `wait stable` also waits for
   the game's own chunks to be built.
+
+## ADR-123 — The preview is pregenerated while the server is free
+
+Status: accepted, 2026-11-09. Plan item G.1.
+
+- **Context**: a server builds the preview around each player once they
+  are there (B.3): the first player after a start, or in a new area, waits
+  for it (1 to 2 min for the 4,096 blocks around them in the user's pack).
+  The user: build it ahead, around the spawn even with nobody online, and
+  in any area an operator names, "un peu comme on lancerait un Chunky la
+  nuit".
+- **Decision** (the user's picks in a Q&A):
+  - Tasks: the tiles within a radius of a point, nearest the point first,
+    built at the finest grid whatever their distance (a player coming near
+    builds nothing again; the grid only changes the heights stage, under
+    10 % of a tile with features). Radius up to 16,384 blocks, past the
+    4,096 players see today, for the distances to come (E.1); the tiles
+    beyond wait on disk.
+  - A dedicated server makes the spawn's task at start,
+    `preview_spawn_radius` blocks around the world's spawn (default 4,096,
+    0 off) in `farfield-server.properties`; a wider radius or a moved spawn
+    runs it again, an operator's cancel holds.
+  - `/farfield pregen start <x> <z> <radius> [dimension]`, `pregen spawn
+    [radius]`, `pause|resume|cancel [id|all]`, `list` (each task's tiles
+    built). Operators only, as the other server commands.
+  - Saved in the world (`farfield-pregen.txt`: id, dimension, center,
+    radius, state) and resumed after a restart; tiles already built are
+    skipped, so progress is never saved.
+  - `pregen_when_players`: `pause` (default) holds every task while a
+    player is online, `run` keeps them going in the preview threads the
+    players' own tiles leave free. The players' preview always comes first.
+  - One task at a time per dimension, in their order. One log line at a
+    task's start, end and every minute (tiles built, seconds a tile, time
+    left), and when players hold or free them.
+- **Later** (the user): the LODs of a world that lived without Farfield
+  imported at start the same way, unattended; to study first (region
+  files, the import's checkpoints).

@@ -19,17 +19,25 @@ import java.util.Properties;
  * too (full data; off by default, ADR-013), whether a dedicated server
  * builds the noise preview of terrain not generated yet for its players,
  * whether that preview runs the world's own features (trees, plants,
- * rocks, ADR-079) and which of them it leaves out ({@link #excludesFeature}).
+ * rocks, ADR-079) and which of them it leaves out ({@link #excludesFeature}),
+ * the radius around the world's spawn its preview is built in ahead of the
+ * players (0: none, ADR-123), and whether that pregeneration pauses while
+ * players are online.
  * Defaults from Neo-Voxy, whose streaming worked at these values. Missing
  * or invalid keys take their default.
  */
 public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, int totalKBps, int threads,
-                           boolean fullData, boolean preview, boolean previewFeatures, String previewFeatureExclude) {
+                           boolean fullData, boolean preview, boolean previewFeatures, String previewFeatureExclude,
+                           int previewSpawnRadius, boolean pregenPausesForPlayers) {
 
     public static final int AUTO = 0;
     public static final int MAX_RADIUS = 30_000_000;
 
-    public static final ServerConfig DEFAULTS = new ServerConfig(true, 4096, 1024, 10240, AUTO, false, true, true, "");
+    /** Pregeneration radii, in blocks: up to four times the preview's drawn range (ADR-123). */
+    public static final int MAX_PREGEN_RADIUS = 16_384;
+
+    public static final ServerConfig DEFAULTS = new ServerConfig(true, 4096, 1024, 10240, AUTO, false, true, true, "",
+            4096, true);
 
     static final String STREAMING = "streaming";
     static final String RADIUS = "streaming_radius";
@@ -40,6 +48,8 @@ public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, 
     static final String PREVIEW = "preview";
     static final String PREVIEW_FEATURES = "preview_features";
     static final String PREVIEW_FEATURE_EXCLUDE = "preview_feature_exclude";
+    static final String PREVIEW_SPAWN_RADIUS = "preview_spawn_radius";
+    static final String PREGEN_WHEN_PLAYERS = "pregen_when_players";
 
     public ServerConfig {
         radiusBlocks = Math.max(0, Math.min(MAX_RADIUS, radiusBlocks));
@@ -47,6 +57,14 @@ public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, 
         totalKBps = Math.max(0, totalKBps);
         threads = Math.max(AUTO, Math.min(16, threads));
         previewFeatureExclude = previewFeatureExclude == null ? "" : previewFeatureExclude.trim();
+        previewSpawnRadius = Math.max(0, Math.min(MAX_PREGEN_RADIUS, previewSpawnRadius));
+    }
+
+    /** The settings before ADR-123: the spawn's preview built ahead in 4,096 blocks, paused for players. */
+    public ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, int totalKBps, int threads,
+                        boolean fullData, boolean preview, boolean previewFeatures, String previewFeatureExclude) {
+        this(streaming, radiusBlocks, playerKBps, totalKBps, threads, fullData, preview, previewFeatures,
+                previewFeatureExclude, 4096, true);
     }
 
     /**
@@ -109,7 +127,9 @@ public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, 
                 integer(p, PLAYER_KBPS, DEFAULTS.playerKBps), integer(p, TOTAL_KBPS, DEFAULTS.totalKBps),
                 threads(p), bool(p, FULL_DATA, DEFAULTS.fullData), bool(p, PREVIEW, DEFAULTS.preview),
                 bool(p, PREVIEW_FEATURES, DEFAULTS.previewFeatures),
-                p.getProperty(PREVIEW_FEATURE_EXCLUDE, DEFAULTS.previewFeatureExclude));
+                p.getProperty(PREVIEW_FEATURE_EXCLUDE, DEFAULTS.previewFeatureExclude),
+                integer(p, PREVIEW_SPAWN_RADIUS, DEFAULTS.previewSpawnRadius),
+                !"run".equalsIgnoreCase(p.getProperty(PREGEN_WHEN_PLAYERS, "pause").trim()));
     }
 
     /** Writes the file through a temporary file. */
@@ -143,6 +163,14 @@ public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, 
             out.write("# Placed features the preview leaves out, by id, separated by commas; * matches\n");
             out.write("# anything. Examples: biomesoplenty:*  *:patch_*  minecraft:trees_jungle\n");
             out.write(PREVIEW_FEATURE_EXCLUDE + "=" + previewFeatureExclude + "\n");
+            out.write("# Build the preview this many blocks around the world's spawn ahead of the players,\n");
+            out.write("# from the server's start (0 to " + MAX_PREGEN_RADIUS + "; 0: off). Players see it up to 4096\n");
+            out.write("# blocks; farther tiles wait for them. /farfield pregen starts other areas. Default "
+                    + DEFAULTS.previewSpawnRadius + ".\n");
+            out.write(PREVIEW_SPAWN_RADIUS + "=" + previewSpawnRadius + "\n");
+            out.write("# While players are online, preview pregeneration pauses (pause), or goes on at low\n");
+            out.write("# priority (run). The preview around the players themselves is always built. Default pause.\n");
+            out.write(PREGEN_WHEN_PLAYERS + "=" + (pregenPausesForPlayers ? "pause" : "run") + "\n");
         }
         Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
     }

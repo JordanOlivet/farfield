@@ -96,6 +96,18 @@ public final class LodServer {
         }
     }
 
+    /** The pregeneration tasks (ADR-123): null without a preview here or before the first update. */
+    static PreviewPregen pregen() {
+        LodServer s = instance;
+        return s == null || s.preview == null ? null : s.preview.pregen();
+    }
+
+    /** Whether a preview tile of a dimension is built at the finest grid; null when not known yet. */
+    static java.util.function.LongPredicate previewBuilt(String dimension) {
+        LodServer s = instance;
+        return s == null || s.preview == null ? null : s.preview.builtIn(dimension);
+    }
+
     static LodServer get() {
         return instance;
     }
