@@ -18,7 +18,7 @@ Minecraft 1.21.1 · NeoForge and Fabric · single player and servers
   height, grass and flowers, kelp, and the shapes of fences, walls, panes
   and stairs. Farther away, coarser levels take over where a block would
   be smaller than a few pixels on screen (the Detail setting).
-- Works with Sodium.
+- Works with Sodium, and with Iris shader packs (below).
 
 ![Vanilla at 8 chunks against Farfield, the same view](https://cdn.modrinth.com/data/3ToF1nXi/images/b7cb5ac50ffadb76540871cea8efb5a3ce013630.png)
 
@@ -31,17 +31,28 @@ The terrain your world has not generated yet is previewed from its seed:
   terracotta, the blocks of biome mods;
 - trees, plants and rocks grown where the game will place them, from every
   mod that adds them;
-- the sea floor's kelp, seagrass and coral reefs.
+- the sea floor's kelp, seagrass and coral reefs;
+- the light of glowing blocks (lava, sea pickles, mods' glowing plants)
+  and the lakes the world digs.
 
 Real terrain replaces the preview chunk by chunk as you explore. The
-preview is built in the background, on threads you set. More biomes in
-the gallery.
+preview is built in the background, on threads you set; you choose
+whether it shows its trees, its plants and its other features. More
+biomes in the gallery.
 
 ![A world just created: almost all of it is the preview](https://cdn.modrinth.com/data/3ToF1nXi/images/3e7dd680ff8564ae8bd461fc657e2a700ebe926c.png)
 
 ![Badlands and a warm sea, in the preview](https://cdn.modrinth.com/data/3ToF1nXi/images/cc881c2cf1673a67bf6e434146a6355f6d4c48ed.png)
 
 ![A desert coast, coral reefs under the warm sea](https://cdn.modrinth.com/data/3ToF1nXi/images/a0b75614bd43233673702da379226ca782965374.png)
+
+## Shader packs
+
+With Iris, the LODs are drawn and lit by your shader pack, water and its
+reflections included, through the contract the pack already ships for
+far terrain: Voxy's (Photon, Complementary, BSL, MakeUp: tested), or
+Distant Horizons' for packs that ship only that one. Farfield takes the
+place of those mods; do not install them beside it.
 
 ## Single player and servers
 
@@ -52,12 +63,13 @@ the gallery.
 | Server without Farfield | Your client builds the LODs from the chunks it receives, kept per server; no preview (it needs the seed) |
 
 `/farfield import` builds the LODs of every chunk a world already has, in
-the background: in single player, or from the server console.
+the background: in single player, or from the server console. A dedicated
+server does it by itself at start for the chunks its LODs never saw.
 
 ## For server owners
 
 Install Farfield on the server and on the players' clients; both need the
-same Farfield version (0.2.x) to stream. Settings in
+same Farfield version (0.3.x) to stream. Settings in
 `config/farfield-server.properties`:
 
 - `streaming_radius`: how far around a player LODs are sent (default
@@ -84,24 +96,25 @@ same Farfield version (0.2.x) to stream. Settings in
 
 ## Compatibility
 
-Tested with Sodium 0.8, Iris installed (shader pack off), C2ME, ModernFix,
-Lithium, FerriteCore and Sinytra Connector, in a NeoForge pack of 386 mods
-and a Fabric pack of 76, with Biomes O' Plenty and Terralith in the
-preview. Other LOD mods (Distant Horizons, Voxy) are not tested beside it:
-use one at a time.
+Tested with Sodium 0.8, Iris with Photon, Complementary Reimagined and
+Unbound, BSL and MakeUp, C2ME, ModernFix, Lithium, FerriteCore, Chunky and
+Sinytra Connector, in a NeoForge pack of 386 mods and a Fabric pack of 76,
+with Biomes O' Plenty and Terralith in the preview. Other LOD mods
+(Distant Horizons, Voxy) are not tested beside it: use one at a time.
 
 ![Levels of detail: finer near, coarser far](https://cdn.modrinth.com/data/3ToF1nXi/images/2724da186657ca00d678ebbf5888423d808e91ef.png)
 
 ## Settings
 
 Mod Menu on Fabric, the mods list on NeoForge, or a key you bind in
-Controls > Key Binds > Farfield: distant terrain on or off, detail,
-textures, fog distances, the preview, building threads, level colors and
-performance logs.
+Controls > Key Binds > Farfield, in four tabs: Rendering (distant terrain
+on or off, detail, textures, fog distances), Preview (on or off, its
+light, its trees, plants and other features), Performance (building
+threads) and Debug (level colors, performance logs).
 
 Commands: `/farfield render`, `detail`, `textures`, `fog`, `preview`,
-`import`, `debug levels` in single player; on a server, players use
-`/farfieldclient` for the drawing ones.
+`import`, `pregen`, `debug levels` in single player; on a server,
+players use `/farfieldclient` for the drawing ones.
 
 ## Requirements
 
@@ -111,9 +124,11 @@ Commands: `/farfield render`, `detail`, `textures`, `fog`, `preview`,
 
 ## Not there yet
 
-- **Shader packs** (Iris, Oculus): planned next.
-- **Light from blocks in the preview** (glowing plants, sea pickles): with
-  shader pack support; the real LODs have it already.
+- **Shadows of the LODs under a shader pack**: the far terrain casts none
+  (as with Distant Horizons and Voxy under these packs). Photon's shadow
+  distance set to your render distance hides the gap.
+- **Ambient occlusion** through a pack's Distant Horizons contract (the
+  Voxy contract has it).
 - **Beyond 4,096 blocks**: planned.
 
 ## Feedback
