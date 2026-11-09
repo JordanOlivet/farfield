@@ -1,5 +1,5 @@
 # Bands at the generation front over land (ADR-100): the east flight, the
-# frame probe on. With dev/agent/series.sh.
+# frame probe on. With dev/rehearsal/series.sh.
 wait stable 300 3
 command gamemode spectator
 tp 48 170 32 -90 20

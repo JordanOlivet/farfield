@@ -2,7 +2,7 @@
 the renderer's notes touching them (ADR-111): those of the frame the band
 appeared in, then those of the frame it went.
 
-    python dev/agent/band-keys.py <frames session dir> [bands, default 8]
+    python dev/rehearsal/band-keys.py <frames session dir> [bands, default 8]
 
 A note reads `[+-]` (put in or out of the draw list) or `looks` (new looks),
 `R` real or `P` preview, the level, then the section [x,y,z]; `select` and

@@ -4,7 +4,7 @@
 # before the client, in the background; a line with gameHasFocus=True means
 # the game took the focus. Window titles may name what the user has open:
 # keep the log out of the repository.
-#   powershell -NoProfile -ExecutionPolicy Bypass -File dev/agent/focus-watch.ps1 -Out <log> -StopFile <file>
+#   powershell -NoProfile -ExecutionPolicy Bypass -File dev/rehearsal/focus-watch.ps1 -Out <log> -StopFile <file>
 param([Parameter(Mandatory)][string]$Out, [Parameter(Mandatory)][string]$StopFile)
 Add-Type @"
 using System; using System.Runtime.InteropServices; using System.Text;

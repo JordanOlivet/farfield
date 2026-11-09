@@ -5,11 +5,14 @@ plugins {
 
 // Settings shared by the dev client runs.
 def clientRunSettings = { run ->
-    // Test agents drive the dev client through files (ADR-095).
-    run.systemProperty('farfield.agent', 'true')
-    // -PagentWindow=minimized|background: an agent's run stays out of the user's way (ADR-096).
+    // Rehearsal, the test harness mod (ADR-122), drives the dev client through files when
+    // its jar is there (rehearsal.dir in local.properties); Farfield's part of it is
+    // FarfieldRehearsal.
+    run.systemProperty('rehearsal', 'true')
+    run.systemProperty('rehearsal.extensions', 'io.lakio.farfield.client.FarfieldRehearsal')
+    // -PagentWindow=minimized|background: a test run stays out of the user's way (ADR-096).
     if (project.hasProperty('agentWindow')) {
-        run.systemProperty('farfield.agent.window', project.property('agentWindow') as String)
+        run.systemProperty('rehearsal.window', project.property('agentWindow') as String)
     }
     // Scripted checks: -PquickPlay=<save name> opens that world directly.
     if (project.hasProperty('quickPlay')) {
@@ -86,6 +89,11 @@ dependencies {
     additionalRuntimeClasspath "io.airlift:aircompressor:${aircompressor_version}"
     // Shader packs (ADR-113): compiled against, never bundled.
     compileOnly("maven.modrinth:iris:${iris_neoforge_version}") { transitive = false }
+    // Rehearsal, the test harness mod (ADR-122), in the dev runs only, when a checkout is named.
+    def rehearsalJar = rehearsalJar('neoforge')
+    if (rehearsalJar != null) {
+        runtimeOnly files(rehearsalJar)
+    }
 }
 
 // Client and server share the default run dir.

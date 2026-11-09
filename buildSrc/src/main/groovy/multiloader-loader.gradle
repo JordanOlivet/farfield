@@ -42,6 +42,23 @@ tasks.named('sourcesJar', Jar) {
     from(configurations.commonResources)
 }
 
+// Rehearsal, the test harness mod (ADR-122): the loader's jar of the checkout named by
+// rehearsal.dir in local.properties (built there with gradlew build), or null.
+ext.rehearsalJar = { String loader ->
+    def dir = project.findProperty('rehearsal.dir')
+    if (dir == null) {
+        return null
+    }
+    def jars = (new File(dir as String, 'output').listFiles() ?: []).findAll {
+        it.name ==~ /rehearsal-${loader}-.*\.jar/
+    }
+    if (jars.isEmpty()) {
+        logger.warn("rehearsal.dir names ${dir}, but its output/ has no ${loader} jar: build it there first")
+        return null
+    }
+    return jars.max { it.lastModified() }
+}
+
 // Dev run dirs (ADR-042): runClient and runServer first copy the missing
 // files of dev/client and dev/server into the run dirs. Each loader calls
 // this with its own run dirs.

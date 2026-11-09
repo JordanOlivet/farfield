@@ -28,6 +28,11 @@ dependencies {
     // Shader packs (ADR-113): compiled against, never bundled.
     modCompileOnly("maven.modrinth:iris:${iris_fabric_version}") { transitive = false }
     modLocalRuntime "com.terraformersmc:modmenu:${modmenu_version}"
+    // Rehearsal, the test harness mod (ADR-122), in the dev runs only, when a checkout is named.
+    def rehearsalJar = rehearsalJar('fabric')
+    if (rehearsalJar != null) {
+        modLocalRuntime files(rehearsalJar)
+    }
     // Libraries of the engine core, nested in the mod jar.
     include(implementation("io.airlift:aircompressor:${aircompressor_version}"))
 }
@@ -41,11 +46,14 @@ loom {
         defaultRefmapName.set("${mod_id}.refmap.json")
     }
     def clientRunSettings = { run ->
-        // Test agents drive the dev client through files (ADR-095).
-        run.property('farfield.agent', 'true')
-        // -PagentWindow=minimized|background: an agent's run stays out of the user's way (ADR-096).
+        // Rehearsal, the test harness mod (ADR-122), drives the dev client through files
+        // when its jar is there (rehearsal.dir in local.properties); Farfield's part of it
+        // is FarfieldRehearsal.
+        run.property('rehearsal', 'true')
+        run.property('rehearsal.extensions', 'io.lakio.farfield.client.FarfieldRehearsal')
+        // -PagentWindow=minimized|background: a test run stays out of the user's way (ADR-096).
         if (project.hasProperty('agentWindow')) {
-            run.property('farfield.agent.window', project.property('agentWindow') as String)
+            run.property('rehearsal.window', project.property('agentWindow') as String)
         }
         // Scripted checks: -PquickPlay=<save name> opens that world directly.
         if (project.hasProperty('quickPlay')) {

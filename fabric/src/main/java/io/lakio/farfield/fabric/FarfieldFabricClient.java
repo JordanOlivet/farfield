@@ -1,6 +1,5 @@
 package io.lakio.farfield.fabric;
 
-import io.lakio.farfield.client.AgentClient;
 import io.lakio.farfield.client.FarfieldClientCommands;
 import io.lakio.farfield.client.FlightRecorder;
 import io.lakio.farfield.client.LodClient;
@@ -30,8 +29,6 @@ public final class FarfieldFabricClient implements ClientModInitializer {
                 (payload, context) -> StreamClient.receive(payload.data()));
         ClientTickEvents.END_CLIENT_TICK.register(StreamClient::tick);
         ClientTickEvents.END_CLIENT_TICK.register(LodClient::tick);
-        // Test agents drive dev clients through files (ADR-095); off unless -Dfarfield.agent=true.
-        ClientTickEvents.END_CLIENT_TICK.register(AgentClient::tick);
         // Flight recording for replays (ADR-099).
         ClientTickEvents.END_CLIENT_TICK.register(FlightRecorder::tick);
         ClientLifecycleEvents.CLIENT_STOPPING.register(mc -> {

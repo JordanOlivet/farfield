@@ -2,7 +2,7 @@ package io.lakio.farfield.client.render;
 
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import io.lakio.farfield.Farfield;
-import io.lakio.farfield.core.agent.JsonLine;
+import io.lakio.farfield.core.debug.JsonLine;
 import io.lakio.farfield.core.debug.ColumnFlicker;
 import io.lakio.farfield.core.debug.ErasedCheck;
 import io.lakio.farfield.core.debug.FlashDetector;
@@ -37,7 +37,7 @@ import static org.lwjgl.opengl.GL46C.*;
 
 /**
  * Watches every frame for short glitches (ADR-099), off unless turned on
- * ({@code /farfieldclient debug frames}, the agent inbox, or
+ * ({@code /farfieldclient debug frames}, Rehearsal's {@code frames} verb, or
  * {@code -Dfarfield.frames=true}). Three captures of the game's image per
  * frame: before the LOD pass (the sky), after it, and at the end of the
  * level. Each is scaled down by 2x2 averages to at most 512 pixels wide on

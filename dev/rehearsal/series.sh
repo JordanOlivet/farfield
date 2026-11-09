@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # A/B series of agent runs on a dev client in single player (ADR-111), from Git Bash.
 #
-#   dev/agent/series.sh <label> <runs> <command file> <mode>...
+#   dev/rehearsal/series.sh <label> <runs> <command file> <mode>...
 #
 # Each mode is name=JVM options, e.g. `base=` and `fix=-Dfarfield.myFix=true`
 # (a temporary switch, never committed). Each round runs every mode once, on
@@ -31,7 +31,7 @@ for i in $(seq 1 "$ROUNDS"); do
     for mode in "$@"; do
         name=${mode%%=*}
         opts=${mode#*=}
-        rm -f "$RUN/saves/farfield-test/session.lock" "$RUN/farfield-agent/outbox.jsonl"
+        rm -f "$RUN/saves/farfield-test/session.lock" "$RUN/rehearsal/outbox.jsonl"
         JAVA_TOOL_OPTIONS="-Dfarfield.frames.dumps=400 $opts" ./gradlew.bat "$CLIENT_TASK" \
             -PquickPlay=farfield-test -PfreshWorld -PagentWindow=minimized --no-daemon --console plain \
             > "$OUTDIR/$LABEL-client.log" 2>&1 &

@@ -1,8 +1,8 @@
 # Agent inbox smoke test (ADR-095), about 80 s on a dev client.
 #   .\gradlew.bat :neoforge:runClient -PquickPlay=farfield-test -PfreshWorld -PagentWindow=minimized
-#   dev/agent/run-commands.sh neoforge/run dev/agent/scenarios/inbox-smoke.cmd
+#   dev/rehearsal/run-commands.sh neoforge/run dev/rehearsal/scenarios/inbox-smoke.cmd
 # Check: every line answered in outbox.jsonl, both waits "settled", the two
-# refused lines at the end ok=false, four PNGs in farfield-agent/shots (far
+# refused lines at the end ok=false, four PNGs in rehearsal/shots (far
 # view drawn, HUD shown only on south-hud, level colours on levels), and
 # "LOD level colors on" then "off" as [CHAT] lines in the game log.
 state

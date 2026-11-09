@@ -18,3 +18,8 @@ farfield.pack.dir=C:/Users/<you>/curseforge/minecraft/Instances/<pack>
 
 # The same for the Fabric pack run (fabric runPackClient), a Fabric instance.
 farfield.fabricPack.dir=C:/Users/<you>/curseforge/minecraft/Instances/<fabric pack>
+
+# A checkout of Rehearsal, the test harness mod (ADR-122), built there with
+# gradlew build: its jar joins the dev client runs, and dev/rehearsal/ runs
+# its launch scripts. Not needed otherwise.
+rehearsal.dir=C:/Users/<you>/source/repos/rehearsal

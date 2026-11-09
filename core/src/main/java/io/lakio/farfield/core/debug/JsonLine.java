@@ -1,10 +1,9 @@
-package io.lakio.farfield.core.agent;
+package io.lakio.farfield.core.debug;
 
 import java.util.Map;
 
 /**
- * One JSON object on one line, for the agent's outbox and the frame
- * probe's events (ADR-095, ADR-099): strings, whole numbers, decimals (NaN
+ * One JSON object on one line, for the frame probe's events (ADR-099): strings, whole numbers, decimals (NaN
  * and infinities as null), booleans and nested maps.
  */
 public final class JsonLine {

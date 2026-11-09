@@ -3421,3 +3421,40 @@ Status: accepted, 2026-11-09. Plan item D.3.
     lake's lava) always does.
 - **Not done**: a mod's tree whose logs or leaves carry neither tag counts
   as "others".
+
+## ADR-122 — The test harness leaves Farfield: Rehearsal
+
+Status: accepted, 2026-11-09. Plan item F.1. Moves the agent inbox of
+ADR-095, the window handling of ADR-096 and the flight replays of ADR-099
+out of Farfield.
+
+- **Context**: the test harness lived in Farfield's jar (`AgentClient`,
+  `AgentWindow`, `core.agent`), so a run without Farfield (a memory or
+  cost baseline, 2026-11-08) had no inbox and no window handling, and the
+  user's other mods could not use it. The user's older `mc-test-harness`
+  (NeoForge only: JSON scenarios, frame time measures, shader pack
+  switches, screenshot comparison) overlapped it.
+- **Decision**:
+  - A mod of its own, **Rehearsal** (the user's pick of name; repository
+    `rehearsal`, private but kept to a public repository's rules, LGPL-3.0,
+    NeoForge and Fabric, mod id `rehearsal`), replacing both harnesses: the
+    command inbox and its verbs, windows out of the way, flights recorded
+    and replayed, plus `measure`, `shader`, `world` and JSON scenarios read
+    at launch, both formats running as the same commands (the user's pick).
+    Turned on by `-Drehearsal=true` or `-Drehearsal.scenario`; inert
+    otherwise.
+  - Rehearsal never names Farfield. A mod under test plugs in through one
+    class of its own named by `-Drehearsal.extensions`, whose methods
+    (`state`, `quiet`, `run`) Rehearsal calls by name with JDK types only,
+    so Farfield neither depends on Rehearsal nor ships test code beyond
+    that class (`FarfieldRehearsal`: the renderer's counters in `state`,
+    `wait stable` waiting for the LODs, the verbs `frames` and `settings`).
+  - Farfield keeps what a player uses: `/farfieldclient record` and its
+    flight files (Rehearsal reads them), the frame probe. Its dev runs take
+    Rehearsal's jar from the checkout named by `rehearsal.dir` in
+    `local.properties`; `dev/agent/` became `dev/rehearsal/`, with
+    `fabric-pack.py` and `run-commands.sh` calling Rehearsal's scripts.
+- **Changes for a test**: the inbox is `<game dir>/rehearsal/` (was
+  `farfield-agent/`), flights to replay go to `rehearsal/flights/`, the log
+  line to wait for is `Rehearsal inbox on`, and `wait stable` also waits for
+  the game's own chunks to be built.

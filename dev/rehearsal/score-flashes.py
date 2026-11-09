@@ -1,6 +1,6 @@
 """Counts the flashes of a frame probe session (ADR-111).
 
-    python dev/agent/score-flashes.py <frames session dir>...
+    python dev/rehearsal/score-flashes.py <frames session dir>...
 
 Per session: far bands (LOD-layer flashes 4 rows high or more, more than 70
 blocks away on the sea plane) and all LOD-layer flashes; then, of the far

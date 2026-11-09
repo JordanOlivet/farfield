@@ -1,5 +1,5 @@
 # Bands at the generation front (ADR-100), single player: the sea flight over
-# a sea never generated, the frame probe on. With dev/agent/series.sh.
+# a sea never generated, the frame probe on. With dev/rehearsal/series.sh.
 wait stable 300 3
 command gamemode spectator
 tp 1808 110 1700 0 20

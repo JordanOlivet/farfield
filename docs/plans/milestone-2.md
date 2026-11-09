@@ -294,7 +294,7 @@ from there: D.2, then the sea floor's plants and corals in the preview.
 
 ## M2.F — Tooling
 
-- [ ] F.1 The user (2026-11-08): move the agent test harness (the agent
+- [~] F.1 The user (2026-11-08): move the agent test harness (the agent
   inbox of ADR-095 and its verbs, window handling, screenshots, scripted
   teleports and waits) out of Farfield into a mod of its own, loaded only in
   test runs. Instrumentation and probes then go into that mod rather than
@@ -302,6 +302,11 @@ from there: D.2, then the sea floor's plants and corals in the preview.
   Farfield keeps the harness (today a baseline run has no inbox and no
   window handling), and the harness serves the user's other mods. Seen
   while measuring Farfield's memory against a pack run without it.
+  ADR-122 (2026-11-09): Rehearsal, its own repository, replacing this
+  harness and the user's `mc-test-harness`; Farfield keeps one extension
+  class. Verified: the Fabric pack with and without Farfield (a JSON
+  scenario), Farfield's NeoForge dev client. Remains: the NeoForge pack
+  launcher run, archiving `mc-test-harness`.
 
 ## M2.G — Ideas to study (the user, 2026-11-09)
 

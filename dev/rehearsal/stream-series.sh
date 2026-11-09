@@ -2,7 +2,7 @@
 # A/B series with streaming (ADR-111), from Git Bash: per mode, a fresh Fabric
 # dev server world, the Fabric dev client joins it and runs a command file.
 #
-#   dev/agent/stream-series.sh <label> <command file> <mode>...
+#   dev/rehearsal/stream-series.sh <label> <command file> <mode>...
 #
 # Modes as in series.sh (name=JVM options for the client). The command file
 # must not wait for a stable view before the join settles: see
@@ -27,7 +27,7 @@ for mode in "$@"; do
     opts=${mode#*=}
     # A world never generated: the template's level.dat alone (same seed, no region).
     rm -rf $S/fresh-s1 && mkdir -p $S/fresh-s1 && cp dev/server/world/level.dat $S/fresh-s1/
-    rm -rf $C/farfield/servers $C/farfield-agent/outbox.jsonl
+    rm -rf $C/farfield/servers $C/rehearsal/outbox.jsonl
     cmds=$OUTDIR/stream-$LABEL-console-$name.txt
     : > "$cmds"
     start=$(date +%s)

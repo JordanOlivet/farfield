@@ -1,6 +1,7 @@
 # Agent playtesting: letting an agent test Farfield like a player
 
-Date: 2026-10-29. Status: analysis, nothing decided yet (no ADR).
+Date: 2026-10-29. Status: analysis; built as ADR-095 to ADR-099, then moved
+out of Farfield into the Rehearsal mod (ADR-122, 2026-11-09).
 
 ## Why
 

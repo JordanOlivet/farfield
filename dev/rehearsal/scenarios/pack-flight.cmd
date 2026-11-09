@@ -1,9 +1,9 @@
 # The pack run (ADR-097, ADR-098): six 256-block jumps east over terrain never
 # generated, a capture after each, about 5 min with the pack's start.
 #   .\gradlew.bat :neoforge:runPackClient -PquickPlay=farfield-test -PfreshWorld -PagentWindow=minimized
-#   dev/agent/run-commands.sh neoforge/runs/pack dev/agent/scenarios/pack-flight.cmd 1200
+#   dev/rehearsal/run-commands.sh neoforge/runs/pack dev/rehearsal/scenarios/pack-flight.cmd 1200
 # Check: no "Connector locator error" in logs/debug.log, Sodium and Iris in
-# the mod list, both waits "settled", eight PNGs in farfield-agent/shots.
+# the mod list, both waits "settled", eight PNGs in rehearsal/shots.
 state
 wait stable 300 3
 state

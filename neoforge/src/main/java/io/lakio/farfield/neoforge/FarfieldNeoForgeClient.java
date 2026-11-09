@@ -1,6 +1,5 @@
 package io.lakio.farfield.neoforge;
 
-import io.lakio.farfield.client.AgentClient;
 import io.lakio.farfield.client.FarfieldSettingsScreen;
 import io.lakio.farfield.client.FarfieldClientCommands;
 import io.lakio.farfield.client.FlightRecorder;
@@ -46,8 +45,6 @@ final class FarfieldNeoForgeClient {
         // Streaming (ADR-068): LODs from a server with Farfield; before client mode, which it replaces.
         NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post e) -> StreamClient.tick(Minecraft.getInstance()));
         NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post e) -> LodClient.tick(Minecraft.getInstance()));
-        // Test agents drive dev clients through files (ADR-095); off unless -Dfarfield.agent=true.
-        NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post e) -> AgentClient.tick(Minecraft.getInstance()));
         // Flight recording for replays (ADR-099).
         NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post e) -> FlightRecorder.tick(Minecraft.getInstance()));
         NeoForge.EVENT_BUS.addListener((GameShuttingDownEvent e) -> {
