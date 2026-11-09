@@ -139,14 +139,16 @@ Items:
   contracts (`docs/analysis/shader-lod-contracts.md`) and ADR-113 (Voxy's
   contract first, then DH's, through mixins into Iris). Remains: C.1a to
   C.1e.
-  - [~] C.1a Spike: opaque LODs and the preview through `photon-gcea`'s
+  - [x] C.1a Spike: opaque LODs and the preview through `photon-gcea`'s
     `voxy_opaque` in a pack client (Iris 1.8.14, NeoForge): the snippet
     linked into `lod.frag`, its draw buffers, `vxDepthTexOpaque` and the
     `vx*` matrices in the composites, the `VOXY` macro. Done: opaque LODs
     drawn and lit by Photon in the pack client (2026-11-03, run 7).
-    Remains: the user's eye in their pack, a night shot, Fabric, and a
-    check that shaders off still draw as before.
-  - [~] C.1b Translucent LODs (`voxy_translucent`, `vxDepthTexTrans`,
+    Then: Fabric under Complementary (production runs, 2026-11-04),
+    shaders off on both loaders (runs of 2026-11-07 and 2026-11-08), the
+    user's eye at night in their NeoForge pack under photon-gcea
+    (2026-11-09).
+  - [x] C.1b Translucent LODs (`voxy_translucent`, `vxDepthTexTrans`,
     blending), then the other packs of the user's instance (BSL,
     Complementary, MakeUp, Photon 1.3b); a link error falls back. Done
     (code, built): the pass at the game's translucent stage, its target and
@@ -159,27 +161,36 @@ Items:
     Voxy's. The dark squares seen on the Fabric pack's sea were ours, not
     the pack path's: the preview's water discarded through an uninitialized
     GPU buffer, fixed by zero-filled buffers (8 clean runs against about 1
-    in 3 before, 2026-11-04). Remains: the user's eye.
-  - [~] C.1c `customId` from the pack's `block.properties`, TAA offset and
+    in 3 before, 2026-11-04). The user's eye: the LOD sea under
+    photon-gcea at night in their NeoForge pack (2026-11-09).
+  - [x] C.1c `customId` from the pack's `block.properties`, TAA offset and
     render scale. Done (code, built): ids per material from Iris's block
     state map, the `taaOffset` jitter in every pack program (pre-pass
     included, built again without it if it fails), the viewport scaled by
     `renderScale`; `vxRenderDistance` covers the farthest LOD geometry.
     Verified running under photon-gcea (TAAU 0.75, 803 of 1,673
-    materials with a pack id). Remains: the user's eye.
-  - [~] C.1d D.6 block light in the preview, for the packs' lightmap.
+    materials with a pack id). The user (2026-11-09, photon-gcea): no
+    shimmer on the far LODs while moving.
+  - [x] C.1d D.6 block light in the preview, for the packs' lightmap.
     Done (ADR-117): the features' light sources kept in the tiles
     (format 17, protocol 8), the preview's voxels lit from them, the
     `preview_light` setting (default on). Verified on the Fabric pack, no
-    pack and Complementary, warm ocean at night. Remains: the user's eye,
-    NeoForge, a dedicated server (tiles streamed).
+    pack and Complementary, warm ocean at night. The user's eye in their
+    NeoForge pack on the home server (tiles streamed), a shader pack on
+    (2026-11-08, confirmed 2026-11-09).
   - [~] C.1e DH's contract for packs without Voxy's (ADR-119). Done: the
     contract chosen per pack at load (one macro), the pack's DH programs
     run on the LOD quads over a bridge, `/farfield debug shaderpack`.
     Verified on the Fabric pack under Complementary Reimagined forced to
-    DH (day, night, sea). Remains: a pack that ships only DH's contract,
-    NeoForge, the user's eye, the other packs of his instance forced to
-    DH, the GPU cost (about +200 us at 1080p).
+    DH (day, night, sea), then by the user in their NeoForge pack under
+    photon-gcea forced to DH (2026-11-09): drawn and lit, but flatter than
+    through Voxy's contract, no ambient occlusion (confirmed by turning it
+    off under Voxy's). Remains: a pack that ships only DH's contract, the
+    other packs of the user's instance forced to DH, the GPU cost (about
+    +200 us at 1080p). Put off by the user (2026-11-09): the ambient
+    occlusion under DH (the pack's shader gets one color per vertex and
+    the quads are merged: it needs quads split where the occlusion
+    changes, more geometry under DH only).
   - Later, outside C.1 (the user, 2026-11-03): packs with neither
     contract (LODs off with a message meanwhile), our own contract, LOD
     shadows.
@@ -226,8 +237,8 @@ Items:
   18, protocol 9): found missing by a light-source probe (2026-11-07,
   surface lava lakes under the tile's surface); the user picked drawing
   them. Verified on the Fabric pack, the lava lake at -925, 1558, day and
-  night. Remains: the user's eye, NeoForge, a dedicated server, a mod's
-  water lake.
+  night, then by the user's eye in their NeoForge pack on the home server
+  (2026-11-08). Remains: a mod's water lake.
 - [~] D.6 Block light in the preview (ADR-117, see C.1d): the light sources the stand-in's
   features place (sea pickles among corals, glow lichen, sea lanterns,
   mods' glowing plants), kept per feature voxel with their emission and
