@@ -1,0 +1,1 @@
+Envoi les images sur modrinth et une fois que tu as les url, update la description pour les intégrer quand ça fait sens. je les enverrai sur curseforge à la fin
