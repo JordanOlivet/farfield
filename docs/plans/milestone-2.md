@@ -303,6 +303,11 @@ from there: D.2, then the sea floor's plants and corals in the preview.
   teleport at today's 5 to 7 s a tile, about 250 MB a world and as much
   for each client). Heights every 32 or 64 blocks there and no feature
   voxels (a canopy cover per chunk instead), measured before choosing.
+  The user (2026-11-10) brought Voxy-SeedGen and Distant Horizons SeedGen
+  to this topic (`docs/progress/2026-11-10.md`): same seed-based approach,
+  far faster because their features follow the draw level. Candidate:
+  the real feature sandbox near (under 1 to 2 km), a per-biome canopy
+  learned from the sandbox-built tiles farther, also inside 4,096 blocks.
 
 ## M2.F — Tooling
 
