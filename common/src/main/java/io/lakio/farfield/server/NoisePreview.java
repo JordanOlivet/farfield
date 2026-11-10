@@ -34,6 +34,7 @@ import net.minecraft.world.level.levelgen.RandomState;
 import net.minecraft.world.phys.Vec3;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -91,6 +92,8 @@ final class NoisePreview {
     /** Chunks a side a biome's sample decorates (a chunk more around for what spills over). */
     private static final int SAMPLE_CHUNKS = 4;
     private static final long SNOW_SALT = 0x5DEECE66DL;
+    /** The biome profiles' file, beside the tiles (ADR-130). */
+    private static final String PROFILES_FILE = "profiles.bin";
     private static final int TILE = PreviewTile.BLOCKS;
     private static final int UNKNOWN = Integer.MIN_VALUE;
     /** A rise of this many blocks between two samples (4 blocks apart) shows bare stone. */
@@ -232,6 +235,41 @@ final class NoisePreview {
             return columnDensity.get().compute(new DensityFunction.SinglePointContext(x, y, z)) > 0;
         }
 
+        Path profilesFile() {
+            return world.preview().dir().resolve(PROFILES_FILE);
+        }
+
+        /**
+         * What the profiles were measured with: the features the settings
+         * leave out and the biomes the generator has. Another stamp drops them.
+         */
+        String profilesStamp() {
+            List<String> keys = new ArrayList<>();
+            for (Holder<Biome> b : biomes.possibleBiomes()) {
+                keys.add(BlockKeys.key(b));
+            }
+            java.util.Collections.sort(keys);
+            io.lakio.farfield.core.config.ServerConfig settings = StreamServer.settings();
+            return "exclude=" + settings.previewFeatureExclude() + ";features=" + settings.previewFeatures()
+                    + ";biomes=" + keys.size() + ":" + Integer.toHexString(String.join(",", keys).hashCode());
+        }
+
+        /** Saves the profiles when they changed; the key tables they refer to first. */
+        void saveProfiles() {
+            PreviewProfiles p = profiles;
+            if (p == null || world == null) {
+                return;
+            }
+            try {
+                world.preview().persistKeys();
+                if (p.save(profilesFile(), profilesStamp())) {
+                    Farfield.LOG.debug("Noise preview of {}: {} biome profiles saved", key.location(), p.size());
+                }
+            } catch (IOException | RuntimeException e) {
+                Farfield.LOG.warn("Noise preview of {}: could not save {}", key.location(), PROFILES_FILE, e);
+            }
+        }
+
         /** What the features grow in each biome, made once the dimension's world is known. */
         PreviewProfiles profiles() {
             PreviewProfiles p = profiles;
@@ -246,8 +284,15 @@ final class NoisePreview {
                             return state != null && (state.is(Blocks.SNOW) || state.is(Blocks.SNOW_BLOCK)
                                     || state.is(Blocks.POWDER_SNOW));
                         });
-                        profiles = new PreviewProfiles(snow,
+                        PreviewProfiles made = new PreviewProfiles(snow,
                                 w.blockStates().id(BlockKeys.key(Blocks.SNOW_BLOCK.defaultBlockState())), CLIFF_RISE);
+                        int read = made.load(profilesFile(), profilesStamp());
+                        Farfield.LOG.info("Noise preview of {}: {}", key.location(), read > 0
+                                ? read + " biome profiles read from " + PROFILES_FILE
+                                : read == -1 ? PROFILES_FILE + " measured with other features or biomes, measured again"
+                                : read == -2 ? PROFILES_FILE + " did not read, measured again"
+                                : "no biome profiles yet, measured as tiles are built");
+                        profiles = made;
                     }
                     p = profiles;
                 }
@@ -571,6 +616,7 @@ final class NoisePreview {
     private static final int WRITE = 6;
 
     private void report(Dimension d) {
+        d.saveProfiles();
         int built = d.built.getAndSet(0);
         long nanos = d.builtNanos.getAndSet(0);
         if (built > 0) {
@@ -616,11 +662,12 @@ final class NoisePreview {
         d.featureFailures.set(0);
         // The four quarters on a fresh tile, then the tile written once.
         StringBuilder timing = new StringBuilder();
+        FeatureCosts costs = new FeatureCosts();
         PreviewTile tile = new PreviewTile();
         tile.setQuarters(0);
         try {
             for (int q = 0; q < 4; q++) {
-                if (buildFine(d, tileX, tileZ, q, tile, System.nanoTime()) < 0) {
+                if (buildFine(d, tileX, tileZ, q, tile, costs, System.nanoTime()) < 0) {
                     return null;
                 }
                 timing.append(q == 0 ? "" : "; ").append("quarter ").append(q).append(": ").append(d.lastFeatureTiming);
@@ -637,7 +684,7 @@ final class NoisePreview {
             out[i] = d.stageNanos.getAndSet(i, 0);
         }
         out[STAGES.length] = d.featureFailures.getAndSet(0);
-        lastTiming = timing.toString();
+        lastTiming = timing + "; " + costs.report(12);
         return out;
     }
 
@@ -783,7 +830,7 @@ final class NoisePreview {
             if (quarter < 0) {
                 return;
             }
-            int quarters = level == 0 ? buildFine(d, tileX, tileZ, quarter, null, start)
+            int quarters = level == 0 ? buildFine(d, tileX, tileZ, quarter, null, null, start)
                     : buildCoarse(d, level, tileX, tileZ, quarter, start);
             if (quarters >= 0) {
                 d.done.put(key, quarters);
@@ -948,7 +995,8 @@ final class NoisePreview {
      * {@code base} (a fresh tile) instead of the stored one when given.
      * Returns the tile's quarters, or -1 when the preview stopped meanwhile.
      */
-    private int buildFine(Dimension d, int tileX, int tileZ, int q, PreviewTile base, long start) throws IOException {
+    private int buildFine(Dimension d, int tileX, int tileZ, int q, PreviewTile base, FeatureCosts costs, long start)
+            throws IOException {
         LodWorld world = d.world;
         PreviewTile tile = base != null ? base : world.preview().load(0, tileX, tileZ);
         if (tile == null) {
@@ -991,6 +1039,9 @@ final class NoisePreview {
         io.lakio.farfield.core.config.ServerConfig settings = StreamServer.settings();
         PreviewFeatures features = new PreviewFeatures(d.level, d.biomes, d.columnSampler.get(), d.fluid, d.seaLevel,
                 d.world, settings, tile, tileX, tileZ, (x, z) -> inVillage(villages, x, z), icebergCells);
+        if (costs != null) {
+            features.measure(costs);
+        }
         int lx0 = qx * PreviewTile.CHUNKS / 2;
         int lz0 = qz * PreviewTile.CHUNKS / 2;
         features.groundWindow(lx0, lz0, PreviewTile.CHUNKS / 2);
@@ -1558,6 +1609,9 @@ final class NoisePreview {
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+        }
+        for (Optional<Dimension> d : dimensions.values()) {
+            d.ifPresent(Dimension::saveProfiles);
         }
     }
 }

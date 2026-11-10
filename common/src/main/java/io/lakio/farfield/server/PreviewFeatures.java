@@ -167,6 +167,12 @@ final class PreviewFeatures {
         this.sandbox.timeSteps(stepNanos);
     }
 
+    /** Measures each feature's time and what it sets ({@link FeatureCosts}, the spike's). */
+    void measure(FeatureCosts costs) {
+        costs.ground(this::ground, PIT_DEPTH);
+        sandbox.measure(costs);
+    }
+
     /** Features that threw while decorating this tile. */
     int failures() {
         return failures;

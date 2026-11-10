@@ -100,6 +100,19 @@ final class FeatureSandbox implements WorldGenLevel {
         this.settings = accessor.farfield$generationSettingsGetter();
     }
 
+    /** Per feature, its time and what it set; null: not measured (the spike's, {@link FeatureCosts}). */
+    @Nullable
+    private FeatureCosts costs;
+    /** The feature running, while {@link #costs} measures. */
+    @Nullable
+    private String current;
+    /** Time spent making stand-in chunks, taken out of the feature that asked for them. */
+    private long chunkNanos;
+
+    void measure(FeatureCosts costs) {
+        this.costs = costs;
+    }
+
     /** Times each step's features into {@code nanos} from now on. */
     void timeSteps(long[] nanos) {
         stepNanos = nanos;
@@ -178,11 +191,17 @@ final class FeatureSandbox implements WorldGenLevel {
                     continue;
                 }
                 worldRandom.setFeatureSeed(decorationSeed, index, step);
-                long start = stepNanos != null ? System.nanoTime() : 0;
+                long start = stepNanos != null || costs != null ? System.nanoTime() : 0;
+                long chunksBefore = chunkNanos;
+                current = costs != null ? name(feature) : null;
                 try {
                     feature.placeWithBiomeCheck(this, generator, worldRandom, origin);
                 } catch (Throwable t) {
                     failures.add(new Failure(name(feature), t));
+                }
+                if (costs != null) {
+                    costs.ran(current, System.nanoTime() - start - (chunkNanos - chunksBefore));
+                    current = null;
                 }
                 if (stepNanos != null && step < stepNanos.length) {
                     stepNanos[step] += System.nanoTime() - start;
@@ -211,8 +230,12 @@ final class FeatureSandbox implements WorldGenLevel {
         long key = ChunkPos.asLong(x, z);
         ChunkAccess chunk = chunks.get(key);
         if (chunk == null) {
+            long start = costs != null ? System.nanoTime() : 0;
             chunk = chunkSource.apply(key);
             chunks.put(key, chunk);
+            if (costs != null) {
+                chunkNanos += System.nanoTime() - start;
+            }
         }
         return chunk;
     }
@@ -241,6 +264,9 @@ final class FeatureSandbox implements WorldGenLevel {
         ChunkAccess chunk = getChunk(pos);
         chunk.setBlockState(pos, state, false);
         written.put(pos.asLong(), state);
+        if (current != null) {
+            costs.set(current, pos.getX(), pos.getY(), pos.getZ(), state);
+        }
         return true;
     }
 

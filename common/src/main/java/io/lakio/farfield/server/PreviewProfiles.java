@@ -6,6 +6,14 @@ import it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.function.IntPredicate;
 
 /**
@@ -17,8 +25,10 @@ import java.util.function.IntPredicate;
  * filler blocks the surface rules lay, under the sea, on flat land and on
  * steep land. Coarse tiles take their canopy, plants and ground from it, so
  * no list of mods or features is written: a mod's forest gets its canopy
- * from its own trees. Kept for the server's session; biomes are by the
- * world's biome ids. Thread-safe.
+ * from its own trees. Kept in the world beside the tiles (ADR-130,
+ * {@link #save}, {@link #load}), so a biome is sampled once in the world's
+ * life, not at every start; biomes and materials are by the world's ids.
+ * Thread-safe.
  */
 final class PreviewProfiles {
 
@@ -54,6 +64,9 @@ final class PreviewProfiles {
     }
 
     private final Int2ObjectOpenHashMap<Biome> biomes = new Int2ObjectOpenHashMap<>();
+    /** Changed since the last {@link #save}. */
+    private boolean dirty;
+    private static final int FILE_VERSION = 1;
     /** Whether a material is a snow cover laid on top (snow layers, snow blocks, powder snow). */
     private final IntPredicate snow;
     private final int snowBlock;
@@ -87,6 +100,7 @@ final class PreviewProfiles {
             return false;
         }
         b.samples++;
+        dirty = true;
         return true;
     }
 
@@ -104,6 +118,7 @@ final class PreviewProfiles {
      * whose features grew, each under its own biome.
      */
     synchronized void record(PreviewTile tile, int lx0, int lz0, int n) {
+        dirty = true;
         int sea = tile.water() >= 0 ? tile.seaLevel() : Integer.MIN_VALUE;
         for (int lz = lz0; lz < lz0 + n; lz++) {
             for (int lx = lx0; lx < lx0 + n; lx++) {
@@ -178,6 +193,100 @@ final class PreviewProfiles {
                 b.ground[kind].addTo(pair(top, filler), 1);
             }
         }
+    }
+
+    /**
+     * Writes the profiles to {@code file} through a temporary file when they
+     * changed since the last save; {@code stamp} names what they were
+     * measured with (the features left out, the biomes the generator has):
+     * {@link #load} drops a file of another stamp. True when written.
+     */
+    synchronized boolean save(Path file, String stamp) throws IOException {
+        if (!dirty) {
+            return false;
+        }
+        Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
+        try (DataOutputStream out = new DataOutputStream(new BufferedOutputStream(Files.newOutputStream(tmp)))) {
+            out.writeInt(FILE_VERSION);
+            out.writeUTF(stamp);
+            out.writeInt(biomes.size());
+            for (var e : biomes.int2ObjectEntrySet()) {
+                Biome b = e.getValue();
+                out.writeInt(e.getIntKey());
+                out.writeInt(b.chunks);
+                out.writeLong(b.columns);
+                out.writeLong(b.covered);
+                out.writeLong(b.topSum);
+                out.writeLong(b.thicknessSum);
+                out.writeLong(b.snowy);
+                out.writeInt(b.samples);
+                out.writeInt(b.tops.size());
+                for (var t : b.tops.int2IntEntrySet()) {
+                    out.writeInt(t.getIntKey());
+                    out.writeInt(t.getIntValue());
+                }
+                out.writeInt(b.plants.size());
+                for (var t : b.plants.int2LongEntrySet()) {
+                    out.writeInt(t.getIntKey());
+                    out.writeLong(t.getLongValue());
+                }
+                for (Long2IntOpenHashMap g : b.ground) {
+                    out.writeInt(g.size());
+                    for (var t : g.long2IntEntrySet()) {
+                        out.writeLong(t.getLongKey());
+                        out.writeInt(t.getIntValue());
+                    }
+                }
+            }
+        }
+        Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        dirty = false;
+        return true;
+    }
+
+    /**
+     * Reads profiles {@link #save} wrote with the same {@code stamp} into
+     * these (empty) ones; returns the biomes read (0 without a file), -1 when
+     * the file is of another stamp or version, -2 when it does not read.
+     */
+    synchronized int load(Path file, String stamp) {
+        if (!Files.exists(file)) {
+            return 0;
+        }
+        Int2ObjectOpenHashMap<Biome> read = new Int2ObjectOpenHashMap<>();
+        try (DataInputStream in = new DataInputStream(new BufferedInputStream(Files.newInputStream(file)))) {
+            if (in.readInt() != FILE_VERSION || !in.readUTF().equals(stamp)) {
+                return -1;
+            }
+            int n = in.readInt();
+            for (int i = 0; i < n; i++) {
+                int id = in.readInt();
+                Biome b = new Biome();
+                b.chunks = in.readInt();
+                b.columns = in.readLong();
+                b.covered = in.readLong();
+                b.topSum = in.readLong();
+                b.thicknessSum = in.readLong();
+                b.snowy = in.readLong();
+                b.samples = in.readInt();
+                for (int k = in.readInt(); k > 0; k--) {
+                    b.tops.put(in.readInt(), in.readInt());
+                }
+                for (int k = in.readInt(); k > 0; k--) {
+                    b.plants.put(in.readInt(), in.readLong());
+                }
+                for (Long2IntOpenHashMap g : b.ground) {
+                    for (int k = in.readInt(); k > 0; k--) {
+                        g.put(in.readLong(), in.readInt());
+                    }
+                }
+                read.put(id, b);
+            }
+        } catch (IOException | RuntimeException e) {
+            return -2;
+        }
+        biomes.putAll(read);
+        return read.size();
     }
 
     private static long pair(int top, int filler) {

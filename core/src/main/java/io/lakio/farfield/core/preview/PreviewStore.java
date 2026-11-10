@@ -143,6 +143,16 @@ public final class PreviewStore {
         return PreviewTile.BLOCKS << level;
     }
 
+    /** The store's folder: the server keeps its biome profiles there too (ADR-130). */
+    public Path dir() {
+        return dir;
+    }
+
+    /** Persists the key tables the store's ids refer to, as before a tile is written (ADR-080). */
+    public void persistKeys() throws IOException {
+        beforeWrite.run();
+    }
+
     /** Tiles stored, every level. */
     public int size() {
         return summaries.size();

@@ -3723,3 +3723,27 @@ Status: accepted, 2026-11-10.
   threads around players: 7 (preview_threads=7 in
   farfield-server.properties)` and sized its pool to 7. The gain in the
   pack is not measured.
+
+## ADR-130 — The biome profiles kept in the world
+
+Status: accepted, 2026-11-11. Amends ADR-126 (profiles kept for the
+server's session).
+
+- **Context**: after each start the server sampled every biome again (283 in
+  the user's pack in the first minute, on half the preview's threads). The
+  profiles live on the server only: clients get finished tiles, so every
+  client already shares one server's samples; what was lost was the server's
+  own memory across restarts. The user asked whether the server could
+  sample once for all its clients: it does; the fix is to keep the samples.
+- **Decision**: `profiles.bin` beside the tiles (`<world>/farfield/preview`
+  of each dimension): written every minute when it changed and at stop,
+  after the key tables its material and biome ids refer to (ADR-080), read
+  when the dimension's preview opens. A stamp names what the profiles were
+  measured with: the features left out (`preview_feature_exclude`), the
+  features setting, and the generator's biomes (their count and a hash of
+  their names); another stamp drops the file and measures again. Logged at
+  open: `N biome profiles read from profiles.bin`, or why none were.
+- **Checked**: NeoForge dev server, two starts: the first logged `no biome
+  profiles yet`, wrote 2,035 bytes; the second `8 biome profiles read from
+  profiles.bin`. A mod updated without a change of biomes keeps its old
+  profiles; the level-0 quarters built near players go on adding to them.
