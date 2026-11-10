@@ -108,6 +108,8 @@ final class NoisePreview {
         final BiomeSource biomes;
         final Climate.Sampler sampler;
         final DensityFunction density;
+        /** The generator, for the spike's exact heights. */
+        final NoiseBasedChunkGenerator generator;
         /** {@link #density} with vanilla's per-column caches, one per preview thread (ADR-057). */
         final ThreadLocal<DensityFunction> columnDensity;
         /** {@link #sampler} with the same caches, shared by its six functions (ADR-057). */
@@ -158,6 +160,7 @@ final class NoisePreview {
             this.level = level;
             RandomState state = level.getChunkSource().randomState();
             biomes = generator.getBiomeSource();
+            this.generator = generator;
             sampler = state.sampler();
             density = state.router().finalDensity();
             columnDensity = ThreadLocal.withInitial(() -> ColumnDensity.of(density));
@@ -481,6 +484,8 @@ final class NoisePreview {
 
     /** Blocks between the samples of the grids {@link #heightsSpike} times: tile levels 0, 2, 4, 6, 8, 12 and 15. */
     private static final int[] SPIKE_SPACINGS = {4, 16, 64, 256, 1024, 16384, 131072};
+    /** One agreeing sample in this many is checked against the generator's own height. */
+    private static final int SPIKE_EXACT_EVERY = 64;
 
     /**
      * Spike for the coarse-to-fine study
@@ -488,7 +493,10 @@ final class NoisePreview {
      * tile's grid ({@link PreviewTile#SAMPLES} a side) centered on a block,
      * at each of {@link #SPIKE_SPACINGS}, each sample searched from its
      * neighbor's height as {@link #build} does, then from the top of the
-     * world; one line per spacing. False when the dimension has no preview.
+     * world; one line per spacing, with both searches against the generator's
+     * own height ({@code getBaseHeight}, exact and slow) on the samples where
+     * they differ and on one sample in {@link #SPIKE_EXACT_EVERY} of the
+     * others. False when the dimension has no preview.
      */
     boolean heightsSpike(ServerLevel level, int x, int z, java.util.function.Consumer<String> report) {
         Optional<Dimension> found = dimensions.computeIfAbsent(level.dimension(), k -> open(level));
@@ -524,6 +532,44 @@ final class NoisePreview {
                     steps += Math.abs(fromTop[i] - fromTop[i - 1]);
                 }
             }
+            int x0 = x - spacing * (n / 2);
+            int z0 = z - spacing * (n / 2);
+            int nearerNeighbor = 0;
+            int nearerTop = 0;
+            int exactDiffer = 0;
+            int exactSame = 0;
+            long errorNeighbor = 0;
+            long errorTop = 0;
+            long errorSame = 0;
+            int worstSame = 0;
+            for (int i = 0; i < seeded.length && d.generator != null; i++) {
+                boolean differs = seeded[i] != fromTop[i];
+                if (!differs && i % SPIKE_EXACT_EVERY != 0) {
+                    continue;
+                }
+                int exact = d.generator.getBaseHeight(x0 + i % n * spacing, z0 + i / n * spacing,
+                        net.minecraft.world.level.levelgen.Heightmap.Types.OCEAN_FLOOR_WG, level,
+                        level.getChunkSource().randomState());
+                int a = Math.abs(seeded[i] - exact);
+                int b = Math.abs(fromTop[i] - exact);
+                if (differs) {
+                    exactDiffer++;
+                    errorNeighbor += a;
+                    errorTop += b;
+                    nearerNeighbor += a < b ? 1 : 0;
+                    nearerTop += b < a ? 1 : 0;
+                } else {
+                    exactSame++;
+                    errorSame += a;
+                    worstSame = Math.max(worstSame, a);
+                }
+            }
+            report.accept(String.format(java.util.Locale.ROOT, "samples every %d blocks, against the generator: where the"
+                            + " searches differ (%d samples) the neighbor's is nearer on %d and the top's on %d, mean error"
+                            + " %.1f and %.1f blocks; where they agree (%d samples checked) mean error %.2f blocks,"
+                            + " worst %d", spacing, exactDiffer, nearerNeighbor, nearerTop,
+                    errorNeighbor / (double) Math.max(1, exactDiffer), errorTop / (double) Math.max(1, exactDiffer),
+                    exactSame, errorSame / (double) Math.max(1, exactSame), worstSame));
             report.accept(String.format(java.util.Locale.ROOT, "samples every %d blocks (tile level %d, %d blocks a side):"
                             + " from the neighbor %d ms (%.1f us a sample), from the top %d ms (%.1f us a sample);"
                             + " %d of %d samples differ (%d lower from the neighbor, worst %d blocks);"

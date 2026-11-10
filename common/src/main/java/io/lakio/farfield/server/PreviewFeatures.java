@@ -79,6 +79,13 @@ final class PreviewFeatures {
      */
     static final int CRUST = 6;
     private static final BlockState UNDER_CRUST = Blocks.BEDROCK.defaultBlockState();
+    /**
+     * Blocks under its lowest surface a stand-in for the surface rules goes
+     * down to. The rules walk every block of every column down to the chunk's
+     * bottom (a third of a tile's time when that was the world's), and read
+     * the stone under a block only to tell a ceiling a few blocks thick.
+     */
+    static final int RULES_DEPTH = 64;
     /** Dimensions whose surface rules threw once: guessed tops from then on, logged once. */
     private static final Set<String> SURFACE_FAILED = ConcurrentHashMap.newKeySet();
 
@@ -294,7 +301,7 @@ final class PreviewFeatures {
         }
         if (surface != null && inTile(chunkX, chunkZ) && !cellsRead[cellsIndex(chunkX, chunkZ)]) {
             // The rules lay the cells' tops first; the features then grow on a ground made of them.
-            ProtoChunk ground = chunk(chunkX, chunkZ, heights, lowest, highest, groundBiomes, below, true);
+            ProtoChunk ground = rulesChunk(chunkX, chunkZ, heights, lowest, below);
             try {
                 long start = System.nanoTime();
                 layGround(ground);
@@ -309,7 +316,7 @@ final class PreviewFeatures {
                 surface = null;
             }
         }
-        return chunk(chunkX, chunkZ, heights, lowest, highest, groundBiomes, below, false);
+        return chunk(chunkX, chunkZ, heights, lowest, highest, groundBiomes, below);
     }
 
     private boolean inTile(int chunkX, int chunkZ) {
@@ -346,17 +353,15 @@ final class PreviewFeatures {
             lowest = Math.min(lowest, h);
             highest = Math.max(highest, h);
         }
-        @SuppressWarnings("unchecked")
-        net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome>[] groundBiomes =
-                new net.minecraft.core.Holder[16];
+        // The quart columns' biomes at their ground first, as a tile's stand-ins sample them.
         for (int q = 0; q < 16; q++) {
             int qx = q & 3;
             int qz = q >> 2;
-            groundBiomes[q] = quartBiome(QuartPos.fromBlock(chunkX << 4) + qx,
+            quartBiome(QuartPos.fromBlock(chunkX << 4) + qx,
                     QuartPos.fromBlock(heights[(qz * 4 + 2) * 16 + qx * 4 + 2]), QuartPos.fromBlock(chunkZ << 4) + qz);
         }
         BlockState below = surface.generatorSettings().value().defaultBlock();
-        ProtoChunk chunk = chunk(chunkX, chunkZ, heights, lowest, highest, groundBiomes, below, true);
+        ProtoChunk chunk = rulesChunk(chunkX, chunkZ, heights, lowest, below);
         long start = System.nanoTime();
         layGround(chunk);
         surfaceNanos += System.nanoTime() - start;
@@ -370,39 +375,101 @@ final class PreviewFeatures {
     }
 
     /**
-     * A stand-in chunk's blocks and biomes, at the carvers status with its
-     * heightmaps: for the surface rules ({@code crust}), the dimension's
-     * default block for {@link #CRUST} blocks under the surface, a block no
-     * rule matches under it; else the tile's top, filler and ground. The sea
-     * over lower ground either way.
+     * A stand-in chunk for the surface rules, at the noise status with its
+     * heightmaps, as the game hands a chunk to them: at that status a block
+     * set updates the two world generation heightmaps, which the rules read
+     * (their start in a column, the slope) and {@link #readCells} after them.
+     * At the carvers status those stayed as primed: the pillars the rules
+     * raise in eroded badlands were never ruled and kept the ground's block
+     * for top. Down to {@link #RULES_DEPTH} blocks under its lowest surface
+     * only: the {@link #ruled} columns hold the dimension's default block for
+     * {@link #CRUST} blocks under the surface and a block no rule matches
+     * under it; the other columns hold that block at their top alone, for the
+     * slope the rules read from the heightmap (they never match it, and walk
+     * through air faster than through blocks). The sea over lower ground. No
+     * biomes: the rules ask {@link #surfaceBiomes}.
+     */
+    private ProtoChunk rulesChunk(int chunkX, int chunkZ, int[] heights, int lowest, BlockState below) {
+        var biomeRegistry = level.registryAccess().registryOrThrow(Registries.BIOME);
+        int bottom = Math.max(level.getMinBuildHeight(), Math.floorDiv(lowest - RULES_DEPTH, 16) * 16);
+        var span = net.minecraft.world.level.LevelHeightAccessor.create(bottom, level.getMaxBuildHeight() - bottom);
+        LevelChunkSection[] sections = new LevelChunkSection[span.getSectionsCount()];
+        for (int i = 0; i < sections.length; i++) {
+            sections[i] = new LevelChunkSection(biomeRegistry);
+        }
+        int bits = net.minecraft.util.Mth.ceillog2(span.getHeight() + 1);
+        var surfaceTops = new net.minecraft.util.SimpleBitStorage(bits, 256);
+        var floorTops = new net.minecraft.util.SimpleBitStorage(bits, 256);
+        for (int z = 0; z < 16; z++) {
+            for (int x = 0; x < 16; x++) {
+                int h = heights[z * 16 + x];
+                if (ruled(x, z)) {
+                    for (int y = bottom; y < h; y++) {
+                        sections[(y - bottom) >> 4].setBlockState(x, y & 15, z, y < h - CRUST ? UNDER_CRUST : below, false);
+                    }
+                } else if (h > bottom) {
+                    sections[(h - 1 - bottom) >> 4].setBlockState(x, (h - 1) & 15, z, UNDER_CRUST, false);
+                }
+                int surfaceTop = h;
+                for (int y = Math.max(h, bottom); fluid != null && y < seaLevel; y++) {
+                    sections[(y - bottom) >> 4].setBlockState(x, y & 15, z, fluid, false);
+                    surfaceTop = seaLevel;
+                }
+                floorTops.set(z * 16 + x, Math.max(h, bottom) - bottom);
+                surfaceTops.set(z * 16 + x, Math.max(surfaceTop, bottom) - bottom);
+            }
+        }
+        ProtoChunk chunk = new ProtoChunk(new ChunkPos(chunkX, chunkZ), UpgradeData.EMPTY, sections,
+                new ProtoChunkTicks<>(), new ProtoChunkTicks<>(), span, biomeRegistry, null);
+        chunk.setPersistedStatus(ChunkStatus.NOISE);
+        if (knownTops(below)) {
+            // What priming would find, without its scan of every column: the columns were just laid.
+            chunk.setHeightmap(Heightmap.Types.WORLD_SURFACE_WG, surfaceTops.getRaw());
+            chunk.setHeightmap(Heightmap.Types.OCEAN_FLOOR_WG, floorTops.getRaw());
+        } else {
+            Heightmap.primeHeightmaps(chunk, WORLD_GEN_HEIGHTMAPS);
+        }
+        return chunk;
+    }
+
+    /**
+     * Whether a rules stand-in's heightmaps follow from its heights: the
+     * ground's blocks stop motion and the sea's fluid does not, as in every
+     * dimension known; else they are primed from the blocks.
+     */
+    private boolean knownTops(BlockState below) {
+        var floor = Heightmap.Types.OCEAN_FLOOR_WG.isOpaque();
+        return floor.test(below) && floor.test(UNDER_CRUST) && (fluid == null || !floor.test(fluid));
+    }
+
+    /**
+     * A stand-in chunk for the features, at the carvers status with its
+     * heightmaps: the tile's top, filler and ground, the sea over lower
+     * ground, the generator's biomes around the ground.
      */
     private ProtoChunk chunk(int chunkX, int chunkZ, int[] heights, int lowest, int highest,
                              net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome>[] groundBiomes,
-                             BlockState below, boolean crust) {
+                             BlockState below) {
         int bx0 = chunkX << 4;
         int bz0 = chunkZ << 4;
         var biomeRegistry = level.registryAccess().registryOrThrow(Registries.BIOME);
         int minSection = level.getMinSection();
         LevelChunkSection[] sections = new LevelChunkSection[level.getSectionsCount()];
         int top = Math.max(highest, fluid != null ? seaLevel : highest);
-        int depth = crust ? CRUST : PreviewTile.FILLER_DEPTH + 1;
+        int depth = PreviewTile.FILLER_DEPTH + 1;
         for (int i = 0; i < sections.length; i++) {
             int sectionY = minSection + i;
             int y0 = SectionPos.sectionToBlockCoord(sectionY);
             PalettedContainer<BlockState> blocks;
             if (y0 + 16 <= lowest - depth) {
                 // Wholly under the ground: one material, no palette work.
-                blocks = new PalettedContainer<>(Block.BLOCK_STATE_REGISTRY, crust ? UNDER_CRUST : below,
+                blocks = new PalettedContainer<>(Block.BLOCK_STATE_REGISTRY, below,
                         PalettedContainer.Strategy.SECTION_STATES);
             } else {
                 blocks = new PalettedContainer<>(Block.BLOCK_STATE_REGISTRY, Blocks.AIR.defaultBlockState(),
                         PalettedContainer.Strategy.SECTION_STATES);
                 if (y0 <= top) {
-                    if (crust) {
-                        fillCrust(blocks, y0, heights, below);
-                    } else {
-                        fill(blocks, bx0, y0, bz0, heights, below);
-                    }
+                    fill(blocks, bx0, y0, bz0, heights, below);
                 }
             }
             PalettedContainer<net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome>> sectionBiomes;
@@ -422,8 +489,71 @@ final class PreviewFeatures {
         ProtoChunk chunk = new ProtoChunk(new ChunkPos(chunkX, chunkZ), UpgradeData.EMPTY, sections,
                 new ProtoChunkTicks<>(), new ProtoChunkTicks<>(), level, biomeRegistry, null);
         chunk.setPersistedStatus(ChunkStatus.CARVERS);
-        Heightmap.primeHeightmaps(chunk, crust ? WORLD_GEN_HEIGHTMAPS : ALL_HEIGHTMAPS);
+        layHeightmaps(chunk, bx0, bz0, heights, below);
         return chunk;
+    }
+
+    /** Per block state, the heightmaps of {@link #HEIGHTMAPS} it counts for, as bits. */
+    private final Map<BlockState, Integer> opaque = new IdentityHashMap<>();
+
+    private int opaque(BlockState state) {
+        Integer bits = opaque.get(state);
+        if (bits == null) {
+            int found = 0;
+            for (int t = 0; t < HEIGHTMAPS.length; t++) {
+                found |= HEIGHTMAPS[t].isOpaque().test(state) ? 1 << t : 0;
+            }
+            opaque.put(state, found);
+            return found;
+        }
+        return bits;
+    }
+
+    /**
+     * Sets the heightmaps of a features stand-in from the column {@link #fill}
+     * just laid (the sea, the top, its filler, the ground), each state asked
+     * the heightmap's own test: what priming finds by scanning every column
+     * from the top.
+     */
+    private void layHeightmaps(ProtoChunk chunk, int bx0, int bz0, int[] heights, BlockState below) {
+        int min = level.getMinBuildHeight();
+        int bits = net.minecraft.util.Mth.ceillog2(level.getHeight() + 1);
+        var maps = new net.minecraft.util.SimpleBitStorage[HEIGHTMAPS.length];
+        for (int t = 0; t < maps.length; t++) {
+            maps[t] = new net.minecraft.util.SimpleBitStorage(bits, 256);
+        }
+        int sea = fluid == null ? 0 : opaque(fluid);
+        int ground = opaque(below);
+        for (int z = 0; z < 16; z++) {
+            for (int x = 0; x < 16; x++) {
+                int h = heights[z * 16 + x];
+                int cx = clamp(bx0 + x - x0) / PreviewTile.GRID;
+                int cz = clamp(bz0 + z - z0) / PreviewTile.GRID;
+                BlockState filler = state(tile.filler(cx, cz));
+                int topBits = opaque(soil(state(tile.top(cx, cz)), filler));
+                int fillerBits = opaque(filler);
+                boolean flooded = fluid != null && Math.max(h, min) < seaLevel;
+                for (int t = 0; t < maps.length; t++) {
+                    int bit = 1 << t;
+                    int first;
+                    if (flooded && (sea & bit) != 0) {
+                        first = seaLevel;
+                    } else if ((topBits & bit) != 0) {
+                        first = h;
+                    } else if ((fillerBits & bit) != 0) {
+                        first = h - 1;
+                    } else if ((ground & bit) != 0) {
+                        first = h - 1 - PreviewTile.FILLER_DEPTH;
+                    } else {
+                        first = min;
+                    }
+                    maps[t].set(z * 16 + x, Math.max(first, min) - min);
+                }
+            }
+        }
+        for (int t = 0; t < maps.length; t++) {
+            chunk.setHeightmap(HEIGHTMAPS[t], maps[t].getRaw());
+        }
     }
 
     /**
@@ -442,7 +572,7 @@ final class PreviewFeatures {
             // block, above it. Computed, it cost 30 to 50 ms a chunk in the user's pack (C2ME's
             // compiled density functions, and nothing cached across chunks), 1 to 3 ms in dev.
             var noiseSettings = surface.generatorSettings().value();
-            var clamped = noiseSettings.noiseSettings().clampToHeightAccessor(chunk);
+            var clamped = noiseSettings.noiseSettings().clampToHeightAccessor(level);
             Aquifer.FluidStatus sea = new Aquifer.FluidStatus(seaLevel,
                     fluid != null ? fluid : Blocks.AIR.defaultBlockState());
             Beardifier none = new Beardifier((it.unimi.dsi.fastutil.objects.ObjectListIterator) it.unimi.dsi.fastutil
@@ -453,10 +583,11 @@ final class PreviewFeatures {
         }
         NoiseChunk shared = noiseChunk;
         chunk.getOrCreateNoiseChunk(c -> shared);
+        // Rules may raise the ground (badlands pillars, icebergs) or open it (a swamp's water, powder
+        // snow): each block they set updates the chunk's heightmaps (ProtoChunk.setBlockState at the
+        // noise status), no priming again after them.
         surface.buildSurface(chunk, new WorldGenerationContext(surface, level), random, level.structureManager(),
                 surfaceBiomes, level.registryAccess().registryOrThrow(Registries.BIOME), Blender.empty());
-        // Rules may raise the ground (badlands pillars, icebergs): the heightmaps again.
-        Heightmap.primeHeightmaps(chunk, WORLD_GEN_HEIGHTMAPS);
     }
 
     /** What the surface rules read; then all a feature may read. */
@@ -465,6 +596,7 @@ final class PreviewFeatures {
     private static final Set<Heightmap.Types> ALL_HEIGHTMAPS = EnumSet.of(Heightmap.Types.WORLD_SURFACE_WG,
             Heightmap.Types.OCEAN_FLOOR_WG, Heightmap.Types.MOTION_BLOCKING, Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
             Heightmap.Types.OCEAN_FLOOR, Heightmap.Types.WORLD_SURFACE);
+    private static final Heightmap.Types[] HEIGHTMAPS = ALL_HEIGHTMAPS.toArray(new Heightmap.Types[0]);
 
     /** A noise chunk for the surface rules alone: every block is above its preliminary surface. */
     private static final class SurfaceNoise extends NoiseChunk {
@@ -549,34 +681,6 @@ final class PreviewFeatures {
 
     private int id(BlockState state) {
         return world.blockStates().id(BlockKeys.key(state));
-    }
-
-    /**
-     * Fills one section from y0 up for the surface rules: the crust over the
-     * block under it in the {@link #ruled} columns, that block alone in the
-     * others, then the sea.
-     */
-    private void fillCrust(PalettedContainer<BlockState> blocks, int y0, int[] heights, BlockState below) {
-        for (int z = 0; z < 16; z++) {
-            for (int x = 0; x < 16; x++) {
-                int h = heights[z * 16 + x];
-                int crust = ruled(x, z) ? CRUST : 0;
-                for (int y = 0; y < 16; y++) {
-                    int by = y0 + y;
-                    BlockState s;
-                    if (by < h - crust) {
-                        s = UNDER_CRUST;
-                    } else if (by < h) {
-                        s = below;
-                    } else if (fluid != null && by < seaLevel) {
-                        s = fluid;
-                    } else {
-                        continue;
-                    }
-                    blocks.getAndSetUnchecked(x, y, z, s);
-                }
-            }
-        }
     }
 
     /**

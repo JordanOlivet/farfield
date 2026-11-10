@@ -240,13 +240,26 @@ world. NeoForge dev server, pregeneration paused, two places.
   top at every spacing, the border's included: heights 131 km apart are
   still on average 21 blocks from each other, three steps of the search. A
   coarse tile keeps today's search, about 0.5 to 0.6 s of heights.
-- To look at, apart from this study: 1 to 2.7 % of the samples differ
-  between the two searches at every spacing (171 to 443 of 16,641), by up
-  to 174 blocks. The search from the neighbor only checks 16 blocks above
-  its result for ground (`surface`), so it may follow a floor under a high
-  overhang or inside an open cave. Which side is wrong is not known yet:
-  the spike now counts the samples the neighbor search puts lower (not run
-  yet), and neither was compared with generated chunks.
+- Apart from this study, a defect of today's heights: 1 to 2.7 % of the
+  samples differ between the two searches at every spacing (171 to 443 of
+  16,641), by up to 174 blocks. Against the generator's own height
+  (`getBaseHeight`, exact, 2.3 ms a column; the spike asks it for the
+  differing samples and one in 64 of the others, both places):
+
+  | | Neighbor search | Search from the top |
+  |---|---|---|
+  | Nearer the generator, of the samples that differ | 21 to 49 % | 47 to 78 % |
+  | Mean error on those samples | 11 to 35 blocks | 2.8 to 4.9 blocks |
+  | Mean error where both agree | 0.6 to 1.1 blocks (worst 5 to 25) | the same |
+
+  The neighbor search is the one that is wrong: about two thirds of its
+  differing samples are lower than the top's. It only checks 16 blocks
+  above its result for ground (`NoisePreview.surface`), so once a sample
+  falls into an open cave or under an overhang, the next ones start there
+  and stay under it. About 1 to 2 % of today's preview heights are tens of
+  blocks off, mostly pits. Not fixed here; a fix has to stay near the
+  neighbor search's cost (0.5 s a tile against 1.4 s from the top), for
+  instance a sparser check up to the top of the world after each result.
 
 ### 2. Inside the features stage
 
@@ -318,9 +331,14 @@ against a rendered frame).
    instead of whole chunks, and one stand-in per chunk instead of two.
    Expected: a tile from about 4.2 s to under 2 s in dev, from about
    9.8 s to about 7 s on the pack server, to measure;
-   the tiles must come out identical (compare the files). To check first
-   in vanilla's source: whether a rule can be asked for one column
-   (`SurfaceRules.Context` is built inside `SurfaceSystem.buildSurface`).
+   the tiles must come out identical (compare the files). Done
+   2026-11-10 (ADR-125) another way: the rules still run on whole chunks
+   (`SurfaceRules.Context` is not reachable from outside), on a stand-in
+   only 64 blocks deep whose unread columns hold one block, and both
+   stand-ins get their heightmaps from the heights they were laid from.
+   Measured in dev: a far tile 3.1 to 2.2 s, the spawn's 228 tiles 2.5 to
+   1.6 min; tiles unchanged but for eroded badlands, now ruled as the game
+   does. The pack's gain is not measured.
 3. Pyramid, coarse first, two passes, canopy, within 4,096 blocks (levels
    0 to 2). Shipped together: the pyramid without the canopy would leave
    far forests bare. If step 2 and the pack's measure make the real

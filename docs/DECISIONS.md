@@ -3533,3 +3533,37 @@ Status: accepted, 2026-11-09. Plan item G.1b; study in
     waits, tasks build within 1,024 blocks of their center only (what a
     player joining early sees), then the import ends, then they build out
     to their radius.
+
+## ADR-125 — The preview's stand-in chunks made cheaper
+
+Status: accepted, 2026-11-10. Step 2 of `docs/analysis/preview-coarse-to-fine.md`.
+
+- **Context**: measured on the NeoForge dev server and the user's pack
+  server, the stand-in chunks and their surface rules took two thirds of a
+  vanilla tile and 37 % of a pack tile; a profile (JFR, six far tiles)
+  put a third of a tile in `SurfaceSystem.buildSurface`, which walks every
+  block of every column down to the world's bottom, and a tenth in
+  `Heightmap.primeHeightmaps`, which scans every column from the top.
+- **Decision**: the stand-in the surface rules run on (`rulesChunk`) goes
+  down to 64 blocks under its lowest surface only; its 240 columns no rule
+  is read from hold one block at their top, for the slope; it carries no
+  biomes (the rules ask the tile's quart biomes) and its heightmaps are set
+  from the heights it was laid from. It stands at the noise status, where
+  the game runs its surface rules: there a block set updates the world
+  generation heightmaps. The features' stand-in (`chunk`) sets its six
+  heightmaps from the columns it lays, each block state asked the
+  heightmap's own test, instead of priming them.
+- **Result** (dev server, vanilla, the same six far tiles and the spawn's
+  228 tiles rebuilt from nothing, runs 7 minutes apart): a far tile 3.1 s
+  to 2.2 s on average (-30 %), the stand-ins 1.9 s to 0.9 s, the surface
+  rules 1.3 s to 0.5 s; the spawn's 228 tiles in 1.6 min instead of
+  2.5 min. Tiles: the heights, the plants and the features unchanged (two
+  builds of the same code already differ on 41 of 234 tiles by a few
+  feature columns, a race between threads not looked at); the cells of the
+  six tiles of eroded badlands differ, 2,413 cells from stone to
+  terracotta. The pillars vanilla raises there (`erodedBadlandsExtension`)
+  never updated the old stand-in's heightmaps, at the carvers status, so
+  the rules started under them and left their stone; at the noise status
+  they rule the pillars' tops, as the game does. Against really generated
+  chunks over 10 biomes (`/farfield spike surface`), the ruled tops are
+  right as often as before, column for column. Not measured in the pack.
