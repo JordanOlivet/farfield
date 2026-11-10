@@ -1,6 +1,6 @@
 # The noise preview built coarse to fine (plan items E.1, E.2)
 
-Date: 2026-11-10. Status: study, nothing decided yet. Branch
+Date: 2026-11-10. Status: steps 2 and 3 built (ADR-125, ADR-126). Branch
 `feat/preview-pyramid`.
 
 The user (2026-11-10), after Voxy-SeedGen and Distant Horizons SeedGen
@@ -343,7 +343,16 @@ against a rendered frame).
    0 to 2). Shipped together: the pyramid without the canopy would leave
    far forests bare. If step 2 and the pack's measure make the real
    features cheap enough, their default distance can be more than 1,250
-   blocks.
+   blocks. Built 2026-11-10 (ADR-126): levels 0 to 2, level 0 within
+   `preview_features_distance` (1,250 by default), the canopy, plants and a
+   coarse tile's ground from a profile per biome measured on the level-0
+   tiles, a biome not measured yet sampled on 4 x 4 chunks first;
+   `pregen_threads`; stream protocol 10. The question of a coarse tile's
+   ground (measure 2) answered: the biome's most common rules' top and
+   filler under the sea, on flat and on steep land, the guess where none
+   is measured yet. The pack's gain on the user's 9.8 s tile, measured
+   2026-11-10 after deploying ADR-125: 8.6 s (-12 %), vegetation 4.7 s of
+   it.
 4. 16,384 blocks (E.1 and E.2): tile levels 3 and 4, draw levels 5 and 6
    for the preview and the real LODs (the store's mip levels 5 and 6),
    the keys' new layout, the distance settings.

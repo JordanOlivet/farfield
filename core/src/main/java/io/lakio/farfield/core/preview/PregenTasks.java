@@ -93,7 +93,31 @@ public final class PregenTasks {
      * {@code {tileX, tileZ}}.
      */
     public static int[][] tiles(int centerX, int centerZ, int radius) {
-        int size = PreviewTile.BLOCKS;
+        return tiles(0, centerX, centerZ, radius);
+    }
+
+    /**
+     * A task's tiles in the order it builds them (ADR-126): the pyramid's
+     * coarsest level over the whole radius first, then each finer one,
+     * nearest first within a level; as {@link PreviewStore#key(int, int, int)}.
+     */
+    public static long[] pyramid(int centerX, int centerZ, int radius, int levels) {
+        List<Long> keys = new ArrayList<>();
+        for (int level = levels - 1; level >= 0; level--) {
+            for (int[] t : tiles(level, centerX, centerZ, radius)) {
+                keys.add(PreviewStore.key(level, t[0], t[1]));
+            }
+        }
+        long[] out = new long[keys.size()];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = keys.get(i);
+        }
+        return out;
+    }
+
+    /** Like {@link #tiles(int, int, int)} for the tiles of a level of the pyramid. */
+    public static int[][] tiles(int level, int centerX, int centerZ, int radius) {
+        int size = PreviewStore.blocks(level);
         int x0 = Math.floorDiv(centerX - radius, size);
         int x1 = Math.floorDiv(centerX + radius, size);
         int z0 = Math.floorDiv(centerZ - radius, size);

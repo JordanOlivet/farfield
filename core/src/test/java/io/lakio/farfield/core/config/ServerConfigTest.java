@@ -49,6 +49,24 @@ class ServerConfigTest {
     }
 
     @Test
+    void featuresDistanceAndPregenThreads() throws Exception {
+        // ADR-126: real features to 1,250 blocks, the pregeneration's own threads on auto.
+        Path file = dir.resolve("farfield-server.properties");
+        Files.writeString(file, "streaming=true\n");
+        assertEquals(1250, ServerConfig.read(file).previewFeaturesDistance());
+        assertEquals(ServerConfig.AUTO, ServerConfig.read(file).pregenThreads());
+        ServerConfig set = new ServerConfig(true, 4096, 1024, 10240, 0, false, true, true, "", 4096, true, true, 2500, 6);
+        set.write(file);
+        assertEquals(set, ServerConfig.read(file));
+        Files.writeString(file, "preview_features_distance=99999\npregen_threads=99\n");
+        assertEquals(ServerConfig.MAX_FEATURES_DISTANCE, ServerConfig.read(file).previewFeaturesDistance());
+        assertEquals(16, ServerConfig.read(file).pregenThreads());
+        Files.writeString(file, "preview_features_distance=-5\npregen_threads=auto\n");
+        assertEquals(0, ServerConfig.read(file).previewFeaturesDistance());
+        assertEquals(ServerConfig.AUTO, ServerConfig.read(file).pregenThreads());
+    }
+
+    @Test
     void featureExclusionsMatchIdsWithStars() {
         ServerConfig config = new ServerConfig(true, 4096, 1024, 0, 0, false, true, true,
                 "biomesoplenty:*, *:patch_*  minecraft:trees_jungle *rock*");

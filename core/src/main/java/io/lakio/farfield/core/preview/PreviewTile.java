@@ -18,10 +18,15 @@ import io.lakio.farfield.core.util.ByteWriter;
  * a {@link #FEATURE_MARGIN}-block margin around it (a crown spreading out
  * of the tile).
  *
- * <p>A far tile computes its heights every {@link #grid()} blocks only (8
- * or 16 instead of {@link #GRID}) and fills the samples between them
- * bilinearly ({@link #fillBetweenSamples}), so readers never see the
- * difference; it is built again finer when a player comes closer.
+ * <p>Tiles come in levels (the pyramid of the coarse-to-fine study,
+ * ADR-126): a tile of {@link #level()} L covers {@code BLOCKS << L} blocks
+ * a side with the same samples, cells and chunk entries, each {@code 1 << L}
+ * times wider. Level 0 carries the world's own features; a coarser tile
+ * carries a canopy per cell instead ({@link #canopyWord}), from what the
+ * features grow in its biome. Readers see level-0 tiles only: a coarser
+ * one is cut into them ({@link #expand}), its canopy turned into feature
+ * runs. A level-0 tile is written twice: its terrain with a canopy first,
+ * then with its features ({@link #complete()}).
  *
  * <p>Heights are the first free block above the ground. Sample (i, k) lies
  * on the block corner (i * 4, k * 4) of the tile, so the last row and
@@ -48,9 +53,10 @@ public final class PreviewTile {
      * (ADR-086), 14 and 15 the ground from the surface rules (ADR-101,
      * ADR-104), 16 the plants under the sea (ADR-105), 17 the light sources
      * of the features (ADR-117), 18 the lakes they dig (ADR-118); older
-     * tiles are built again.
+     * tiles are built again; 19 the levels of the pyramid, the canopy, and
+     * no far grid any more (ADR-126).
      */
-    private static final int FORMAT = 18;
+    private static final int FORMAT = 19;
     /** Blocks a side of a feature voxel. */
     public static final int FEATURE_VOXEL = 2;
     /** Blocks around the tile its features may reach. */
@@ -63,8 +69,14 @@ public final class PreviewTile {
     public static final int MAX_KINDS = 255;
 
     private final short[] heights = new short[SAMPLES * SAMPLES];
-    /** Blocks between the heights computed from the noise: {@link #GRID}, 8 or 16. */
-    private int grid = GRID;
+    /** The pyramid's level: the tile covers {@code BLOCKS << level} blocks a side. */
+    private int level;
+    /** Built to its end: a coarse tile, or a level-0 tile with its features (not its terrain pass alone). */
+    private boolean complete = true;
+    /** Per cell, its canopy ({@link #canopyWord}), 0 for none. */
+    private final int[] canopy = new int[CELLS * CELLS];
+    /** The snow on canopies that carry it; -1 for none. */
+    private int canopySnow = -1;
     private final int[] top = new int[CELLS * CELLS];
     private final int[] filler = new int[CELLS * CELLS];
     private final int[] biomes = new int[CHUNKS * CHUNKS];
@@ -400,37 +412,244 @@ public final class PreviewTile {
         return plantGround;
     }
 
-    public int grid() {
-        return grid;
+    /** The pyramid's level: the tile covers {@code BLOCKS << level} blocks a side, its samples {@code GRID << level} apart. */
+    public int level() {
+        return level;
     }
 
-    public void setGrid(int blocks) {
-        grid = blocks;
+    public void setLevel(int level) {
+        if (level < 0 || level > MAX_LEVEL) {
+            throw new IllegalArgumentException("tile level " + level);
+        }
+        this.level = level;
+    }
+
+    /** The coarsest level a tile may have: a level-15 tile spans 16,777,216 blocks. */
+    public static final int MAX_LEVEL = 15;
+
+    /** Built to its end: a coarse tile, or a level-0 tile with its features, not its terrain pass alone. */
+    public boolean complete() {
+        return complete;
+    }
+
+    public void setComplete(boolean value) {
+        complete = value;
     }
 
     /**
-     * Fills every sample between those on multiples of {@code step} (in
-     * samples; {@code SAMPLES - 1} must be a multiple of it) bilinearly,
-     * rounded to the nearest block.
+     * A cell's canopy (ADR-126): the top of what the features grow there,
+     * {@code top} blocks above the ground, {@code thickness} blocks of
+     * {@code material} under that top (1 to 15), with the tile's {@link
+     * #canopySnow()} over it when {@code snow}.
      */
-    public void fillBetweenSamples(int step) {
-        if (step <= 1) {
-            return;
+    public static int canopyWord(int material, int top, int thickness, boolean snow) {
+        if (material < 0 || material >= 0xFFFFF) {
+            throw new IllegalArgumentException("canopy material " + material);
         }
+        return (material + 1) | Math.max(1, Math.min(63, top)) << 20 | Math.max(1, Math.min(15, thickness)) << 26
+                | (snow ? 1 << 30 : 0);
+    }
+
+    public static int canopyMaterial(int word) {
+        return (word & 0xFFFFF) - 1;
+    }
+
+    public static int canopyTop(int word) {
+        return word >>> 20 & 63;
+    }
+
+    public static int canopyThickness(int word) {
+        return word >>> 26 & 15;
+    }
+
+    public static boolean canopySnowy(int word) {
+        return (word >>> 30 & 1) != 0;
+    }
+
+    /** Sets a cell's canopy ({@link #canopyWord}), 0 for none. */
+    public void setCanopy(int cx, int cz, int word) {
+        canopy[cz * CELLS + cx] = word;
+    }
+
+    public int canopy(int cx, int cz) {
+        return canopy[cz * CELLS + cx];
+    }
+
+    public boolean hasCanopy() {
+        for (int w : canopy) {
+            if (w != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Drops every cell's canopy: the features grow next. */
+    public void clearCanopy() {
+        java.util.Arrays.fill(canopy, 0);
+    }
+
+    /** Drops every chunk's plants: the features grow next. */
+    public void clearPlants() {
+        java.util.Arrays.fill(plants, null);
+    }
+
+    public void setCanopySnow(int material) {
+        canopySnow = material;
+    }
+
+    /** The material of the snow over snowy canopies; -1 for none. */
+    public int canopySnow() {
+        return canopySnow;
+    }
+
+    /**
+     * The level-0 tile at offset ({@code ox}, {@code oz}) inside this one, 0
+     * to {@code (1 << level) - 1} each (this tile itself at level 0): its
+     * samples interpolated from this tile's, its cells, chunks and canopy
+     * those it lies in, the canopy turned into feature runs ({@link
+     * #growCanopy}). Neither this tile nor its arrays are shared with it.
+     */
+    public PreviewTile expand(int ox, int oz) {
+        int scale = 1 << level;
+        if (ox < 0 || oz < 0 || ox >= scale || oz >= scale) {
+            throw new IllegalArgumentException("offset " + ox + ", " + oz + " in a level-" + level + " tile");
+        }
+        PreviewTile t = new PreviewTile();
+        int bx0 = ox * BLOCKS;
+        int bz0 = oz * BLOCKS;
+        expandHeights(t, bx0, bz0);
+        t.below = below;
+        t.water = water;
+        t.seaLevel = seaLevel;
+        t.ice = ice;
+        t.iceberg = iceberg;
+        t.plantGround = plantGround;
+        t.canopySnow = canopySnow;
+        t.complete = complete;
+        t.plantKinds.addAll(plantKinds);
+        int cellShift = Integer.numberOfTrailingZeros(GRID) + level;
+        for (int cz = 0; cz < CELLS; cz++) {
+            int from = ((bz0 + cz * GRID) >> cellShift) * CELLS;
+            for (int cx = 0; cx < CELLS; cx++) {
+                int c = from + ((bx0 + cx * GRID) >> cellShift);
+                int i = cz * CELLS + cx;
+                t.top[i] = top[c];
+                t.filler[i] = filler[c];
+                t.canopy[i] = canopy[c];
+                if ((frozen[c >> 6] >>> c & 1) != 0) {
+                    t.frozen[i >> 6] |= 1L << i;
+                }
+            }
+        }
+        int chunkShift = 4 + level;
+        for (int cz = 0; cz < CHUNKS; cz++) {
+            for (int cx = 0; cx < CHUNKS; cx++) {
+                int c = ((bz0 + cz * 16) >> chunkShift) * CHUNKS + ((bx0 + cx * 16) >> chunkShift);
+                int i = cz * CHUNKS + cx;
+                t.biomes[i] = biomes[c];
+                t.plants[i] = plants[c] == null ? null : plants[c].clone();
+                t.seaPlants[i] = seaPlants[c] == null ? null : seaPlants[c].clone();
+            }
+        }
+        if (level == 0) {
+            t.kinds.addAll(kinds);
+            for (int c = 0; c < trees.length; c++) {
+                t.trees[c] = trees[c] == null ? null : trees[c].clone();
+            }
+            t.buildings.addAll(buildings);
+            for (int c = 0; c < features.length; c++) {
+                t.features[c] = features[c] == null ? null : features[c].clone();
+            }
+            t.lights = lights.clone();
+            t.pits = pits.clone();
+        }
+        t.growCanopy();
+        return t;
+    }
+
+    /**
+     * The {@link #summary()} of the level-0 tile {@link #expand} would cut at
+     * offset ({@code ox}, {@code oz}), without growing its canopy into runs:
+     * a section's existence asks it on the render thread.
+     */
+    public Summary expandedSummary(int ox, int oz) {
+        int scale = 1 << level;
+        if (ox < 0 || oz < 0 || ox >= scale || oz >= scale) {
+            throw new IllegalArgumentException("offset " + ox + ", " + oz + " in a level-" + level + " tile");
+        }
+        PreviewTile t = new PreviewTile();
+        int bx0 = ox * BLOCKS;
+        int bz0 = oz * BLOCKS;
+        expandHeights(t, bx0, bz0);
+        t.water = water;
+        t.seaLevel = seaLevel;
+        t.canopySnow = canopySnow;
+        int cellShift = Integer.numberOfTrailingZeros(GRID) + level;
+        for (int cz = 0; cz < CELLS; cz++) {
+            int from = ((bz0 + cz * GRID) >> cellShift) * CELLS;
+            for (int cx = 0; cx < CELLS; cx++) {
+                t.canopy[cz * CELLS + cx] = canopy[from + ((bx0 + cx * GRID) >> cellShift)];
+            }
+        }
+        return t.summary();
+    }
+
+    /** Sets the samples of {@code t} from this tile's, its corner at block (bx0, bz0) of this one. */
+    private void expandHeights(PreviewTile t, int bx0, int bz0) {
+        int span = GRID << level;
+        int area = span * span;
         for (int k = 0; k < SAMPLES; k++) {
-            int k0 = k / step * step;
-            int k1 = Math.min(k0 + step, SAMPLES - 1);
+            int pz = bz0 + k * GRID;
+            int ck = Math.min(pz / span, SAMPLES - 2);
+            int fz = pz - ck * span;
             for (int i = 0; i < SAMPLES; i++) {
-                if (i % step == 0 && k % step == 0) {
+                int px = bx0 + i * GRID;
+                int ci = Math.min(px / span, SAMPLES - 2);
+                int fx = px - ci * span;
+                int a = sample(ci, ck) * (span - fx) + sample(ci + 1, ck) * fx;
+                int b = sample(ci, ck + 1) * (span - fx) + sample(ci + 1, ck + 1) * fx;
+                t.setHeight(i, k, Math.floorDiv(a * (span - fz) + b * fz + area / 2, area));
+            }
+        }
+    }
+
+    /**
+     * Turns the canopy of a level-0 tile into feature runs: every feature
+     * column of the tile under a cell with a canopy and no runs of its own
+     * gets one run of the canopy's material from {@code top - thickness} to
+     * {@code top} blocks above the ground there, and a voxel of snow over it
+     * when the canopy is snowy. The canopy stays.
+     */
+    public void growCanopy() {
+        if (level != 0) {
+            throw new IllegalStateException("a level-" + level + " tile grows its canopy once cut");
+        }
+        int first = FEATURE_MARGIN / FEATURE_VOXEL;
+        int last = (FEATURE_MARGIN + BLOCKS) / FEATURE_VOXEL;
+        for (int fz = first; fz < last; fz++) {
+            int bz = fz * FEATURE_VOXEL - FEATURE_MARGIN;
+            for (int fx = first; fx < last; fx++) {
+                int bx = fx * FEATURE_VOXEL - FEATURE_MARGIN;
+                int word = canopy[(bz / GRID) * CELLS + bx / GRID];
+                int c = fz * FEATURE_SIDE + fx;
+                if (word == 0 || features[c] != null) {
                     continue;
                 }
-                int i0 = i / step * step;
-                int i1 = Math.min(i0 + step, SAMPLES - 1);
-                float u = i1 == i0 ? 0 : (i - i0) / (float) (i1 - i0);
-                float v = k1 == k0 ? 0 : (k - k0) / (float) (k1 - k0);
-                float top = sample(i0, k0) * (1 - u) + sample(i1, k0) * u;
-                float bottom = sample(i0, k1) * (1 - u) + sample(i1, k1) * u;
-                setHeight(i, k, Math.round(top * (1 - v) + bottom * v));
+                int ground = height(bx, bz);
+                int topY = ground + canopyTop(word);
+                int bottomY = Math.max(ground, topY - canopyThickness(word));
+                int vy0 = Math.floorDiv(bottomY, FEATURE_VOXEL);
+                int vy1 = Math.floorDiv(topY - 1, FEATURE_VOXEL) + 1;
+                boolean snow = canopySnowy(word) && canopySnow >= 0;
+                int[] runs = snow ? new int[4] : new int[2];
+                runs[0] = featureRun(vy0, Math.max(1, vy1 - vy0));
+                runs[1] = canopyMaterial(word);
+                if (snow) {
+                    runs[2] = featureRun(vy0 + Math.max(1, vy1 - vy0), 1);
+                    runs[3] = canopySnow;
+                }
+                features[c] = runs;
             }
         }
     }
@@ -575,6 +794,20 @@ public final class PreviewTile {
                 }
             }
         }
+        // Canopies raise the chunks they stand over: by their top, a voxel more for rounding, and the snow.
+        for (int cz = 0; cz < CELLS; cz++) {
+            for (int cx = 0; cx < CELLS; cx++) {
+                int word = canopy[cz * CELLS + cx];
+                if (word == 0) {
+                    continue;
+                }
+                int h = Math.max(Math.max(sample(cx, cz), sample(cx + 1, cz)),
+                        Math.max(sample(cx, cz + 1), sample(cx + 1, cz + 1)));
+                int topY = h + canopyTop(word) + FEATURE_VOXEL + (canopySnowy(word) ? FEATURE_VOXEL : 0);
+                int i = (cz >> 2) * CHUNKS + (cx >> 2);
+                max[i] = (short) Math.max(max[i], topY);
+            }
+        }
         // Feature tops raise the chunks they stand over (columns of the margin raise none here).
         for (int fz = 0; fz < FEATURE_SIDE; fz++) {
             for (int fx = 0; fx < FEATURE_SIDE; fx++) {
@@ -602,15 +835,15 @@ public final class PreviewTile {
                 }
             }
         }
-        return new Summary(min, max, water >= 0 ? seaLevel : Integer.MIN_VALUE, grid);
+        return new Summary(min, max, water >= 0 ? seaLevel : Integer.MIN_VALUE, complete);
     }
 
     /**
      * What decides which sections of a tile hold something: per chunk the
      * lowest and highest surface; the sea level, or {@code Integer.MIN_VALUE}
-     * without sea; the grid its heights were computed on ({@link #grid()}).
+     * without sea; whether the tile is built to its end ({@link #complete()}).
      */
-    public record Summary(short[] chunkMin, short[] chunkMax, int sea, int grid) {
+    public record Summary(short[] chunkMin, short[] chunkMax, int sea, boolean complete) {
 
         /**
          * Whether blocks [y0, y1) may hold voxels over chunks [cx0, cx1] x
@@ -655,9 +888,15 @@ public final class PreviewTile {
         ice = mapId(materials, ice);
         iceberg = mapId(materials, iceberg);
         plantGround = mapId(materials, plantGround);
+        canopySnow = mapId(materials, canopySnow);
         for (int i = 0; i < top.length; i++) {
             top[i] = mapId(materials, top[i]);
             filler[i] = mapId(materials, filler[i]);
+            if (canopy[i] != 0) {
+                int w = canopy[i];
+                canopy[i] = canopyWord(mapId(materials, canopyMaterial(w)), canopyTop(w), canopyThickness(w),
+                        canopySnowy(w));
+            }
         }
         for (int i = 0; i < this.biomes.length; i++) {
             this.biomes[i] = mapId(biomes, this.biomes[i]);
@@ -691,7 +930,8 @@ public final class PreviewTile {
 
     public void encode(ByteWriter out) {
         out.writeVarInt(FORMAT);
-        out.writeVarInt(grid);
+        out.writeVarInt(level);
+        out.writeVarInt(complete ? 1 : 0);
         out.writeVarInt(below);
         out.writeVarInt(water + 1);
         out.writeInt(seaLevel);
@@ -791,6 +1031,14 @@ public final class PreviewTile {
             out.writeVarInt(pits[i + 2] - pits[i + 1]);
             out.writeVarInt(pits[i + 3] + 1);
         }
+        out.writeVarInt(canopySnow + 1);
+        boolean anyCanopy = hasCanopy();
+        out.writeVarInt(anyCanopy ? 1 : 0);
+        if (anyCanopy) {
+            for (int w : canopy) {
+                out.writeVarInt(w);
+            }
+        }
     }
 
     public static PreviewTile decode(ByteReader in) {
@@ -799,7 +1047,8 @@ public final class PreviewTile {
             throw new IllegalArgumentException("unknown preview tile format " + format);
         }
         PreviewTile t = new PreviewTile();
-        t.grid = in.readVarInt();
+        t.setLevel(in.readVarInt());
+        t.complete = in.readVarInt() != 0;
         t.below = in.readVarInt();
         t.water = in.readVarInt() - 1;
         t.seaLevel = in.readInt();
@@ -910,6 +1159,12 @@ public final class PreviewTile {
             entries[i + 3] = in.readVarInt() - 1;
         }
         t.pits = sortedPits(entries);
+        t.canopySnow = in.readVarInt() - 1;
+        if (in.readVarInt() != 0) {
+            for (int i = 0; i < t.canopy.length; i++) {
+                t.canopy[i] = in.readVarInt();
+            }
+        }
         return t;
     }
 

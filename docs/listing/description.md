@@ -90,13 +90,18 @@ same Farfield version (0.3.x) to stream. Settings in
 - `preview` and `preview_features`: the preview around each player, with
   the world's features, built on low-priority threads (on by default).
   `preview_feature_exclude` leaves out features by id
-  (`biomesoplenty:*`, `*:patch_*`).
+  (`biomesoplenty:*`, `*:patch_*`). `preview_features_distance` (default
+  1250, up to 4096): the real features grow this near a player; farther,
+  the preview draws each biome's canopy from what they grow there, at a
+  fraction of the cost.
 - `preview_spawn_radius` (default 4096, up to 16384, 0 off): the preview
   around the world's spawn is built from the server's start, before anyone
   joins. `/farfield pregen start <x> <z> <radius>` prepares any other area
   (`pause`, `resume`, `cancel`, `list`); tasks resume after a restart.
   `pregen_when_players=pause` (default) holds them while players are
   online, `run` keeps them going behind the players' own preview.
+  `pregen_threads` (default auto) sets their threads while nobody is
+  online.
 - `import_on_start` (default true): at start, the server reads into its
   LODs the region files they never saw, a world that lived without
   Farfield or regions changed while it was away, nearest the spawn first,

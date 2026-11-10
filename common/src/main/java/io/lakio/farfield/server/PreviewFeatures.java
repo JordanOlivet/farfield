@@ -212,17 +212,54 @@ final class PreviewFeatures {
     }
 
     /**
-     * Lays the tile's ground without decorating it, for a server with the
-     * preview's features off: every chunk is made once for its top blocks.
+     * Decorates the {@code n} x {@code n} chunks of the tile from its chunk
+     * ({@code lx0}, {@code lz0}) and stores what grew there into the tile:
+     * a few chunks of a biome sampled for its canopy (ADR-126). The tile's
+     * heights must be known a chunk around them, where features spill.
      */
-    void surfaceOnly() {
-        int chunkX0 = x0 >> 4;
-        int chunkZ0 = z0 >> 4;
-        for (int cz = 0; cz < PreviewTile.CHUNKS; cz++) {
-            for (int cx = 0; cx < PreviewTile.CHUNKS; cx++) {
-                standIn(ChunkPos.asLong(chunkX0 + cx, chunkZ0 + cz));
+    void decorateWindow(int lx0, int lz0, int n) {
+        int chunkX0 = (x0 >> 4) + lx0;
+        int chunkZ0 = (z0 >> 4) + lz0;
+        for (int cz = 0; cz < n; cz++) {
+            for (int cx = 0; cx < n; cx++) {
+                for (FeatureSandbox.Failure f : sandbox.decorate(chunkX0 + cx, chunkZ0 + cz, this::runs)) {
+                    failures++;
+                    if (FAILED.add(f.feature())) {
+                        Farfield.LOG.warn("Noise preview: feature {} failed in the preview's stand-in world; left out"
+                                + " where it fails", f.feature(), f.error());
+                    }
+                }
             }
         }
+        collect(Integer.MAX_VALUE);
+        store();
+    }
+
+    /**
+     * Lays the tile's ground from the generator's surface rules without
+     * decorating it (ADR-126): the terrain pass of a level-0 tile, written
+     * before its features grow, and all of a tile when the server's settings
+     * turn features off. {@link #decorate} after it lays nothing again.
+     */
+    void groundOnly() {
+        long start = System.nanoTime();
+        int chunkX0 = x0 >> 4;
+        int chunkZ0 = z0 >> 4;
+        BlockState below = state(tile.below());
+        for (int cz = 0; cz < PreviewTile.CHUNKS && surface != null; cz++) {
+            for (int cx = 0; cx < PreviewTile.CHUNKS && surface != null; cx++) {
+                if (cellsRead[cz * PreviewTile.CHUNKS + cx]) {
+                    continue;
+                }
+                int bx0 = (chunkX0 + cx) << 4;
+                int bz0 = (chunkZ0 + cz) << 4;
+                int[] heights = new int[256];
+                int lowest = columnHeights(bx0, bz0, heights)[0];
+                groundBiomes(bx0, bz0, heights);
+                surfaceChunk(chunkX0 + cx, chunkZ0 + cz, heights, lowest, below);
+            }
+        }
+        standInNanos += System.nanoTime() - start;
     }
 
     /** Whether a placed feature runs: a step that shows, not left out by the settings. */
@@ -277,6 +314,20 @@ final class PreviewFeatures {
         int bx0 = chunkX << 4;
         int bz0 = chunkZ << 4;
         int[] heights = new int[256];
+        int[] range = columnHeights(bx0, bz0, heights);
+        int lowest = range[0];
+        int highest = range[1];
+        BlockState below = state(tile.below());
+        var groundBiomes = groundBiomes(bx0, bz0, heights);
+        if (surface != null && inTile(chunkX, chunkZ) && !cellsRead[cellsIndex(chunkX, chunkZ)]) {
+            // The rules lay the cells' tops first; the features then grow on a ground made of them.
+            surfaceChunk(chunkX, chunkZ, heights, lowest, below);
+        }
+        return chunk(chunkX, chunkZ, heights, lowest, highest, groundBiomes, below);
+    }
+
+    /** A chunk's surface per column ({@code z * 16 + x}) into {@code heights}; returns {lowest, highest}. */
+    private int[] columnHeights(int bx0, int bz0, int[] heights) {
         int lowest = Integer.MAX_VALUE;
         int highest = Integer.MIN_VALUE;
         for (int z = 0; z < 16; z++) {
@@ -287,36 +338,44 @@ final class PreviewFeatures {
                 highest = Math.max(highest, h);
             }
         }
-        BlockState below = state(tile.below());
-        // One biome per quart column, at its ground: features grow at the ground and ask its biome
-        // there. Sampling every quart of the sections around cost 6 ms a chunk (the climate noise).
-        @SuppressWarnings("unchecked")
-        net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome>[] groundBiomes =
-                new net.minecraft.core.Holder[16];
+        return new int[]{lowest, highest};
+    }
+
+    /**
+     * One biome per quart column of a chunk, at its ground: features grow at
+     * the ground and ask its biome there, and the surface rules then find the
+     * same. Sampling every quart of the sections around cost 6 ms a chunk
+     * (the climate noise).
+     */
+    @SuppressWarnings("unchecked")
+    private net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome>[] groundBiomes(int bx0, int bz0,
+                                                                                         int[] heights) {
+        net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome>[] out = new net.minecraft.core.Holder[16];
         for (int q = 0; q < 16; q++) {
             int qx = q & 3;
             int qz = q >> 2;
-            groundBiomes[q] = quartBiome(QuartPos.fromBlock(bx0) + qx,
+            out[q] = quartBiome(QuartPos.fromBlock(bx0) + qx,
                     QuartPos.fromBlock(heights[(qz * 4 + 2) * 16 + qx * 4 + 2]), QuartPos.fromBlock(bz0) + qz);
         }
-        if (surface != null && inTile(chunkX, chunkZ) && !cellsRead[cellsIndex(chunkX, chunkZ)]) {
-            // The rules lay the cells' tops first; the features then grow on a ground made of them.
-            ProtoChunk ground = rulesChunk(chunkX, chunkZ, heights, lowest, below);
-            try {
-                long start = System.nanoTime();
-                layGround(ground);
-                surfaceNanos += System.nanoTime() - start;
-                surfacedChunks++;
-                readCells(ground, heights);
-            } catch (RuntimeException e) {
-                if (SURFACE_FAILED.add(level.dimension().location().toString())) {
-                    Farfield.LOG.warn("Noise preview of {}: the surface rules failed in the preview's stand-in"
-                            + " world; tops guessed from the biomes from now on", level.dimension().location(), e);
-                }
-                surface = null;
+        return out;
+    }
+
+    /** Runs the surface rules on a chunk of the tile and reads its cells; on a throw, guessed tops from then on. */
+    private void surfaceChunk(int chunkX, int chunkZ, int[] heights, int lowest, BlockState below) {
+        ProtoChunk ground = rulesChunk(chunkX, chunkZ, heights, lowest, below);
+        try {
+            long start = System.nanoTime();
+            layGround(ground);
+            surfaceNanos += System.nanoTime() - start;
+            surfacedChunks++;
+            readCells(ground, heights);
+        } catch (RuntimeException e) {
+            if (SURFACE_FAILED.add(level.dimension().location().toString())) {
+                Farfield.LOG.warn("Noise preview of {}: the surface rules failed in the preview's stand-in"
+                        + " world; tops guessed from the biomes from now on", level.dimension().location(), e);
             }
+            surface = null;
         }
-        return chunk(chunkX, chunkZ, heights, lowest, highest, groundBiomes, below);
     }
 
     private boolean inTile(int chunkX, int chunkZ) {

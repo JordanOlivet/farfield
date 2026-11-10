@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongConsumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -21,25 +22,41 @@ import java.util.stream.Stream;
 
 /**
  * The noise preview tiles of one dimension (ADR-039), one zstd-compressed
- * file each ({@code t.<x>.<z>.ffp}). The summary of every tile stays in
- * memory (which sections hold something), the last decoded tiles in a small
- * cache. Listeners hear about every tile written. Thread-safe.
+ * file each, in a folder per level of the pyramid (ADR-126:
+ * {@code L<level>/t.<x>.<z>.ffp}). The summary of every tile stays in
+ * memory (which sections hold something), the last decoded tiles in small
+ * caches.
+ *
+ * <p>Readers see level-0 tiles only, the views: {@link #read(int, int)} and
+ * {@link #summary(int, int)} give the stored level-0 tile there, else the
+ * finest coarser tile over it cut to that place ({@link PreviewTile#expand}).
+ * View listeners hear the level-0 places whose view a write changed; tile
+ * listeners hear every tile written, by its key ({@link #key(int, int, int)}).
+ * Thread-safe.
  */
 public final class PreviewStore {
 
     private static final Pattern TILE_FILE = Pattern.compile("t\\.(-?\\d+)\\.(-?\\d+)\\.ffp");
+    private static final Pattern LEVEL_DIR = Pattern.compile("L(\\d+)");
     private static final int CACHED_TILES = 64;
+    private static final int CACHED_COARSE = 16;
 
     private final Path dir;
     private final io.lakio.farfield.core.storage.SectionStore.BeforeWrite beforeWrite;
+    /** Every stored tile's summary, by key (any level). */
     private final Map<Long, PreviewTile.Summary> summaries = new ConcurrentHashMap<>();
-    private final Map<Long, PreviewTile> cache = new LinkedHashMap<>(CACHED_TILES, 0.75f, true) {
-        @Override
-        protected boolean removeEldestEntry(Map.Entry<Long, PreviewTile> eldest) {
-            return size() > CACHED_TILES;
-        }
-    };
+    /** Summaries of the views cut from a coarser tile, by level-0 key; dropped when a tile over them is written. */
+    private final Map<Long, PreviewTile.Summary> viewSummaries = new ConcurrentHashMap<>();
+    /** Bit per level holding a tile. */
+    private volatile int levels;
+    /** Counts writes: a view made across one is not cached. */
+    private final AtomicLong writes = new AtomicLong();
+    /** Views by level-0 key. */
+    private final Map<Long, PreviewTile> cache = lru(CACHED_TILES);
+    /** Stored coarse tiles by key. */
+    private final Map<Long, PreviewTile> coarse = lru(CACHED_COARSE);
     private final List<LongConsumer> listeners = new CopyOnWriteArrayList<>();
+    private final List<LongConsumer> tileListeners = new CopyOnWriteArrayList<>();
 
     /** Opens the store, reading the summary of every tile already there. */
     public PreviewStore(Path dir) throws IOException {
@@ -59,7 +76,24 @@ public final class PreviewStore {
         this.dir = dir;
         this.beforeWrite = beforeWrite;
         Files.createDirectories(dir);
-        try (Stream<Path> files = Files.list(dir)) {
+        try (Stream<Path> entries = Files.list(dir)) {
+            for (Path f : (Iterable<Path>) entries::iterator) {
+                String name = f.getFileName().toString();
+                Matcher levelDir = LEVEL_DIR.matcher(name);
+                if (TILE_FILE.matcher(name).matches()) {
+                    Files.deleteIfExists(f); // a tile of the format before the levels: built again
+                } else if (levelDir.matches() && Files.isDirectory(f)) {
+                    int level = Integer.parseInt(levelDir.group(1));
+                    if (level <= PreviewTile.MAX_LEVEL) {
+                        openLevel(f, level);
+                    }
+                }
+            }
+        }
+    }
+
+    private void openLevel(Path levelDir, int level) throws IOException {
+        try (Stream<Path> files = Files.list(levelDir)) {
             for (Path f : (Iterable<Path>) files::iterator) {
                 Matcher m = TILE_FILE.matcher(f.getFileName().toString());
                 if (!m.matches()) {
@@ -68,7 +102,12 @@ public final class PreviewStore {
                 int x = Integer.parseInt(m.group(1));
                 int z = Integer.parseInt(m.group(2));
                 try {
-                    summaries.put(key(x, z), load(f).summary());
+                    PreviewTile t = load(f);
+                    if (t.level() != level) {
+                        throw new IOException("a level-" + t.level() + " tile among level " + level);
+                    }
+                    summaries.put(key(level, x, z), t.summary());
+                    levels |= 1 << level;
                 } catch (IOException | RuntimeException e) {
                     Files.deleteIfExists(f); // a damaged tile is built again
                 }
@@ -76,52 +115,178 @@ public final class PreviewStore {
         }
     }
 
+    /** The key of the tile of level {@code level} at tile coordinates (tileX, tileZ) of that level. */
+    public static long key(int level, int tileX, int tileZ) {
+        return (long) level << 58 | ((long) tileX & 0x3FFFFFFL) << 32 | (tileZ & 0xFFFFFFFFL);
+    }
+
+    /** The key of a level-0 tile. */
     public static long key(int tileX, int tileZ) {
-        return (long) tileX << 32 | (tileZ & 0xFFFFFFFFL);
+        return key(0, tileX, tileZ);
+    }
+
+    public static int level(long key) {
+        return (int) (key >>> 58);
     }
 
     public static int tileX(long key) {
-        return (int) (key >> 32);
+        return (int) (key << 6 >> 38);
     }
 
     public static int tileZ(long key) {
         return (int) key;
     }
 
+    /** Blocks a side of a tile of that level. */
+    public static int blocks(int level) {
+        return PreviewTile.BLOCKS << level;
+    }
+
+    /** Tiles stored, every level. */
     public int size() {
         return summaries.size();
     }
 
+    /** Whether a level-0 view exists there: a tile of any level over it. */
     public boolean contains(int tileX, int tileZ) {
-        return summaries.containsKey(key(tileX, tileZ));
+        return source(tileX, tileZ) >= 0;
+    }
+
+    /** Whether that very tile is stored. */
+    public boolean contains(int level, int tileX, int tileZ) {
+        return summaries.containsKey(key(level, tileX, tileZ));
     }
 
     /** The summary of a stored tile, or null. */
-    public PreviewTile.Summary summary(int tileX, int tileZ) {
-        return summaries.get(key(tileX, tileZ));
+    public PreviewTile.Summary summary(int level, int tileX, int tileZ) {
+        return summaries.get(key(level, tileX, tileZ));
     }
 
-    /** A stored tile, or null. */
-    public PreviewTile read(int tileX, int tileZ) throws IOException {
-        long key = key(tileX, tileZ);
-        if (!summaries.containsKey(key)) {
+    /** The summary of the level-0 view there, or null. */
+    public PreviewTile.Summary summary(int tileX, int tileZ) {
+        long source = source(tileX, tileZ);
+        if (source < 0) {
             return null;
         }
+        int level = level(source);
+        if (level == 0) {
+            return summaries.get(source);
+        }
+        long view = key(tileX, tileZ);
+        PreviewTile.Summary s = viewSummaries.get(view);
+        if (s != null) {
+            return s;
+        }
+        long before = writes.get();
+        try {
+            PreviewTile tile = coarse(source);
+            if (tile == null) {
+                return null;
+            }
+            s = tile.expandedSummary(tileX - (tileX(source) << level), tileZ - (tileZ(source) << level));
+        } catch (IOException e) {
+            return null;
+        }
+        if (writes.get() == before) {
+            viewSummaries.put(view, s);
+        }
+        return s;
+    }
+
+    /** The level-0 view there ({@link PreviewTile#expand} of the finest tile over it), or null. */
+    public PreviewTile read(int tileX, int tileZ) throws IOException {
+        long view = key(tileX, tileZ);
         synchronized (cache) {
-            PreviewTile t = cache.get(key);
+            PreviewTile t = cache.get(view);
             if (t != null) {
                 return t;
             }
         }
-        PreviewTile t = load(file(tileX, tileZ));
-        synchronized (cache) {
-            cache.put(key, t);
+        long before = writes.get();
+        long source = source(tileX, tileZ);
+        if (source < 0) {
+            return null;
+        }
+        int level = level(source);
+        PreviewTile t;
+        if (level == 0) {
+            PreviewTile stored = load(file(source));
+            t = stored.hasCanopy() ? stored.expand(0, 0) : stored;
+        } else {
+            PreviewTile stored = coarse(source);
+            if (stored == null) {
+                return null;
+            }
+            t = stored.expand(tileX - (tileX(source) << level), tileZ - (tileZ(source) << level));
+        }
+        if (writes.get() == before) {
+            synchronized (cache) {
+                cache.put(view, t);
+            }
         }
         return t;
     }
 
-    /** Writes a tile through a temporary file, then tells the listeners. */
+    /** A stored tile as written (a coarse one not cut), or null. */
+    public PreviewTile read(int level, int tileX, int tileZ) throws IOException {
+        long key = key(level, tileX, tileZ);
+        if (!summaries.containsKey(key)) {
+            return null;
+        }
+        return level == 0 ? load(file(key)) : coarse(key);
+    }
+
+    /** The key of the finest stored tile over level-0 place (tileX, tileZ); -1 for none. */
+    private long source(int tileX, int tileZ) {
+        int held = levels;
+        while (held != 0) {
+            int level = Integer.numberOfTrailingZeros(held);
+            held &= held - 1;
+            long key = key(level, tileX >> level, tileZ >> level);
+            if (summaries.containsKey(key)) {
+                return key;
+            }
+        }
+        return -1;
+    }
+
+    private PreviewTile coarse(long key) throws IOException {
+        synchronized (coarse) {
+            PreviewTile t = coarse.get(key);
+            if (t != null) {
+                return t;
+            }
+        }
+        if (!summaries.containsKey(key)) {
+            return null;
+        }
+        PreviewTile t;
+        try {
+            t = load(file(key));
+        } catch (java.nio.file.NoSuchFileException e) {
+            return null;
+        }
+        synchronized (coarse) {
+            coarse.put(key, t);
+        }
+        return t;
+    }
+
+    /** Writes a level-0 tile. */
     public void write(int tileX, int tileZ, PreviewTile tile) throws IOException {
+        write(0, tileX, tileZ, tile);
+    }
+
+    /**
+     * Writes a tile of its level through a temporary file, then tells the
+     * tile listeners, and the view listeners of the level-0 places it is now
+     * the finest tile over. The tile is not changed, nor kept: the caller may
+     * go on with it.
+     */
+    public void write(int level, int tileX, int tileZ, PreviewTile tile) throws IOException {
+        if (tile.level() != level) {
+            throw new IllegalArgumentException("a level-" + tile.level() + " tile written at level " + level);
+        }
         beforeWrite.run();
         ByteWriter raw = new ByteWriter(64 * 1024);
         tile.encode(raw);
@@ -133,30 +298,72 @@ public final class PreviewStore {
         out[1] = (byte) (length >>> 8);
         out[2] = (byte) (length >>> 16);
         out[3] = (byte) (length >>> 24);
-        Path file = file(tileX, tileZ);
+        long key = key(level, tileX, tileZ);
+        Path file = file(key);
+        Files.createDirectories(file.getParent());
         Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
         Files.write(tmp, java.util.Arrays.copyOf(out, n + 4));
         replace(tmp, file);
-        long key = key(tileX, tileZ);
+        // The cached copy is decoded from the bytes written: the caller's tile goes on changing.
+        PreviewTile stored = decode(java.util.Arrays.copyOf(out, n + 4));
+        writes.incrementAndGet();
+        summaries.put(key, stored.summary());
+        levels |= 1 << level;
+        int scale = 1 << level;
+        int x0 = tileX << level;
+        int z0 = tileZ << level;
         synchronized (cache) {
-            cache.put(key, tile);
+            for (int z = z0; z < z0 + scale; z++) {
+                for (int x = x0; x < x0 + scale; x++) {
+                    cache.remove(key(x, z));
+                }
+            }
+            if (level == 0) {
+                cache.put(key, stored.hasCanopy() ? stored.expand(0, 0) : stored);
+            }
         }
-        summaries.put(key, tile.summary());
-        for (LongConsumer l : listeners) {
+        if (level > 0) {
+            synchronized (coarse) {
+                coarse.put(key, stored);
+            }
+        }
+        for (int z = z0; z < z0 + scale; z++) {
+            for (int x = x0; x < x0 + scale; x++) {
+                viewSummaries.remove(key(x, z));
+            }
+        }
+        writes.incrementAndGet();
+        for (LongConsumer l : tileListeners) {
             l.accept(key);
         }
+        for (int z = z0; z < z0 + scale; z++) {
+            for (int x = x0; x < x0 + scale; x++) {
+                if (source(x, z) == key) {
+                    long view = key(x, z);
+                    for (LongConsumer l : listeners) {
+                        l.accept(view);
+                    }
+                }
+            }
+        }
+    }
+
+    /** A stored level-0 tile's file, or null ({@link #readFile(int, int, int)}). */
+    public byte[] readFile(int tileX, int tileZ) throws IOException {
+        return readFile(0, tileX, tileZ);
     }
 
     /**
      * A stored tile's file as it is on disk (raw length, then its zstd
      * frame), or null: sent as is to clients (ADR-068).
      */
-    public byte[] readFile(int tileX, int tileZ) throws IOException {
-        if (!summaries.containsKey(key(tileX, tileZ))) {
+    public byte[] readFile(int level, int tileX, int tileZ) throws IOException {
+        long key = key(level, tileX, tileZ);
+        if (!summaries.containsKey(key)) {
             return null;
         }
         try {
-            return Files.readAllBytes(file(tileX, tileZ));
+            return Files.readAllBytes(file(key));
         } catch (java.nio.file.NoSuchFileException e) {
             return null;
         }
@@ -181,16 +388,35 @@ public final class PreviewStore {
         }
     }
 
-    public void addListener(LongConsumer onTileWritten) {
-        listeners.add(onTileWritten);
+    /** Hears the level-0 places whose view changed, by their key. */
+    public void addListener(LongConsumer onViewChanged) {
+        listeners.add(onViewChanged);
     }
 
-    public void removeListener(LongConsumer onTileWritten) {
-        listeners.remove(onTileWritten);
+    public void removeListener(LongConsumer onViewChanged) {
+        listeners.remove(onViewChanged);
     }
 
-    private Path file(int tileX, int tileZ) {
-        return dir.resolve("t." + tileX + "." + tileZ + ".ffp");
+    /** Hears every tile written, by its key ({@link #key(int, int, int)}). */
+    public void addTileListener(LongConsumer onTileWritten) {
+        tileListeners.add(onTileWritten);
+    }
+
+    public void removeTileListener(LongConsumer onTileWritten) {
+        tileListeners.remove(onTileWritten);
+    }
+
+    private Path file(long key) {
+        return dir.resolve("L" + level(key)).resolve("t." + tileX(key) + "." + tileZ(key) + ".ffp");
+    }
+
+    private static Map<Long, PreviewTile> lru(int size) {
+        return new LinkedHashMap<>(size, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<Long, PreviewTile> eldest) {
+                return size() > size;
+            }
+        };
     }
 
     /**

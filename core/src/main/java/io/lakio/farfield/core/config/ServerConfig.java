@@ -22,14 +22,19 @@ import java.util.Properties;
  * rocks, ADR-079) and which of them it leaves out ({@link #excludesFeature}),
  * the radius around the world's spawn its preview is built in ahead of the
  * players (0: none, ADR-123), whether that pregeneration (and the import
- * at start) pauses while players are online, and whether the server
- * imports its region files into its LODs at start (ADR-124).
+ * at start) pauses while players are online, whether the server
+ * imports its region files into its LODs at start (ADR-124), the distance
+ * from a player within which the preview grows the world's own features
+ * (farther, a canopy from what they grow, ADR-126), and the threads that
+ * build the pregeneration while nobody is online ({@link #AUTO}: the
+ * preview's threads setting).
  * Defaults from Neo-Voxy, whose streaming worked at these values. Missing
  * or invalid keys take their default.
  */
 public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, int totalKBps, int threads,
                            boolean fullData, boolean preview, boolean previewFeatures, String previewFeatureExclude,
-                           int previewSpawnRadius, boolean pregenPausesForPlayers, boolean importOnStart) {
+                           int previewSpawnRadius, boolean pregenPausesForPlayers, boolean importOnStart,
+                           int previewFeaturesDistance, int pregenThreads) {
 
     public static final int AUTO = 0;
     public static final int MAX_RADIUS = 30_000_000;
@@ -37,8 +42,11 @@ public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, 
     /** Pregeneration radii, in blocks: up to four times the preview's drawn range (ADR-123). */
     public static final int MAX_PREGEN_RADIUS = 16_384;
 
+    /** The farthest the preview grows the world's own features: its drawn range. */
+    public static final int MAX_FEATURES_DISTANCE = 4096;
+
     public static final ServerConfig DEFAULTS = new ServerConfig(true, 4096, 1024, 10240, AUTO, false, true, true, "",
-            4096, true, true);
+            4096, true, true, 1250, AUTO);
 
     static final String STREAMING = "streaming";
     static final String RADIUS = "streaming_radius";
@@ -52,6 +60,8 @@ public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, 
     static final String PREVIEW_SPAWN_RADIUS = "preview_spawn_radius";
     static final String PREGEN_WHEN_PLAYERS = "pregen_when_players";
     static final String IMPORT_ON_START = "import_on_start";
+    static final String PREVIEW_FEATURES_DISTANCE = "preview_features_distance";
+    static final String PREGEN_THREADS = "pregen_threads";
 
     public ServerConfig {
         radiusBlocks = Math.max(0, Math.min(MAX_RADIUS, radiusBlocks));
@@ -60,6 +70,16 @@ public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, 
         threads = Math.max(AUTO, Math.min(16, threads));
         previewFeatureExclude = previewFeatureExclude == null ? "" : previewFeatureExclude.trim();
         previewSpawnRadius = Math.max(0, Math.min(MAX_PREGEN_RADIUS, previewSpawnRadius));
+        previewFeaturesDistance = Math.max(0, Math.min(MAX_FEATURES_DISTANCE, previewFeaturesDistance));
+        pregenThreads = Math.max(AUTO, Math.min(16, pregenThreads));
+    }
+
+    /** The settings before ADR-126: features to 1,250 blocks, the pregeneration on the preview's threads. */
+    public ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, int totalKBps, int threads,
+                        boolean fullData, boolean preview, boolean previewFeatures, String previewFeatureExclude,
+                        int previewSpawnRadius, boolean pregenPausesForPlayers, boolean importOnStart) {
+        this(streaming, radiusBlocks, playerKBps, totalKBps, threads, fullData, preview, previewFeatures,
+                previewFeatureExclude, previewSpawnRadius, pregenPausesForPlayers, importOnStart, 1250, AUTO);
     }
 
     /** The settings before ADR-123: the spawn's preview built ahead in 4,096 blocks, paused for players. */
@@ -135,12 +155,14 @@ public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, 
         }
         return new ServerConfig(bool(p, STREAMING, DEFAULTS.streaming), integer(p, RADIUS, DEFAULTS.radiusBlocks),
                 integer(p, PLAYER_KBPS, DEFAULTS.playerKBps), integer(p, TOTAL_KBPS, DEFAULTS.totalKBps),
-                threads(p), bool(p, FULL_DATA, DEFAULTS.fullData), bool(p, PREVIEW, DEFAULTS.preview),
+                threads(p, THREADS), bool(p, FULL_DATA, DEFAULTS.fullData), bool(p, PREVIEW, DEFAULTS.preview),
                 bool(p, PREVIEW_FEATURES, DEFAULTS.previewFeatures),
                 p.getProperty(PREVIEW_FEATURE_EXCLUDE, DEFAULTS.previewFeatureExclude),
                 integer(p, PREVIEW_SPAWN_RADIUS, DEFAULTS.previewSpawnRadius),
                 !"run".equalsIgnoreCase(p.getProperty(PREGEN_WHEN_PLAYERS, "pause").trim()),
-                bool(p, IMPORT_ON_START, DEFAULTS.importOnStart));
+                bool(p, IMPORT_ON_START, DEFAULTS.importOnStart),
+                integer(p, PREVIEW_FEATURES_DISTANCE, DEFAULTS.previewFeaturesDistance),
+                threads(p, PREGEN_THREADS));
     }
 
     /** Writes the file through a temporary file. */
@@ -186,6 +208,14 @@ public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, 
             out.write("# lived without Farfield, regions changed while it was away. Every dimension, nearest\n");
             out.write("# the spawn first; paused while players are online as above. Default true.\n");
             out.write(IMPORT_ON_START + "=" + importOnStart + "\n");
+            out.write("# Distance from a player in blocks within which the preview grows the world's own\n");
+            out.write("# features (0 to " + MAX_FEATURES_DISTANCE + "). Farther it draws a canopy from what they grow in each\n");
+            out.write("# biome: the cost of the real features grows with the square of this distance. Default "
+                    + DEFAULTS.previewFeaturesDistance + ".\n");
+            out.write(PREVIEW_FEATURES_DISTANCE + "=" + previewFeaturesDistance + "\n");
+            out.write("# Threads that build the preview pregeneration while no player is online, 1 to 16,\n");
+            out.write("# or auto (the preview's threads setting). Default auto.\n");
+            out.write(PREGEN_THREADS + "=" + (pregenThreads == AUTO ? "auto" : Integer.toString(pregenThreads)) + "\n");
         }
         Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
     }
@@ -214,8 +244,8 @@ public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, 
         }
     }
 
-    private static int threads(Properties p) {
-        String v = p.getProperty(THREADS);
+    private static int threads(Properties p, String key) {
+        String v = p.getProperty(key);
         if (v == null || v.trim().equalsIgnoreCase("auto")) {
             return AUTO;
         }

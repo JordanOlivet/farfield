@@ -44,6 +44,24 @@ class PregenTasksTest {
     }
 
     @Test
+    void aTaskBuildsItsPyramidCoarsestFirst() {
+        long[] keys = PregenTasks.pyramid(100, -200, 4096, 3);
+        int level = 2;
+        int[] count = new int[3];
+        for (long k : keys) {
+            int l = PreviewStore.level(k);
+            assertTrue(l <= level, "never coarser again");
+            level = l;
+            count[l]++;
+        }
+        assertEquals(PregenTasks.tiles(100, -200, 4096).length, count[0]);
+        assertEquals(PregenTasks.tiles(1, 100, -200, 4096).length, count[1]);
+        assertEquals(PregenTasks.tiles(2, 100, -200, 4096).length, count[2]);
+        assertTrue(count[2] < 40 && count[1] < 100, "levels 2 and 1: " + count[2] + ", " + count[1]);
+        assertEquals(PreviewStore.key(2, 0, -1), keys[0], "the center's level-2 tile first");
+    }
+
+    @Test
     void tasksRoundTripAndABadLineIsLeftOut() throws IOException {
         Path file = dir.resolve("farfield").resolve("pregen.txt");
         PregenTasks tasks = new PregenTasks();

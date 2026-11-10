@@ -296,7 +296,7 @@ public final class StreamServer {
         });
         if (config.preview()) {
             tileListeners.computeIfAbsent(world, w -> {
-                w.preview().addListener(tile -> tileWritten(w, tile));
+                w.preview().addTileListener(tile -> tileWritten(w, tile));
                 return Boolean.TRUE;
             });
         }
@@ -452,14 +452,16 @@ public final class StreamServer {
                 if (p.session != fetch.session()) {
                     return;
                 }
+                int level = PreviewStore.level(tile);
                 int tx = PreviewStore.tileX(tile);
                 int tz = PreviewStore.tileZ(tile);
                 byte[] file = null;
-                if (tileInRange(tx, tz, px, pz)) {
+                if (level <= PreviewTile.MAX_LEVEL && tileInRange(tile, px, pz)) {
                     try {
-                        file = p.world.preview().readFile(tx, tz);
+                        file = p.world.preview().readFile(level, tx, tz);
                     } catch (IOException e) {
-                        Farfield.LOG.warn("LOD streaming: reading preview tile {} {} failed", tx, tz, e);
+                        Farfield.LOG.warn("LOD streaming: reading level-{} preview tile {} {} failed", level, tx, tz,
+                                e);
                     }
                 }
                 if (file == null) {
@@ -486,23 +488,23 @@ public final class StreamServer {
         });
     }
 
-    /** A tile was built: the players near it ask for it again. Any thread. */
+    /** A tile was built (its key, any level): the players near it ask for it again. Any thread. */
     private void tileWritten(LodWorld world, long tile) {
-        int tx = PreviewStore.tileX(tile);
-        int tz = PreviewStore.tileZ(tile);
         for (Player p : players.values()) {
             int session = p.session;
-            if (session >= 0 && p.world == world && tileInRange(tx, tz, p.player.getX(), p.player.getZ())) {
+            if (session >= 0 && p.world == world && tileInRange(tile, p.player.getX(), p.player.getZ())) {
                 p.out.add(new StreamProtocol.Answer(StreamProtocol.TILE_CHANGED, session, tile).encode());
             }
         }
     }
 
-    private boolean tileInRange(int tx, int tz, double px, double pz) {
-        double x0 = (double) tx * PreviewTile.BLOCKS;
-        double z0 = (double) tz * PreviewTile.BLOCKS;
-        double dx = Math.max(0, Math.max(x0 - px, px - (x0 + PreviewTile.BLOCKS)));
-        double dz = Math.max(0, Math.max(z0 - pz, pz - (z0 + PreviewTile.BLOCKS)));
+    /** Whether a tile (its key, any level) comes within the streaming radius of a player. */
+    private boolean tileInRange(long tile, double px, double pz) {
+        int size = PreviewStore.blocks(PreviewStore.level(tile));
+        double x0 = (double) PreviewStore.tileX(tile) * size;
+        double z0 = (double) PreviewStore.tileZ(tile) * size;
+        double dx = Math.max(0, Math.max(x0 - px, px - (x0 + size)));
+        double dz = Math.max(0, Math.max(z0 - pz, pz - (z0 + size)));
         double r = config.radiusBlocks();
         return dx * dx + dz * dz <= r * r;
     }

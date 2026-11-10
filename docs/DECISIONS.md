@@ -3567,3 +3567,58 @@ Status: accepted, 2026-11-10. Step 2 of `docs/analysis/preview-coarse-to-fine.md
   they rule the pillars' tops, as the game does. Against really generated
   chunks over 10 biomes (`/farfield spike surface`), the ruled tops are
   right as often as before, column for column. Not measured in the pack.
+
+## ADR-126 — The preview built as a pyramid, coarse first, with a canopy far away
+
+Status: accepted, 2026-11-10. Step 3 of `docs/analysis/preview-coarse-to-fine.md`;
+amends ADR-039 (one kind of tile), ADR-079 (features in every tile) and
+ADR-123 (the pregeneration's order).
+
+- **Context**: every tile within 4,096 blocks cost a full level-0 tile
+  with its features (2 to 9 s, 236 tiles around a player), whatever the
+  detail it is drawn at. In the user's pack the vegetation alone is 55 %
+  of a tile after ADR-125. The user (2026-11-10): coarse levels first,
+  real features to 1,250 blocks as a setting, a threads setting for the
+  pregeneration with nobody online, planned for the world border.
+- **Decision**:
+  - Tiles have a level (`PreviewTile.level`, format 19): a level-L tile
+    covers `512 << L` blocks with the same 129 x 129 samples, cells and
+    chunk entries. The server builds level 2 over the drawn range, level 1
+    within 2,048 blocks, level 0 within `preview_features_distance`
+    (default 1,250, 0 to 4,096), the coarsest first over the whole range,
+    then each finer one, nearest and in front first (`PreviewPyramid`).
+    The far grid of ADR-038's tiles (8 or 16 blocks) is gone: level 1 and 2
+    are those grids.
+  - The store keeps one folder per level (`preview/L<level>/`); readers see
+    level-0 views only: the stored level-0 tile, else the finest coarser
+    tile over the place cut to it (`PreviewTile.expand`), whose canopy
+    becomes feature runs. View listeners hear the places whose view
+    changed; tile listeners every tile written. Tiles of the old layout are
+    deleted at open.
+  - A coarse tile carries no features: per cell a canopy (top above the
+    ground, thickness, material, snow), per chunk plants, and its ground,
+    all from a profile per biome (`PreviewProfiles`) measured from the
+    level-0 tiles whose features grew: the share of 2-block columns the
+    features top, their mean top and thickness, the most common top
+    material, the snowy share, the plants per chunk, the most common top
+    and filler of the rules' cells under the sea, on flat and on steep
+    land. A cell takes its biome's canopy where a hash of its place falls
+    under the biome's cover. A biome not measured yet is sampled first: 4
+    x 4 chunks decorated in the stand-in world where it lies (twice at
+    most a session). No list of mods or features.
+  - A level-0 tile is written twice: its terrain (heights, the rules'
+    ground, villages, the profiles' canopy and plants, `complete` false),
+    then with its features. A stored tile not complete is built again.
+  - The pregeneration builds its pyramid first, then the level-0 tiles
+    (`PregenTasks.pyramid`); `pregen_threads` (default auto: the preview's
+    threads) sizes the pool while it runs with nobody online.
+  - Stream protocol 10: tile keys carry the level
+    (`PreviewStore.key(level, x, z)`); clients ask every level, coarsest
+    first.
+- **Less faithful**: beyond the features' distance no tree stands at its
+  place, a biome's density is its mean, villages, lakes the features dig,
+  plants under the sea and the features' light sources are left out; a
+  coarse tile's ground is its biome's most common, not the rules' per cell
+  (badlands bands, a biome's mix of tops); the canopy is one material and
+  no trunk. The real trees replace the canopy when the player comes within
+  the features' distance.

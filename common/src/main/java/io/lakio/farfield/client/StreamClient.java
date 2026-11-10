@@ -4,6 +4,7 @@ import io.lakio.farfield.Farfield;
 import io.lakio.farfield.core.LodKey;
 import io.lakio.farfield.core.lod.LodSection;
 import io.lakio.farfield.core.preview.PreviewStore;
+import io.lakio.farfield.core.preview.PreviewPyramid;
 import io.lakio.farfield.core.preview.PreviewTile;
 import io.lakio.farfield.core.storage.SectionStore;
 import io.lakio.farfield.core.stream.FetchWindow;
@@ -521,7 +522,14 @@ public final class StreamClient {
         }
     }
 
-    /** Asks for the preview tiles within the radius not checked yet this session, nearest first. */
+    /**
+     * Asks for the preview tiles within the radius not checked yet this
+     * session: every level of the pyramid (ADR-126), the coarsest first, then
+     * nearest first. Levels finer than the coarsest within their own range
+     * only ({@link PreviewPyramid#range}, level 0 at the farthest features'
+     * distance a server may set): the server answers absent for those it
+     * does not build.
+     */
     private void askTiles(Minecraft mc, long now) {
         var player = mc.player;
         if (player == null) {
@@ -529,27 +537,32 @@ public final class StreamClient {
         }
         double px = player.getX();
         double pz = player.getZ();
-        int tile = PreviewTile.BLOCKS;
-        int x0 = Math.floorDiv((int) Math.floor(px - radius), tile);
-        int x1 = Math.floorDiv((int) Math.floor(px + radius), tile);
-        int z0 = Math.floorDiv((int) Math.floor(pz - radius), tile);
-        int z1 = Math.floorDiv((int) Math.floor(pz + radius), tile);
         java.util.List<long[]> candidates = new java.util.ArrayList<>();
-        for (int tz = z0; tz <= z1; tz++) {
-            for (int tx = x0; tx <= x1; tx++) {
-                long key = PreviewStore.key(tx, tz);
-                if (tilesAnswered.contains(key) || tilesInFlight.containsKey(key)) {
-                    continue;
-                }
-                double dx = Math.max(0, Math.max((double) tx * tile - px, px - ((double) tx + 1) * tile));
-                double dz = Math.max(0, Math.max((double) tz * tile - pz, pz - ((double) tz + 1) * tile));
-                double d = dx * dx + dz * dz;
-                if (d <= (double) radius * radius) {
-                    candidates.add(new long[]{key, (long) d});
+        for (int level = PreviewPyramid.LEVELS - 1; level >= 0; level--) {
+            int tile = PreviewStore.blocks(level);
+            double range = Math.min(radius, PreviewPyramid.range(level,
+                    io.lakio.farfield.core.config.ServerConfig.MAX_FEATURES_DISTANCE));
+            int x0 = Math.floorDiv((int) Math.floor(px - range), tile);
+            int x1 = Math.floorDiv((int) Math.floor(px + range), tile);
+            int z0 = Math.floorDiv((int) Math.floor(pz - range), tile);
+            int z1 = Math.floorDiv((int) Math.floor(pz + range), tile);
+            for (int tz = z0; tz <= z1; tz++) {
+                for (int tx = x0; tx <= x1; tx++) {
+                    long key = PreviewStore.key(level, tx, tz);
+                    if (tilesAnswered.contains(key) || tilesInFlight.containsKey(key)) {
+                        continue;
+                    }
+                    double dx = Math.max(0, Math.max((double) tx * tile - px, px - ((double) tx + 1) * tile));
+                    double dz = Math.max(0, Math.max((double) tz * tile - pz, pz - ((double) tz + 1) * tile));
+                    double d = dx * dx + dz * dz;
+                    if (d <= range * range) {
+                        candidates.add(new long[]{key, (long) d});
+                    }
                 }
             }
         }
-        candidates.sort((a, b) -> Long.compare(a[1], b[1]));
+        candidates.sort((a, b) -> PreviewStore.level(a[0]) != PreviewStore.level(b[0])
+                ? Integer.compare(PreviewStore.level(b[0]), PreviewStore.level(a[0])) : Long.compare(a[1], b[1]));
         int n = Math.min(candidates.size(), tileWindow.size() - tilesInFlight.size());
         if (n <= 0) {
             return;
@@ -934,11 +947,11 @@ public final class StreamClient {
             try {
                 PreviewTile tile = PreviewStore.decodeFile(received);
                 tile.remapIds(blocks, biomes);
-                m.preview().write(PreviewStore.tileX(key), PreviewStore.tileZ(key), tile);
+                m.preview().write(PreviewStore.level(key), PreviewStore.tileX(key), PreviewStore.tileZ(key), tile);
             } catch (IOException | RuntimeException e) {
                 lostTiles.add(key);
-                Farfield.LOG.warn("LOD streaming: could not store preview tile {} {}", PreviewStore.tileX(key),
-                        PreviewStore.tileZ(key), e);
+                Farfield.LOG.warn("LOD streaming: could not store level-{} preview tile {} {}",
+                        PreviewStore.level(key), PreviewStore.tileX(key), PreviewStore.tileZ(key), e);
             }
         });
     }

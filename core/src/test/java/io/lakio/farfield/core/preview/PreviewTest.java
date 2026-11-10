@@ -182,26 +182,177 @@ class PreviewTest {
         }
     }
 
-    @Test
-    void coarseTilesFillTheirSamplesBetween() {
-        // Heights computed every 16 blocks (every 4th sample): a plane rising 2 blocks per sample along X.
+    private static final int CANOPY_LEAVES = 21;
+    private static final int SNOW_LAYER = 22;
+
+    /** A level-2 tile: a plane rising a block per sample along X (16 blocks), cells and chunks numbered. */
+    private static PreviewTile coarse() {
         PreviewTile t = new PreviewTile();
-        for (int k = 0; k < PreviewTile.SAMPLES; k += 4) {
-            for (int i = 0; i < PreviewTile.SAMPLES; i += 4) {
-                t.setHeight(i, k, 60 + 2 * i);
+        t.setLevel(2);
+        t.setBelow(STONE);
+        t.setWater(WATER, 63);
+        for (int k = 0; k < PreviewTile.SAMPLES; k++) {
+            for (int i = 0; i < PreviewTile.SAMPLES; i++) {
+                t.setHeight(i, k, 60 + i);
             }
         }
-        t.fillBetweenSamples(4);
-        t.setGrid(16);
-        assertEquals(62, t.sample(1, 0));
-        assertEquals(66, t.sample(3, 7));
-        assertEquals(60 + 2 * 128, t.sample(128, 127));
+        for (int cz = 0; cz < PreviewTile.CELLS; cz++) {
+            for (int cx = 0; cx < PreviewTile.CELLS; cx++) {
+                t.setCell(cx, cz, 100 + cx, 200 + cz);
+            }
+        }
+        for (int cz = 0; cz < PreviewTile.CHUNKS; cz++) {
+            for (int cx = 0; cx < PreviewTile.CHUNKS; cx++) {
+                t.setBiome(cx, cz, cz * PreviewTile.CHUNKS + cx);
+            }
+        }
+        t.setCanopySnow(SNOW_LAYER);
+        return t;
+    }
+
+    @Test
+    void aCoarseTileIsCutIntoLevelZeroTiles() {
+        PreviewTile t = coarse();
+        // The cell over blocks 512..527 x 1024..1039 of the tile: offset (1, 2), its first cell.
+        t.setCanopy(32, 64, PreviewTile.canopyWord(CANOPY_LEAVES, 8, 4, false));
+        t.setCanopy(33, 64, PreviewTile.canopyWord(CANOPY_LEAVES, 8, 4, true));
+        PreviewTile v = t.expand(1, 2);
+        assertEquals(0, v.level());
+        // View sample i lies at block 512 + 4i of the tile: coarse sample 32 + i / 4.
+        assertEquals(60 + 32, v.sample(0, 0));
+        assertEquals(60 + 33, v.sample(4, 9));
+        assertEquals(60 + 35, v.sample(10, 0), "34.5 samples in: halfway rounds up");
+        assertEquals(60 + 64, v.sample(128, 128), "the last sample is the next tile's first");
+        assertEquals(100 + 32, v.top(0, 0));
+        assertEquals(100 + 33, v.top(4, 0));
+        assertEquals(200 + 64, v.filler(0, 3));
+        assertEquals(16 * PreviewTile.CHUNKS + 8, v.biome(0, 0), "chunks four times as wide");
+        assertEquals(16 * PreviewTile.CHUNKS + 8, v.biome(3, 3));
+        assertEquals(17 * PreviewTile.CHUNKS + 9, v.biome(4, 4));
+        assertEquals(WATER, v.water());
+        assertEquals(63, v.seaLevel());
+        // The canopy as runs: 8 blocks above the ground, 4 thick, in the columns of its cell only.
+        int[] runs = v.featureColumn(PreviewTile.FEATURE_MARGIN / 2, PreviewTile.FEATURE_MARGIN / 2);
+        assertEquals(2, runs.length);
+        int ground = v.height(0, 0);
+        assertEquals(ground + 8 - 4, PreviewTile.featureRunY(runs[0]));
+        assertEquals(4, PreviewTile.featureRunBlocks(runs[0]));
+        assertEquals(CANOPY_LEAVES, runs[1]);
+        int[] snowy = v.featureColumn(PreviewTile.FEATURE_MARGIN / 2 + 8, PreviewTile.FEATURE_MARGIN / 2);
+        assertEquals(4, snowy.length, "a snowy canopy carries a voxel of snow");
+        assertEquals(SNOW_LAYER, snowy[3]);
+        assertEquals(0, v.featureColumn(PreviewTile.FEATURE_MARGIN / 2 + 16, PreviewTile.FEATURE_MARGIN / 2).length);
+        assertEquals(0, v.featureColumn(0, 0).length, "nothing in the margin");
+        // The cheap summary agrees with the full view's where it matters: the canopy raises its chunk.
+        PreviewTile.Summary cheap = t.expandedSummary(1, 2);
+        PreviewTile.Summary full = v.summary();
+        assertTrue(cheap.chunkMax()[0] >= full.chunkMax()[0]);
+        assertEquals(full.chunkMin()[0], cheap.chunkMin()[0]);
+        assertTrue(cheap.chunkMax()[0] > v.sample(4, 4) + 8, "the canopy counts");
+    }
+
+    @Test
+    void levelCanopyAndPassesSurviveEncoding() {
+        PreviewTile t = coarse();
+        t.setCanopy(5, 7, PreviewTile.canopyWord(CANOPY_LEAVES, 12, 6, true));
+        t.setComplete(false);
         ByteWriter out = new ByteWriter(1024);
         t.encode(out);
         PreviewTile back = PreviewTile.decode(new ByteReader().reset(out.array(), 0, out.length()));
-        assertEquals(16, back.grid());
-        assertEquals(16, back.summary().grid());
-        assertEquals(PreviewTile.GRID, new PreviewTile().grid());
+        assertEquals(2, back.level());
+        assertFalse(back.complete());
+        assertFalse(back.summary().complete());
+        assertEquals(t.canopy(5, 7), back.canopy(5, 7));
+        assertEquals(12, PreviewTile.canopyTop(back.canopy(5, 7)));
+        assertEquals(6, PreviewTile.canopyThickness(back.canopy(5, 7)));
+        assertTrue(PreviewTile.canopySnowy(back.canopy(5, 7)));
+        assertEquals(CANOPY_LEAVES, PreviewTile.canopyMaterial(back.canopy(5, 7)));
+        assertEquals(SNOW_LAYER, back.canopySnow());
+        assertEquals(0, back.canopy(6, 7));
+        assertTrue(new PreviewTile().complete());
+        assertEquals(0, new PreviewTile().level());
+    }
+
+    @Test
+    void storeKeysCarryTheLevel() {
+        for (int level : new int[]{0, 2, 15}) {
+            for (int[] p : new int[][]{{0, 0}, {-3, 7}, {58_593, -58_594}, {-1, -1}}) {
+                long key = PreviewStore.key(level, p[0], p[1]);
+                assertEquals(level, PreviewStore.level(key));
+                assertEquals(p[0], PreviewStore.tileX(key));
+                assertEquals(p[1], PreviewStore.tileZ(key));
+                assertTrue(key >= 0);
+            }
+        }
+        assertEquals(PreviewStore.key(0, -3, 7), PreviewStore.key(-3, 7));
+        assertNotEquals(PreviewStore.key(1, 4, 4), PreviewStore.key(0, 4, 4));
+    }
+
+    @Test
+    void theStoreShowsTheFinestTileOverEachPlace() throws IOException {
+        PreviewStore store = new PreviewStore(dir);
+        List<Long> views = new ArrayList<>();
+        List<Long> tiles = new ArrayList<>();
+        store.addListener(views::add);
+        store.addTileListener(tiles::add);
+        // A level-2 tile at (-1, 0) covers level-0 places -4..-1 x 0..3.
+        PreviewTile c = coarse();
+        store.write(2, -1, 0, c);
+        assertEquals(List.of(PreviewStore.key(2, -1, 0)), tiles);
+        assertEquals(16, views.size());
+        assertTrue(views.contains(PreviewStore.key(-4, 3)));
+        assertTrue(store.contains(-1, 3));
+        assertFalse(store.contains(0, 0));
+        assertTrue(store.contains(2, -1, 0));
+        assertFalse(store.contains(0, -1, 3));
+        assertEquals(c.expand(3, 3).sample(7, 9), store.read(-1, 3).sample(7, 9));
+        assertNotNull(store.summary(-1, 3));
+        assertTrue(store.summary(2, -1, 0).complete());
+
+        // A level-0 tile over one of them: only its place's view changes.
+        views.clear();
+        PreviewTile fine = slope();
+        fine.setComplete(false);
+        store.write(-2, 1, fine);
+        assertEquals(List.of(PreviewStore.key(-2, 1)), views);
+        assertEquals(fine.sample(100, 7), store.read(-2, 1).sample(100, 7));
+        assertFalse(store.summary(-2, 1).complete());
+        // The coarse tile written again changes the other fifteen.
+        views.clear();
+        store.write(2, -1, 0, coarse());
+        assertEquals(15, views.size());
+        assertFalse(views.contains(PreviewStore.key(-2, 1)));
+
+        PreviewStore reopened = new PreviewStore(dir);
+        assertEquals(2, reopened.size());
+        assertEquals(fine.sample(100, 7), reopened.read(-2, 1).sample(100, 7));
+        assertEquals(c.expand(0, 0).sample(3, 3), reopened.read(-4, 0).sample(3, 3));
+        assertNotNull(reopened.read(2, -1, 0));
+        assertNotNull(reopened.readFile(2, -1, 0));
+        assertNull(reopened.readFile(-1, 0));
+    }
+
+    @Test
+    void aTerrainPassShowsItsCanopy() throws IOException {
+        PreviewStore store = new PreviewStore(dir);
+        PreviewTile t = slope();
+        t.setCanopy(0, 0, PreviewTile.canopyWord(CANOPY_LEAVES, 6, 2, false));
+        store.write(0, 0, t);
+        assertEquals(2, store.read(0, 0).featureColumn(PreviewTile.FEATURE_MARGIN / 2,
+                PreviewTile.FEATURE_MARGIN / 2).length, "grown into runs for the readers");
+        assertEquals(0, t.featureColumn(PreviewTile.FEATURE_MARGIN / 2, PreviewTile.FEATURE_MARGIN / 2).length,
+                "the writer's tile unchanged");
+        assertTrue(new PreviewStore(dir).read(0, 0).featureColumn(PreviewTile.FEATURE_MARGIN / 2,
+                PreviewTile.FEATURE_MARGIN / 2).length > 0, "and after reopening");
+    }
+
+    @Test
+    void tilesOfTheFormerLayoutAreDropped() throws IOException {
+        java.nio.file.Files.createDirectories(dir);
+        java.nio.file.Files.write(dir.resolve("t.0.0.ffp"), new byte[]{1, 2, 3});
+        PreviewStore store = new PreviewStore(dir);
+        assertEquals(0, store.size());
+        assertFalse(java.nio.file.Files.exists(dir.resolve("t.0.0.ffp")));
     }
 
     private static final int ICE = 8;

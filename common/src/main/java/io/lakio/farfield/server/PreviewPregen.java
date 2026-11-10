@@ -3,6 +3,7 @@ package io.lakio.farfield.server;
 import io.lakio.farfield.Farfield;
 import io.lakio.farfield.core.config.ServerConfig;
 import io.lakio.farfield.core.preview.PregenTasks;
+import io.lakio.farfield.core.preview.PreviewPyramid;
 import io.lakio.farfield.core.preview.PreviewStore;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
@@ -31,9 +32,11 @@ import java.util.function.LongPredicate;
  * players hold them forces that task on until it ends or is paused, for this
  * session only (a restart goes back to the setting), with half of the
  * preview's queue kept for it (the players' tiles took every slot, and a
- * forced task built nothing). Tiles are built at the
- * finest grid, whatever their
- * distance: a player coming near does not build them again. Server thread.
+ * forced task built nothing). A task builds its pyramid first (ADR-126):
+ * the coarsest tiles over its whole radius, then each finer level, the
+ * level-0 tiles with their features last, nearest first in each level;
+ * whatever their distance, so a player coming near builds none again.
+ * Server thread.
  */
 final class PreviewPregen {
 
@@ -50,7 +53,7 @@ final class PreviewPregen {
     private final Path file;
     private final boolean pausesForPlayers;
     private final PregenTasks tasks;
-    private final Map<String, int[][]> order = new HashMap<>();
+    private final Map<String, long[]> order = new HashMap<>();
     private final Map<String, Integer> cursor = new HashMap<>();
     /** Per task, the tiles built when it was last reported and when. */
     private final Map<String, long[]> lastReport = new HashMap<>();
@@ -117,8 +120,10 @@ final class PreviewPregen {
         }
     }
 
-    private int[][] order(PregenTasks.Task t) {
-        return order.computeIfAbsent(t.id(), k -> PregenTasks.tiles(t.centerX(), t.centerZ(), t.radius()));
+    /** A task's tiles by key, in the order it builds them ({@link PregenTasks#pyramid}). */
+    private long[] order(PregenTasks.Task t) {
+        return order.computeIfAbsent(t.id(), k -> PregenTasks.pyramid(t.centerX(), t.centerZ(), t.radius(),
+                PreviewPyramid.LEVELS));
     }
 
     /** An LOD import runs or waits: tasks keep to their near area until it ends. */
@@ -133,9 +138,11 @@ final class PreviewPregen {
         }
     }
 
-    /** Blocks between a task's center and the nearest point of tile (tx, tz). */
-    private static double distance(PregenTasks.Task t, int tx, int tz) {
-        int size = io.lakio.farfield.core.preview.PreviewTile.BLOCKS;
+    /** Blocks between a task's center and the nearest point of a tile, by its key (any level). */
+    private static double distance(PregenTasks.Task t, long key) {
+        int size = PreviewStore.blocks(PreviewStore.level(key));
+        int tx = PreviewStore.tileX(key);
+        int tz = PreviewStore.tileZ(key);
         double dx = Math.max(0, Math.max((double) tx * size - t.centerX(), t.centerX() - ((double) tx + 1) * size));
         double dz = Math.max(0, Math.max((double) tz * size - t.centerZ(), t.centerZ() - ((double) tz + 1) * size));
         return Math.sqrt(dx * dx + dz * dz);
@@ -146,9 +153,9 @@ final class PreviewPregen {
         if (!importing) {
             return false;
         }
-        int[][] tiles = order(t);
+        long[] tiles = order(t);
         int at = cursor.getOrDefault(t.id(), 0);
-        return at < tiles.length && distance(t, tiles[at][0], tiles[at][1]) > NEAR_WHILE_IMPORTING;
+        return at < tiles.length && distance(t, tiles[at]) > NEAR_WHILE_IMPORTING;
     }
 
     /** Whether tasks may run now: some running, and no player holds them. */
@@ -190,9 +197,9 @@ final class PreviewPregen {
             if (!runs(t) || !t.dimension().equals(dimension)) {
                 continue;
             }
-            int[][] tiles = order(t);
+            long[] tiles = order(t);
             int at = cursor.getOrDefault(t.id(), 0);
-            while (at < tiles.length && built.test(PreviewStore.key(tiles[at][0], tiles[at][1]))) {
+            while (at < tiles.length && built.test(tiles[at])) {
                 at++;
             }
             cursor.put(t.id(), at);
@@ -202,10 +209,10 @@ final class PreviewPregen {
             }
             started.putIfAbsent(t.id(), System.nanoTime());
             for (int i = at; i < Math.min(tiles.length, at + LOOK_AHEAD) && out.size() < max; i++) {
-                if (importing && distance(t, tiles[i][0], tiles[i][1]) > NEAR_WHILE_IMPORTING) {
-                    break; // tiles come nearest first: the rest waits for the import's end
+                if (importing && distance(t, tiles[i]) > NEAR_WHILE_IMPORTING) {
+                    break; // tiles come nearest first in a level: the rest waits for the import's end
                 }
-                long key = PreviewStore.key(tiles[i][0], tiles[i][1]);
+                long key = tiles[i];
                 if (!inFlight.contains(key) && !built.test(key)) {
                     out.add(key);
                 }
@@ -231,10 +238,10 @@ final class PreviewPregen {
             if (!runs(t) || !t.dimension().equals(dimension)) {
                 continue;
             }
-            int[][] tiles = order(t);
+            long[] tiles = order(t);
             int done = 0;
-            for (int[] tile : tiles) {
-                done += builtIn.test(PreviewStore.key(tile[0], tile[1])) ? 1 : 0;
+            for (long tile : tiles) {
+                done += builtIn.test(tile) ? 1 : 0;
             }
             long now = System.nanoTime();
             long[] last = lastReport.put(t.id(), new long[]{done, now});
@@ -298,12 +305,12 @@ final class PreviewPregen {
     List<String> list(java.util.function.Function<String, LongPredicate> builtIn) {
         List<String> lines = new ArrayList<>();
         for (PregenTasks.Task t : tasks.tasks()) {
-            int[][] tiles = order(t);
+            long[] tiles = order(t);
             int done = 0;
             LongPredicate built = t.open() ? builtIn.apply(t.dimension()) : null;
             if (built != null) {
-                for (int[] tile : tiles) {
-                    done += built.test(PreviewStore.key(tile[0], tile[1])) ? 1 : 0;
+                for (long tile : tiles) {
+                    done += built.test(tile) ? 1 : 0;
                 }
             }
             String state = t.state().name().toLowerCase(Locale.ROOT);

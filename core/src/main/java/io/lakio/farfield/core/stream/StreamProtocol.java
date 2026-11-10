@@ -28,9 +28,10 @@ public final class StreamProtocol {
      * 6: preview tiles of format 11, the world's own features, ADR-079;
      * 7: tiles of format 12, ADR-080; 8: tiles of format 17, their light
      * sources, ADR-117; 9: tiles of format 18, the lakes the features dig,
-     * ADR-118).
+     * ADR-118; 10: tile keys carry the pyramid's level, tiles of format 19,
+     * ADR-126).
      */
-    public static final int VERSION = 9;
+    public static final int VERSION = 10;
     /** Largest body of one message, under the game's custom payload limits. */
     public static final int MAX_PAYLOAD = 30_000;
 
