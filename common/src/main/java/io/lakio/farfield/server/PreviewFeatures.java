@@ -242,12 +242,17 @@ final class PreviewFeatures {
      * turn features off. {@link #decorate} after it lays nothing again.
      */
     void groundOnly() {
+        groundWindow(0, 0, PreviewTile.CHUNKS);
+    }
+
+    /** {@link #groundOnly} on the {@code n} x {@code n} chunks of the tile from its chunk ({@code lx0}, {@code lz0}). */
+    void groundWindow(int lx0, int lz0, int n) {
         long start = System.nanoTime();
         int chunkX0 = x0 >> 4;
         int chunkZ0 = z0 >> 4;
         BlockState below = state(tile.below());
-        for (int cz = 0; cz < PreviewTile.CHUNKS && surface != null; cz++) {
-            for (int cx = 0; cx < PreviewTile.CHUNKS && surface != null; cx++) {
+        for (int cz = lz0; cz < lz0 + n && surface != null; cz++) {
+            for (int cx = lx0; cx < lx0 + n && surface != null; cx++) {
                 if (cellsRead[cz * PreviewTile.CHUNKS + cx]) {
                     continue;
                 }
@@ -948,7 +953,8 @@ final class PreviewFeatures {
                 runList.add(PreviewTile.featureRun(runY, runLength));
                 runList.add(runMaterial);
             }
-            tile.setFeatureColumn(column % PreviewTile.FEATURE_SIDE, column / PreviewTile.FEATURE_SIDE,
+            // Merged: a quarter built before may have spilled a crown into these columns (ADR-127).
+            tile.mergeFeatureColumn(column % PreviewTile.FEATURE_SIDE, column / PreviewTile.FEATURE_SIDE,
                     runList.toIntArray());
         }
         for (int c = 0; c < plants.length; c++) {
@@ -974,7 +980,7 @@ final class PreviewFeatures {
             pairs[n++] = PreviewTile.lightWord(BlockPos.getX(pos) - x0, BlockPos.getZ(pos) - z0, e.getIntValue());
             pairs[n++] = BlockPos.getY(pos);
         }
-        tile.setLights(pairs);
+        tile.addLights(pairs);
     }
 
     /**
@@ -1017,7 +1023,7 @@ final class PreviewFeatures {
             }
         }
         dug.clear();
-        tile.setPits(entries.toIntArray());
+        tile.addPits(entries.toIntArray());
     }
 
     /** Per chunk and lowest block's material: the columns of plants under the sea and their mean height. */

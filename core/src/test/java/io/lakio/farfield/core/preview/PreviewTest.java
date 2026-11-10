@@ -347,6 +347,81 @@ class PreviewTest {
     }
 
     @Test
+    void aViewTakesEachQuarterFromTheFinestTileWithItBuilt() throws IOException {
+        PreviewStore store = new PreviewStore(dir);
+        PreviewTile c = coarse();
+        store.write(2, 0, 0, c);
+        // Level-0 place (1, 1): quarter 0 alone built fine, 10 blocks above the coarse terrain.
+        PreviewTile fine = c.expand(1, 1);
+        for (int k = 0; k < PreviewTile.SAMPLES; k++) {
+            for (int i = 0; i < PreviewTile.SAMPLES; i++) {
+                fine.setHeight(i, k, fine.sample(i, k) + 10);
+            }
+        }
+        fine.setQuarters(0);
+        fine.setQuarter(0, true);
+        List<Long> views = new ArrayList<>();
+        store.addListener(views::add);
+        store.write(0, 1, 1, fine, 1);
+        assertEquals(List.of(PreviewStore.key(1, 1)), views);
+        PreviewTile v = store.read(1, 1);
+        PreviewTile coarseView = c.expand(1, 1);
+        assertEquals(coarseView.sample(10, 10) + 10, v.sample(10, 10), "quarter 0 from the fine tile");
+        assertEquals(coarseView.sample(100, 10), v.sample(100, 10), "quarter 1 from the coarse one");
+        assertEquals(coarseView.sample(100, 100), v.sample(100, 100));
+        PreviewTile.Summary s = store.summary(1, 1);
+        assertEquals(fine.summary().chunkMin()[0], s.chunkMin()[0]);
+        assertEquals(coarseView.summary().chunkMin()[31], s.chunkMin()[31]);
+
+        // A fine tile alone, half built: no view until every quarter has a tile.
+        PreviewStore lone = new PreviewStore(dir.resolve("lone"));
+        PreviewTile half = slope();
+        half.setQuarters(0);
+        half.setQuarter(0, true);
+        half.setQuarter(1, true);
+        lone.write(0, 7, 7, half, 3);
+        assertFalse(lone.contains(7, 7));
+        assertNull(lone.read(7, 7));
+        assertTrue(lone.contains(0, 7, 7));
+        assertFalse(lone.summary(0, 7, 7).complete());
+        assertTrue(lone.summary(0, 7, 7).quarterComplete(1));
+        assertFalse(lone.summary(0, 7, 7).built(2));
+    }
+
+    @Test
+    void aCoarseQuarterReachesOnlyTheViewsUnderIt() throws IOException {
+        PreviewStore store = new PreviewStore(dir);
+        store.write(2, 0, 0, coarse());
+        List<Long> views = new ArrayList<>();
+        store.addListener(views::add);
+        // Quarter 3 of a level-2 tile: level-0 places 2..3 x 2..3.
+        store.write(2, 0, 0, coarse(), 1 << 3);
+        assertEquals(4, views.size());
+        assertTrue(views.contains(PreviewStore.key(3, 2)));
+        assertFalse(views.contains(PreviewStore.key(1, 1)));
+    }
+
+    @Test
+    void quarterMergesKeepWhatANeighborSpilled() {
+        PreviewTile t = new PreviewTile();
+        t.setFeatureColumn(20, 20, new int[]{PreviewTile.featureRun(40, 3), 5});
+        t.mergeFeatureColumn(20, 20, new int[]{PreviewTile.featureRun(42, 3), 6});
+        int[] runs = t.featureColumn(20, 20);
+        assertEquals(4, runs.length);
+        assertEquals(PreviewTile.featureRun(40, 2), runs[0]);
+        assertEquals(5, runs[1]);
+        assertEquals(PreviewTile.featureRun(42, 3), runs[2]);
+        assertEquals(6, runs[3]);
+        t.setLights(new int[]{PreviewTile.lightWord(3, 4, 7), 70});
+        t.addLights(new int[]{PreviewTile.lightWord(3, 4, 12), 70, PreviewTile.lightWord(9, 9, 3), 64});
+        assertEquals(4, t.lights().length);
+        t.setPits(new int[]{PreviewTile.pitWord(1, 1), 60, 62, 4});
+        t.addPits(new int[]{PreviewTile.pitWord(1, 1), 58, 61, 4, PreviewTile.pitWord(2, 1), 59, 59, -1});
+        assertEquals(2 * PreviewTile.PIT_INTS, t.pits().length);
+        assertEquals(58, t.pits()[t.pit(1, 1) + 1]);
+    }
+
+    @Test
     void tilesOfTheFormerLayoutAreDropped() throws IOException {
         java.nio.file.Files.createDirectories(dir);
         java.nio.file.Files.write(dir.resolve("t.0.0.ffp"), new byte[]{1, 2, 3});

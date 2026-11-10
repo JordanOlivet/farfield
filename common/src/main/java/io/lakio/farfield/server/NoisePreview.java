@@ -4,7 +4,6 @@ import io.lakio.farfield.Farfield;
 import io.lakio.farfield.core.preview.PreviewPyramid;
 import io.lakio.farfield.core.preview.PreviewStore;
 import io.lakio.farfield.core.preview.PreviewTile;
-import io.lakio.farfield.core.select.WantOrder;
 import io.lakio.farfield.core.world.LodWorld;
 import io.lakio.farfield.lod.BlockKeys;
 import io.lakio.farfield.lod.LodLevel;
@@ -149,8 +148,15 @@ final class NoisePreview {
         /** Where the last tile's feature time went (the spike's report). */
         volatile String lastFeatureTiming = "";
         volatile LodWorld world;
-        /** Tiles stored or built, by key: whether built to their end ({@link PreviewTile#complete()}). */
-        final Map<Long, Boolean> done = new ConcurrentHashMap<>();
+        /** Tiles stored or built, by key: their quarters built and complete ({@link PreviewTile#quarters()}). */
+        final Map<Long, Integer> done = new ConcurrentHashMap<>();
+        /** Coarse quarters (tile key | quarter << 62) built without the canopy of these biomes, waiting for their sample. */
+        final Map<Long, int[]> pending = new ConcurrentHashMap<>();
+        /** Biomes whose sample is queued or running, and the queue: {biome, x, z}. */
+        final Set<Integer> sampling = ConcurrentHashMap.newKeySet();
+        final java.util.concurrent.ConcurrentLinkedQueue<int[]> sampleQueue =
+                new java.util.concurrent.ConcurrentLinkedQueue<>();
+        final AtomicInteger samplesInFlight = new AtomicInteger();
         /** Coarse tiles built and biomes sampled since the last report. */
         final AtomicInteger coarseBuilt = new AtomicInteger();
         final AtomicInteger biomesSampled = new AtomicInteger();
@@ -310,18 +316,23 @@ final class NoisePreview {
         return null;
     }
 
-    /** Whether a tile (by its key, any level) is stored and built to its end: a level-0 one with its features. */
+    /** Whether a tile (by its key, any level) is stored with every quarter built and complete. */
     private static boolean built(Dimension d, long key) {
-        Boolean built = d.done.get(key);
-        if (built == null) {
+        return quarters(d, key) == PreviewTile.ALL_QUARTERS;
+    }
+
+    /** A tile's quarters built and complete ({@link PreviewTile#quarters()}), 0 when not stored. */
+    private static int quarters(Dimension d, long key) {
+        Integer quarters = d.done.get(key);
+        if (quarters == null) {
             PreviewTile.Summary s = d.world.preview().summary(PreviewStore.level(key), PreviewStore.tileX(key),
                     PreviewStore.tileZ(key));
+            quarters = s == null ? 0 : s.quarters();
             if (s != null) {
-                built = s.complete();
-                d.done.put(key, built);
+                d.done.put(key, quarters);
             }
         }
-        return Boolean.TRUE.equals(built);
+        return quarters;
     }
 
     private static Optional<Dimension> open(ServerLevel level) {
@@ -336,11 +347,19 @@ final class NoisePreview {
         return Optional.of(new Dimension(level, generator));
     }
 
+    /** Blocks a finer level's quarters wait behind the coarser front, per level (ADR-127). */
+    private static final double LEVEL_LAG = PreviewPyramid.LEVEL_LAG;
+    /** Blocks a coarse quarter waiting for its canopy waits behind everything else. */
+    private static final double REFINE_LAG = 8192;
     /**
-     * Submits the missing tiles of the pyramid around the players (ADR-126):
-     * the coarsest level first, then each finer one; within a level the
-     * nearest, those behind counted farther ({@link WantOrder#score},
-     * ADR-056); up to {@link #MAX_IN_FLIGHT} (or two per thread) at a time.
+     * Submits the quarters of the pyramid missing around the players
+     * (ADR-126, ADR-127), in rings: by their distance alone (a pure circle:
+     * counting those behind farther filled the view no sooner, ADR-127), a
+     * finer level's {@link #LEVEL_LAG} blocks behind the coarser one, so a
+     * coarse disc grows from the player and the detail follows it; one
+     * quarter of a tile at a time; up to
+     * {@link #MAX_IN_FLIGHT} (or two per thread) at a time, the biomes'
+     * samples given part of the threads first.
      */
     private void schedule(Dimension d, List<ServerPlayer> players, boolean pregenHere) {
         List<long[]> candidates = new ArrayList<>();
@@ -355,27 +374,39 @@ final class NoisePreview {
                 }
                 int range = PreviewPyramid.range(level, features);
                 int size = PreviewStore.blocks(level);
-                int x0 = Math.floorDiv((int) Math.floor(p.getX() - range), size);
-                int x1 = Math.floorDiv((int) Math.floor(p.getX() + range), size);
-                int z0 = Math.floorDiv((int) Math.floor(p.getZ() - range), size);
-                int z1 = Math.floorDiv((int) Math.floor(p.getZ() + range), size);
+                int quarter = size / 2;
+                int x0 = Math.floorDiv((int) Math.floor(p.getX() - range), quarter);
+                int x1 = Math.floorDiv((int) Math.floor(p.getX() + range), quarter);
+                int z0 = Math.floorDiv((int) Math.floor(p.getZ() - range), quarter);
+                int z1 = Math.floorDiv((int) Math.floor(p.getZ() + range), quarter);
                 for (int x = x0; x <= x1; x++) {
                     for (int z = z0; z <= z1; z++) {
-                        double dx = Math.max(0, Math.max(x * (double) size - p.getX(), p.getX() - (x + 1) * (double) size));
-                        double dz = Math.max(0, Math.max(z * (double) size - p.getZ(), p.getZ() - (z + 1) * (double) size));
+                        double dx = Math.max(0, Math.max(x * (double) quarter - p.getX(),
+                                p.getX() - (x + 1) * (double) quarter));
+                        double dz = Math.max(0, Math.max(z * (double) quarter - p.getZ(),
+                                p.getZ() - (z + 1) * (double) quarter));
                         double distance = Math.sqrt(dx * dx + dz * dz);
-                        long tile = PreviewStore.key(level, x, z);
-                        if (distance > range || !seen.add(tile) || built(d, tile)) {
+                        if (distance > range) {
                             continue;
                         }
-                        double cx = (x + 0.5) * size - p.getX();
-                        double cz = (z + 0.5) * size - p.getZ();
+                        long tile = PreviewStore.key(level, Math.floorDiv(x, 2), Math.floorDiv(z, 2));
+                        int q = Math.floorMod(z, 2) * 2 + Math.floorMod(x, 2);
+                        int quarters = quarters(d, tile);
+                        boolean refine = (quarters >> q & 1) != 0;
+                        if (refine && ((quarters >> (q + 4) & 1) != 0 || !ready(d, tile, q))
+                                || !seen.add(tile | (long) q << 62)) {
+                            continue;
+                        }
+                        double cx = (x + 0.5) * quarter - p.getX();
+                        double cz = (z + 0.5) * quarter - p.getZ();
                         double centerDistance = Math.sqrt(cx * cx + cz * cz);
-                        // Looking straight up or down, or standing in the tile: no side is behind.
+                        // Looking straight up or down, or standing in the quarter: no side is behind.
                         double facing = lookLength < 1e-3 || centerDistance < 1 ? 1
                                 : (look.x * cx + look.z * cz) / (lookLength * centerDistance);
-                        candidates.add(new long[]{tile, (long) WantOrder.score(distance, facing),
-                                distance <= NEAR ? 1 : 0, facing >= FRONT_COS ? 1 : 0});
+                        double score = distance
+                                + LEVEL_LAG * (PreviewPyramid.LEVELS - 1 - level) + (refine ? REFINE_LAG : 0);
+                        candidates.add(new long[]{tile, (long) score, distance <= NEAR ? 1 : 0,
+                                facing >= FRONT_COS ? 1 : 0, q});
                     }
                 }
             }
@@ -384,20 +415,29 @@ final class NoisePreview {
             d.left = candidates.size();
             trackFill(d, players.get(0), candidates);
         }
-        candidates.sort((a, b) -> PreviewStore.level(a[0]) != PreviewStore.level(b[0])
-                ? Integer.compare(PreviewStore.level(b[0]), PreviewStore.level(a[0])) : Long.compare(a[1], b[1]));
+        candidates.sort((a, b) -> Long.compare(a[1], b[1]));
         int limit = Math.max(MAX_IN_FLIGHT, 2 * pool.getCorePoolSize());
+        // The biomes' samples first, on part of the threads: the canopy of the coarse quarters waits for them.
+        int sampleSlots = Math.max(1, pool.getCorePoolSize() / 2);
+        int[] request;
+        while (d.samplesInFlight.get() < sampleSlots && d.inFlight.size() + d.samplesInFlight.get() < limit
+                && (request = d.sampleQueue.poll()) != null) {
+            d.samplesInFlight.incrementAndGet();
+            int[] r = request;
+            pool.execute(() -> runSample(d, r));
+        }
         // A task an operator forced while players are online keeps half the queue: the players'
         // tiles alone filled it, and the forced task built nothing (2026-11-09).
         int playerLimit = pregenHere && pregen.forcedIn(d.key.location().toString()) ? limit - Math.max(1, limit / 2)
                 : limit;
         for (long[] c : candidates) {
-            if (d.inFlight.size() >= playerLimit) {
+            if (d.inFlight.size() + d.samplesInFlight.get() >= playerLimit) {
                 break;
             }
             long tile = c[0];
+            int q = (int) c[4];
             if (d.inFlight.add(tile)) {
-                pool.execute(() -> build(d, tile));
+                pool.execute(() -> build(d, tile, q));
             }
         }
         // Then the pregeneration's tiles, its pyramid first, in what the players leave free.
@@ -405,7 +445,7 @@ final class NoisePreview {
             for (long tile : pregen.next(d.key.location().toString(), t -> built(d, t), d.inFlight,
                     limit - d.inFlight.size())) {
                 if (d.inFlight.add(tile)) {
-                    pool.execute(() -> build(d, tile));
+                    pool.execute(() -> build(d, tile, -1));
                 }
             }
         }
@@ -454,7 +494,7 @@ final class NoisePreview {
 
     private static void logFill(Dimension d, long now, String end) {
         if (RenderSettings.performanceLogs()) {
-            Farfield.LOG.info("Noise preview fill after {}: {} tiles to build; within {} blocks done at {}, in front at {},"
+            Farfield.LOG.info("Noise preview fill after {}: {} quarters to build; within {} blocks done at {}, in front at {},"
                             + " {} at {} s", d.fillCause, d.fillTiles, (int) NEAR, seconds(d, d.nearDone),
                     seconds(d, d.frontDone), end, String.format("%.1f", (now - d.fillStart) / 1e9));
         }
@@ -485,7 +525,7 @@ final class NoisePreview {
                         .append(d.stageNanos.getAndSet(i, 0) / 1_000_000 / built);
             }
             if (RenderSettings.performanceLogs()) {
-                Farfield.LOG.info("Noise preview of {}: {} tiles built in the last minute, {} of them coarse ({} ms"
+                Farfield.LOG.info("Noise preview of {}: {} quarters built in the last minute, {} of them coarse ({} ms"
                         + " each: {}; {} villages, {} features failed, {} light sources, {} dug columns, {} biomes"
                         + " sampled, {} known), {} left within {} blocks",
                         d.key.location(), built, d.coarseBuilt.getAndSet(0), nanos / 1_000_000 / built, stages,
@@ -519,13 +559,30 @@ final class NoisePreview {
             d.stageNanos.set(i, 0);
         }
         d.featureFailures.set(0);
-        build(d, PreviewStore.key(tileX, tileZ));
+        // The four quarters on a fresh tile, then the tile written once.
+        StringBuilder timing = new StringBuilder();
+        PreviewTile tile = new PreviewTile();
+        tile.setQuarters(0);
+        try {
+            for (int q = 0; q < 4; q++) {
+                if (buildFine(d, tileX, tileZ, q, tile, System.nanoTime()) < 0) {
+                    return null;
+                }
+                timing.append(q == 0 ? "" : "; ").append("quarter ").append(q).append(": ").append(d.lastFeatureTiming);
+            }
+            long t = System.nanoTime();
+            world.preview().write(0, tileX, tileZ, tile);
+            stage(d, WRITE, t);
+        } catch (IOException | RuntimeException e) {
+            Farfield.LOG.warn("Noise preview of {}: the spike's tile {}, {} failed", d.key.location(), tileX, tileZ, e);
+            return null;
+        }
         long[] out = new long[STAGES.length + 1];
         for (int i = 0; i < STAGES.length; i++) {
             out[i] = d.stageNanos.getAndSet(i, 0);
         }
         out[STAGES.length] = d.featureFailures.getAndSet(0);
-        lastTiming = d.lastFeatureTiming;
+        lastTiming = timing.toString();
         return out;
     }
 
@@ -660,16 +717,21 @@ final class NoisePreview {
         return now;
     }
 
-    /** Builds and stores one tile of any level. */
-    private void build(Dimension d, long key) {
+    /** Builds and stores a quarter of a tile (by its key, any level), the next its tile needs when {@code q} is -1. */
+    private void build(Dimension d, long key, int q) {
         int level = PreviewStore.level(key);
         int tileX = PreviewStore.tileX(key);
         int tileZ = PreviewStore.tileZ(key);
         long start = System.nanoTime();
         try {
-            boolean done = level == 0 ? buildFine(d, tileX, tileZ, start) : buildCoarse(d, level, tileX, tileZ, start);
-            if (done) {
-                d.done.put(key, true);
+            int quarter = q >= 0 ? q : nextQuarter(d, key);
+            if (quarter < 0) {
+                return;
+            }
+            int quarters = level == 0 ? buildFine(d, tileX, tileZ, quarter, null, start)
+                    : buildCoarse(d, level, tileX, tileZ, quarter, start);
+            if (quarters >= 0) {
+                d.done.put(key, quarters);
                 d.built.incrementAndGet();
                 d.coarseBuilt.addAndGet(level > 0 ? 1 : 0);
                 d.builtNanos.addAndGet(System.nanoTime() - start);
@@ -684,21 +746,71 @@ final class NoisePreview {
         }
     }
 
+    /** The first quarter of a tile to build: not built, or coarse and incomplete with its biomes measured now; -1 for none. */
+    private static int nextQuarter(Dimension d, long key) {
+        int quarters = quarters(d, key);
+        for (int q = 0; q < 4; q++) {
+            if ((quarters >> q & 1) == 0 || (quarters >> (q + 4) & 1) == 0 && ready(d, key, q)) {
+                return q;
+            }
+        }
+        return -1;
+    }
+
+    /** Whether an incomplete coarse quarter may be built again: none of its biomes waits for a sample. */
+    private static boolean ready(Dimension d, long key, int q) {
+        int[] biomes = d.pending.get(key | (long) q << 62);
+        if (biomes == null) {
+            return true;
+        }
+        for (int b : biomes) {
+            if (d.sampling.contains(b)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Whether sample (i, k) lies in a built quarter of {@code built} (bits 0 to 3): it is kept. */
+    private static boolean kept(int built, int i, int k) {
+        int half = PreviewTile.QUARTER_SAMPLES;
+        for (int qz = k < half ? 0 : 1; qz <= (k <= half ? 0 : 1); qz++) {
+            for (int qx = i < half ? 0 : 1; qx <= (i <= half ? 0 : 1); qx++) {
+                if ((built >> (qz * 2 + qx) & 1) != 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** Whether cell (cx, cz) lies in a built quarter of {@code built}. */
+    private static boolean cellKept(int built, int cx, int cz) {
+        int half = PreviewTile.QUARTER_SAMPLES;
+        return (built >> ((cz < half ? 0 : 2) + (cx < half ? 0 : 1)) & 1) != 0;
+    }
+
     /**
-     * The surface of a tile's samples, {@code spacing} blocks apart from its
-     * corner (x0, z0), each searched from its neighbor's height; false when
-     * the preview stopped meanwhile.
+     * The surface of a tile's samples [i0, i1] x [k0, k1], {@code spacing}
+     * blocks apart from its corner (x0, z0), each searched from its
+     * neighbor's height; the samples of the quarters in {@code built} are
+     * kept. False when the preview stopped meanwhile.
      */
-    private boolean heights(Dimension d, PreviewTile tile, int x0, int z0, int spacing) {
+    private boolean heights(Dimension d, PreviewTile tile, int x0, int z0, int spacing, int i0, int i1, int k0,
+                            int k1, int built) {
         int previous = UNKNOWN;
-        for (int k = 0; k < PreviewTile.SAMPLES; k++) {
+        for (int k = k0; k <= k1; k++) {
             // Each row starts from the one above: neighbors are seeds, not results.
-            int seed = k == 0 ? UNKNOWN : tile.sample(0, k - 1);
-            for (int i = 0; i < PreviewTile.SAMPLES; i++) {
+            int seed = k > k0 || k > 0 && kept(built, i0, k - 1) ? tile.sample(i0, k - 1) : UNKNOWN;
+            for (int i = i0; i <= i1; i++) {
                 if (stopped) {
                     return false;
                 }
-                int h = surface(d, x0 + i * spacing, z0 + k * spacing, i == 0 ? seed : previous);
+                if (kept(built, i, k)) {
+                    previous = tile.sample(i, k);
+                    continue;
+                }
+                int h = surface(d, x0 + i * spacing, z0 + k * spacing, i == i0 ? seed : previous);
                 tile.setHeight(i, k, h);
                 previous = h;
             }
@@ -707,18 +819,22 @@ final class NoisePreview {
     }
 
     /**
-     * Sets a tile's cells from its samples and biomes: the top and filler
-     * blocks (from the biome's measured ground when {@code profiles} is
-     * given and knows it, else guessed), the icebergs, the frozen sea; then
-     * the tile's ground, sea and ice. Returns the cells icebergs took.
+     * Sets a tile's cells [c0x, c1x) x [c0z, c1z] (those of built quarters
+     * kept) from its samples and biomes: the top and filler blocks (from the
+     * biome's measured ground when {@code profiles} is given and knows it,
+     * else guessed), the icebergs, the frozen sea; then the tile's ground,
+     * sea and ice. Returns the cells icebergs took.
      */
     private static boolean[] cells(Dimension d, PreviewTile tile, int x0, int z0, int spacing, Materials m,
                                    Holder<Biome>[] chunkBiomes, boolean[] icebergs, Holder<Biome>[] seaBiomes,
-                                   PreviewProfiles profiles) {
+                                   PreviewProfiles profiles, int c0x, int c1x, int c0z, int c1z, int built) {
         boolean[] icebergCells = new boolean[PreviewTile.CELLS * PreviewTile.CELLS];
         int cliff = CLIFF_RISE * spacing / PreviewTile.GRID;
-        for (int cz = 0; cz < PreviewTile.CELLS; cz++) {
-            for (int cx = 0; cx < PreviewTile.CELLS; cx++) {
+        for (int cz = c0z; cz < c1z; cz++) {
+            for (int cx = c0x; cx < c1x; cx++) {
+                if (cellKept(built, cx, cz)) {
+                    continue;
+                }
                 int h = Math.max(Math.max(tile.sample(cx, cz), tile.sample(cx + 1, cz)),
                         Math.max(tile.sample(cx, cz + 1), tile.sample(cx + 1, cz + 1)));
                 int low = Math.min(Math.min(tile.sample(cx, cz), tile.sample(cx + 1, cz)),
@@ -769,133 +885,183 @@ final class NoisePreview {
     }
 
     /**
-     * Builds a level-0 tile and stores it: its terrain (heights, the surface
-     * rules' ground, villages, a canopy and plants from the profiles) first,
-     * then, unless the settings turn them off, again with the world's own
-     * features. False when the preview stopped meanwhile.
+     * Builds a quarter of a level-0 tile with the world's own features
+     * (unless the settings turn them off) and stores the tile (ADR-127): its
+     * samples, cells and chunks, and those a chunk around inside the tile,
+     * where the features spill over; the quarters built before kept. On
+     * {@code base} (a fresh tile) instead of the stored one when given.
+     * Returns the tile's quarters, or -1 when the preview stopped meanwhile.
      */
-    private boolean buildFine(Dimension d, int tileX, int tileZ, long start) throws IOException {
+    private int buildFine(Dimension d, int tileX, int tileZ, int q, PreviewTile base, long start) throws IOException {
         LodWorld world = d.world;
-        PreviewTile tile = new PreviewTile();
+        PreviewTile tile = base != null ? base : world.preview().load(0, tileX, tileZ);
+        if (tile == null) {
+            tile = new PreviewTile();
+            tile.setQuarters(0);
+        }
+        int built = tile.quarters() & 0xF & ~(1 << q);
+        int half = PreviewTile.QUARTER_SAMPLES;
+        int qx = q & 1;
+        int qz = q >> 1;
+        int i0 = Math.max(0, qx * half - 4);
+        int i1 = Math.min(PreviewTile.SAMPLES - 1, qx * half + half + 4);
+        int k0 = Math.max(0, qz * half - 4);
+        int k1 = Math.min(PreviewTile.SAMPLES - 1, qz * half + half + 4);
         int x0 = tileX * TILE;
         int z0 = tileZ * TILE;
-        if (!heights(d, tile, x0, z0, PreviewTile.GRID)) {
-            return false;
+        if (!heights(d, tile, x0, z0, PreviewTile.GRID, i0, i1, k0, k1, built)) {
+            return -1;
         }
         // Biomes at the sea's top by quart, shared by the icebergs (samples) and the frozen cells.
         @SuppressWarnings("unchecked")
         Holder<Biome>[] seaBiomes = new Holder[PreviewTile.SAMPLES * PreviewTile.SAMPLES];
-        boolean[] icebergs = icebergs(d, tile, x0, z0, PreviewTile.GRID, seaBiomes);
+        boolean[] icebergs = icebergs(d, tile, x0, z0, PreviewTile.GRID, seaBiomes, i0, i1, k0, k1, built);
         long t = stage(d, HEIGHTS, start);
         Materials m = new Materials(world, d);
-        Holder<Biome>[] chunkBiomes = biomes(d, tile, x0, z0, 0, world);
+        Holder<Biome>[] chunkBiomes = biomes(d, tile, x0, z0, 0, world, i0 / 4, (i1 + 3) / 4, k0 / 4, (k1 + 3) / 4);
         t = stage(d, BIOMES, t);
-        boolean[] icebergCells = cells(d, tile, x0, z0, PreviewTile.GRID, m, chunkBiomes, icebergs, seaBiomes, null);
+        boolean[] icebergCells = cells(d, tile, x0, z0, PreviewTile.GRID, m, chunkBiomes, icebergs, seaBiomes, null,
+                i0, i1, k0, k1, built);
         t = stage(d, CELLS, t);
         if (stopped) {
-            return false;
+            return -1;
         }
-        List<PreviewVillages.Village> villages = villages(d, tile, x0, z0, m);
+        int bx0 = x0 + qx * TILE / 2;
+        int bz0 = z0 + qz * TILE / 2;
+        List<PreviewVillages.Village> villages = villages(d, tile, x0, z0, m, bx0, bz0, bx0 + TILE / 2,
+                bz0 + TILE / 2, x0 + i0 * PreviewTile.GRID, z0 + k0 * PreviewTile.GRID, x0 + i1 * PreviewTile.GRID,
+                z0 + k1 * PreviewTile.GRID);
         t = stage(d, VILLAGES, t);
         io.lakio.farfield.core.config.ServerConfig settings = StreamServer.settings();
         PreviewFeatures features = new PreviewFeatures(d.level, d.biomes, d.columnSampler.get(), d.fluid, d.seaLevel,
                 d.world, settings, tile, tileX, tileZ, (x, z) -> inVillage(villages, x, z), icebergCells);
-        features.groundOnly();
+        int lx0 = qx * PreviewTile.CHUNKS / 2;
+        int lz0 = qz * PreviewTile.CHUNKS / 2;
+        features.groundWindow(lx0, lz0, PreviewTile.CHUNKS / 2);
+        t = stage(d, GROUND, t);
         boolean grow = settings.previewFeatures();
         if (grow) {
-            profileCover(d, tile, x0, z0, m, icebergCells);
+            features.decorateWindow(lx0, lz0, PreviewTile.CHUNKS / 2);
+            d.featureFailures.addAndGet(features.failures());
+            t = stage(d, FEATURES, t);
         }
-        tile.setComplete(!grow);
-        t = stage(d, GROUND, t);
+        d.lastFeatureTiming = features.timing();
+        tile.setQuarter(q, true);
         if (stopped) {
-            return false; // the stores close next
+            return -1; // the stores close next
         }
-        world.preview().write(tileX, tileZ, tile);
-        t = stage(d, WRITE, t);
-        if (!grow) {
-            d.lastFeatureTiming = features.timing();
-            return true;
+        if (base == null) {
+            world.preview().write(0, tileX, tileZ, tile, 1 << q);
         }
-        tile.clearCanopy();
-        tile.clearPlants();
-        features.decorate();
-        d.featureFailures.addAndGet(features.failures());
+        stage(d, WRITE, t);
         d.lightSources.addAndGet(tile.lights().length / 2);
         d.dugColumns.addAndGet(tile.pits().length / PreviewTile.PIT_INTS);
-        d.lastFeatureTiming = features.timing();
-        tile.setComplete(true);
-        t = stage(d, FEATURES, t);
-        if (stopped) {
-            return false;
+        if (grow) {
+            d.profiles().record(tile, lx0, lz0, PreviewTile.CHUNKS / 2);
         }
-        world.preview().write(tileX, tileZ, tile);
-        stage(d, WRITE, t);
-        d.profiles().record(tile, 0, 0, PreviewTile.CHUNKS);
-        return true;
+        return tile.quarters();
     }
 
     /**
-     * Builds a coarse tile of the pyramid and stores it (ADR-126): the same
-     * samples {@code 4 << level} blocks apart, the biomes not measured yet
-     * sampled first, then the ground, plants and canopy from what the
-     * features grow in each biome. False when the preview stopped meanwhile.
+     * Builds a quarter of a coarse tile of the pyramid and stores the tile
+     * (ADR-126, ADR-127): its samples {@code 4 << level} blocks apart, then
+     * the ground, plants and canopy from what the features grow in each
+     * biome. A biome not measured yet goes to the samples' queue and the
+     * quarter stays incomplete, built again once it is measured. Returns the
+     * tile's quarters, or -1 when the preview stopped meanwhile.
      */
-    private boolean buildCoarse(Dimension d, int level, int tileX, int tileZ, long start) throws IOException {
+    private int buildCoarse(Dimension d, int level, int tileX, int tileZ, int q, long start) throws IOException {
         LodWorld world = d.world;
-        PreviewTile tile = new PreviewTile();
-        tile.setLevel(level);
+        PreviewTile tile = world.preview().load(level, tileX, tileZ);
+        if (tile == null) {
+            tile = new PreviewTile();
+            tile.setLevel(level);
+            tile.setQuarters(0);
+        }
+        int built = tile.quarters() & 0xF & ~(1 << q);
+        int half = PreviewTile.QUARTER_SAMPLES;
+        int i0 = (q & 1) * half;
+        int k0 = (q >> 1) * half;
         int spacing = PreviewTile.GRID << level;
         int x0 = tileX * PreviewStore.blocks(level);
         int z0 = tileZ * PreviewStore.blocks(level);
-        if (!heights(d, tile, x0, z0, spacing)) {
-            return false;
+        if (!heights(d, tile, x0, z0, spacing, i0, i0 + half, k0, k0 + half, built)) {
+            return -1;
         }
         @SuppressWarnings("unchecked")
         Holder<Biome>[] seaBiomes = new Holder[PreviewTile.SAMPLES * PreviewTile.SAMPLES];
-        boolean[] icebergs = icebergs(d, tile, x0, z0, spacing, seaBiomes);
+        boolean[] icebergs = icebergs(d, tile, x0, z0, spacing, seaBiomes, i0, i0 + half, k0, k0 + half, built);
         long t = stage(d, HEIGHTS, start);
         Materials m = new Materials(world, d);
-        Holder<Biome>[] chunkBiomes = biomes(d, tile, x0, z0, level, world);
+        int ch0x = i0 / 4;
+        int ch0z = k0 / 4;
+        int chunks = PreviewTile.CHUNKS / 2;
+        Holder<Biome>[] chunkBiomes = biomes(d, tile, x0, z0, level, world, ch0x, ch0x + chunks, ch0z, ch0z + chunks);
         t = stage(d, BIOMES, t);
         boolean grow = StreamServer.settings().previewFeatures();
+        int[] waiting = grow ? queueSamples(d, tile, x0, z0, level, ch0x, ch0z, chunks) : new int[0];
+        boolean[] icebergCells = cells(d, tile, x0, z0, spacing, m, chunkBiomes, icebergs, seaBiomes, d.profiles(),
+                i0, i0 + half, k0, k0 + half, built);
         if (grow) {
-            sampleBiomes(d, tile, chunkBiomes, x0, z0, level, m);
-            t = stage(d, FEATURES, t);
-        }
-        if (stopped) {
-            return false;
-        }
-        boolean[] icebergCells = cells(d, tile, x0, z0, spacing, m, chunkBiomes, icebergs, seaBiomes, d.profiles());
-        if (grow) {
-            profileCover(d, tile, x0, z0, m, icebergCells);
+            profileCover(d, tile, x0, z0, m, icebergCells, ch0x, ch0z, chunks);
         }
         t = stage(d, CELLS, t);
-        if (stopped) {
-            return false;
+        tile.setQuarter(q, waiting.length == 0);
+        long pendingKey = PreviewStore.key(level, tileX, tileZ) | (long) q << 62;
+        if (waiting.length == 0) {
+            d.pending.remove(pendingKey);
+        } else {
+            d.pending.put(pendingKey, waiting);
         }
-        world.preview().write(level, tileX, tileZ, tile);
+        if (stopped) {
+            return -1;
+        }
+        world.preview().write(level, tileX, tileZ, tile, 1 << q);
         stage(d, WRITE, t);
-        return true;
+        return tile.quarters();
     }
 
     /**
-     * Samples the biomes of a coarse tile its profiles do not know yet: for
-     * each, a few chunks where its first coarse chunk lies are decorated in
-     * the stand-in world ({@link #sample}), once or twice a biome.
+     * Queues a sample of each biome of a coarse quarter's chunks its profiles
+     * do not know yet (once or twice a biome, where its first coarse chunk
+     * lies); returns the biomes still waiting for one.
      */
-    private void sampleBiomes(Dimension d, PreviewTile tile, Holder<Biome>[] chunkBiomes, int x0, int z0, int level,
-                              Materials m) {
+    private static int[] queueSamples(Dimension d, PreviewTile tile, int x0, int z0, int level, int ch0x, int ch0z,
+                                      int chunks) {
         PreviewProfiles profiles = d.profiles();
-        Set<Integer> asked = new HashSet<>();
-        for (int c = 0; c < chunkBiomes.length && !stopped; c++) {
-            int id = tile.biome(c % PreviewTile.CHUNKS, c / PreviewTile.CHUNKS);
-            if (id < 0 || !asked.add(id) || profiles.known(id) || !profiles.takeSample(id)) {
-                continue;
+        Set<Integer> seen = new HashSet<>();
+        List<Integer> waiting = new ArrayList<>();
+        for (int cz = ch0z; cz < ch0z + chunks; cz++) {
+            for (int cx = ch0x; cx < ch0x + chunks; cx++) {
+                int id = tile.biome(cx, cz);
+                if (id < 0 || !seen.add(id) || profiles.known(id)) {
+                    continue;
+                }
+                if (!d.sampling.contains(id) && profiles.takeSample(id)) {
+                    d.sampling.add(id);
+                    d.sampleQueue.add(new int[]{id, x0 + ((cx * 16 + 8) << level), z0 + ((cz * 16 + 8) << level)});
+                }
+                if (d.sampling.contains(id)) {
+                    waiting.add(id);
+                }
             }
-            int bx = x0 + ((c % PreviewTile.CHUNKS * 16 + 8) << level);
-            int bz = z0 + ((c / PreviewTile.CHUNKS * 16 + 8) << level);
-            sample(d, bx, bz, m);
+        }
+        return waiting.stream().mapToInt(Integer::intValue).toArray();
+    }
+
+    /** Runs one queued biome sample ({@link #sample}); then the biome waits no more. */
+    private void runSample(Dimension d, int[] request) {
+        try {
+            sample(d, request[1], request[2], new Materials(d.world, d));
             d.biomesSampled.incrementAndGet();
+        } catch (RuntimeException e) {
+            if (!stopped) {
+                Farfield.LOG.warn("Noise preview of {}: a biome's sample at {}, {} failed", d.key.location(),
+                        request[1], request[2], e);
+            }
+        } finally {
+            d.sampling.remove(request[0]);
+            d.samplesInFlight.decrementAndGet();
         }
     }
 
@@ -918,17 +1084,8 @@ final class NoisePreview {
         int i1 = (lx + window) * 4;
         int k0 = lz * 4;
         int k1 = (lz + window) * 4;
-        int previous = UNKNOWN;
-        for (int k = k0; k <= k1; k++) {
-            int seed = k == k0 ? UNKNOWN : tile.sample(i0, k - 1);
-            for (int i = i0; i <= i1; i++) {
-                if (stopped) {
-                    return;
-                }
-                int h = surface(d, x0 + i * PreviewTile.GRID, z0 + k * PreviewTile.GRID, i == i0 ? seed : previous);
-                tile.setHeight(i, k, h);
-                previous = h;
-            }
+        if (!heights(d, tile, x0, z0, PreviewTile.GRID, i0, i1, k0, k1, 0)) {
+            return;
         }
         // Outside the window, the window's edge: a stand-in the features reach past it stands on that.
         for (int k = 0; k < PreviewTile.SAMPLES; k++) {
@@ -938,21 +1095,8 @@ final class NoisePreview {
                 }
             }
         }
-        @SuppressWarnings("unchecked")
-        Holder<Biome>[] chunkBiomes = new Holder[PreviewTile.CHUNKS * PreviewTile.CHUNKS];
-        Holder<Biome> fallback = null;
-        for (int cz = lz; cz < lz + window; cz++) {
-            for (int cx = lx; cx < lx + window; cx++) {
-                int x = x0 + cx * 16 + 8;
-                int z = z0 + cz * 16 + 8;
-                Holder<Biome> biome = d.biomes.getNoiseBiome(QuartPos.fromBlock(x),
-                        QuartPos.fromBlock(tile.sample(cx * 4 + 2, cz * 4 + 2)), QuartPos.fromBlock(z),
-                        d.columnSampler.get());
-                chunkBiomes[cz * PreviewTile.CHUNKS + cx] = biome;
-                tile.setBiome(cx, cz, d.world.biomes().id(BlockKeys.key(biome)));
-                fallback = fallback == null ? biome : fallback;
-            }
-        }
+        Holder<Biome>[] chunkBiomes = biomes(d, tile, x0, z0, 0, d.world, lx, lx + window, lz, lz + window);
+        Holder<Biome> fallback = chunkBiomes[lz * PreviewTile.CHUNKS + lx];
         for (int c = 0; c < chunkBiomes.length; c++) {
             if (chunkBiomes[c] == null) {
                 chunkBiomes[c] = fallback;
@@ -962,7 +1106,7 @@ final class NoisePreview {
         @SuppressWarnings("unchecked")
         Holder<Biome>[] seaBiomes = new Holder[PreviewTile.SAMPLES * PreviewTile.SAMPLES];
         cells(d, tile, x0, z0, PreviewTile.GRID, m, chunkBiomes, new boolean[PreviewTile.SAMPLES * PreviewTile.SAMPLES],
-                seaBiomes, null);
+                seaBiomes, null, i0, i1, k0, k1, 0);
         PreviewFeatures features = new PreviewFeatures(d.level, d.biomes, d.columnSampler.get(), d.fluid, d.seaLevel,
                 d.world, StreamServer.settings(), tile, tileX, tileZ, (x, z) -> false, null);
         features.decorateWindow(lx + 1, lz + 1, SAMPLE_CHUNKS);
@@ -971,18 +1115,20 @@ final class NoisePreview {
     }
 
     /**
-     * Lays the plants and canopy the profiles give each biome over a tile of
-     * any level (ADR-126): a chunk's plants are its biome's mean; a cell on
-     * land takes its biome's canopy where a hash of its place falls under
-     * the biome's cover, so the share of the ground under the canopy holds,
-     * and its snow where another hash falls under the snowy share.
+     * Lays the plants and canopy the profiles give each biome over the
+     * {@code chunks} x {@code chunks} chunks of a tile of any level from
+     * chunk (ch0x, ch0z) and their cells (ADR-126): a chunk's plants are its
+     * biome's mean; a cell on land takes its biome's canopy where a hash of
+     * its place falls under the biome's cover, so the share of the ground
+     * under the canopy holds, and its snow where another hash falls under
+     * the snowy share.
      */
     private static void profileCover(Dimension d, PreviewTile tile, int x0, int z0, Materials m,
-                                     boolean[] icebergCells) {
+                                     boolean[] icebergCells, int ch0x, int ch0z, int chunks) {
         PreviewProfiles profiles = d.profiles();
         Map<Integer, PreviewProfiles.Canopy> canopies = new java.util.HashMap<>();
-        for (int cz = 0; cz < PreviewTile.CHUNKS; cz++) {
-            for (int cx = 0; cx < PreviewTile.CHUNKS; cx++) {
+        for (int cz = ch0z; cz < ch0z + chunks; cz++) {
+            for (int cx = ch0x; cx < ch0x + chunks; cx++) {
                 int[] plants = profiles.plants(tile.biome(cx, cz));
                 int[] entries = new int[plants.length / 2];
                 int n = 0;
@@ -1000,8 +1146,9 @@ final class NoisePreview {
         int cellBlocks = PreviewTile.GRID << level;
         int cellX0 = Math.floorDiv(x0, cellBlocks);
         int cellZ0 = Math.floorDiv(z0, cellBlocks);
-        for (int cz = 0; cz < PreviewTile.CELLS; cz++) {
-            for (int cx = 0; cx < PreviewTile.CELLS; cx++) {
+        for (int cz = ch0z * 4; cz < (ch0z + chunks) * 4; cz++) {
+            for (int cx = ch0x * 4; cx < (ch0x + chunks) * 4; cx++) {
+                tile.setCanopy(cx, cz, 0);
                 if (icebergCells[cz * PreviewTile.CELLS + cx]) {
                     continue;
                 }
@@ -1034,19 +1181,20 @@ final class NoisePreview {
     private static final int ICEBERG_SNOW = 22;
 
     /**
-     * Raises the samples ({@code spacing} blocks apart) under the sea of a
-     * frozen ocean to the icebergs vanilla's surface rule builds there; returns
-     * which samples rose, {@code k * SAMPLES + i}.
+     * Raises the samples [i0, i1] x [k0, k1] ({@code spacing} blocks apart;
+     * those of built quarters kept) under the sea of a frozen ocean to the
+     * icebergs vanilla's surface rule builds there; returns which samples
+     * rose, {@code k * SAMPLES + i}.
      */
     private static boolean[] icebergs(Dimension d, PreviewTile tile, int x0, int z0, int spacing,
-                                      Holder<Biome>[] seaBiomes) {
+                                      Holder<Biome>[] seaBiomes, int i0, int i1, int k0, int k1, int built) {
         boolean[] raised = new boolean[PreviewTile.SAMPLES * PreviewTile.SAMPLES];
         if (d.fluid == null || !d.fluid.is(Blocks.WATER)) {
             return raised;
         }
-        for (int k = 0; k < PreviewTile.SAMPLES; k++) {
-            for (int i = 0; i < PreviewTile.SAMPLES; i++) {
-                if (tile.sample(i, k) > d.seaLevel) {
+        for (int k = k0; k <= k1; k++) {
+            for (int i = i0; i <= i1; i++) {
+                if (tile.sample(i, k) > d.seaLevel || kept(built, i, k)) {
                     continue;
                 }
                 int x = x0 + i * spacing;
@@ -1094,23 +1242,27 @@ final class NoisePreview {
     }
 
     /**
-     * Adds the houses of the villages near the tile whose corner lies in it;
-     * returns those villages (no trees grow in them).
+     * Adds the houses of the villages near a tile whose corner lies in the
+     * blocks [bx0, bx1) x [bz0, bz1) (a quarter); returns the villages near
+     * it (no trees grow in them). The tile's heights stand for the ground
+     * within [hx0, hx1] x [hz0, hz1], the ones just computed.
      */
-    private static List<PreviewVillages.Village> villages(Dimension d, PreviewTile tile, int x0, int z0, Materials m) {
+    private static List<PreviewVillages.Village> villages(Dimension d, PreviewTile tile, int x0, int z0, Materials m,
+                                                          int bx0, int bz0, int bx1, int bz1, int hx0, int hz0,
+                                                          int hx1, int hz1) {
         int reach = PreviewVillages.RADIUS + 16;
-        IntBinaryOperator surface = (x, z) -> x >= x0 && z >= z0 && x < x0 + TILE && z < z0 + TILE
+        IntBinaryOperator surface = (x, z) -> x >= hx0 && z >= hz0 && x < hx1 && z < hz1
                 ? tile.height(x - x0, z - z0) : surface(d, x, z, UNKNOWN);
-        List<PreviewVillages.Village> villages = d.villages.within(x0 - reach, z0 - reach, x0 + TILE + reach,
-                z0 + TILE + reach, (x, z) -> d.biomes.getNoiseBiome(QuartPos.fromBlock(x),
+        List<PreviewVillages.Village> villages = d.villages.within(bx0 - reach, bz0 - reach, bx1 + reach,
+                bz1 + reach, (x, z) -> d.biomes.getNoiseBiome(QuartPos.fromBlock(x),
                         QuartPos.fromBlock(surface.applyAsInt(x, z)), QuartPos.fromBlock(z), d.columnSampler.get()));
         for (PreviewVillages.Village v : villages) {
-            if (v.x() >= x0 && v.z() >= z0 && v.x() < x0 + TILE && v.z() < z0 + TILE) {
+            if (v.x() >= bx0 && v.z() >= bz0 && v.x() < bx1 && v.z() < bz1) {
                 d.villagesBuilt.incrementAndGet();
             }
             int[] materials = m.village(v.style());
             for (PreviewVillages.House h : PreviewVillages.houses(v, d.seed, d.seaLevel, surface)) {
-                if (h.x() >= x0 && h.z() >= z0 && h.x() < x0 + TILE && h.z() < z0 + TILE) {
+                if (h.x() >= bx0 && h.z() >= bz0 && h.x() < bx1 && h.z() < bz1) {
                     tile.addBuilding(new PreviewTile.Building(h.x() - x0, h.z() - z0, h.width(), h.depth(), h.floor(),
                             h.top(), materials[0], materials[1]));
                 }
@@ -1130,12 +1282,17 @@ final class NoisePreview {
         return false;
     }
 
-    /** The biome at the surface of each chunk's center (chunks {@code 16 << level} blocks wide), stored in the tile and returned. */
+    /**
+     * The biome at the surface of the center of chunks [cx0, cx1) x [cz0,
+     * cz1) (chunks {@code 16 << level} blocks wide), stored in the tile and
+     * returned; null for the other chunks.
+     */
     @SuppressWarnings("unchecked")
-    private static Holder<Biome>[] biomes(Dimension d, PreviewTile tile, int x0, int z0, int level, LodWorld world) {
+    private static Holder<Biome>[] biomes(Dimension d, PreviewTile tile, int x0, int z0, int level, LodWorld world,
+                                          int cx0, int cx1, int cz0, int cz1) {
         Holder<Biome>[] out = new Holder[PreviewTile.CHUNKS * PreviewTile.CHUNKS];
-        for (int cz = 0; cz < PreviewTile.CHUNKS; cz++) {
-            for (int cx = 0; cx < PreviewTile.CHUNKS; cx++) {
+        for (int cz = Math.max(0, cz0); cz < Math.min(PreviewTile.CHUNKS, cz1); cz++) {
+            for (int cx = Math.max(0, cx0); cx < Math.min(PreviewTile.CHUNKS, cx1); cx++) {
                 int x = x0 + ((cx * 16 + 8) << level);
                 int z = z0 + ((cz * 16 + 8) << level);
                 int y = tile.sample(cx * 4 + 2, cz * 4 + 2);

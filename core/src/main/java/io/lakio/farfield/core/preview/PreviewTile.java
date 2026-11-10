@@ -25,8 +25,13 @@ import io.lakio.farfield.core.util.ByteWriter;
  * carries a canopy per cell instead ({@link #canopyWord}), from what the
  * features grow in its biome. Readers see level-0 tiles only: a coarser
  * one is cut into them ({@link #expand}), its canopy turned into feature
- * runs. A level-0 tile is written twice: its terrain with a canopy first,
- * then with its features ({@link #complete()}).
+ * runs.
+ *
+ * <p>A tile is built a quarter at a time (ADR-127), each 64 samples a side
+ * (256 blocks at level 0), nearest the player first: {@link #quarters()}
+ * tells which are built and which are complete (a coarse quarter waiting
+ * for its biomes' canopy is built, not complete). Readers see a quarter
+ * only once built; until then the coarser tile over it.
  *
  * <p>Heights are the first free block above the ground. Sample (i, k) lies
  * on the block corner (i * 4, k * 4) of the tile, so the last row and
@@ -54,9 +59,9 @@ public final class PreviewTile {
      * ADR-104), 16 the plants under the sea (ADR-105), 17 the light sources
      * of the features (ADR-117), 18 the lakes they dig (ADR-118); older
      * tiles are built again; 19 the levels of the pyramid, the canopy, and
-     * no far grid any more (ADR-126).
+     * no far grid any more (ADR-126); 20 built by quarters (ADR-127).
      */
-    private static final int FORMAT = 19;
+    private static final int FORMAT = 20;
     /** Blocks a side of a feature voxel. */
     public static final int FEATURE_VOXEL = 2;
     /** Blocks around the tile its features may reach. */
@@ -71,8 +76,8 @@ public final class PreviewTile {
     private final short[] heights = new short[SAMPLES * SAMPLES];
     /** The pyramid's level: the tile covers {@code BLOCKS << level} blocks a side. */
     private int level;
-    /** Built to its end: a coarse tile, or a level-0 tile with its features (not its terrain pass alone). */
-    private boolean complete = true;
+    /** Bits 0 to 3: quarter q built; bits 4 to 7: quarter q complete ({@link #quarters()}). */
+    private int quarters = ALL_QUARTERS;
     /** Per cell, its canopy ({@link #canopyWord}), 0 for none. */
     private final int[] canopy = new int[CELLS * CELLS];
     /** The snow on canopies that carry it; -1 for none. */
@@ -427,13 +432,299 @@ public final class PreviewTile {
     /** The coarsest level a tile may have: a level-15 tile spans 16,777,216 blocks. */
     public static final int MAX_LEVEL = 15;
 
-    /** Built to its end: a coarse tile, or a level-0 tile with its features, not its terrain pass alone. */
-    public boolean complete() {
-        return complete;
+    /** Every quarter built and complete. */
+    public static final int ALL_QUARTERS = 0xFF;
+    /** Samples a side of a quarter (it shares its last row and column with the next one). */
+    public static final int QUARTER_SAMPLES = (SAMPLES - 1) / 2;
+
+    /**
+     * Which quarters are built (bit {@code q}) and complete (bit {@code q +
+     * 4}); quarter {@code q = qz * 2 + qx} covers samples {@code qx * 64} to
+     * {@code qx * 64 + 64} along X, cells and chunks likewise.
+     */
+    public int quarters() {
+        return quarters;
     }
 
+    public void setQuarters(int bits) {
+        quarters = bits & ALL_QUARTERS;
+    }
+
+    public boolean built(int quarter) {
+        return (quarters >> quarter & 1) != 0;
+    }
+
+    public boolean quarterComplete(int quarter) {
+        return (quarters >> (quarter + 4) & 1) != 0;
+    }
+
+    /** Marks a quarter built, and complete or not. */
+    public void setQuarter(int quarter, boolean complete) {
+        quarters |= 1 << quarter;
+        quarters = complete ? quarters | 1 << (quarter + 4) : quarters & ~(1 << (quarter + 4));
+    }
+
+    /** Every quarter built and complete. */
+    public boolean complete() {
+        return quarters == ALL_QUARTERS;
+    }
+
+    /** Every quarter built, and all complete or none. */
     public void setComplete(boolean value) {
-        complete = value;
+        quarters = value ? ALL_QUARTERS : 0x0F;
+    }
+
+    /**
+     * Copies quarter {@code q} of a level-0 tile (a view) into this one: its
+     * samples (the shared edges included), cells, chunks with their plants
+     * and trees by material, the feature columns over its blocks (and the
+     * margin beside it at the tile's edges), the buildings, light sources
+     * and dug columns whose place lies in it.
+     */
+    public void copyQuarter(PreviewTile from, int q) {
+        int qx = q & 1;
+        int qz = q >> 1;
+        int s0x = qx * QUARTER_SAMPLES;
+        int s0z = qz * QUARTER_SAMPLES;
+        for (int k = s0z; k <= s0z + QUARTER_SAMPLES; k++) {
+            for (int i = s0x; i <= s0x + QUARTER_SAMPLES; i++) {
+                setHeight(i, k, from.sample(i, k));
+            }
+        }
+        for (int cz = s0z; cz < s0z + QUARTER_SAMPLES; cz++) {
+            for (int cx = s0x; cx < s0x + QUARTER_SAMPLES; cx++) {
+                int i = cz * CELLS + cx;
+                top[i] = from.top[i];
+                filler[i] = from.filler[i];
+                canopy[i] = from.canopy[i];
+                frozen[i >> 6] = (frozen[i >> 6] & ~(1L << i)) | (from.frozen[i >> 6] & 1L << i);
+            }
+        }
+        int c0x = qx * CHUNKS / 2;
+        int c0z = qz * CHUNKS / 2;
+        for (int cz = c0z; cz < c0z + CHUNKS / 2; cz++) {
+            for (int cx = c0x; cx < c0x + CHUNKS / 2; cx++) {
+                int c = cz * CHUNKS + cx;
+                biomes[c] = from.biomes[c];
+                plants[c] = remapPlants(from, from.plants[c], false);
+                seaPlants[c] = remapPlants(from, from.seaPlants[c], true);
+                trees[c] = remapTrees(from, from.trees[c]);
+            }
+        }
+        int half = BLOCKS / 2;
+        int bx0 = qx * half;
+        int bz0 = qz * half;
+        int bx1 = bx0 + half;
+        int bz1 = bz0 + half;
+        // The tile's margin beside an edge quarter is that quarter's.
+        int mx0 = qx == 0 ? -FEATURE_MARGIN : bx0;
+        int mz0 = qz == 0 ? -FEATURE_MARGIN : bz0;
+        int mx1 = qx == 1 ? BLOCKS + FEATURE_MARGIN : bx1;
+        int mz1 = qz == 1 ? BLOCKS + FEATURE_MARGIN : bz1;
+        for (int fz = 0; fz < FEATURE_SIDE; fz++) {
+            int bz = fz * FEATURE_VOXEL - FEATURE_MARGIN;
+            if (bz < mz0 || bz >= mz1) {
+                continue;
+            }
+            for (int fx = 0; fx < FEATURE_SIDE; fx++) {
+                int bx = fx * FEATURE_VOXEL - FEATURE_MARGIN;
+                if (bx >= mx0 && bx < mx1) {
+                    int c = fz * FEATURE_SIDE + fx;
+                    features[c] = from.features[c] == null ? null : from.features[c].clone();
+                }
+            }
+        }
+        buildings.removeIf(b -> b.x() >= bx0 && b.x() < bx1 && b.z() >= bz0 && b.z() < bz1);
+        for (Building b : from.buildings) {
+            if (b.x() >= bx0 && b.x() < bx1 && b.z() >= bz0 && b.z() < bz1) {
+                buildings.add(b);
+            }
+        }
+        java.util.function.IntPredicate inside = word -> {
+            int x = lightX(word);
+            int z = lightZ(word);
+            return x >= mx0 && x < mx1 && z >= mz0 && z < mz1;
+        };
+        Ints kept = new Ints();
+        for (int i = 0; i < lights.length; i += 2) {
+            if (!inside.test(lights[i])) {
+                kept.add(lights[i]);
+                kept.add(lights[i + 1]);
+            }
+        }
+        for (int i = 0; i < from.lights.length; i += 2) {
+            if (inside.test(from.lights[i])) {
+                kept.add(from.lights[i]);
+                kept.add(from.lights[i + 1]);
+            }
+        }
+        lights = kept.toIntArray();
+        kept.clear();
+        for (int i = 0; i < pits.length; i += PIT_INTS) {
+            int x = pitX(pits[i]);
+            int z = pitZ(pits[i]);
+            if (!(x >= mx0 && x < mx1 && z >= mz0 && z < mz1)) {
+                kept.addAll(pits, i, PIT_INTS);
+            }
+        }
+        for (int i = 0; i < from.pits.length; i += PIT_INTS) {
+            int x = pitX(from.pits[i]);
+            int z = pitZ(from.pits[i]);
+            if (x >= mx0 && x < mx1 && z >= mz0 && z < mz1) {
+                kept.addAll(from.pits, i, PIT_INTS);
+            }
+        }
+        pits = sortedPits(kept.toIntArray());
+    }
+
+    /** Takes the tile-wide values of another tile: its ground, sea, ice, plant ground, canopy snow. */
+    public void copyTileValues(PreviewTile from) {
+        below = from.below;
+        water = from.water;
+        seaLevel = from.seaLevel;
+        ice = from.ice;
+        iceberg = from.iceberg;
+        plantGround = from.plantGround;
+        canopySnow = from.canopySnow;
+    }
+
+    /** A chunk's plant entries of another tile with this tile's kinds; null for none. */
+    private int[] remapPlants(PreviewTile from, int[] entries, boolean sea) {
+        if (entries == null) {
+            return null;
+        }
+        int[] out = new int[entries.length];
+        int n = 0;
+        for (int e : entries) {
+            int kind = plantKind(from.plantMaterial(e & 0xFF));
+            if (kind >= 0) {
+                out[n++] = e & ~0xFF | kind;
+            }
+        }
+        return n == 0 ? null : java.util.Arrays.copyOf(out, n);
+    }
+
+    private int[] remapTrees(PreviewTile from, int[] list) {
+        if (list == null) {
+            return null;
+        }
+        int[] out = new int[list.length];
+        int n = 0;
+        for (int t : list) {
+            int kind = kind(from.treeKind(t >>> 8));
+            if (kind >= 0) {
+                out[n++] = t & 0xFF | kind << 8;
+            }
+        }
+        return n == 0 ? null : java.util.Arrays.copyOf(out, n);
+    }
+
+    /**
+     * Adds runs to column (fx, fz): where the column has runs already (a
+     * crown a neighbor quarter spilled over), every voxel of both is kept,
+     * the new run's material where both have one.
+     */
+    public void mergeFeatureColumn(int fx, int fz, int[] runs) {
+        int c = fz * FEATURE_SIDE + fx;
+        int[] old = features[c];
+        if (old == null || runs == null || runs.length == 0) {
+            setFeatureColumn(fx, fz, runs == null || runs.length == 0 ? old : runs);
+            return;
+        }
+        java.util.TreeMap<Integer, Integer> voxels = new java.util.TreeMap<>();
+        for (int[] list : new int[][]{old, runs}) {
+            for (int r = 0; r < list.length; r += 2) {
+                int y = list[r] >> 8;
+                for (int v = 0; v < (list[r] & 0xFF); v++) {
+                    voxels.put(y + v, list[r + 1]);
+                }
+            }
+        }
+        Ints out = new Ints();
+        int runY = 0;
+        int length = 0;
+        int material = -1;
+        for (var e : voxels.entrySet()) {
+            if (length > 0 && e.getKey() == runY + length && e.getValue() == material && length < 255) {
+                length++;
+                continue;
+            }
+            if (length > 0) {
+                out.add(featureRun(runY, length));
+                out.add(material);
+            }
+            runY = e.getKey();
+            length = 1;
+            material = e.getValue();
+        }
+        out.add(featureRun(runY, length));
+        out.add(material);
+        features[c] = out.toIntArray();
+    }
+
+    /** Adds light sources ({@link #setLights} pairs); a place already there keeps the brighter. */
+    public void addLights(int[] pairs) {
+        java.util.Map<Long, Integer> all = new java.util.HashMap<>();
+        for (int[] list : new int[][]{lights, pairs}) {
+            for (int i = 0; i < list.length; i += 2) {
+                long place = (long) (list[i] & 0xFFFFF) << 32 | (list[i + 1] & 0xFFFFFFFFL);
+                all.merge(place, lightEmission(list[i]), Math::max);
+            }
+        }
+        int[] out = new int[all.size() * 2];
+        int n = 0;
+        for (var e : all.entrySet()) {
+            out[n++] = (int) (e.getKey() >>> 32) | e.getValue() << 20;
+            out[n++] = (int) (long) e.getKey();
+        }
+        lights = out;
+    }
+
+    /** A growable list of ints. */
+    private static final class Ints {
+        private int[] data = new int[16];
+        private int size;
+
+        void add(int v) {
+            if (size == data.length) {
+                data = java.util.Arrays.copyOf(data, size * 2);
+            }
+            data[size++] = v;
+        }
+
+        void addAll(int[] from, int at, int n) {
+            for (int i = 0; i < n; i++) {
+                add(from[at + i]);
+            }
+        }
+
+        void clear() {
+            size = 0;
+        }
+
+        int[] toIntArray() {
+            return java.util.Arrays.copyOf(data, size);
+        }
+    }
+
+    /** Adds dug columns ({@link #setPits} entries); a column already there takes the new entry. */
+    public void addPits(int[] entries) {
+        if (entries == null || entries.length % PIT_INTS != 0) {
+            throw new IllegalArgumentException("pit entries come in " + PIT_INTS + " ints");
+        }
+        java.util.Map<Integer, int[]> all = new java.util.HashMap<>();
+        for (int[] list : new int[][]{pits, entries}) {
+            for (int i = 0; i < list.length; i += PIT_INTS) {
+                all.put(list[i], java.util.Arrays.copyOfRange(list, i, i + PIT_INTS));
+            }
+        }
+        int[] out = new int[all.size() * PIT_INTS];
+        int n = 0;
+        for (int[] e : all.values()) {
+            System.arraycopy(e, 0, out, n, PIT_INTS);
+            n += PIT_INTS;
+        }
+        pits = sortedPits(out);
     }
 
     /**
@@ -526,7 +817,6 @@ public final class PreviewTile {
         t.iceberg = iceberg;
         t.plantGround = plantGround;
         t.canopySnow = canopySnow;
-        t.complete = complete;
         t.plantKinds.addAll(plantKinds);
         int cellShift = Integer.numberOfTrailingZeros(GRID) + level;
         for (int cz = 0; cz < CELLS; cz++) {
@@ -835,15 +1125,28 @@ public final class PreviewTile {
                 }
             }
         }
-        return new Summary(min, max, water >= 0 ? seaLevel : Integer.MIN_VALUE, complete);
+        return new Summary(min, max, water >= 0 ? seaLevel : Integer.MIN_VALUE, quarters);
     }
 
     /**
      * What decides which sections of a tile hold something: per chunk the
      * lowest and highest surface; the sea level, or {@code Integer.MIN_VALUE}
-     * without sea; whether the tile is built to its end ({@link #complete()}).
+     * without sea; the quarters built and complete ({@link #quarters()}).
      */
-    public record Summary(short[] chunkMin, short[] chunkMax, int sea, boolean complete) {
+    public record Summary(short[] chunkMin, short[] chunkMax, int sea, int quarters) {
+
+        /** Every quarter built and complete. */
+        public boolean complete() {
+            return quarters == ALL_QUARTERS;
+        }
+
+        public boolean built(int quarter) {
+            return (quarters >> quarter & 1) != 0;
+        }
+
+        public boolean quarterComplete(int quarter) {
+            return (quarters >> (quarter + 4) & 1) != 0;
+        }
 
         /**
          * Whether blocks [y0, y1) may hold voxels over chunks [cx0, cx1] x
@@ -931,7 +1234,7 @@ public final class PreviewTile {
     public void encode(ByteWriter out) {
         out.writeVarInt(FORMAT);
         out.writeVarInt(level);
-        out.writeVarInt(complete ? 1 : 0);
+        out.writeVarInt(quarters);
         out.writeVarInt(below);
         out.writeVarInt(water + 1);
         out.writeInt(seaLevel);
@@ -1048,7 +1351,7 @@ public final class PreviewTile {
         }
         PreviewTile t = new PreviewTile();
         t.setLevel(in.readVarInt());
-        t.complete = in.readVarInt() != 0;
+        t.quarters = in.readVarInt() & ALL_QUARTERS;
         t.below = in.readVarInt();
         t.water = in.readVarInt() - 1;
         t.seaLevel = in.readInt();

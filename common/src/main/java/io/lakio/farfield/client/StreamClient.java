@@ -524,8 +524,8 @@ public final class StreamClient {
 
     /**
      * Asks for the preview tiles within the radius not checked yet this
-     * session: every level of the pyramid (ADR-126), the coarsest first, then
-     * nearest first. Levels finer than the coarsest within their own range
+     * session: every level of the pyramid (ADR-126), in rings as the server
+     * builds them ({@link PreviewPyramid#order}, ADR-127). Levels finer than the coarsest within their own range
      * only ({@link PreviewPyramid#range}, level 0 at the farthest features'
      * distance a server may set): the server answers absent for those it
      * does not build.
@@ -556,13 +556,12 @@ public final class StreamClient {
                     double dz = Math.max(0, Math.max((double) tz * tile - pz, pz - ((double) tz + 1) * tile));
                     double d = dx * dx + dz * dz;
                     if (d <= range * range) {
-                        candidates.add(new long[]{key, (long) d});
+                        candidates.add(new long[]{key, (long) PreviewPyramid.order(level, Math.sqrt(d))});
                     }
                 }
             }
         }
-        candidates.sort((a, b) -> PreviewStore.level(a[0]) != PreviewStore.level(b[0])
-                ? Integer.compare(PreviewStore.level(b[0]), PreviewStore.level(a[0])) : Long.compare(a[1], b[1]));
+        candidates.sort((a, b) -> Long.compare(a[1], b[1]));
         int n = Math.min(candidates.size(), tileWindow.size() - tilesInFlight.size());
         if (n <= 0) {
             return;

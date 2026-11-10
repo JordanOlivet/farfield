@@ -15,6 +15,17 @@ public final class PreviewPyramid {
     public static final int LEVELS = 3;
     /** The drawn range, in blocks: the renderer draws nothing farther. */
     public static final int RANGE = 4096;
+    /**
+     * Blocks a finer level waits behind the coarser one when quarters are
+     * ordered by distance (ADR-127): a coarse disc grows from the player, the
+     * detail follows it.
+     */
+    public static final int LEVEL_LAG = 1024;
+
+    /** The order of a tile or quarter of {@code level} at {@code distance} blocks: lower first. */
+    public static double order(int level, double distance) {
+        return distance + (double) LEVEL_LAG * (LEVELS - 1 - level);
+    }
 
     private PreviewPyramid() {
     }

@@ -3622,3 +3622,50 @@ ADR-123 (the pregeneration's order).
   (badlands bands, a biome's mix of tops); the canopy is one material and
   no trunk. The real trees replace the canopy when the player comes within
   the features' distance.
+
+## ADR-127 — The preview built by quarters, in rings from the player
+
+Status: accepted, 2026-11-10. Amends ADR-126 (whole tiles, coarsest level
+first over the whole range, a level-0 tile written twice).
+
+- **Context**: in the user's pack after ADR-126 (2026-11-10, server log): 71
+  tiles after joining, in front at 72.8 s, all at 101 s; a level-2 tile is
+  2,048 blocks a side and came in at once, "en forme de carré sur le côté
+  gauche de mon champ de vision mais le côté droite n'est arrivé que plus
+  tard"; 283 biomes sampled inline in the first minute made a coarse tile
+  2.8 s instead of about 1. The user asked for a disc growing from the
+  player, as vanilla's generation shows, with pieces sized by distance, as
+  the real LODs' sections already are (32 voxels a side at every level,
+  asked nearest first).
+- **Decision**:
+  - A tile is built a quarter at a time (tile format 20,
+    `PreviewTile.quarters()`): 64 samples a side, 256 blocks at level 0,
+    512 at level 1, 1,024 at level 2. A level-0 quarter computes its samples
+    and the surface rules' ground a chunk around it too, where its features
+    spill; features a neighbor quarter spilled are merged, not replaced
+    (`mergeFeatureColumn`, `addLights`, `addPits`). One quarter of a tile
+    is in flight at a time. The level-0 terrain pass of ADR-126 is gone: a
+    level-0 quarter is written once, with its features.
+  - The store shows each quarter of a level-0 view from the finest tile
+    with it built (`PreviewStore.read`, `summary`); a view exists once all
+    four quarters have one. A write names the quarters it changed, and only
+    the views under them are heard.
+  - Order: by distance alone, a finer level `PreviewPyramid.LEVEL_LAG`
+    (1,024) blocks behind the coarser one (`PreviewPyramid.order`), so a
+    coarse disc grows from the player and the detail follows; the stream
+    client asks tiles in the same order.
+  - Biome samples leave the tile's path: a coarse quarter with a biome not
+    measured yet is written without that canopy, incomplete, and the sample
+    goes to a queue that gets half the preview's threads first; the quarter
+    is built again once its biomes are measured.
+- **Front priority or pure circle** (the user asked to measure both and to
+  keep the pure circle unless the front one is much faster): NeoForge dev
+  client, single player, the same three never generated spots (6000, 0;
+  -6000, 6000; 0, -9000), facing east, preview deleted before each run, a
+  temporary `-Dfarfield.previewFront` switch (removed). Warm spot B, both
+  runs: in front 28.9 s with the front priority, 28.0 s without; within
+  1,024 blocks 28.4 s and 20.5 s; all built 32.9 s and 28.0 s. The other
+  spots compare a cold join with a warm teleport and say nothing. In both,
+  the 6-second shots show the whole view to the horizon. No gain from the
+  front priority: the pure circle is kept. One run each: noise not
+  measured.
