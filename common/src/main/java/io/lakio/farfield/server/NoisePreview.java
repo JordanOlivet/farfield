@@ -479,6 +479,79 @@ final class NoisePreview {
         return out;
     }
 
+    /** Blocks between the samples of the grids {@link #heightsSpike} times: tile levels 0, 2, 4, 6, 8, 12 and 15. */
+    private static final int[] SPIKE_SPACINGS = {4, 16, 64, 256, 1024, 16384, 131072};
+
+    /**
+     * Spike for the coarse-to-fine study
+     * ({@code docs/analysis/preview-coarse-to-fine.md}): the heights of one
+     * tile's grid ({@link PreviewTile#SAMPLES} a side) centered on a block,
+     * at each of {@link #SPIKE_SPACINGS}, each sample searched from its
+     * neighbor's height as {@link #build} does, then from the top of the
+     * world; one line per spacing. False when the dimension has no preview.
+     */
+    boolean heightsSpike(ServerLevel level, int x, int z, java.util.function.Consumer<String> report) {
+        Optional<Dimension> found = dimensions.computeIfAbsent(level.dimension(), k -> open(level));
+        if (found.isEmpty()) {
+            return false;
+        }
+        Dimension d = found.get();
+        int n = PreviewTile.SAMPLES;
+        int[] seeded = new int[n * n];
+        int[] fromTop = new int[n * n];
+        // Once unmeasured: the first grid would pay for the compiler.
+        heightsGrid(d, x, z, PreviewTile.GRID, true, seeded);
+        heightsGrid(d, x, z, PreviewTile.GRID, false, fromTop);
+        for (int spacing : SPIKE_SPACINGS) {
+            if (stopped) {
+                return true;
+            }
+            long t0 = System.nanoTime();
+            heightsGrid(d, x, z, spacing, true, seeded);
+            long t1 = System.nanoTime();
+            heightsGrid(d, x, z, spacing, false, fromTop);
+            long t2 = System.nanoTime();
+            int differ = 0;
+            int lower = 0;
+            int worst = 0;
+            long steps = 0;
+            for (int i = 0; i < seeded.length; i++) {
+                int gap = Math.abs(seeded[i] - fromTop[i]);
+                differ += gap != 0 ? 1 : 0;
+                lower += seeded[i] < fromTop[i] ? 1 : 0;
+                worst = Math.max(worst, gap);
+                if (i % n != 0) {
+                    steps += Math.abs(fromTop[i] - fromTop[i - 1]);
+                }
+            }
+            report.accept(String.format(java.util.Locale.ROOT, "samples every %d blocks (tile level %d, %d blocks a side):"
+                            + " from the neighbor %d ms (%.1f us a sample), from the top %d ms (%.1f us a sample);"
+                            + " %d of %d samples differ (%d lower from the neighbor, worst %d blocks);"
+                            + " mean step between neighbors %.1f blocks",
+                    spacing, Integer.numberOfTrailingZeros(spacing / PreviewTile.GRID), spacing * (n - 1),
+                    (t1 - t0) / 1_000_000, (t1 - t0) / 1e3 / seeded.length, (t2 - t1) / 1_000_000,
+                    (t2 - t1) / 1e3 / seeded.length, differ, seeded.length, lower, worst,
+                    steps / (double) (n * (n - 1))));
+        }
+        return true;
+    }
+
+    /** The surface of a grid of {@link PreviewTile#SAMPLES} samples a side centered on (x, z), row by row into {@code out}. */
+    private static void heightsGrid(Dimension d, int x, int z, int spacing, boolean fromNeighbor, int[] out) {
+        int n = PreviewTile.SAMPLES;
+        int x0 = x - spacing * (n / 2);
+        int z0 = z - spacing * (n / 2);
+        int previous = UNKNOWN;
+        for (int k = 0; k < n; k++) {
+            int seed = k == 0 ? UNKNOWN : out[(k - 1) * n];
+            for (int i = 0; i < n; i++) {
+                int h = surface(d, x0 + i * spacing, z0 + k * spacing, !fromNeighbor ? UNKNOWN : i == 0 ? seed : previous);
+                out[k * n + i] = h;
+                previous = h;
+            }
+        }
+    }
+
     /** Where the last tile {@link #buildNow} built spent its feature time. */
     volatile String lastTiming = "";
 

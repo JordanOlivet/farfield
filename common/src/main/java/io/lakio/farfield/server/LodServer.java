@@ -356,6 +356,15 @@ public final class LodServer {
         return s.preview.buildNow(level, lod.world(), tileX, tileZ);
     }
 
+    /**
+     * Spike for the coarse-to-fine study: {@link NoisePreview#heightsSpike} on
+     * the calling thread; false without a preview there.
+     */
+    static boolean previewHeightsSpike(ServerLevel level, int x, int z, java.util.function.Consumer<String> report) {
+        LodServer s = instance;
+        return s != null && s.preview != null && s.preview.heightsSpike(level, x, z, report);
+    }
+
     /** Where the last tile {@link #buildPreviewTileNow} built spent its feature time. */
     static String lastPreviewTiming() {
         LodServer s = instance;

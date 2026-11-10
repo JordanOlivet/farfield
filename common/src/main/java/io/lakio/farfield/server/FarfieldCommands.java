@@ -94,6 +94,11 @@ public final class FarfieldCommands {
                                         .executes(c -> surfaceSpike(c, 8))
                                         .then(Commands.argument("side", IntegerArgumentType.integer(1, 64))
                                                 .executes(c -> surfaceSpike(c, IntegerArgumentType.getInteger(c, "side"))))))
+                        .then(Commands.literal("heights")
+                                .then(Commands.literal("at")
+                                        .then(Commands.argument("x", IntegerArgumentType.integer())
+                                                .then(Commands.argument("z", IntegerArgumentType.integer())
+                                                        .executes(FarfieldCommands::heightsSpikeAt)))))
                         .then(Commands.literal("features")
                                 .then(Commands.argument("biome", net.minecraft.commands.arguments.ResourceLocationArgument.id())
                                         .executes(c -> featureSpike(c, 8))
@@ -260,6 +265,34 @@ public final class FarfieldCommands {
             return 0;
         }
         source.sendSuccess(() -> Component.literal("Preview tile spike started at " + at.getX() + " " + at.getZ()), true);
+        return 1;
+    }
+
+    /**
+     * Spike for the coarse-to-fine study: the time of the heights of a tile's
+     * grid around a position, at the spacings of several tile levels.
+     */
+    private static int heightsSpikeAt(CommandContext<CommandSourceStack> c) {
+        CommandSourceStack source = c.getSource();
+        int x = IntegerArgumentType.getInteger(c, "x");
+        int z = IntegerArgumentType.getInteger(c, "z");
+        var level = source.getLevel();
+        Thread t = new Thread(() -> {
+            java.util.function.Consumer<String> report = line -> {
+                Farfield.LOG.info("Heights spike: {}", line);
+                source.getServer().execute(() -> source.sendSuccess(() -> Component.literal(line), true));
+            };
+            try {
+                report.accept(LodServer.previewHeightsSpike(level, x, z, report) ? "done"
+                        : "no preview in " + level.dimension().location());
+            } catch (RuntimeException e) {
+                Farfield.LOG.warn("Heights spike failed", e);
+                report.accept("failed: " + e);
+            }
+        }, "farfield-heights-spike");
+        t.setDaemon(true);
+        t.start();
+        source.sendSuccess(() -> Component.literal("Heights spike started at " + x + " " + z), true);
         return 1;
     }
 
