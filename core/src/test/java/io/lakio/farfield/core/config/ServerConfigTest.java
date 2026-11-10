@@ -55,12 +55,16 @@ class ServerConfigTest {
         Files.writeString(file, "streaming=true\n");
         assertEquals(1250, ServerConfig.read(file).previewFeaturesDistance());
         assertEquals(ServerConfig.AUTO, ServerConfig.read(file).pregenThreads());
-        ServerConfig set = new ServerConfig(true, 4096, 1024, 10240, 0, false, true, true, "", 4096, true, true, 2500, 6);
+        assertEquals(ServerConfig.AUTO, ServerConfig.read(file).previewThreads(), "ADR-129: auto by default");
+        ServerConfig set = new ServerConfig(true, 4096, 1024, 10240, 0, false, true, true, "", 4096, true, true, 2500, 6,
+                10);
         set.write(file);
         assertEquals(set, ServerConfig.read(file));
-        Files.writeString(file, "preview_features_distance=99999\npregen_threads=99\n");
+        assertEquals(10, ServerConfig.read(file).previewThreads());
+        Files.writeString(file, "preview_features_distance=99999\npregen_threads=99\npreview_threads=40\n");
         assertEquals(ServerConfig.MAX_FEATURES_DISTANCE, ServerConfig.read(file).previewFeaturesDistance());
         assertEquals(16, ServerConfig.read(file).pregenThreads());
+        assertEquals(16, ServerConfig.read(file).previewThreads());
         Files.writeString(file, "preview_features_distance=-5\npregen_threads=auto\n");
         assertEquals(0, ServerConfig.read(file).previewFeaturesDistance());
         assertEquals(ServerConfig.AUTO, ServerConfig.read(file).pregenThreads());

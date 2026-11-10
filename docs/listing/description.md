@@ -102,6 +102,9 @@ same Farfield version (0.3.x) to stream. Settings in
   online, `run` keeps them going behind the players' own preview.
   `pregen_threads` (default auto) sets their threads while nobody is
   online.
+- `preview_threads` (default auto, 1 to 16): the threads that build the
+  preview around players. More builds it sooner but takes cores from the
+  server's own chunk generation.
 - `import_on_start` (default true): at start, the server reads into its
   LODs the region files they never saw, a world that lived without
   Farfield or regions changed while it was away, nearest the spawn first,

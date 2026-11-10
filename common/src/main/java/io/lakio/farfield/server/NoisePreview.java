@@ -109,6 +109,8 @@ final class NoisePreview {
     private long ticks;
     /** Opened on the first update, once the server and its settings are there. */
     private PreviewPregen pregen;
+    /** The server's preview threads setting last logged; -1 before the first update. */
+    private int loggedServerThreads = -1;
     /** When the pipeline last took in new chunks; the preview keeps half its threads until {@link #YIELD_NANOS} after. */
     private long lastIngest;
     private static final long YIELD_NANOS = 5_000_000_000L;
@@ -271,7 +273,16 @@ final class NoisePreview {
         }
         pregen.setImporting(importing);
         boolean pregenOn = pregen.active(server);
-        int usual = RenderSettings.effectiveThreads(RenderSettings.previewThreads());
+        // The server's own setting first (ADR-129): a dedicated server has no preview setting of its own.
+        int serverThreads = StreamServer.settings().previewThreads();
+        int usual = serverThreads != io.lakio.farfield.core.config.ServerConfig.AUTO ? serverThreads
+                : RenderSettings.effectiveThreads(RenderSettings.previewThreads());
+        if (serverThreads != loggedServerThreads) {
+            loggedServerThreads = serverThreads;
+            Farfield.LOG.info("Noise preview threads around players: {} ({})", usual,
+                    serverThreads == io.lakio.farfield.core.config.ServerConfig.AUTO ? "auto"
+                            : "preview_threads=" + serverThreads + " in farfield-server.properties");
+        }
         int pregenThreads = StreamServer.settings().pregenThreads();
         if (pregenOn && pregenThreads != io.lakio.farfield.core.config.ServerConfig.AUTO
                 && server.getPlayerCount() == 0) {

@@ -3699,3 +3699,27 @@ Status: accepted, 2026-11-10. Amends ADR-127 (one queue for every level).
   The first try held level 0 back while samples or canopies waited, after
   the disc was whole: the detail then came later. Not measured in the
   pack, where level 0 is ten times slower than in dev.
+
+## ADR-129 — The server's own preview threads setting
+
+Status: accepted, 2026-11-10.
+
+- **Context**: the preview's threads came from the client setting
+  `preview_threads`, which a dedicated server does not have: it always ran
+  on auto (one thread per three logical processors, 1 to 6; 5 on the
+  user's 16-core server, 3 while it takes in new chunks). `pregen_threads`
+  (ADR-126) covers the pregeneration with nobody online only. The user: let
+  the server's admin choose more threads for the preview when the server is
+  not busy.
+- **Decision**: `preview_threads` in `farfield-server.properties`, auto by
+  default (the former behavior) or 1 to 16, used by the preview around
+  players on any server, an integrated one included, over the client
+  setting. Half of them still stand aside while the server takes in newly
+  generated chunks (ADR-084). Logged once: `Noise preview threads around
+  players: N (...)`. The file's comment warns that more threads take cores
+  from the game's own chunk generation and tick (Linux ignores Java thread
+  priorities, measured 2026-10-28).
+- **Checked**: the dev server with `preview_threads=7` logged `Noise preview
+  threads around players: 7 (preview_threads=7 in
+  farfield-server.properties)` and sized its pool to 7. The gain in the
+  pack is not measured.
