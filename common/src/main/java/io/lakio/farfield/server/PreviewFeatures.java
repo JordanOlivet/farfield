@@ -167,6 +167,21 @@ final class PreviewFeatures {
         this.sandbox.timeSteps(stepNanos);
     }
 
+    /**
+     * Puts the features under the cost guard (ADR-131): a block counts as
+     * kept when the LODs draw it and it lies above the tile's ground or in
+     * the top blocks a lake digs, as {@link #collect} keeps it.
+     */
+    void budget(FeatureBudget budget) {
+        sandbox.budget(budget, (x, y, z, state) -> !state.isAir()
+                && BlockKeys.meshClass(state) != io.lakio.farfield.core.mesh.MaterialClassifier.AIR
+                && y >= ground(x, z) - PIT_DEPTH, this::chunkBiome);
+        sandbox.biomeNames(id -> {
+            String key = id < 0 ? null : world.biomes().key(id);
+            return key == null ? "?" : key;
+        });
+    }
+
     /** Measures each feature's time and what it sets ({@link FeatureCosts}, the spike's). */
     void measure(FeatureCosts costs) {
         costs.ground(this::ground, PIT_DEPTH);
@@ -387,6 +402,13 @@ final class PreviewFeatures {
             }
             surface = null;
         }
+    }
+
+    /** A chunk's biome id for the cost guard: the tile's, at its center; a chunk outside the tile its nearest edge chunk's. */
+    private int chunkBiome(int chunkX, int chunkZ) {
+        int lx = Math.max(0, Math.min(PreviewTile.CHUNKS - 1, chunkX - (x0 >> 4)));
+        int lz = Math.max(0, Math.min(PreviewTile.CHUNKS - 1, chunkZ - (z0 >> 4)));
+        return tile.biome(lx, lz);
     }
 
     private boolean inTile(int chunkX, int chunkZ) {

@@ -165,6 +165,8 @@ final class NoisePreview {
         /** Quarters in flight (queued or running) of the coarse levels and of level 0. */
         final AtomicInteger coarseInFlight = new AtomicInteger();
         final AtomicInteger fineInFlight = new AtomicInteger();
+        /** The features' cost guard (ADR-131), shared by every tile and sample of the dimension. */
+        final FeatureBudget budget = new FeatureBudget();
         /** Coarse tiles built and biomes sampled since the last report. */
         final AtomicInteger coarseBuilt = new AtomicInteger();
         final AtomicInteger biomesSampled = new AtomicInteger();
@@ -627,11 +629,12 @@ final class NoisePreview {
             }
             if (RenderSettings.performanceLogs()) {
                 Farfield.LOG.info("Noise preview of {}: {} quarters built in the last minute, {} of them coarse ({} ms"
-                        + " each: {}; {} villages, {} features failed, {} light sources, {} dug columns, {} biomes"
-                        + " sampled, {} known), {} left within {} blocks",
+                        + " each: {}; {} villages, {} features failed, {} left out for their cost, {} light sources,"
+                        + " {} dug columns, {} biomes sampled, {} known), {} left within {} blocks",
                         d.key.location(), built, d.coarseBuilt.getAndSet(0), nanos / 1_000_000 / built, stages,
-                        d.villagesBuilt.getAndSet(0), d.featureFailures.getAndSet(0), d.lightSources.getAndSet(0),
-                        d.dugColumns.getAndSet(0), d.biomesSampled.getAndSet(0), d.profiles().size(), d.left,
+                        d.villagesBuilt.getAndSet(0), d.featureFailures.getAndSet(0), d.budget.excludedCount(),
+                        d.lightSources.getAndSet(0), d.dugColumns.getAndSet(0), d.biomesSampled.getAndSet(0),
+                        d.profiles().size(), d.left,
                         (int) RANGE);
             }
             d.reportedDone = false;
@@ -684,7 +687,8 @@ final class NoisePreview {
             out[i] = d.stageNanos.getAndSet(i, 0);
         }
         out[STAGES.length] = d.featureFailures.getAndSet(0);
-        lastTiming = timing + "; " + costs.report(12);
+        lastTiming = timing + "; " + costs.report(12) + "; " + d.budget.excludedCount()
+                + " features left out for their cost so far (ADR-131)";
         return out;
     }
 
@@ -1039,6 +1043,7 @@ final class NoisePreview {
         io.lakio.farfield.core.config.ServerConfig settings = StreamServer.settings();
         PreviewFeatures features = new PreviewFeatures(d.level, d.biomes, d.columnSampler.get(), d.fluid, d.seaLevel,
                 d.world, settings, tile, tileX, tileZ, (x, z) -> inVillage(villages, x, z), icebergCells);
+        features.budget(d.budget);
         if (costs != null) {
             features.measure(costs);
         }
@@ -1216,6 +1221,7 @@ final class NoisePreview {
                 seaBiomes, null, i0, i1, k0, k1, 0);
         PreviewFeatures features = new PreviewFeatures(d.level, d.biomes, d.columnSampler.get(), d.fluid, d.seaLevel,
                 d.world, StreamServer.settings(), tile, tileX, tileZ, (x, z) -> false, null);
+        features.budget(d.budget);
         features.decorateWindow(lx + 1, lz + 1, SAMPLE_CHUNKS);
         d.featureFailures.addAndGet(features.failures());
         d.profiles().record(tile, lx + 1, lz + 1, SAMPLE_CHUNKS);

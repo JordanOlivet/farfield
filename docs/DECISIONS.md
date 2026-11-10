@@ -3747,3 +3747,36 @@ server's session).
   profiles yet`, wrote 2,035 bytes; the second `8 biome profiles read from
   profiles.bin`. A mod updated without a change of biomes keeps its old
   profiles; the level-0 quarters built near players go on adding to them.
+
+## ADR-131 — A cost guard for the preview's features
+
+Status: accepted, 2026-11-11.
+
+- **Context**: the tile spike now splits feature time by what each feature
+  set (`FeatureCosts`). 16 tiles the user measured at random in the pack
+  (2026-11-11): 7.1 s a tile on average (4.8 to 9.5), features 4.9 s;
+  of 66.5 s of measured feature time, `supplementaries:shore_barnacles`
+  alone 32.2 s (48 %, in 11 of the 16 tiles, up to 4.1 s in one), plants
+  only 4 %, trees 9 %, features that set nothing 11 %, features that set
+  blocks only under the ground the preview keeps 3 % (`amethyst_geode`,
+  `glow_lichen`). Skipping the plants (the option studied) would gain
+  little; one costly feature that leaves almost nothing in sight would gain
+  half. The user's rule (ADR-079): classes of features, never a list of
+  mods.
+- **Decision**: `FeatureBudget` measures, per placed feature and biome of
+  the chunk, its time in the stand-in world (the stand-in chunks it made
+  meanwhile left out) and the blocks it set that the preview keeps (drawn by
+  the LODs, above the ground or in the top 8 blocks a lake digs). After 64
+  chunks of a biome, a feature costing at least 0.5 ms a chunk and keeping
+  fewer than 4 blocks per millisecond is left out in that biome for the
+  server's session, logged once: `Noise preview: feature <id> left out of
+  the preview in biome <id> for its cost: ...`. Per biome because a feature
+  may do nothing where it first ran and matter elsewhere (a check with a
+  low threshold left out `freeze_top_layer` in a warm area, the feature
+  that lays the snow of cold biomes). The minute line counts the features
+  left out. `preview_feature_exclude` still leaves out features by id.
+- **Checked**: dev server with the threshold lowered to 0.1 ms (a temporary
+  switch, removed): `lake_lava_underground`, `amethyst_geode`,
+  `glow_lichen` left out with 0 kept blocks; that check also showed the
+  need for the per-biome rule. Not run in the pack at the real threshold:
+  whether the barnacles fall under it depends on how many blocks they set.
