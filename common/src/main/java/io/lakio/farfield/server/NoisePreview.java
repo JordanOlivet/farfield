@@ -157,6 +157,9 @@ final class NoisePreview {
         final java.util.concurrent.ConcurrentLinkedQueue<int[]> sampleQueue =
                 new java.util.concurrent.ConcurrentLinkedQueue<>();
         final AtomicInteger samplesInFlight = new AtomicInteger();
+        /** Quarters in flight (queued or running) of the coarse levels and of level 0. */
+        final AtomicInteger coarseInFlight = new AtomicInteger();
+        final AtomicInteger fineInFlight = new AtomicInteger();
         /** Coarse tiles built and biomes sampled since the last report. */
         final AtomicInteger coarseBuilt = new AtomicInteger();
         final AtomicInteger biomesSampled = new AtomicInteger();
@@ -177,6 +180,8 @@ final class NoisePreview {
         int fillTiles;
         long nearDone;
         long frontDone;
+        /** When the coarse disc was whole: no coarse quarter left to build (its canopy aside). */
+        long coarseDone;
 
         Dimension(ServerLevel level, NoiseBasedChunkGenerator generator) {
             key = level.dimension();
@@ -406,7 +411,7 @@ final class NoisePreview {
                         double score = distance
                                 + LEVEL_LAG * (PreviewPyramid.LEVELS - 1 - level) + (refine ? REFINE_LAG : 0);
                         candidates.add(new long[]{tile, (long) score, distance <= NEAR ? 1 : 0,
-                                facing >= FRONT_COS ? 1 : 0, q});
+                                facing >= FRONT_COS ? 1 : 0, q, refine ? 1 : 0});
                     }
                 }
             }
@@ -416,11 +421,29 @@ final class NoisePreview {
             trackFill(d, players.get(0), candidates);
         }
         candidates.sort((a, b) -> Long.compare(a[1], b[1]));
-        int limit = Math.max(MAX_IN_FLIGHT, 2 * pool.getCorePoolSize());
-        // The biomes' samples first, on part of the threads: the canopy of the coarse quarters waits for them.
-        int sampleSlots = Math.max(1, pool.getCorePoolSize() / 2);
+        int threads = pool.getCorePoolSize();
+        int limit = Math.max(MAX_IN_FLIGHT, 2 * threads);
+        // Shared threads (ADR-128): while both have quarters to build, level 0 holds at most half the
+        // threads in flight, queue included, and the coarse levels with the biomes' samples the rest, so
+        // the coarse disc keeps growing while the detail fills in. A level-0 quarter takes seconds in a
+        // pack: on one queue they held every thread in turn, and the disc stopped and went on.
+        // Once the disc is whole, what is left of the coarse share (samples, canopies waiting for them)
+        // keeps the threads level 0 leaves; level 0 is held back no more.
+        boolean disc = false;
+        boolean coarseRest = !d.sampleQueue.isEmpty();
+        boolean fineWaiting = false;
+        for (long[] c : candidates) {
+            boolean coarse = PreviewStore.level(c[0]) > 0;
+            disc |= coarse && c[5] == 0;
+            coarseRest |= coarse && c[5] != 0;
+            fineWaiting |= !coarse;
+        }
+        int fineCap = disc ? Math.max(1, threads / 2) : coarseRest ? threads : limit;
+        int coarseCap = fineWaiting ? limit - fineCap : limit;
+        // The biomes' samples first, on part of the coarse share: the canopy of the coarse quarters waits for them.
+        int sampleSlots = Math.max(1, threads / 2);
         int[] request;
-        while (d.samplesInFlight.get() < sampleSlots && d.inFlight.size() + d.samplesInFlight.get() < limit
+        while (d.samplesInFlight.get() < sampleSlots && coarseUsed(d) < coarseCap && inFlight(d) < limit
                 && (request = d.sampleQueue.poll()) != null) {
             d.samplesInFlight.incrementAndGet();
             int[] r = request;
@@ -431,23 +454,39 @@ final class NoisePreview {
         int playerLimit = pregenHere && pregen.forcedIn(d.key.location().toString()) ? limit - Math.max(1, limit / 2)
                 : limit;
         for (long[] c : candidates) {
-            if (d.inFlight.size() + d.samplesInFlight.get() >= playerLimit) {
+            if (inFlight(d) >= playerLimit) {
                 break;
             }
-            long tile = c[0];
-            int q = (int) c[4];
-            if (d.inFlight.add(tile)) {
-                pool.execute(() -> build(d, tile, q));
-            }
+            submit(d, c[0], (int) c[4], fineCap, coarseCap);
         }
         // Then the pregeneration's tiles, its pyramid first, in what the players leave free.
-        if (pregenHere && d.inFlight.size() < limit) {
+        if (pregenHere && inFlight(d) < limit) {
             for (long tile : pregen.next(d.key.location().toString(), t -> built(d, t), d.inFlight,
-                    limit - d.inFlight.size())) {
-                if (d.inFlight.add(tile)) {
-                    pool.execute(() -> build(d, tile, -1));
-                }
+                    limit - inFlight(d))) {
+                submit(d, tile, -1, fineCap, coarseCap);
             }
+        }
+    }
+
+    /** Quarters and samples in flight. */
+    private static int inFlight(Dimension d) {
+        return d.coarseInFlight.get() + d.fineInFlight.get() + d.samplesInFlight.get();
+    }
+
+    /** What the coarse share holds in flight: coarse quarters and biome samples. */
+    private static int coarseUsed(Dimension d) {
+        return d.coarseInFlight.get() + d.samplesInFlight.get();
+    }
+
+    /** Submits a quarter of a tile (-1: its next) within its level's share; one quarter of a tile at a time. */
+    private void submit(Dimension d, long tile, int q, int fineCap, int coarseCap) {
+        boolean fine = PreviewStore.level(tile) == 0;
+        if (fine ? d.fineInFlight.get() >= fineCap : coarseUsed(d) >= coarseCap) {
+            return;
+        }
+        if (d.inFlight.add(tile)) {
+            (fine ? d.fineInFlight : d.coarseInFlight).incrementAndGet();
+            pool.execute(() -> build(d, tile, q));
         }
     }
 
@@ -473,18 +512,22 @@ final class NoisePreview {
             d.fillTiles = candidates.size();
             d.nearDone = 0;
             d.frontDone = 0;
+            d.coarseDone = 0;
         }
         if (d.fillStart == 0) {
             return;
         }
         boolean near = false;
         boolean front = false;
+        boolean coarse = false;
         for (long[] c : candidates) {
             near |= c[2] != 0;
             front |= c[3] != 0;
+            coarse |= PreviewStore.level(c[0]) > 0 && c[5] == 0;
         }
         d.nearDone = near || d.nearDone != 0 ? d.nearDone : now;
         d.frontDone = front || d.frontDone != 0 ? d.frontDone : now;
+        d.coarseDone = coarse || d.coarseDone != 0 ? d.coarseDone : now;
         if (candidates.isEmpty()) {
             logFill(d, now, "all built");
         } else if (now - d.fillStart > FILL_GIVE_UP_NANOS) {
@@ -494,9 +537,10 @@ final class NoisePreview {
 
     private static void logFill(Dimension d, long now, String end) {
         if (RenderSettings.performanceLogs()) {
-            Farfield.LOG.info("Noise preview fill after {}: {} quarters to build; within {} blocks done at {}, in front at {},"
-                            + " {} at {} s", d.fillCause, d.fillTiles, (int) NEAR, seconds(d, d.nearDone),
-                    seconds(d, d.frontDone), end, String.format("%.1f", (now - d.fillStart) / 1e9));
+            Farfield.LOG.info("Noise preview fill after {}: {} quarters to build; coarse disc whole at {}, within {}"
+                            + " blocks done at {}, in front at {}, {} at {} s", d.fillCause, d.fillTiles,
+                    seconds(d, d.coarseDone), (int) NEAR, seconds(d, d.nearDone), seconds(d, d.frontDone), end,
+                    String.format("%.1f", (now - d.fillStart) / 1e9));
         }
         d.fillStart = 0;
     }
@@ -743,6 +787,7 @@ final class NoisePreview {
             }
         } finally {
             d.inFlight.remove(key);
+            (level == 0 ? d.fineInFlight : d.coarseInFlight).decrementAndGet();
         }
     }
 

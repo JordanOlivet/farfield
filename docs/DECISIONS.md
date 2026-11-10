@@ -3669,3 +3669,33 @@ first over the whole range, a level-0 tile written twice).
   the 6-second shots show the whole view to the horizon. No gain from the
   front priority: the pure circle is kept. One run each: noise not
   measured.
+
+## ADR-128 — The coarse disc keeps its share of the preview's threads
+
+Status: accepted, 2026-11-10. Amends ADR-127 (one queue for every level).
+
+- **Context**: the user, in the pack after ADR-127: "la preview se génère
+  en grossier, puis se stoppe, j'ai l'impression que c'est pour laisser les
+  niveaux plus fin se générer, puis les grossier reprennent, puis se
+  restoppent". On one queue ordered by distance, a level-0 quarter at d
+  ranks with a coarse one at d + 2,048 blocks; level-0 quarters take 2 to
+  3 s in the pack against about 0.2 s for a coarse one, so whenever the
+  near detail's turn came it held every thread and the disc stood still.
+- **Decision**: while coarse quarters of the disc remain and level 0 has
+  quarters too, level 0 holds at most half the threads in flight (queue
+  included) and the coarse levels with the biomes' samples the rest. Once
+  the disc is whole, level 0 is held back no more: the samples and the
+  canopies waiting for them keep only what it leaves. The fill line gives
+  `coarse disc whole at`.
+- **Measured** (NeoForge dev client, the route of ADR-127, preview deleted
+  before each run, a temporary switch since removed; one run each):
+
+  | | One queue | Shared, first try | Shared |
+  |---|---|---|---|
+  | Coarse disc whole, spots A / B | 23.0 / 24.5 s | 10.5 / 11.0 s | 10.0 / 10.5 s |
+  | Within 1,024 blocks, A / B | 18.5 / 18.5 s | 19.5 / 24.0 s | 18.0 / 18.0 s |
+  | All built, A / B | 23.0 / 24.5 s | 23.5 / 31.0 s | 21.5 / 22.0 s |
+
+  The first try held level 0 back while samples or canopies waited, after
+  the disc was whole: the detail then came later. Not measured in the
+  pack, where level 0 is ten times slower than in dev.
