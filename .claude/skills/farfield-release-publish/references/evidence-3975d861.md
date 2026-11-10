@@ -1,0 +1,1 @@
+farfield-release-publish [project]: Use when tagging or publishing a Farfield release. | farfield-listing-copy [project]: Use when writing Modrinth text, README, banner PNG, or uploading gallery screenshots to Modrinth or CurseForge.

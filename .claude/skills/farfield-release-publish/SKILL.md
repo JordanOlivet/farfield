@@ -1,6 +1,6 @@
 ---
 name: farfield-release-publish
-description: Use when tagging or publishing a Farfield release.
+description: Use when publishing a Farfield release or store listing.
 category: minecraft-modding
 ---
 
@@ -18,3 +18,17 @@ A release is a pushed tag `v<version>[-alpha.N]`. Do not tag until the user says
 8. Log the release in the day's `docs/progress` file (session wrap-up skill). The GitHub Release body defaults to the commit list: prepend a readable summary with `gh release edit TAG --notes-file FILE`, where FILE holds the summary followed by the old body from `gh release view TAG --json body --jq .body`.
 
 Details, run ids and warnings: see `references/release-checklist-details.md`.
+
+## Store listing text and gallery
+
+Listing text states only what the released build does today. Anything planned goes under "Not there yet", never in the feature list. Check each feature claim in the code and the lang files first: a stale claim is worse than a missing one.
+
+- Source: `docs/listing/description.md` (English). The README links to it: change both when a feature lands or is dropped. Re-check "Not there yet" on each release.
+- The README status line states the version and what is planned, never "private" or "early development" once the repo is public.
+- Banners: `python docs/brand/render_banners.py` regenerates `banner-scene.png` and `banner-icon.png` (the icon comes from `docs/brand/render_logo.py`). Open each PNG before use.
+- Screenshots cover the biomes the mod is about, not one biome: badlands, desert, savanna, dark forest, mangrove, jungle, cherry, sea, with the ice ones kept. Fresh-world captures at 1920x1080: set `overrideWidth:1920` and `overrideHeight:1080` in the run dir's `options.txt` for the session, and restore the `.orig` copy after. Pick from a contact sheet, then read each candidate at full size: thin dark lines at a distant water edge show only there.
+- Gallery: Modrinth takes JPEG quality 90, a 4K copy for the gallery and a 1920x1010 copy in `docs/listing/screenshots/`. CurseForge caps each image at 2 MB: check sizes first.
+- Upload with `docs/listing/modrinth.py add-image`; `modrinth.py show` prints each image's full-size URL, embedded under the section it illustrates. After any `description.md` change, push with the script, read back with `python -X utf8 -I docs/listing/modrinth.py show`, and diff against the file.
+- Modrinth status `processing`: the public API answers 404. Read through the token script before calling a 404 a bug.
+- Compatibility lists only the packs and mods run for this release.
+- Edit or upload only after the user validates the text. CurseForge: the user pastes the page and the gallery himself; hand him the final `description.md`, the JPEG paths and sizes, and the changed sections.

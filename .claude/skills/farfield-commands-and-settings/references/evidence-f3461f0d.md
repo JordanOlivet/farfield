@@ -1,0 +1,1 @@
+farfield-chat-commands [project]: Use when editing a Farfield chat command or its arguments. | farfield-server-config-keys [project]: Use when adding a ServerConfig server setting key.

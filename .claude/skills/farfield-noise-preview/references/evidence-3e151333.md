@@ -1,0 +1,1 @@
+spike-tiles.sh: feed() { sleep 100; echo "farfield spike tile at 20000 20000"; sleep 25; echo "farfield spike tile at -30000 12000"; ... sleep 30; echo stop; } | ./gradlew.bat :neoforge:runServer --no-daemon --console plain > "$LOG" 2>&1. Then: [11:30:09] [Server thread/INFO] [minecraft/DedicatedServer]: Done (1.569s)! For help, type "help"

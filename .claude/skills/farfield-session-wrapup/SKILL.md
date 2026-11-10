@@ -1,6 +1,6 @@
 ---
 name: farfield-session-wrapup
-description: Use when closing Farfield work: progress log, commit, push.
+description: Use when closing Farfield work, or asked what's left next.
 category: workflow
 ---
 
@@ -20,3 +20,15 @@ A reverted or rejected decision is a new decision too: append an ADR that says s
 A question turn ("est-il possible", "dis-moi ce que t'en penses", "tu en penses quoi") gets an answer only. Do not commit, push, or write the progress log in that turn. Record the open question as a next step in the next real wrap-up, or wait for the go-ahead.
 
 New decisions are a new ADR appended to `docs/DECISIONS.md`; never rewrite an existing one. A constant or bound the block chose (a protocol version, a timing, a window's limits) is a decision: before the commit, append its ADR, or write in the progress log why it is not one.
+
+## What's left or next on the plan
+
+Answer from the open items of `docs/plans/milestone-*.md`, never from memory of the session.
+
+1. List the open items with `grep -nE '^\s*- \[( |~)\]'` on the current milestone file, then read each item's Done and Remains sub-bullets: the headline alone hides what the user still has to check.
+2. Group them, at most 5 per group: (a) waiting on the user's own test, no code; (b) code work; (c) deferred by the user, quoting his words.
+3. Per item: one line, a time estimate in minutes or hours, and the first concrete action. Never repeat an earlier promise from memory: grep the plan and the progress log for what the user quotes; if it is absent, say so and estimate from the code.
+4. Most important first. End with one line: `Prochaine action : réponds « go N ».`
+5. Never tick `[x]` in the answer. Tick only what was verified, when the work is committed.
+
+Reply in French.

@@ -1,0 +1,1 @@
+farfield-client-jar-deploy [project]: Use when "déploie" copies a Farfield jar to the client.
