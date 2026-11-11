@@ -308,6 +308,12 @@ from there: D.2, then the sea floor's plants and corals in the preview.
   far faster because their features follow the draw level. Candidate:
   the real feature sandbox near (under 1 to 2 km), a per-biome canopy
   learned from the sandbox-built tiles farther, also inside 4,096 blocks.
+  The user (2026-11-11): reach the world border. Studied in
+  `docs/analysis/preview-to-the-border.md` (ideas from the SeedGen mods,
+  adapted): coarse levels with the ground only, heights from the
+  generator's estimate without caves, compiled surface rules, tree shapes
+  harvested from the sandbox and stamped on a hashed grid; three open
+  questions for the user.
 
 ## M2.F — Tooling
 
