@@ -88,9 +88,10 @@ out vec4 fragColor;
 
 const uint TILES_PER_ROW = 128u;
 const float TILE = 16.0;
-// Level 0 to 4: red, orange, yellow, green, blue.
-const vec3 LEVEL_COLORS[5] = vec3[](vec3(1.0, 0.15, 0.1), vec3(1.0, 0.55, 0.0), vec3(1.0, 0.95, 0.1),
-                                    vec3(0.2, 0.85, 0.2), vec3(0.2, 0.45, 1.0));
+// Level 0 to 7: red, orange, yellow, green, blue, then the far preview's (E.3b) purple, pink, white.
+const vec3 LEVEL_COLORS[8] = vec3[](vec3(1.0, 0.15, 0.1), vec3(1.0, 0.55, 0.0), vec3(1.0, 0.95, 0.1),
+                                    vec3(0.2, 0.85, 0.2), vec3(0.2, 0.45, 1.0), vec3(0.6, 0.25, 0.9),
+                                    vec3(1.0, 0.4, 0.75), vec3(1.0, 1.0, 1.0));
 
 
 bool occluder(ivec3 v) {
@@ -289,7 +290,7 @@ void main() {
     vec2 lightUv = clamp(vec2(v_lightmap) / 16.0, vec2(0.5 / 16.0), vec2(15.5 / 16.0));
     color = pow(min(color, vec3(1.0)), vec3(1.0 / 2.2)) * (v_light * ao) * texture(u_lightmap, lightUv).rgb;
     if (u_debugLevels) {
-        color = mix(color, LEVEL_COLORS[min(v_level, 4)], 0.65);
+        color = mix(color, LEVEL_COLORS[min(v_level, 7)], 0.65);
     }
     // As vanilla's fog_distance: sphere, or cylinder.
     float fogDistance = u_fogCylinder ? max(length(v_relative.xz), abs(v_relative.y)) : distance;

@@ -3931,3 +3931,55 @@ step 5 of `docs/analysis/preview-to-the-border.md` ("go étape 5").
   min (312 tiles with three levels, 1.6 min, ADR-134); levels 5, 4 and 3
   whole 2.5 to 2.7 s after the start, level 2 at 6.6 s, level 1 at 22.5 s,
   level 0 at 98 s. Not run in a client or in the pack.
+
+## ADR-136 — The LODs and the preview to 32,768 blocks
+
+Status: accepted, 2026-11-11. Amends ADR-034 (the fog distance, 4,096 at
+most) and ADR-126 (the preview within a fixed 4,096 blocks). Lot E.3b of
+milestone 2 (also plan item E.1).
+
+- **Context**: ADR-135 built tile levels 3 to 5, which reach 32,768 blocks,
+  but the renderer, the fog setting and the preview's schedule stopped at
+  4,096. The preview's renderer layer drew levels 0 to 4 only, each section
+  from level-0 views cut out of the tiles: at draw level 7 a section spans
+  64 tiles, whose views (4 KB of summary, about 300 KB once cut) and real
+  masks (8 KB) would have cost hundreds of MB to 32,768 blocks.
+- **Decision**:
+  - The fog distance stays the LODs' distance (nothing is drawn beyond
+    it, its tooltip said so), 256 to 32,768 blocks (`MAX_FOG_DISTANCE`),
+    4,096 by default (`DEFAULT_DRAW_DISTANCE`); off draws to 4,096 without
+    fog, as before. The slider goes by 128 blocks to 4,096, then by 1,024.
+    `LodRenderer.MAX_DISTANCE` follows the maximum; the LODs' own fallback
+    fog follows the selection's distance.
+  - The preview is built to each player's draw distance
+    (`PreviewPyramid.range(level, features, distance)`, `MAX_RANGE`
+    32,768): in single player the host's own setting, as is; on a server
+    the distance in the client's hint (protocol 11, not released yet, gains
+    it), at most `streaming_radius`; 4,096 before a hint. Level L's tiles
+    within `1024 << L` blocks, the coarsest over the whole distance. The
+    client asks tiles within its own distance too.
+  - The preview layer draws levels 0 to 7 (`PreviewLayer.LEVELS`; preview
+    keys add 8 to 4 bits of level, so 7 is the last without new keys). A
+    far section (draw level 5 and up) reads the stored coarse tile of level
+    `drawLevel - 2` or coarser as written (`PreviewStore.coarseSource`), not
+    level-0 views: `PreviewVoxels.buildFar` scales each tile's samples and
+    cells by its level, and lays the ground, sea and ice only (no lakes,
+    trees, plants or block light). Its existence comes from that tile's
+    summary; real chunks are not looked at for it. A tile without real data
+    takes one shared empty mask. The coarse tiles kept decoded go from 16 to
+    64. A far section is meshed again when any tile under it changed.
+  - The level colors gain purple (32), pink (64) and white (128 blocks).
+- **Checked** (dev clients, `farfield-test`, from 48, 330, 32): single
+  player, the integrated server built every tile within 32,768 blocks (`0
+  left within 32768 blocks`); level colors show levels 5, 6 and 7 out to
+  the horizon, where at 4,096 the terrain stops in the fog. 329 sections
+  drawn and 10 MB of quads against 109 and 5 MB, about 2.0 against 1.5 ms
+  of GPU and 200 against 140 us on the render thread a frame, 118 fps
+  both. A NeoForge client asking 32,768 from a Fabric dev server with
+  `streaming_radius=16384`: the server built to 16,384 (`left within 16384
+  blocks`), the client drew its levels 5 to 7 from the streamed tiles. Not
+  run in the pack. Left: real LODs above level 4 (E.3c: explored land far
+  away is drawn at level 4); a coarse tile written where a finer one is
+  already the finest source tells no view listener, so a far section
+  reading it is not meshed again (the coarsest are built first, so not met
+  in these runs).

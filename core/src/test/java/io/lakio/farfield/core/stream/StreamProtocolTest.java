@@ -44,7 +44,7 @@ class StreamProtocolTest {
 
     @Test
     void hintCarriesTheDetailAndGivesEachLevelItsDrawDistance() {
-        StreamProtocol.Hint hint = new StreamProtocol.Hint(7, 3.25);
+        StreamProtocol.Hint hint = new StreamProtocol.Hint(7, 3.25, 16384);
         assertEquals(hint, StreamProtocol.Hint.decode(hint.encode()));
         // Level 0 is drawn where level 1 (64 blocks) splits: within 3.25 * 64 blocks.
         assertEquals(208.0, StreamProtocol.Hint.drawDistance(0, 5, 3.25));

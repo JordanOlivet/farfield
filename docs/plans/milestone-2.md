@@ -291,13 +291,16 @@ Items:
 Put off by the user (2026-10-30): "c'est pas du tout prio". The order
 from there: D.2, then the sea floor's plants and corals in the preview.
 
-- [ ] E.1 The user (2026-10-28): raise the limit from 4,096 to 16,384
+- [~] E.1 The user (2026-10-28): raise the limit from 4,096 to 16,384
   blocks, 4,096 staying the default. A server maximum never exceeded
   (`streaming_radius`, capped at 16,384); a client wish (default 4,096),
   clamped by the server's maximum when connected, applied as is in single
   player or client-only rendering. Raise the hard-coded 4,096 caps
   (`LodRenderer.MAX_DISTANCE`, `NoisePreview.RANGE`, `RenderConfig` fog and
   texture maxima); update every tooltip and text (en_us, fr_fr).
+  Done with E.3b (ADR-136), to 32,768: the client's wish is its fog
+  distance, the server's maximum `streaming_radius`; the texture distance
+  stays at 4,096 at most. Remains: the pack.
 - [ ] E.2 A cheap preview beyond 4,096 blocks: the area is 16 times larger
   (about 3,200 tiles instead of 236, 50 to 60 min of server work after a
   teleport at today's 5 to 7 s a tile, about 250 MB a world and as much
@@ -338,7 +341,7 @@ from there: D.2, then the sea floor's plants and corals in the preview.
     to 0.86 s a coarse tile, 58 to 83 % of the tops as level 0's, levels 5
     to 3 whole 2.7 s after a pregen's start (level 2 at 6.6 s). Remains:
     a look in a client, the pack's times.
-  - [ ] E.3b Client and server to 32,768 blocks (1 to 1.5 days). E.1's
+  - [~] E.3b Client and server to 32,768 blocks (1 to 1.5 days). E.1's
     settings (a client wish, 4,096 by default, clamped by the server's
     maximum); `MAX_DISTANCE`, the fog maximum, the depth's far plane; the
     preview's selector to draw level 7 (tile level 5), its masks for
@@ -347,6 +350,10 @@ from there: D.2, then the sea floor's plants and corals in the preview.
     cost too much (measure first); tooltips in `en_us` and `fr_fr`.
     Verify in a dev client: captures at 32,768, mesh job times, frame
     time.
+    Done 2026-11-11 (ADR-136), verified in NeoForge dev clients: single
+    player to 32,768 blocks (levels 5 to 7 drawn, 2.0 against 1.5 ms of
+    GPU a frame at 4,096); a Fabric dev server with `streaming_radius`
+    16,384 built its client's preview to 16,384. Remains: the pack.
   - [ ] E.3c Real LODs above level 4 (about 1 day): `LodWorld.LEVELS` 5 to
     8 (real 0 to 7, preview 8 to 15: still 4 bits), its 30 uses in 6
     files (`FaceTextures.LEVELS` is the texture's mips, not this),

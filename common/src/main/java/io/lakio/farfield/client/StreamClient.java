@@ -162,6 +162,7 @@ public final class StreamClient {
     /** The renderer's split detail, and the one last told the server (-1: not yet this session). */
     private double detail = 4.0;
     private double hintSent = -1;
+    private int distanceSent = -1;
 
     private StreamClient(ResourceKey<Level> dimension, Path dir) {
         this.dimension = dimension;
@@ -443,9 +444,11 @@ public final class StreamClient {
         if (session < 0) {
             return;
         }
-        if (hintSent < 0 || Math.abs(detail - hintSent) > hintSent * 0.05) {
+        int distance = drawDistance();
+        if (hintSent < 0 || Math.abs(detail - hintSent) > hintSent * 0.05 || distance != distanceSent) {
             hintSent = detail;
-            send(new StreamProtocol.Hint(session, detail).encode());
+            distanceSent = distance;
+            send(new StreamProtocol.Hint(session, detail, distance).encode());
         }
         dropLost();
         // Requests the server never answered (it dropped them): asked again later.
@@ -541,7 +544,7 @@ public final class StreamClient {
         for (int level = PreviewPyramid.LEVELS - 1; level >= 0; level--) {
             int tile = PreviewStore.blocks(level);
             double range = Math.min(radius, PreviewPyramid.range(level,
-                    io.lakio.farfield.core.config.ServerConfig.MAX_FEATURES_DISTANCE));
+                    io.lakio.farfield.core.config.ServerConfig.MAX_FEATURES_DISTANCE, drawDistance()));
             int x0 = Math.floorDiv((int) Math.floor(px - range), tile);
             int x1 = Math.floorDiv((int) Math.floor(px + range), tile);
             int z0 = Math.floorDiv((int) Math.floor(pz - range), tile);
@@ -631,6 +634,12 @@ public final class StreamClient {
      * The renderer's split detail ({@link StreamProtocol.Hint}): told the
      * server when it moves, so it pushes each level where it is drawn.
      */
+    /** The blocks this client draws to (its fog distance), for the hint and the tiles asked (E.3b). */
+    static int drawDistance() {
+        return Math.min(io.lakio.farfield.core.preview.PreviewPyramid.MAX_RANGE,
+                io.lakio.farfield.core.config.RenderConfig.drawDistance(io.lakio.farfield.lod.RenderSettings.fogDistance()));
+    }
+
     public void setDetail(double detail) {
         this.detail = detail;
     }

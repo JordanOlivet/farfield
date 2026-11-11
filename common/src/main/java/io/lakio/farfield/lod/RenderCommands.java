@@ -237,7 +237,7 @@ public final class RenderCommands {
         RenderSettings.setDebugLevels(on);
         RenderSettings.save();
         Farfield.LOG.info("LOD level colors switched {} by command", on ? "on" : "off");
-        return on ? "LOD level colors on: red 1 block, orange 2, yellow 4, green 8, blue 16."
+        return on ? "LOD level colors on: red 1 block, orange 2, yellow 4, green 8, blue 16, purple 32, pink 64, white 128."
                 : "LOD level colors off.";
     }
 

@@ -40,7 +40,8 @@ public final class PreviewStore {
     private static final Pattern TILE_FILE = Pattern.compile("t\\.(-?\\d+)\\.(-?\\d+)\\.ffp");
     private static final Pattern LEVEL_DIR = Pattern.compile("L(\\d+)");
     private static final int CACHED_TILES = 64;
-    private static final int CACHED_COARSE = 16;
+    /** Coarse tiles kept decoded: the far sections read them as stored (E.3b), about 20 a level to 32,768 blocks. */
+    private static final int CACHED_COARSE = 64;
 
     private final Path dir;
     private final io.lakio.farfield.core.storage.SectionStore.BeforeWrite beforeWrite;
@@ -291,6 +292,37 @@ public final class PreviewStore {
             }
         }
         return t;
+    }
+
+    /**
+     * The key of the finest stored tile of level {@code minLevel} or coarser
+     * over block (bx, bz) whose quarter there is built; -1 for none. The far
+     * sections read it as stored, not cut into level-0 views (E.3b).
+     */
+    public long coarseSource(int minLevel, int bx, int bz) {
+        int held = levels >>> minLevel << minLevel;
+        while (held != 0) {
+            int level = Integer.numberOfTrailingZeros(held);
+            held &= held - 1;
+            int size = blocks(level);
+            long key = key(level, Math.floorDiv(bx, size), Math.floorDiv(bz, size));
+            PreviewTile.Summary s = summaries.get(key);
+            int q = (Math.floorMod(bz, size) >= size / 2 ? 2 : 0) + (Math.floorMod(bx, size) >= size / 2 ? 1 : 0);
+            if (s != null && s.built(q)) {
+                return key;
+            }
+        }
+        return -1;
+    }
+
+    /** The summary of a stored tile by its key, or null. */
+    public PreviewTile.Summary summary(long key) {
+        return summaries.get(key);
+    }
+
+    /** A stored tile by its key, as written, or null. */
+    public PreviewTile read(long key) throws IOException {
+        return read(level(key), tileX(key), tileZ(key));
     }
 
     /** A stored tile as written (a coarse one not cut), or null. */

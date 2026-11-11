@@ -49,11 +49,17 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
     public static final int FOG_OFF = Integer.MAX_VALUE;
     /** Thick fog distance meaning the game's own thick fog, LODs fading into it (ADR-033). */
     public static final int FOG_VANILLA = 0;
-    /** Fog distances in blocks, where the fog becomes opaque. */
+    /**
+     * Fog distances in blocks, where the fog becomes opaque; nothing is drawn
+     * beyond, so the fog distance is the LODs' distance too (E.3b: up to
+     * 32,768 blocks, the preview's tile level 5).
+     */
     public static final int MIN_FOG_DISTANCE = 256;
-    public static final int MAX_FOG_DISTANCE = 4096;
+    public static final int MAX_FOG_DISTANCE = 32768;
+    /** The LODs' distance without fog ({@link #FOG_OFF}), and the fog's default: the 4,096 blocks of before E.3b. */
+    public static final int DEFAULT_DRAW_DISTANCE = 4096;
     /** Default: the fog at the edge of the LODs in normal dimensions, the game's own in thick fog. */
-    public static final int DEFAULT_FOG_DISTANCE = MAX_FOG_DISTANCE;
+    public static final int DEFAULT_FOG_DISTANCE = DEFAULT_DRAW_DISTANCE;
     public static final int DEFAULT_THICK_FOG_DISTANCE = FOG_VANILLA;
 
     /** Thread count meaning one per four logical processors ({@link #threads}). */
@@ -173,6 +179,11 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
         return blocks == ALL_DISTANCES ? ALL_DISTANCES : Math.max(0, Math.min(MAX_TEXTURE_DISTANCE, blocks));
     }
 
+    /** How far LODs are drawn under a fog distance: the distance itself, {@link #DEFAULT_DRAW_DISTANCE} without fog. */
+    public static int drawDistance(int fogDistance) {
+        return fogDistance == FOG_OFF ? DEFAULT_DRAW_DISTANCE : fogDistance;
+    }
+
     /** {@link #FOG_OFF}, or {@link #MIN_FOG_DISTANCE} to {@link #MAX_FOG_DISTANCE} blocks. */
     public static int clampFogDistance(int blocks) {
         return blocks == FOG_OFF ? FOG_OFF : Math.max(MIN_FOG_DISTANCE, Math.min(MAX_FOG_DISTANCE, blocks));
@@ -192,7 +203,7 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
         try (Reader in = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
             p.load(in);
         }
-        int thickFallback = bool(p, EXTEND_DIMENSION_FOG, false) ? MAX_FOG_DISTANCE : DEFAULT_THICK_FOG_DISTANCE;
+        int thickFallback = bool(p, EXTEND_DIMENSION_FOG, false) ? DEFAULT_DRAW_DISTANCE : DEFAULT_THICK_FOG_DISTANCE;
         return new RenderConfig(
                 bool(p, ENABLED, DEFAULTS.enabled),
                 floatValue(p, VOXEL_PIXELS, DEFAULTS.voxelPixels),
@@ -226,10 +237,13 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
             out.write("# Distance in blocks up to which LOD faces show their textures, 0 to "
                     + MAX_TEXTURE_DISTANCE + " (0: off), or all. Default all.\n");
             out.write(TEXTURE_DISTANCE + "=" + (textureDistance == ALL_DISTANCES ? ALL : Integer.toString(textureDistance)) + "\n");
-            out.write("# Tint LOD faces by level (red 1 block, orange 2, yellow 4, green 8, blue 16).\n");
+            out.write("# Tint LOD faces by level (red 1 block, orange 2, yellow 4, green 8, blue 16,\n");
+            out.write("# purple 32, pink 64, white 128).\n");
             out.write(LEVEL_COLORS + "=" + levelColors + "\n");
             out.write("# Distance in blocks where the fog becomes opaque in normal dimensions, "
-                    + MIN_FOG_DISTANCE + " to " + MAX_FOG_DISTANCE + ", or off. Default " + DEFAULT_FOG_DISTANCE + ".\n");
+                    + MIN_FOG_DISTANCE + " to " + MAX_FOG_DISTANCE + ", or off. Nothing is drawn beyond it\n");
+            out.write("# (off: LODs to " + DEFAULT_DRAW_DISTANCE + " blocks, without fog). Default "
+                    + DEFAULT_FOG_DISTANCE + ".\n");
             out.write(FOG_DISTANCE + "=" + fogText(fogDistance) + "\n");
             out.write("# The same in dimensions with thick fog (the Nether), or vanilla: LODs fade into\n");
             out.write("# the game's own fog. Default vanilla.\n");

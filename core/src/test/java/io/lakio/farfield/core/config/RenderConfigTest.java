@@ -95,7 +95,7 @@ class RenderConfigTest {
 
         // The setting before ADR-034: pushed-back thick fog reads as the LOD horizon.
         Files.writeString(file, "extend_dimension_fog=true\n", StandardCharsets.UTF_8);
-        assertEquals(RenderConfig.MAX_FOG_DISTANCE, RenderConfig.read(file).thickFogDistance());
+        assertEquals(RenderConfig.DEFAULT_DRAW_DISTANCE, RenderConfig.read(file).thickFogDistance());
         Files.writeString(file, "extend_dimension_fog=true\nthick_fog_distance=768\n", StandardCharsets.UTF_8);
         assertEquals(768, RenderConfig.read(file).thickFogDistance());
 

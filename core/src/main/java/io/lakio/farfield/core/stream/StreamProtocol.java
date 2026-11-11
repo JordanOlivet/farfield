@@ -29,8 +29,9 @@ public final class StreamProtocol {
      * 7: tiles of format 12, ADR-080; 8: tiles of format 17, their light
      * sources, ADR-117; 9: tiles of format 18, the lakes the features dig,
      * ADR-118; 10: tile keys carry the pyramid's level, tiles of format 19,
-     * ADR-126; 11: tiles of format 22, levels 0 to 5, ADR-135; formats 20 and
-     * 21 had kept 10, and a client of either declined the other's tiles).
+     * ADR-126; 11: tiles of format 22, levels 0 to 5, ADR-135, and the
+     * hint's draw distance, E.3b; formats 20 and 21 had kept 10, and a client
+     * of either declined the other's tiles).
      */
     public static final int VERSION = 11;
     /** Largest body of one message, under the game's custom payload limits. */
@@ -437,19 +438,22 @@ public final class StreamProtocol {
      * closer than {@code detail} times its size, so level L is drawn within
      * {@link #drawDistance} of the camera; the server pushes the sections
      * written there. Sent at the session's start and when the detail moves
-     * (window size, field of view, a spyglass).
+     * (window size, field of view, a spyglass). With the blocks the client
+     * draws to (its fog distance, E.3b): the server builds its preview no
+     * farther.
      */
-    public record Hint(int session, double detail) {
+    public record Hint(int session, double detail, int distance) {
         public byte[] encode() {
             ByteWriter out = start(HINT);
             out.writeVarInt(session);
             out.writeVarInt((int) Math.round(Math.max(0, Math.min(detail, 1_000_000)) * 1000));
+            out.writeVarInt(Math.max(0, distance));
             return out.toByteArray();
         }
 
         public static Hint decode(byte[] payload) {
             ByteReader in = body(payload);
-            return new Hint(in.readVarInt(), in.readVarInt() / 1000.0);
+            return new Hint(in.readVarInt(), in.readVarInt() / 1000.0, in.readVarInt());
         }
 
         /**

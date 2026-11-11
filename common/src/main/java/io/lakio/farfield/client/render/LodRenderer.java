@@ -131,11 +131,10 @@ public final class LodRenderer {
     private static final int[] FILL_CHECKS = {0, 1, 2, 5, 10, 20, 30, 45, 60};
     private static final LodRenderer INSTANCE = new LodRenderer();
 
-    private static final double MAX_DISTANCE = 4096;
+    /** The farthest LODs drawn (E.3b): the fog distance's maximum, the preview's coarsest tiles. */
+    private static final double MAX_DISTANCE = RenderConfig.MAX_FOG_DISTANCE;
     /** How far {@code debug here} follows the view. */
     private static final int LOOK_DISTANCE = 4096;
-    private static final float FOG_START = (float) MAX_DISTANCE * 0.6f;
-    private static final float FOG_END = (float) MAX_DISTANCE;
     /** Mesh jobs in flight: 32 to 128 filled the view as fast (ADR-056). */
     private static final int MAX_IN_FLIGHT = 64;
     private static final long UPLOAD_BUDGET_QUADS = 1 << 20;
@@ -906,7 +905,7 @@ public final class LodRenderer {
     private double selectionDistance() {
         int distance = thickFogDimension ? RenderSettings.thickFogDistance() : RenderSettings.fogDistance();
         if (distance == RenderConfig.FOG_OFF) {
-            return MAX_DISTANCE;
+            return RenderConfig.DEFAULT_DRAW_DISTANCE; // no fog: the 4,096 blocks of before E.3b
         }
         if (distance == RenderConfig.FOG_VANILLA) {
             return 0; // the game's thick fog is opaque within its render distance
@@ -927,7 +926,7 @@ public final class LodRenderer {
                 // The farthest LOD geometry, not the selection's radius: square sections cross it by up
                 // to a coarsest section's diagonal, and packs put their LOD far plane there (Photon's
                 // combined_far = 16 * vxRenderDistance), so geometry past it came out as fog.
-                double coarsest = 32 << (LodWorld.LEVELS - 1);
+                double coarsest = 32 << (PreviewLayer.LEVELS - 1);
                 int extent = (int) Math.min(MAX_DISTANCE * 2.0, r.selectionDistance() + coarsest * Math.sqrt(2));
                 r.packLink.frame(projection, viewRotation, 8f, (float) MAX_DISTANCE * 2, extent);
             } catch (RuntimeException e) {
@@ -2556,8 +2555,7 @@ public final class LodRenderer {
             LongIterator keys = resident.keySet().iterator();
             while (keys.hasNext()) {
                 long k = keys.nextLong();
-                int[] rows = PreviewLayer.isPreview(k) ? changedTiles.get(PreviewLayer.tileOf(k)) : null;
-                if (rows != null && PreviewLayer.meets(k, rows)) {
+                if (PreviewLayer.isPreview(k) && PreviewLayer.touched(k, changedTiles)) {
                     stale.add(k);
                     if (drawn.contains(k)) {
                         joinSwap(swap, k, now); // their new meshes go in together (ADR-092)
@@ -3448,7 +3446,8 @@ public final class LodRenderer {
             glUniform1i(s.fogCylinder, followVanillaFog && RenderSystem.getShaderFogShape() == FogShape.CYLINDER ? 1 : 0);
         } else {
             // The fog mixin did not run or left a mod's fog alone: the LODs' own far fog.
-            glUniform2f(s.fog, FOG_START, FOG_END);
+            float end = (float) Math.max(RenderConfig.MIN_FOG_DISTANCE, selectionDistance());
+            glUniform2f(s.fog, end * 0.6f, end);
             glUniform1i(s.fogCylinder, 0);
         }
         glUniform1i(s.translucent, translucent ? 1 : 0);

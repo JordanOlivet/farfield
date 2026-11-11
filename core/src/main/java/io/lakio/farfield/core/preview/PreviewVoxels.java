@@ -195,6 +195,27 @@ public final class PreviewVoxels {
     public static LodSection build(int level, int sx, int sy, int sz, Tiles tiles, Mask mask, int air, int minY,
                                    int maskGround, int maskFluid, int layerAxis, int layerIndex,
                                    MipBuilder.Shapes covers, boolean blockLight, Shown shown) {
+        return build(level, sx, sy, sz, tiles, mask, air, minY, maskGround, maskFluid, layerAxis, layerIndex, covers,
+                blockLight, shown, false);
+    }
+
+    /**
+     * A far section (E.3b: draw levels above the level-0 tile's, 32-block
+     * voxels and coarser) from tiles as stored, of any level: {@code tiles}
+     * gives, by level-0 place, the coarse tile over it, not cut into a view
+     * (each tile's level scales its samples and cells). The ground, sea and
+     * ice only: no lakes, trees, plants or block light, which such voxels
+     * would not show (the coarse levels hold none from level 3 up).
+     */
+    public static LodSection buildFar(int level, int sx, int sy, int sz, Tiles tiles, Mask mask, int air, int minY,
+                                      int maskGround, int maskFluid, int layerAxis, int layerIndex) {
+        return build(level, sx, sy, sz, tiles, mask, air, minY, maskGround, maskFluid, layerAxis, layerIndex, null,
+                false, Shown.ALL, true);
+    }
+
+    private static LodSection build(int level, int sx, int sy, int sz, Tiles tiles, Mask mask, int air, int minY,
+                                    int maskGround, int maskFluid, int layerAxis, int layerIndex,
+                                    MipBuilder.Shapes covers, boolean blockLight, Shown shown, boolean far) {
         int s = 1 << level;
         int size = S * s;
         int ox = sx * size;
@@ -234,7 +255,7 @@ public final class PreviewVoxels {
                 if (real[c]) {
                     ground[c] = mask.ground(bx >> 4, bz >> 4);
                     fluid[c] = mask.fluidTop(bx >> 4, bz >> 4);
-                } else if (h[c] != NONE) {
+                } else if (h[c] != NONE && !far) {
                     dug[c] = dig(near, bx, bz, s, c, h, low, lake, lakeTop, pit);
                 }
             }
@@ -368,7 +389,7 @@ public final class PreviewVoxels {
         if (section != null) {
             seaLight(section, seas, oy, s, layerAxis, layerIndex);
         }
-        if (layerAxis < 0) {
+        if (layerAxis < 0 && !far) {
             // Layers only hide a neighbor's water faces: trees there are left out (a
             // water face against a trunk on a section border stays, behind the trunk).
             section = trees(section, level, ox, oy, oz, cache, mask, air, layerAxis, layerIndex, shown);
@@ -386,8 +407,9 @@ public final class PreviewVoxels {
                     if (tile == null) {
                         continue;
                     }
-                    int biome = tile.biome(Math.floorMod(bx, PreviewTile.BLOCKS) >> 4,
-                            Math.floorMod(bz, PreviewTile.BLOCKS) >> 4);
+                    int t = tile.level();
+                    int biome = tile.biome(Math.floorMod(bx, PreviewTile.BLOCKS << t) >> t >> 4,
+                            Math.floorMod(bz, PreviewTile.BLOCKS << t) >> t >> 4);
                     for (int cy = 0; cy < LodSection.BIOME_CELLS_PER_AXIS; cy++) {
                         section.setBiome(cx, cy, cz, biome);
                     }
@@ -1291,8 +1313,11 @@ public final class PreviewVoxels {
             return NONE;
         }
         int lowest = Integer.MAX_VALUE;
-        int lx = Math.floorMod(bx, PreviewTile.BLOCKS);
-        int lz = Math.floorMod(bz, PreviewTile.BLOCKS);
+        // A tile as stored covers 512 << level blocks with the same samples (a far section's, E.3b; a view: level 0).
+        int t = tile.level();
+        int lx = Math.floorMod(bx, PreviewTile.BLOCKS << t) >> t;
+        int lz = Math.floorMod(bz, PreviewTile.BLOCKS << t) >> t;
+        s = Math.max(1, s >> t);
         int best = NONE;
         int last = PreviewTile.CELLS - 1;
         if (s < PreviewTile.GRID) {

@@ -45,14 +45,28 @@ final class PreviewLayer {
     static final int KEY_LEVEL_OFFSET = 8;
     private static final byte EXISTS = 1;
     private static final byte ABSENT = 2;
-    private static final int TOP_LEVEL = LodWorld.LEVELS - 1;
+    /**
+     * The level whose section is one level-0 tile (512 blocks): the real
+     * level-4 sections the masks are read from, the views the near sections
+     * are built from.
+     */
+    private static final int TILE_LEVEL = 4;
+    /**
+     * Draw levels of the preview, 0 to {@code LEVELS - 1} (E.3b): above
+     * {@link #TILE_LEVEL} a far section reads the coarse tile of level
+     * {@code drawLevel - 2} or coarser as stored ({@link PreviewVoxels#buildFar}).
+     * 7 at most: preview keys add {@link #KEY_LEVEL_OFFSET} to 4 bits of level.
+     */
+    static final int LEVELS = 8;
     /** Mask layout: 32 rows of real-chunk bits (z, bit x), then per chunk (z * 32 + x) the ground, then the fluid top. */
     private static final int GROUND = PreviewTile.CHUNKS;
     private static final int FLUID = GROUND + PreviewTile.CHUNKS * PreviewTile.CHUNKS;
     private static final int MASK_INTS = FLUID + PreviewTile.CHUNKS * PreviewTile.CHUNKS;
+    /** A mask with no real chunk, shared by the tiles without real data (most of them, far away); never written. */
+    private static final int[] EMPTY_MASK = emptyMask();
     private static final int[][] STEP = {{-1, 0, 0}, {1, 0, 0}, {0, -1, 0}, {0, 1, 0}, {0, 0, -1}, {0, 0, 1}};
 
-    private final LodSelector selector = new LodSelector(LodWorld.LEVELS, 4.0);
+    private final LodSelector selector = new LodSelector(LEVELS, 4.0);
     private final Executor executor;
     /** Selection existence of plain keys, render thread; cleared whenever tiles or masks change. */
     private final Long2ByteOpenHashMap existence = new Long2ByteOpenHashMap();
@@ -179,7 +193,7 @@ final class PreviewLayer {
         if (w == null) {
             return;
         }
-        if (LodKey.level(key) == TOP_LEVEL) {
+        if (LodKey.level(key) == TILE_LEVEL) {
             long tile = PreviewStore.key(LodKey.x(key), LodKey.z(key));
             if (masks.containsKey(tile)) {
                 maskDirty.add(tile);
@@ -452,17 +466,54 @@ final class PreviewLayer {
                 : (held[Math.floorMod(chunkZ, PreviewTile.CHUNKS)] >>> Math.floorMod(chunkX, PreviewTile.CHUNKS) & 1) != 0
                 ? "; a held mask hides it once the real terrain is drawn" : "; a held mask for its tile";
         if ((mask[Math.floorMod(chunkZ, PreviewTile.CHUNKS)] >>> Math.floorMod(chunkX, PreviewTile.CHUNKS) & 1) == 0) {
-            return "shown (no real data at level " + TOP_LEVEL + ")" + hold;
+            return "shown (no real data at level " + TILE_LEVEL + ")" + hold;
         }
         return "hidden for real terrain (ground at " + mask[GROUND + c] + ", fluid top "
                 + mask[FLUID + c] + ")" + hold;
     }
 
-    /** The tile a preview key's section lies in. */
+    /** The tile a preview key's section lies in; for a far section, the one at its corner. */
     static long tileOf(long key) {
         int shift = drawLevel(key);
         // A level-L section spans 32 << L blocks; a tile 512 = 32 << 4.
-        return PreviewStore.key(LodKey.x(key) >> (TOP_LEVEL - shift), LodKey.z(key) >> (TOP_LEVEL - shift));
+        if (shift > TILE_LEVEL) {
+            return PreviewStore.key(LodKey.x(key) << (shift - TILE_LEVEL), LodKey.z(key) << (shift - TILE_LEVEL));
+        }
+        return PreviewStore.key(LodKey.x(key) >> (TILE_LEVEL - shift), LodKey.z(key) >> (TILE_LEVEL - shift));
+    }
+
+    /**
+     * Whether a preview section must be meshed again for the changed tiles
+     * ({@code tiles}: per tile, its changed chunks' rows): a near section
+     * where its chunks meet them, a far one when it lies over any of them.
+     */
+    static boolean touched(long key, Map<Long, int[]> tiles) {
+        int shift = drawLevel(key);
+        if (shift <= TILE_LEVEL) {
+            int[] rows = tiles.get(tileOf(key));
+            return rows != null && meets(key, rows);
+        }
+        int n = 1 << (shift - TILE_LEVEL);
+        int x0 = LodKey.x(key) * n;
+        int z0 = LodKey.z(key) * n;
+        if (tiles.size() < n * n) {
+            for (long tile : tiles.keySet()) {
+                int tx = PreviewStore.tileX(tile) - x0;
+                int tz = PreviewStore.tileZ(tile) - z0;
+                if (tx >= 0 && tz >= 0 && tx < n && tz < n) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        for (int z = 0; z < n; z++) {
+            for (int x = 0; x < n; x++) {
+                if (tiles.containsKey(PreviewStore.key(x0 + x, z0 + z))) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private boolean sectionExists(long plain) {
@@ -470,9 +521,10 @@ final class PreviewLayer {
         if (known != 0) {
             return known == EXISTS;
         }
-        boolean exists = computeExists(plain);
+        boolean far = LodKey.level(plain) > TILE_LEVEL;
+        boolean exists = far ? computeFarExists(plain) : computeExists(plain);
         // A tile whose mask is not known yet is asked again at the next selection.
-        if (exists || masks.containsKey(tileOf(plain))) {
+        if (exists || far || masks.containsKey(tileOf(plain))) {
             existence.put(plain, exists ? EXISTS : ABSENT);
         }
         return exists;
@@ -522,6 +574,34 @@ final class PreviewLayer {
     }
 
     /**
+     * Whether a far section may hold voxels: by the summary of the coarse
+     * tile it reads ({@link PreviewStore#coarseSource}, level {@code
+     * drawLevel - 2} or coarser), over the section's chunks of that tile.
+     * Real chunks are not looked at: a section over explored land alone
+     * builds its mask columns only.
+     */
+    private boolean computeFarExists(long plain) {
+        LodWorld w = world;
+        int level = LodKey.level(plain);
+        int s = 1 << level;
+        int size = LodSection.SIZE * s;
+        int bx = LodKey.x(plain) * size;
+        int bz = LodKey.z(plain) * size;
+        long source = w.preview().coarseSource(level - 2, bx, bz);
+        PreviewTile.Summary summary = source < 0 ? null : w.preview().summary(source);
+        if (summary == null) {
+            return false;
+        }
+        int t = PreviewStore.level(source);
+        int chunkBlocks = 16 << t;
+        int cx0 = Math.floorMod(bx, PreviewStore.blocks(t)) / chunkBlocks;
+        int cz0 = Math.floorMod(bz, PreviewStore.blocks(t)) / chunkBlocks;
+        int chunks = Math.max(1, size / chunkBlocks);
+        int y0 = LodKey.y(plain) * size;
+        return summary.spans(cx0, cz0, cx0 + chunks - 1, cz0 + chunks - 1, y0, y0 + size, s);
+    }
+
+    /**
      * Reads a tile's mask in the background, again while real data keeps
      * changing in it; the mask in use stays until the new one replaces it.
      */
@@ -565,6 +645,12 @@ final class PreviewLayer {
                 requestMask(w, tile);
             }
         });
+    }
+
+    private static int[] emptyMask() {
+        int[] mask = new int[MASK_INTS];
+        Arrays.fill(mask, GROUND, MASK_INTS, Integer.MIN_VALUE);
+        return mask;
     }
 
     private static int[] filledRows() {
@@ -795,17 +881,25 @@ final class PreviewLayer {
      * Any thread.
      */
     private int[] readMask(LodWorld w, long tile) throws IOException {
-        int[] mask = new int[MASK_INTS];
-        java.util.Arrays.fill(mask, GROUND, MASK_INTS, Integer.MIN_VALUE);
         int x = PreviewStore.tileX(tile);
         int z = PreviewStore.tileZ(tile);
-        int size = LodSection.SIZE << TOP_LEVEL;
-        int voxel = 1 << TOP_LEVEL;
+        int size = LodSection.SIZE << TILE_LEVEL;
+        int voxel = 1 << TILE_LEVEL;
+        // No real data and no level-0 chunk waiting: the shared empty mask (most tiles far away, E.3b).
+        boolean any = fineMasks.containsKey(tile);
+        for (int y = Math.floorDiv(maxY - 1, size); y >= Math.floorDiv(minY, size) && !any; y--) {
+            any = w.exists(LodKey.pack(TILE_LEVEL, x, y, z));
+        }
+        if (!any) {
+            return EMPTY_MASK;
+        }
+        int[] mask = new int[MASK_INTS];
+        java.util.Arrays.fill(mask, GROUND, MASK_INTS, Integer.MIN_VALUE);
         int air = w.air();
         MaterialClassifier classes = w.materials();
         // From the top down: the first fluid and the first ground seen in each column.
         for (int y = Math.floorDiv(maxY - 1, size); y >= Math.floorDiv(minY, size); y--) {
-            long key = LodKey.pack(TOP_LEVEL, x, y, z);
+            long key = LodKey.pack(TILE_LEVEL, x, y, z);
             LodSection real = w.exists(key) ? w.read(key) : null;
             if (real == null) {
                 continue;
@@ -846,7 +940,7 @@ final class PreviewLayer {
                 }
                 int c = cz * PreviewTile.CHUNKS + cx;
                 int low = RealGround.lowest(w, x * PreviewTile.CHUNKS + cx, z * PreviewTile.CHUNKS + cz, minY, maxY,
-                        TOP_LEVEL);
+                        TILE_LEVEL);
                 if (low != Integer.MIN_VALUE && (mask[GROUND + c] == Integer.MIN_VALUE || low < mask[GROUND + c])) {
                     mask[GROUND + c] = low;
                 }
@@ -897,6 +991,20 @@ final class PreviewLayer {
 
     private LodSection build(LodWorld w, long key, int layerAxis, int layerIndex) throws IOException {
         PreviewStore store = w.preview();
+        int level = drawLevel(key);
+        if (level > TILE_LEVEL) {
+            // The coarse tile over each place as stored, of level - 2 or coarser (E.3b).
+            PreviewVoxels.Tiles coarse = (x, z) -> {
+                long source = store.coarseSource(level - 2, x * PreviewTile.BLOCKS, z * PreviewTile.BLOCKS);
+                try {
+                    return source < 0 ? null : store.read(source);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            };
+            return PreviewVoxels.buildFar(level, LodKey.x(key), LodKey.y(key), LodKey.z(key), coarse, maskOf(w),
+                    w.air(), minY, maskGround(w), maskFluid(w), layerAxis, layerIndex);
+        }
         PreviewVoxels.Tiles tiles = (x, z) -> {
             try {
                 return store.read(x, z);

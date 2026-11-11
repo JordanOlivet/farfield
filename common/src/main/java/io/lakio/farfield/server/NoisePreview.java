@@ -88,7 +88,7 @@ final class NoisePreview {
     private static final int REPORT_TICKS = 1200;
     private static final int MAX_IN_FLIGHT = 8;
     /** The LOD range: the renderer draws nothing farther. */
-    private static final double RANGE = PreviewPyramid.RANGE;
+    private static final double RANGE = PreviewPyramid.MAX_RANGE;
     /** Chunks a side a biome's sample decorates (a chunk more around for what spills over). */
     private static final int SAMPLE_CHUNKS = 4;
     private static final long SNOW_SALT = 0x5DEECE66DL;
@@ -189,6 +189,8 @@ final class NoisePreview {
         final java.util.concurrent.atomic.AtomicLongArray stageNanos =
                 new java.util.concurrent.atomic.AtomicLongArray(STAGES.length);
         int left = -1;
+        /** The farthest distance a player's preview was built to at the last schedule (E.3b), for the logs. */
+        volatile int range = PreviewPyramid.MAX_RANGE;
         boolean reportedDone;
         /** Fill line: where the first player was at the last update, when they joined or jumped (0: not timed). */
         double lastX = Double.NaN;
@@ -424,6 +426,19 @@ final class NoisePreview {
     }
 
     /** A tile's quarters built and complete ({@link PreviewTile#quarters()}), 0 when not stored. */
+    /**
+     * The blocks a player's preview is built to (E.3b): the single player's
+     * own draw distance (its fog distance, the client in this process), else
+     * what its client's hint asks, at most the streaming radius.
+     */
+    private static int distance(ServerPlayer p) {
+        if (!p.server.isDedicatedServer() && p.server.isSingleplayerOwner(p.getGameProfile())) {
+            return Math.min(PreviewPyramid.MAX_RANGE, io.lakio.farfield.core.config.RenderConfig.drawDistance(
+                    RenderSettings.fogDistance()));
+        }
+        return Math.min(PreviewPyramid.MAX_RANGE, StreamServer.previewDistance(p));
+    }
+
     private static int quarters(Dimension d, long key) {
         Integer quarters = d.done.get(key);
         if (quarters == null) {
@@ -444,8 +459,8 @@ final class NoisePreview {
                     level.dimension().location());
             return Optional.empty();
         }
-        Farfield.LOG.info("Noise preview of {}: building the terrain not generated yet within {} blocks",
-                level.dimension().location(), (int) RANGE);
+        Farfield.LOG.info("Noise preview of {}: building the terrain not generated yet, to each player's draw"
+                + " distance (at most {} blocks)", level.dimension().location(), (int) RANGE);
         Dimension d = new Dimension(level, generator);
         Farfield.LOG.info("Noise preview of {}: surface searched on the density without {} cave branch{} (ADR-133)",
                 level.dimension().location(), d.cutBranches, d.cutBranches == 1 ? "" : "es");
@@ -467,17 +482,20 @@ final class NoisePreview {
      * samples given part of the threads first.
      */
     private void schedule(Dimension d, List<ServerPlayer> players, boolean pregenHere) {
+        int farthest = 0;
         List<long[]> candidates = new ArrayList<>();
         Set<Long> seen = new HashSet<>();
         int features = StreamServer.settings().previewFeaturesDistance();
         for (ServerPlayer p : players) {
             Vec3 look = p.getLookAngle();
             double lookLength = Math.sqrt(look.x * look.x + look.z * look.z);
+            int drawn = distance(p);
+            farthest = Math.max(farthest, drawn);
             for (int level = PreviewPyramid.LEVELS - 1; level >= 0; level--) {
                 if (level == 0 && features <= 0) {
                     continue;
                 }
-                int range = PreviewPyramid.range(level, features);
+                int range = PreviewPyramid.range(level, features, drawn);
                 int size = PreviewStore.blocks(level);
                 int quarter = size / 2;
                 int x0 = Math.floorDiv((int) Math.floor(p.getX() - range), quarter);
@@ -517,6 +535,7 @@ final class NoisePreview {
             }
         }
         if (!players.isEmpty()) {
+            d.range = farthest;
             d.left = candidates.size();
             trackFill(d, players.get(0), candidates);
         }
@@ -677,13 +696,13 @@ final class NoisePreview {
                         d.villagesBuilt.getAndSet(0), d.featureFailures.getAndSet(0), d.budget.excludedCount(),
                         d.lightSources.getAndSet(0), d.dugColumns.getAndSet(0), d.biomesSampled.getAndSet(0),
                         d.profiles().size(), d.left,
-                        (int) RANGE);
+                        d.range);
             }
             d.reportedDone = false;
         } else if (d.left == 0 && !d.reportedDone) {
             if (RenderSettings.performanceLogs()) {
                 Farfield.LOG.info("Noise preview of {}: every tile within {} blocks is built",
-                        d.key.location(), (int) RANGE);
+                        d.key.location(), d.range);
             }
             d.reportedDone = true;
         }

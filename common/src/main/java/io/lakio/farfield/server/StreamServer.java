@@ -140,6 +140,8 @@ public final class StreamServer {
         volatile boolean pushing;
         /** The client's split detail ({@link StreamProtocol.Hint}). */
         volatile double detail = DEFAULT_DETAIL;
+        /** The blocks the client draws to ({@link StreamProtocol.Hint}); 0 before its first hint. */
+        volatile int distance;
 
         Player(ServerPlayer player, long now) {
             this.player = player;
@@ -632,7 +634,22 @@ public final class StreamServer {
         Player p = current(sp, hint.session());
         if (p != null) {
             p.detail = Math.max(1, hint.detail());
+            p.distance = hint.distance();
         }
+    }
+
+    /**
+     * The blocks the noise preview is built to around a player (E.3b): the
+     * distance its client draws to, by its hint, at most the streaming
+     * radius; the default draw distance before a hint, and for a player
+     * without Farfield (whose tiles nobody asks for).
+     */
+    public static int previewDistance(ServerPlayer sp) {
+        StreamServer s = instance;
+        Player p = s == null ? null : s.players.get(sp.getUUID());
+        int wish = p == null || p.distance <= 0 ? io.lakio.farfield.core.config.RenderConfig.DEFAULT_DRAW_DISTANCE
+                : p.distance;
+        return Math.min(wish, settings.radiusBlocks());
     }
 
     /**

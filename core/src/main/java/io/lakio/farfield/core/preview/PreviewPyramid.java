@@ -3,8 +3,9 @@ package io.lakio.farfield.core.preview;
 /**
  * The levels of preview tiles a server builds (ADR-126, step 3 of
  * {@code docs/analysis/preview-coarse-to-fine.md}): level 0 with the world's
- * own features within the features' distance (a server setting), level 1
- * within 2,048 blocks, the coarser ones over the whole drawn range. A
+ * own features within the features' distance (a server setting), level L
+ * within {@code 1024 << L} blocks, all within a player's drawn distance
+ * (E.3b), the coarsest over all of it. A
  * level-L tile's samples are {@code 4 << L} blocks apart. The coarsest level
  * is built first over the whole range, then each finer one; from {@link
  * #GROUND_ONLY} up a tile holds the ground only.
@@ -20,8 +21,11 @@ public final class PreviewPyramid {
      * 32-block voxels and coarser.
      */
     public static final int GROUND_ONLY = 3;
-    /** The drawn range, in blocks: the renderer draws nothing farther. */
-    public static final int RANGE = 4096;
+    /**
+     * The farthest drawn distance, in blocks (E.3b): the coarsest level's
+     * tiles reach it; a player's own distance is at most this.
+     */
+    public static final int MAX_RANGE = 32768;
     /**
      * Blocks a finer level waits behind the coarser one when quarters are
      * ordered by distance (ADR-127): a coarse disc grows from the player, the
@@ -38,14 +42,16 @@ public final class PreviewPyramid {
     }
 
     /**
-     * Blocks from a player within which tiles of {@code level} are wanted:
-     * the features' distance for level 0, {@code 1024 << level} for the
-     * others, the drawn range for the coarsest.
+     * Blocks from a player drawing to {@code distance} within which tiles of
+     * {@code level} are wanted: the features' distance for level 0, {@code
+     * 1024 << level} for the others, the whole distance for the coarsest;
+     * never past the distance.
      */
-    public static int range(int level, int featuresDistance) {
+    public static int range(int level, int featuresDistance, int distance) {
+        int d = Math.max(0, Math.min(MAX_RANGE, distance));
         if (level == 0) {
-            return Math.min(RANGE, featuresDistance);
+            return Math.min(d, featuresDistance);
         }
-        return level == LEVELS - 1 ? RANGE : Math.min(RANGE, 1024 << level);
+        return level == LEVELS - 1 ? d : Math.min(d, 1024 << level);
     }
 }
