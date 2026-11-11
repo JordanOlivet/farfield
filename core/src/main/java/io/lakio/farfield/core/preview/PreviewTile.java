@@ -890,19 +890,20 @@ public final class PreviewTile {
 
     /** Sets the samples of {@code t} from this tile's, its corner at block (bx0, bz0) of this one. */
     private void expandHeights(PreviewTile t, int bx0, int bz0) {
-        int span = GRID << level;
-        int area = span * span;
+        // In longs: from level 10 the products, from level 14 the area itself, overflow an int (E.3d).
+        long span = (long) GRID << level;
+        long area = span * span;
         for (int k = 0; k < SAMPLES; k++) {
             int pz = bz0 + k * GRID;
-            int ck = Math.min(pz / span, SAMPLES - 2);
-            int fz = pz - ck * span;
+            int ck = (int) Math.min(pz / span, SAMPLES - 2);
+            long fz = pz - ck * span;
             for (int i = 0; i < SAMPLES; i++) {
                 int px = bx0 + i * GRID;
-                int ci = Math.min(px / span, SAMPLES - 2);
-                int fx = px - ci * span;
-                int a = sample(ci, ck) * (span - fx) + sample(ci + 1, ck) * fx;
-                int b = sample(ci, ck + 1) * (span - fx) + sample(ci + 1, ck + 1) * fx;
-                t.setHeight(i, k, Math.floorDiv(a * (span - fz) + b * fz + area / 2, area));
+                int ci = (int) Math.min(px / span, SAMPLES - 2);
+                long fx = px - ci * span;
+                long a = sample(ci, ck) * (span - fx) + sample(ci + 1, ck) * fx;
+                long b = sample(ci, ck + 1) * (span - fx) + sample(ci + 1, ck + 1) * fx;
+                t.setHeight(i, k, (int) Math.floorDiv(a * (span - fz) + b * fz + area / 2, area));
             }
         }
     }

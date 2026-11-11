@@ -13,7 +13,7 @@ package io.lakio.farfield.core.preview;
 public final class PreviewPyramid {
 
     /** Levels built: 0 to {@code LEVELS - 1}. */
-    public static final int LEVELS = 6;
+    public static final int LEVELS = 16;
     /**
      * The first level whose tiles hold the ground only (E.3a of milestone 2):
      * heights, the surface rules' blocks, the sea and ice; no plants, no
@@ -22,10 +22,11 @@ public final class PreviewPyramid {
      */
     public static final int GROUND_ONLY = 3;
     /**
-     * The farthest drawn distance, in blocks (E.3b): the coarsest level's
-     * tiles reach it; a player's own distance is at most this.
+     * The farthest drawn distance, in blocks (E.3d: past the world border,
+     * 2^25): the coarsest level's tiles reach it; a player's own distance is
+     * at most this.
      */
-    public static final int MAX_RANGE = 32768;
+    public static final int MAX_RANGE = 1 << 25;
     /**
      * Blocks a finer level waits behind the coarser one when quarters are
      * ordered by distance (ADR-127): a coarse disc grows from the player, the

@@ -48,14 +48,19 @@ public final class FarfieldSettingsScreen extends OptionsSubScreen {
     private static final int TEXTURE_STEPS = RenderSettings.MAX_TEXTURE_DISTANCE / TEXTURE_STEP;
     private static final int TEXTURE_ALL = TEXTURE_STEPS + 1;
     private static final int FOG_STEP = 128;
-    /** Past the default draw distance the fog slider goes by this many blocks (E.3b: to 32,768). */
+    /** Past the default draw distance the fog slider goes by this many blocks (E.3b) to {@link #DOUBLING_FROM}. */
     private static final int FAR_FOG_STEP = 1024;
+    /** From here the fog slider doubles at each step, to the maximum (E.3d: to the world border). */
+    private static final int DOUBLING_FROM = 32768;
     /** Steps of {@link #FOG_STEP} from the minimum to the default draw distance included. */
     private static final int NEAR_FOG_STEPS =
             (RenderConfig.DEFAULT_DRAW_DISTANCE - RenderConfig.MIN_FOG_DISTANCE) / FOG_STEP + 1;
+    /** Steps up to {@link #DOUBLING_FROM} included. */
+    private static final int LINEAR_FOG_STEPS = NEAR_FOG_STEPS
+            + (DOUBLING_FROM - RenderConfig.DEFAULT_DRAW_DISTANCE) / FAR_FOG_STEP;
     /** Last step of the normal fog slider (off); the thick fog slider has one more (vanilla first). */
-    private static final int FOG_STEPS = NEAR_FOG_STEPS
-            + (RenderConfig.MAX_FOG_DISTANCE - RenderConfig.DEFAULT_DRAW_DISTANCE) / FAR_FOG_STEP;
+    private static final int FOG_STEPS = LINEAR_FOG_STEPS
+            + Integer.numberOfTrailingZeros(RenderConfig.MAX_FOG_DISTANCE / DOUBLING_FROM);
 
     public FarfieldSettingsScreen(Screen lastScreen) {
         super(lastScreen, Minecraft.getInstance().options, Component.translatable("farfield.options.title"));
@@ -288,7 +293,10 @@ public final class FarfieldSettingsScreen extends OptionsSubScreen {
         if (step < NEAR_FOG_STEPS) {
             return RenderConfig.MIN_FOG_DISTANCE + step * FOG_STEP;
         }
-        return RenderConfig.DEFAULT_DRAW_DISTANCE + (step - NEAR_FOG_STEPS + 1) * FAR_FOG_STEP;
+        if (step < LINEAR_FOG_STEPS) {
+            return RenderConfig.DEFAULT_DRAW_DISTANCE + (step - NEAR_FOG_STEPS + 1) * FAR_FOG_STEP;
+        }
+        return DOUBLING_FROM << (step - LINEAR_FOG_STEPS + 1);
     }
 
     private static int fogStep(int blocks, boolean thick) {
@@ -302,8 +310,12 @@ public final class FarfieldSettingsScreen extends OptionsSubScreen {
         if (blocks <= RenderConfig.DEFAULT_DRAW_DISTANCE) {
             return Math.round((blocks - RenderConfig.MIN_FOG_DISTANCE) / (float) FOG_STEP) + offset;
         }
-        return Math.min(FOG_STEPS - 1, NEAR_FOG_STEPS - 1
-                + Math.round((blocks - RenderConfig.DEFAULT_DRAW_DISTANCE) / (float) FAR_FOG_STEP)) + offset;
+        if (blocks <= DOUBLING_FROM) {
+            return NEAR_FOG_STEPS - 1 + Math.round((blocks - RenderConfig.DEFAULT_DRAW_DISTANCE) / (float) FAR_FOG_STEP)
+                    + offset;
+        }
+        int doublings = 63 - Long.numberOfLeadingZeros(Math.max(1, Math.round(blocks / (double) DOUBLING_FROM)));
+        return Math.min(FOG_STEPS - 1, LINEAR_FOG_STEPS - 1 + doublings) + offset;
     }
 
     private static Component fogLabel(int blocks) {

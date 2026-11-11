@@ -437,14 +437,10 @@ public final class PreviewStore {
         writes.incrementAndGet();
         summaries.put(key, stored.summary());
         levels |= 1 << level;
-        int scale = 1 << level;
-        int x0 = tileX << level;
-        int z0 = tileZ << level;
+        long[] places = placesUnder(level, tileX, tileZ);
         synchronized (cache) {
-            for (int z = z0; z < z0 + scale; z++) {
-                for (int x = x0; x < x0 + scale; x++) {
-                    cache.remove(key(x, z));
-                }
+            for (long place : places) {
+                cache.remove(place);
             }
             if (level == 0 && (stored.quarters() & 0xF) == 0xF) {
                 cache.put(key, stored.hasCanopy() ? stored.expand(0, 0) : stored);
@@ -455,30 +451,61 @@ public final class PreviewStore {
                 coarse.put(key, stored);
             }
         }
-        for (int z = z0; z < z0 + scale; z++) {
-            for (int x = x0; x < x0 + scale; x++) {
-                viewSummaries.remove(key(x, z));
-            }
+        for (long place : places) {
+            viewSummaries.remove(place);
         }
         writes.incrementAndGet();
         for (LongConsumer l : tileListeners) {
             l.accept(key);
         }
-        for (int z = z0; z < z0 + scale; z++) {
-            for (int x = x0; x < x0 + scale; x++) {
-                boolean heard = false;
-                for (int q = 0; q < 4 && !heard; q++) {
-                    heard = (changed >> quarterIn(level, x, z, q) & 1) != 0 && source(x, z, q) == key
-                            && sources(x, z) != null;
-                }
-                if (heard) {
-                    long view = key(x, z);
-                    for (LongConsumer l : listeners) {
-                        l.accept(view);
-                    }
+        for (long place : places) {
+            int x = tileX(place);
+            int z = tileZ(place);
+            boolean heard = false;
+            for (int q = 0; q < 4 && !heard; q++) {
+                heard = (changed >> quarterIn(level, x, z, q) & 1) != 0 && source(x, z, q) == key
+                        && sources(x, z) != null;
+            }
+            if (heard) {
+                for (LongConsumer l : listeners) {
+                    l.accept(place);
                 }
             }
         }
+    }
+
+    /**
+     * Above this level a tile spans too many level-0 places to visit each
+     * at a write (a level-15 tile, a billion, E.3d): only the places read
+     * are, the views cached or summed up; the far sections, which read the
+     * coarse tiles as stored, hear the tile listeners.
+     */
+    private static final int WALK_LEVEL = 5;
+
+    /** The level-0 places of a tile a write tells about: all of them up to {@link #WALK_LEVEL}, else those read. */
+    private long[] placesUnder(int level, int tileX, int tileZ) {
+        int scale = 1 << level;
+        int x0 = tileX << level;
+        int z0 = tileZ << level;
+        if (level <= WALK_LEVEL) {
+            long[] out = new long[scale * scale];
+            int i = 0;
+            for (int z = z0; z < z0 + scale; z++) {
+                for (int x = x0; x < x0 + scale; x++) {
+                    out[i++] = key(x, z);
+                }
+            }
+            return out;
+        }
+        java.util.Set<Long> read = new java.util.HashSet<>(viewSummaries.keySet());
+        synchronized (cache) {
+            read.addAll(cache.keySet());
+        }
+        return read.stream().filter(place -> {
+            int x = tileX(place);
+            int z = tileZ(place);
+            return x >= x0 && x < x0 + scale && z >= z0 && z < z0 + scale;
+        }).mapToLong(Long::longValue).toArray();
     }
 
     /** A stored tile decoded from its file, never shared with the caches: a builder adds a quarter to it. */

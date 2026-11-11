@@ -439,6 +439,16 @@ final class NoisePreview {
         return Math.min(PreviewPyramid.MAX_RANGE, StreamServer.previewDistance(p));
     }
 
+    /**
+     * Whether a quarter (its corner, its side in blocks) lies wholly outside
+     * the world border (E.3d): nothing past it is ever generated or drawn.
+     */
+    private static boolean outsideBorder(Dimension d, double x0, double z0, int side) {
+        var border = d.level.getWorldBorder();
+        return x0 >= border.getMaxX() || z0 >= border.getMaxZ() || x0 + side <= border.getMinX()
+                || z0 + side <= border.getMinZ();
+    }
+
     private static int quarters(Dimension d, long key) {
         Integer quarters = d.done.get(key);
         if (quarters == null) {
@@ -509,7 +519,8 @@ final class NoisePreview {
                         double dz = Math.max(0, Math.max(z * (double) quarter - p.getZ(),
                                 p.getZ() - (z + 1) * (double) quarter));
                         double distance = Math.sqrt(dx * dx + dz * dz);
-                        if (distance > range) {
+                        if (distance > range || outsideBorder(d, x * (double) quarter, z * (double) quarter,
+                                quarter)) {
                             continue;
                         }
                         long tile = PreviewStore.key(level, Math.floorDiv(x, 2), Math.floorDiv(z, 2));

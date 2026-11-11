@@ -321,6 +321,26 @@ public final class LogStore implements AutoCloseable {
         Files.move(indexFile(tmp), indexFile(file), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
     }
 
+    /**
+     * Rewrites the log of a closed store with each live record under {@code
+     * map(key)} (ADR-138: a new key layout), as {@link #compact} does: a crash
+     * leaves either the old log or the new one.
+     */
+    public static void rekey(Path file, java.util.function.LongUnaryOperator map) throws IOException {
+        Path tmp = file.resolveSibling(file.getFileName() + ".rekey");
+        Files.deleteIfExists(tmp);
+        Files.deleteIfExists(indexFile(tmp));
+        try (LogStore source = open(file); LogStore copy = open(tmp)) {
+            for (Long key : source.index.keySet()) {
+                byte[] payload = source.get(key);
+                copy.put(map.applyAsLong(key), payload, 0, payload.length);
+            }
+        }
+        Files.deleteIfExists(indexFile(file));
+        Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        Files.move(indexFile(tmp), indexFile(file), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+    }
+
     private void readFully(ByteBuffer dst, long position) throws IOException {
         long pos = position;
         while (dst.hasRemaining()) {

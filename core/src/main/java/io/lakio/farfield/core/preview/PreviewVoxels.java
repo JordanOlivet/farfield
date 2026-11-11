@@ -236,8 +236,10 @@ public final class PreviewVoxels {
         int[] cell = new int[2];
         int[] pit = new int[3];
         // The lakes are read per column, so the few tiles around the section are looked up once each.
-        Tiles near = new NearTiles(tiles, ox - s - PreviewTile.FEATURE_MARGIN, oz - s - PreviewTile.FEATURE_MARGIN,
-                ox + size + s + PreviewTile.FEATURE_MARGIN, oz + size + s + PreviewTile.FEATURE_MARGIN);
+        // Not for a far section: no lakes there, and its area spans up to 2,048 tiles a side (level 15).
+        Tiles near = far ? tiles : new NearTiles(tiles, ox - s - PreviewTile.FEATURE_MARGIN,
+                oz - s - PreviewTile.FEATURE_MARGIN, ox + size + s + PreviewTile.FEATURE_MARGIN,
+                oz + size + s + PreviewTile.FEATURE_MARGIN);
         // A layer along X or Z needs only its own row of columns and the two beside it.
         int iMin = layerAxis == 0 ? layerIndex - 1 : -1;
         int iMax = layerAxis == 0 ? layerIndex + 1 : S;

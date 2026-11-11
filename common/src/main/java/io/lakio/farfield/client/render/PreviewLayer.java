@@ -42,7 +42,7 @@ import java.util.function.LongPredicate;
  */
 final class PreviewLayer {
 
-    static final int KEY_LEVEL_OFFSET = 8;
+    static final int KEY_LEVEL_OFFSET = 16;
     private static final byte EXISTS = 1;
     private static final byte ABSENT = 2;
     /**
@@ -52,12 +52,12 @@ final class PreviewLayer {
      */
     private static final int TILE_LEVEL = 4;
     /**
-     * Draw levels of the preview, 0 to {@code LEVELS - 1} (E.3b): above
+     * Draw levels of the preview, 0 to {@code LEVELS - 1} (E.3b, E.3d): above
      * {@link #TILE_LEVEL} a far section reads the coarse tile of level
      * {@code drawLevel - 2} or coarser as stored ({@link PreviewVoxels#buildFar}).
-     * 7 at most: preview keys add {@link #KEY_LEVEL_OFFSET} to 4 bits of level.
+     * 15 at most: preview keys add {@link #KEY_LEVEL_OFFSET} to 5 bits of level.
      */
-    static final int LEVELS = 8;
+    static final int LEVELS = 16;
     /** Mask layout: 32 rows of real-chunk bits (z, bit x), then per chunk (z * 32 + x) the ground, then the fluid top. */
     private static final int GROUND = PreviewTile.CHUNKS;
     private static final int FLUID = GROUND + PreviewTile.CHUNKS * PreviewTile.CHUNKS;
@@ -94,6 +94,19 @@ final class PreviewLayer {
     private final Map<Long, int[]> changedChunks = new ConcurrentHashMap<>();
     private static final int[] ALL_CHUNKS = filledRows();
     private final LongConsumer tileListener = tile -> changed(tile, ALL_CHUNKS);
+    /**
+     * Coarse tiles written, by their raw keys, for the far sections reading
+     * them as stored (E.3d): a level-15 tile spans a billion level-0 places,
+     * which the view listener above no longer hears one by one.
+     */
+    private final ConcurrentLinkedQueue<Long> changedCoarse = new ConcurrentLinkedQueue<>();
+    private final LongConsumer coarseListener = raw -> {
+        if (PreviewStore.level(raw) > 0) {
+            changedCoarse.add(raw);
+        }
+    };
+    /** The coarse tiles drained by the last {@link #drainChanges}, for {@link #touched}. Render thread. */
+    private final java.util.List<Long> drainedCoarse = new java.util.ArrayList<>();
     private volatile boolean masksChanged;
     private volatile LodWorld world;
     private volatile int minY;
@@ -126,6 +139,7 @@ final class PreviewLayer {
         LodWorld previous = world;
         if (previous != null) {
             previous.preview().removeListener(tileListener);
+            previous.preview().removeTileListener(coarseListener);
         }
         world = next;
         existence.clear();
@@ -140,8 +154,11 @@ final class PreviewLayer {
         fineSince.clear();
         changedTiles.clear();
         changedChunks.clear();
+        changedCoarse.clear();
+        drainedCoarse.clear();
         if (next != null) {
             next.preview().addListener(tileListener);
+            next.preview().addTileListener(coarseListener);
         }
     }
 
@@ -431,9 +448,20 @@ final class PreviewLayer {
      * The tiles whose resident preview sections must be meshed again, since
      * the last call; also tells whether the selection must run again. Render thread.
      */
+    /** Whether the last {@link #drainChanges} drained coarse tiles written. Render thread. */
+    boolean coarseChanged() {
+        return !drainedCoarse.isEmpty();
+    }
+
     boolean drainChanges(Map<Long, int[]> tiles) {
         boolean changed = masksChanged;
         masksChanged = false;
+        drainedCoarse.clear();
+        Long raw;
+        while ((raw = changedCoarse.poll()) != null) {
+            drainedCoarse.add(raw);
+            changed = true;
+        }
         Long tile;
         while ((tile = changedTiles.poll()) != null) {
             int[] rows = changedChunks.remove(tile);
@@ -485,13 +513,25 @@ final class PreviewLayer {
     /**
      * Whether a preview section must be meshed again for the changed tiles
      * ({@code tiles}: per tile, its changed chunks' rows): a near section
-     * where its chunks meet them, a far one when it lies over any of them.
+     * where its chunks meet them, a far one when it lies over any of them or
+     * over a coarse tile written ({@link #drainChanges}). Render thread.
      */
-    static boolean touched(long key, Map<Long, int[]> tiles) {
+    boolean touched(long key, Map<Long, int[]> tiles) {
         int shift = drawLevel(key);
         if (shift <= TILE_LEVEL) {
             int[] rows = tiles.get(tileOf(key));
             return rows != null && meets(key, rows);
+        }
+        long size = (long) LodSection.SIZE << shift;
+        long bx = LodKey.x(key) * size;
+        long bz = LodKey.z(key) * size;
+        for (long raw : drainedCoarse) {
+            long blocks = PreviewStore.blocks(PreviewStore.level(raw));
+            long tx = PreviewStore.tileX(raw) * blocks;
+            long tz = PreviewStore.tileZ(raw) * blocks;
+            if (tx < bx + size && bx < tx + blocks && tz < bz + size && bz < tz + blocks) {
+                return true;
+            }
         }
         int n = 1 << (shift - TILE_LEVEL);
         int x0 = LodKey.x(key) * n;

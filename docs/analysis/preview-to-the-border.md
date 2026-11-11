@@ -174,6 +174,10 @@ Each measured before the next.
 5. **To the border** (2 to 4 days): tile levels to 15, the keys, the
    store's levels, the renderer (coarse-to-fine study §6). Split into
    lots E.3a to E.3e in `docs/plans/milestone-2.md` (2026-11-11).
+   Built the same day: tile levels 3 and up with the ground only
+   (ADR-135), the distance to 32,768 (ADR-136), real LODs to level 7
+   (ADR-137), keys of five level bits and sixteen levels to the border
+   (ADR-138). The renderer at the border is studied below (E.3e).
 6. Only if heights still dominate: the density stopped at its sign.
 
 ## Measures (2026-11-11)
@@ -249,3 +253,51 @@ tile in the pack, and is what a coarse tile's right ground needs.
 2. Coarse levels from 32-block voxels up hold the ground and water only;
    trees come back later "si jamais je vois que c'est bizarre sans".
 3. Coarsest first to the border, as today; adjusted later if needed.
+
+## The renderer at the border (E.3e, 2026-11-11)
+
+Measured in a NeoForge dev client on `farfield-test`, fog distance at its
+maximum (2^25 blocks), window 854 x 480, after ADR-138.
+
+| View | Sections drawn | Quads | GPU a frame | Render thread a frame |
+|---|---|---|---|---|
+| 32,768 blocks (ADR-136) | 329 | 10 MB | 2.0 ms | 0.20 ms |
+| The whole world, from the spawn at y 600 | 2,963 | 40 MB | 4.1 ms | 0.56 ms |
+| From 29,000,000, facing the border | 430 | 29 MB resident | 1.3 ms | 0.32 ms |
+
+- **Depth.** The LODs write the game's depth buffer with their own
+  perspective mapping, near 8, far twice the maximum (`lod.vert`). In 24
+  bits (or a float near 1) a surface at distance d is told from one
+  behind it from about d^2 / 1.3e8 blocks: 75 at 100,000, 7,500 at a
+  million, 6.7 million at 30 million. Sections there are a million blocks
+  with voxels of 32,768, and the far band is a few pixels high: no
+  flicker or wrong ordering shows in the captures from the spawn or the
+  edge. Options if it ever shows: a far pass drawn first with its own
+  range and the depth cleared before the near LODs and the game's terrain
+  (the near LODs' far halves could then cover far ridges, at the
+  threshold only); a reversed float depth (`glClipControl`), which the
+  game's own passes and shader packs do not expect; a logarithmic depth
+  written per fragment, which loses the early depth test. None is worth
+  its cost or risk for what the captures show.
+- **Culling.** The frustum's far plane at 67 million blocks with a near
+  plane at 1 was lost in float and every section was culled: fixed in
+  ADR-138 (near plane at least far / 4,000,000).
+- **Fog and sky.** The fog starts at 60 % of the distance: at the maximum,
+  20 million blocks, so the terrain reaches the horizon unfogged and meets
+  the vanilla sky there. Nothing to change unless the user wants a haze.
+- **Shader packs (not tested).** The pack link gives packs a far plane of
+  twice the maximum (67 million) and the drawn extent (ADR-113). Photon's
+  `combined_far` and its depth reconstruction were tested only to a few
+  thousand blocks: a run with Photon at a large distance is the open
+  check before raising the default.
+- **Building it.** About 40 tiles a level around a place for levels 6 to
+  15; built in about 30 s around the spawn, about a minute at 29,000,000
+  for every level; the preview store to the border 17 MB. The coarsest
+  levels come after the nearer finer ones (the order's lag is 1,024
+  blocks a level, the coarsest quarters millions of blocks away): a
+  first image to the border sooner would order the coarsest levels first
+  outright.
+
+Recommendation: keep the depth as is; check a shader pack at a large
+distance before the default goes past 4,096; the default stays 4,096.
+

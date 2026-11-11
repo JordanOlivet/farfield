@@ -1826,9 +1826,12 @@ public final class LodRenderer {
         return r.looksReady;
     }
 
+    /** The coarsest draw level whose sections keep their chunk columns (8 KB a section at most). */
+    private static final int MAX_COLUMNS_LEVEL = 7;
+
     /** Whether a resident section of draw level {@code level} has quads in a chunk column it draws. */
     private boolean drawsColumn(Resident r, int level, int chunkX, int chunkZ) {
-        if (r == null || r.columns == null || !looksReady(r)) {
+        if (level > MAX_COLUMNS_LEVEL || r == null || r.columns == null || !looksReady(r)) {
             return false;
         }
         int side = 2 << level;
@@ -2357,14 +2360,19 @@ public final class LodRenderer {
         it.unimi.dsi.fastutil.ints.IntOpenHashSet used = new it.unimi.dsi.fastutil.ints.IntOpenHashSet();
         int octants = 0;
         int level = drawLevel(key);
-        long[] drawnColumns = all.length == 0 ? null : new long[Math.max(1, (4 << (2 * level)) >> 6)];
+        // The chunk columns a section draws, for the hole detector near the player: none kept above
+        // level 7 (E.3d), where a section spans up to 65,536 chunks a side and the detector never looks.
+        long[] drawnColumns = all.length == 0 || level > MAX_COLUMNS_LEVEL ? null
+                : new long[Math.max(1, (4 << (2 * level)) >> 6)];
         for (long q : all) {
             maxMaterial = Math.max(maxMaterial, Quad.material(q));
             used.add(Quad.material(q));
             if (octants != 0xFF) {
                 octants |= Quad.octants(q);
             }
-            Quad.markColumns(q, 4 - level, drawnColumns);
+            if (drawnColumns != null) {
+                Quad.markColumns(q, 4 - level, drawnColumns);
+            }
         }
         long[] borders = PreviewLayer.isPreview(key) ? null : borderHashes(section, classes, level);
         int[] usedMaterials = used.toIntArray();
@@ -2549,13 +2557,13 @@ public final class LodRenderer {
         if (previewLayer.drainChanges(changedTiles)) {
             selectionDirty = true;
         }
-        if (!changedTiles.isEmpty()) {
+        if (!changedTiles.isEmpty() || previewLayer.coarseChanged()) {
             long swap = swapSeq++;
             long now = System.nanoTime();
             LongIterator keys = resident.keySet().iterator();
             while (keys.hasNext()) {
                 long k = keys.nextLong();
-                if (PreviewLayer.isPreview(k) && PreviewLayer.touched(k, changedTiles)) {
+                if (PreviewLayer.isPreview(k) && previewLayer.touched(k, changedTiles)) {
                     stale.add(k);
                     if (drawn.contains(k)) {
                         joinSwap(swap, k, now); // their new meshes go in together (ADR-092)
@@ -3204,7 +3212,10 @@ public final class LodRenderer {
         float m11 = Math.abs(projection.m11());
         float m00 = Math.abs(projection.m00());
         float fovY = (float) (2 * Math.atan(1 / m11)) * 1.1f;
-        cullMatrix.setPerspective(fovY, m11 / m00, 1f, (float) MAX_DISTANCE * 2).mul(viewRotation);
+        // Far plane past the farthest selected section; near plane no closer than far / 4e6, or the
+        // far plane's row is lost in float (at the border's 67 M blocks every section was culled, E.3d).
+        float far = (float) Math.min(MAX_DISTANCE * 2, Math.max(1024, selectionDistance() * 2 + (32 << 15) * 2.0));
+        cullMatrix.setPerspective(fovY, m11 / m00, Math.max(1f, far / 4_000_000f), far).mul(viewRotation);
         frustum.set(cullMatrix);
     }
 

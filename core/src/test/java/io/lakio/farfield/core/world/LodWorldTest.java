@@ -241,7 +241,7 @@ class LodWorldTest {
             world.ingest(chunk(world, 0, 0));
             world.flush(0);
             world.buildMips();
-            assertNotNull(world.read(LodKey.pack(7, 0, -1, 0)), "a new store builds every level");
+            assertNotNull(world.read(LodKey.pack(LodWorld.LEVELS - 1, 0, -1, 0)), "a new store builds every level");
         }
         // A store of before ADR-137: levels 0 to 4, no marker.
         java.nio.file.Files.delete(dir.resolve("mips.levels"));
@@ -256,18 +256,57 @@ class LodWorldTest {
         }
         try (LodWorld world = LodWorld.open(dir, MaterialTable.SIMPLE)) {
             assertNull(world.read(LodKey.pack(5, 0, -1, 0)));
-            assertEquals(6, world.mipsToUpgrade(), "two section heights a level, from 5 to 7");
+            assertEquals(2 * (LodWorld.LEVELS - 5), world.mipsToUpgrade(), "two section heights a level, from 5 up");
             int[] pending = world.coarseLevelsPending();
             assertEquals(0, pending[1] + pending[2] + pending[3] + pending[4], "the levels under 5 untouched");
             while (world.rebuilding()) {
                 world.buildRebuildSlice(null, 1_000_000L);
             }
             assertNotNull(world.read(LodKey.pack(7, 0, -1, 0)));
-            assertEquals("8", java.nio.file.Files.readString(dir.resolve("mips.levels")).trim());
+            assertEquals(Integer.toString(LodWorld.LEVELS), java.nio.file.Files.readString(dir.resolve("mips.levels")).trim());
         }
         try (LodWorld world = LodWorld.open(dir, MaterialTable.SIMPLE)) {
             assertEquals(0, world.mipsToUpgrade(), "built once");
+            assertNotNull(world.read(LodKey.pack(8, 0, -1, 0)), "level 8 kept at a reopen (the old preview's L8 cleanup)");
         }
+    }
+
+    @Test
+    void aStoreOfTheFourBitKeysIsConvertedAtOpen() throws IOException {
+        long key = LodKey.pack(0, 0, -1, 0);
+        int stone;
+        try (LodWorld world = LodWorld.open(dir, MaterialTable.SIMPLE)) {
+            stone = world.blockStates().id("minecraft:stone");
+            world.ingest(chunk(world, 0, 0));
+            world.flush(0);
+            world.buildMips();
+        }
+        // Back to the layout before ADR-138 (level 4 bits, x 24, z 24, y 12), its marker gone.
+        Path sections = dir.resolve("sections");
+        try (var levels = java.nio.file.Files.list(sections)) {
+            for (Path level : (Iterable<Path>) levels::iterator) {
+                if (!java.nio.file.Files.isDirectory(level)) {
+                    continue;
+                }
+                try (var files = java.nio.file.Files.list(level)) {
+                    for (Path f : (Iterable<Path>) files::iterator) {
+                        if (f.getFileName().toString().endsWith(".ffl")) {
+                            io.lakio.farfield.core.storage.LogStore.rekey(f, k -> (long) LodKey.level(k) << 60
+                                    | ((long) LodKey.x(k) & 0xFFFFFFL) << 36 | ((long) LodKey.z(k) & 0xFFFFFFL) << 12
+                                    | (LodKey.y(k) & 0xFFFL));
+                        }
+                    }
+                }
+            }
+        }
+        java.nio.file.Files.delete(sections.resolve("keys.version"));
+        try (LodWorld world = LodWorld.open(dir, MaterialTable.SIMPLE)) {
+            LodSection section = world.read(key);
+            assertNotNull(section, "found under the new layout");
+            assertEquals(stone, section.material(0, 31, 0));
+            assertNotNull(world.read(LodKey.pack(7, 0, -1, 0)));
+        }
+        assertEquals("2", java.nio.file.Files.readString(sections.resolve("keys.version")).trim());
     }
 
     @Test

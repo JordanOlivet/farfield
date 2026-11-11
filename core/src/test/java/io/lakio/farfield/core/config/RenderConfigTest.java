@@ -76,7 +76,7 @@ class RenderConfigTest {
                 texture_distance=-5
                 level_colors=on
                 fog_distance=10
-                thick_fog_distance=99999
+                thick_fog_distance=999999999
                 """, StandardCharsets.UTF_8);
         assertEquals(new RenderConfig(true, RenderConfig.MAX_VOXEL_PIXELS, 0, true, RenderConfig.MIN_FOG_DISTANCE,
                 RenderConfig.MAX_FOG_DISTANCE), RenderConfig.read(file));

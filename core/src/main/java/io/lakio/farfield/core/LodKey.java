@@ -9,25 +9,28 @@ package io.lakio.farfield.core;
  * from the most significant bit:
  *
  * <pre>
- *   level  4 bits  unsigned, 0..15
+ *   level  5 bits  unsigned, 0..31
  *   x     24 bits  signed
  *   z     24 bits  signed
- *   y     12 bits  signed
+ *   y     11 bits  signed
  * </pre>
  *
  * <p>24 signed bits cover ±8,388,607 nodes, enough for the ±30,000,000-block
- * world border at any node size of 4 blocks or more; 12 signed bits cover
- * ±2047 nodes vertically.
+ * world border at any node size of 4 blocks or more; 11 signed bits cover
+ * ±1023 nodes vertically (a world is at most 4,064 blocks, 127 level-0
+ * sections). Five bits of level since E.3d (ADR-138): the real levels 0 to
+ * 15 and the preview's above them, to the world border; four before, the
+ * layout {@link #fromLayout1} converts stored keys from.
  */
 public final class LodKey {
 
-    public static final int MAX_LEVEL = 15;
+    public static final int MAX_LEVEL = 31;
     public static final int XZ_MIN = -(1 << 23);
     public static final int XZ_MAX = (1 << 23) - 1;
-    public static final int Y_MIN = -(1 << 11);
-    public static final int Y_MAX = (1 << 11) - 1;
+    public static final int Y_MIN = -(1 << 10);
+    public static final int Y_MAX = (1 << 10) - 1;
 
-    private static final int Y_BITS = 12;
+    private static final int Y_BITS = 11;
     private static final int XZ_BITS = 24;
     private static final int Z_SHIFT = Y_BITS;
     private static final int X_SHIFT = Z_SHIFT + XZ_BITS;
@@ -69,6 +72,18 @@ public final class LodKey {
 
     public static int y(long key) {
         return (int) (key << (64 - Y_BITS) >> (64 - Y_BITS));
+    }
+
+    /**
+     * The key of the same node in the layout before ADR-138 (4 bits of level,
+     * 12 of y), for the stores written with it.
+     */
+    public static long fromLayout1(long old) {
+        int level = (int) (old >>> 60);
+        int x = (int) (old << 4 >> 40);
+        int z = (int) (old << 28 >> 40);
+        int y = (int) (old << 52 >> 52);
+        return pack(level, x, y, z);
     }
 
     /** Key of the node one level coarser that contains this node. */

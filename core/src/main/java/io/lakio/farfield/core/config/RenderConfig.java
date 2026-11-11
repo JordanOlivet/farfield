@@ -51,11 +51,11 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
     public static final int FOG_VANILLA = 0;
     /**
      * Fog distances in blocks, where the fog becomes opaque; nothing is drawn
-     * beyond, so the fog distance is the LODs' distance too (E.3b: up to
-     * 32,768 blocks, the preview's tile level 5).
+     * beyond, so the fog distance is the LODs' distance too (E.3b, E.3d: up
+     * to 2^25 blocks, past the world border).
      */
     public static final int MIN_FOG_DISTANCE = 256;
-    public static final int MAX_FOG_DISTANCE = 32768;
+    public static final int MAX_FOG_DISTANCE = 1 << 25;
     /** The LODs' distance without fog ({@link #FOG_OFF}), and the fog's default: the 4,096 blocks of before E.3b. */
     public static final int DEFAULT_DRAW_DISTANCE = 4096;
     /** Default: the fog at the edge of the LODs in normal dimensions, the game's own in thick fog. */

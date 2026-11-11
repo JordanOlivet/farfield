@@ -61,7 +61,8 @@ public final class StreamClient {
     private static final long REQUEST_TIMEOUT_NANOS = 30_000_000_000L;
     private static final long STATS_NANOS = 10_000_000_000L;
     private static final String EPOCH_FILE = "server.epoch";
-    private static final String VERSIONS_FILE = "versions.bin";
+    /** The versions held, by key; renamed with the key layout of ADR-138, so a mirror fetches its sections again once. */
+    private static final String VERSIONS_FILE = "versions2.bin";
     /** Written once the mirror's coarse levels are known to be the server's (ADR-083). */
     private static final String COARSE_MARKER_FILE = "coarse.v1";
     private static final String TILES_FILE = "tiles.bin";
@@ -269,6 +270,10 @@ public final class StreamClient {
 
     private void openMirror() throws IOException {
         mirror = LodWorld.openMirror(dir, BlockKeys.RESOLVER);
+        if (mirror.keysConverted() > 0) {
+            Farfield.LOG.info("LOD stream mirror: {} region files converted to the keys of ADR-138, once",
+                    mirror.keysConverted());
+        }
         blockKeys = new KeyTranslation(mirror.blockStates());
         biomeKeys = new KeyTranslation(mirror.biomes());
         Path epochFile = dir.resolve(EPOCH_FILE);

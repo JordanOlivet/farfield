@@ -365,17 +365,26 @@ from there: D.2, then the sea floor's plants and corals in the preview.
     once; protocol 11 unchanged (not released). Verified: unit test, the
     dev store's 82 sections at open, explored land at 20,000 blocks drawn
     at level 7. Remains: the pack.
-  - [ ] E.3d Keys and levels to the border (1 to 1.5 days): `LodKey` with
+  - [~] E.3d Keys and levels to the border (1 to 1.5 days): `LodKey` with
     5 bits of level and a preview bit (y on 10 bits); the section store's
     records converted at open (a new store format); tile levels to 15,
     draw levels to 17; the range to the world border. Verify: unit tests
     of the keys and the conversion, a dev store converted.
-  - [ ] E.3e The renderer at the border (studied first, 0.5 to 1 day): a
+    Done 2026-11-11 (ADR-138), another way: 5 bits of level with the
+    preview 16 levels above (no preview bit), real and preview levels to
+    15 (sections of a million blocks; tile levels to 15), the distance to
+    2^25. Verified: unit tests, the dev store converted, a dev client at
+    the spawn and at 29,000,000 (four bugs found there and fixed). Remains:
+    a server, the pack.
+  - [~] E.3e The renderer at the border (studied first, 0.5 to 1 day): a
     24-bit depth from 8 blocks cannot part surfaces millions of blocks
     away (a far pass, then a near one with the depth cleared, or a reversed
     float depth; the game's depth buffer and shader packs decide); the fog
     and sky out there; the packs' LOD far plane (ADR-113). Verify in a dev
     client far away.
+    Studied 2026-11-11 (`docs/analysis/preview-to-the-border.md`, step 5):
+    no depth change for now, the captures at the border show no artifact;
+    the shader packs' far plane is untested. Waits for the user's look.
 
 ## M2.F — Tooling
 

@@ -244,6 +244,10 @@ public final class LodPipeline {
                 }
                 levels.put(level, lod);
                 Farfield.LOG.info("LOD store of {} ({}) opened at {}", lod.name(), name, dir);
+                if (lod.world().keysConverted() > 0) {
+                    Farfield.LOG.info("LOD store of {}: {} region files converted to the keys of ADR-138, once",
+                            lod.name(), lod.world().keysConverted());
+                }
                 int upgrade = lod.world().mipsToUpgrade();
                 if (upgrade > 0) {
                     Farfield.LOG.info("LOD store of {}: building its coarse levels with the current mip rules,"

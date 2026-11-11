@@ -211,6 +211,24 @@ class PreviewTest {
     }
 
     @Test
+    void aLevelFifteenTileIsCutWithoutOverflow() {
+        // Samples 131,072 blocks apart: the interpolation's area is 2^34, past an int (E.3d).
+        PreviewTile t = new PreviewTile();
+        t.setLevel(15);
+        for (int k = 0; k < PreviewTile.SAMPLES; k++) {
+            for (int i = 0; i < PreviewTile.SAMPLES; i++) {
+                t.setHeight(i, k, 2000 + i);
+            }
+        }
+        // Place (16,384, 0): 8,388,608 blocks in, sample 64 exactly; 4 blocks on, 1/32,768 of a sample.
+        PreviewTile v = t.expand(16_384, 0);
+        assertEquals(2000 + 64, v.sample(0, 0));
+        assertEquals(2000 + 64, v.sample(128, 128));
+        PreviewTile last = t.expand(32_767, 32_767);
+        assertEquals(2000 + 128, last.sample(128, 128), "the tile's far corner");
+    }
+
+    @Test
     void aCoarseTileIsCutIntoLevelZeroTiles() {
         PreviewTile t = coarse();
         // The cell over blocks 512..527 x 1024..1039 of the tile: offset (1, 2), its first cell.

@@ -4012,3 +4012,53 @@ milestone 2.
   32 facing the spawn with the preview off and the level colors on, the
   explored land around the spawn shows white (level 7). Not run in the
   pack, where the server's store builds them once after the deploy.
+
+## ADR-138 — Keys of five level bits, sixteen levels, the preview to the world border
+
+Status: accepted, 2026-11-11. Amends ADR-136 and ADR-137 (draw levels and
+real levels 0 to 7, 32,768 blocks). Lot E.3d of milestone 2.
+
+- **Context**: past 32,768 blocks the sections must grow: a selection
+  visits every top-level section of the distance, 214 million of 4,096
+  blocks to the border, 3,600 of a million blocks. `LodKey` held 4 bits of
+  level, half of them taken by the preview's keys (`KEY_LEVEL_OFFSET` 8).
+- **Decision**:
+  - `LodKey`: 5 bits of level, 24 of x and z, 11 of y (±1,023 sections; a
+    world is at most 127 level-0 sections high). Real levels 0 to 15
+    (`LodWorld.LEVELS` 16, sections up to a million blocks, voxels of
+    32,768), preview keys 16 levels above (`KEY_LEVEL_OFFSET` 16,
+    `PreviewLayer.LEVELS` 16). Stored records are keyed by packed keys: a
+    section store without `sections/keys.version` rewrites each region
+    file's records under the new keys at open (`LogStore.rekey`, as a
+    compaction; `LodKey.fromLayout1`), once, logged (`N region files
+    converted to the keys of ADR-138, once`). A mirror's versions file is
+    renamed (`versions2.bin`): it fetches its sections again once. The
+    `sections/L8` cleanup of ADR-038's preview runs only in a store of the
+    old keys: since, L8 is the real level 8. Levels 8 to 15 are built from
+    level 7 once (ADR-137's marker).
+  - The preview: tile levels 0 to 15 (`PreviewPyramid.LEVELS`), the
+    coarsest a tile of 16.8 million blocks; `MAX_RANGE` and the fog's
+    maximum 2^25 blocks (33,554,432), past the border from anywhere; the
+    fog slider doubles from 32,768. Quarters wholly outside the world
+    border are not built.
+  - Found at the border and fixed: a write of a level-L tile walked its
+    (2^L)^2 level-0 places to clear caches and tell the view listeners (a
+    billion at level 15: the client hung, then ran out of heap); above
+    level 5 only the places read are walked, and the far sections hear the
+    coarse tiles' raw keys. Cutting a coarse tile into a view overflowed an
+    int from level 10 (its interpolation's area 2^34 at level 15: a
+    division by zero after a teleport). The renderer kept per section the
+    chunk columns it draws, `(2 << level)^2` bits, for the hole detector:
+    none above level 7. The frustum's far plane at 67 million blocks
+    against a near plane of 1 was lost in float and culled every section:
+    the near plane is now at least far / 4,000,000. A far section's tile
+    cache no longer spans its area's tiles (2,048 a side at level 15).
+- **Checked**: unit tests (keys of the old layout converted, a store
+  converted at open and read, a level-15 tile cut without overflow, level
+  8 kept at a reopen, the level count of ADR-137's marker). NeoForge dev
+  client, `farfield-test`, fog at 33,554,432: from 48, 600, 32 the terrain
+  to the horizon, 2,963 sections drawn, 40 MB of quads, 4.1 ms of GPU and
+  0.56 ms of render thread a frame, 118 fps; teleported to 29,000,000, 600,
+  32 and facing the border, 430 sections, 1.3 ms of GPU; the levels 6 to
+  15 of a place built in about 30 s, about 40 tiles a level; the whole
+  preview store 17 MB. Not run on a server or in the pack.

@@ -56,12 +56,14 @@ import java.util.function.LongConsumer;
 public final class LodWorld implements AutoCloseable {
 
     /**
-     * Levels 0 (one voxel per block) to 7 (one voxel per 128 blocks): 4
-     * until E.3c (ADR-137), the explored land drawn as coarse as the far
-     * preview. The preview's keys take the 8 levels above them in {@link
-     * io.lakio.farfield.core.LodKey}'s 4 bits.
+     * Levels 0 (one voxel per block) to 15 (one voxel per 32,768 blocks, a
+     * section of a million): 4 until E.3c (ADR-137), 7 until E.3d (ADR-138),
+     * the explored land drawn as coarse as the far preview to the world
+     * border, and the selection's top sections few at any distance. The
+     * preview's keys take the 16 levels above them in {@link
+     * io.lakio.farfield.core.LodKey}'s 5 bits.
      */
-    public static final int LEVELS = 8;
+    public static final int LEVELS = 16;
     private static final int LOCK_STRIPES = 64;
 
     private final Path dir;
@@ -131,7 +133,10 @@ public final class LodWorld implements AutoCloseable {
         biomeKeys = KeyFile.open(dir.resolve("biomes.txt"));
         air = blockStateKeys.registry().id("minecraft:air");
         materials = new MaterialTable(blockStateKeys.registry(), resolver);
-        deleteOldPreview(dir.resolve("sections").resolve("L8"));
+        // Only in a store of the keys before ADR-138: since, L8 holds the real level 8.
+        if (!Files.exists(dir.resolve("sections").resolve("keys.version"))) {
+            deleteOldPreview(dir.resolve("sections").resolve("L8"));
+        }
         store = new SectionStore(dir.resolve("sections"), () -> {
             blockStateKeys.persist();
             biomeKeys.persist();
@@ -212,6 +217,11 @@ public final class LodWorld implements AutoCloseable {
             }
         }
         Files.delete(level);
+    }
+
+    /** Region files whose record keys the open converted to the current {@link LodKey} layout (ADR-138). */
+    public int keysConverted() {
+        return store.rekeyed();
     }
 
     /**

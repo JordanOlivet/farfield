@@ -58,10 +58,19 @@ public final class SectionStore implements AutoCloseable {
         byte[] decompressed = new byte[64 * 1024];
     }
 
+    /** The key layout of the records ({@link LodKey}); a store without the marker has layout 1. */
+    private static final String KEYS_VERSION = "2";
+    private static final String KEYS_FILE = "keys.version";
+
+    /** Region files whose keys were converted to the current layout at open (ADR-138); 0 for none. */
+    private int rekeyed;
+
     public SectionStore(Path dir, BeforeWrite beforeWrite) throws IOException {
         this.dir = dir;
         this.beforeWrite = beforeWrite;
         Files.createDirectories(dir);
+        Path keys = dir.resolve(KEYS_FILE);
+        boolean current = Files.exists(keys) && KEYS_VERSION.equals(Files.readString(keys).trim());
         try (Stream<Path> levels = Files.list(dir)) {
             for (Path levelDir : (Iterable<Path>) levels::iterator) {
                 String name = levelDir.getFileName().toString();
@@ -73,12 +82,24 @@ public final class SectionStore implements AutoCloseable {
                     for (Path f : (Iterable<Path>) files::iterator) {
                         Matcher m = REGION_FILE.matcher(f.getFileName().toString());
                         if (m.matches()) {
+                            if (!current) {
+                                LogStore.rekey(f, LodKey::fromLayout1);
+                                rekeyed++;
+                            }
                             existing.add(regionKey(level, Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2))));
                         }
                     }
                 }
             }
         }
+        if (!current) {
+            Files.writeString(keys, KEYS_VERSION);
+        }
+    }
+
+    /** Region files whose record keys this open converted to the current layout (ADR-138). */
+    public int rekeyed() {
+        return rekeyed;
     }
 
     private static long regionKey(int level, int rx, int rz) {

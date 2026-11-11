@@ -26,6 +26,21 @@ class LodKeyTest {
     }
 
     @Test
+    void convertsKeysOfTheFourBitLayout() {
+        // The layout before ADR-138: level 4 bits, x 24, z 24, y 12.
+        int[][] cases = {{0, 3, -2, -1}, {4, -8_000_000, 100, 8_000_000}, {7, 12, -1023, -5}, {15, -1, 1023, 0}};
+        for (int[] c : cases) {
+            long old = (long) c[0] << 60 | ((long) c[1] & 0xFFFFFFL) << 36 | ((long) c[3] & 0xFFFFFFL) << 12
+                    | (c[2] & 0xFFFL);
+            long key = LodKey.fromLayout1(old);
+            assertEquals(c[0], LodKey.level(key));
+            assertEquals(c[1], LodKey.x(key));
+            assertEquals(c[2], LodKey.y(key));
+            assertEquals(c[3], LodKey.z(key));
+        }
+    }
+
+    @Test
     void roundTripsExtremes() {
         int[][] cases = {
                 {0, LodKey.XZ_MIN, LodKey.Y_MIN, LodKey.XZ_MIN},
@@ -53,7 +68,7 @@ class LodKeyTest {
 
     @Test
     void rejectsOutOfRangeInput() {
-        assertThrows(IllegalArgumentException.class, () -> LodKey.pack(16, 0, 0, 0));
+        assertThrows(IllegalArgumentException.class, () -> LodKey.pack(LodKey.MAX_LEVEL + 1, 0, 0, 0));
         assertThrows(IllegalArgumentException.class, () -> LodKey.pack(0, LodKey.XZ_MAX + 1, 0, 0));
         assertThrows(IllegalArgumentException.class, () -> LodKey.pack(0, 0, LodKey.Y_MIN - 1, 0));
         assertThrows(IllegalArgumentException.class, () -> LodKey.parent(LodKey.pack(LodKey.MAX_LEVEL, 0, 0, 0)));
