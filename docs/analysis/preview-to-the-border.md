@@ -135,7 +135,9 @@ bits of level), the renderer's depth range, fog and sky.
 
 Each measured before the next.
 
-1. **Spike** (about 2 h): on the NeoForge dev server and the user's pack,
+1. **Spike** (done 2026-11-11, see Measures; (b) measured as the ground's
+   share of a pack tile, the compiled rules being step 3): on the NeoForge
+   dev server and the user's pack,
    for one tile: (a) heights from the estimate and the density without
    caves, against today's search and the generator's own height
    (`getBaseHeight`), time and error; (b) the compiled surface rule
@@ -186,12 +188,35 @@ samples where the searches differ and one in 64 of the others (610 to
   points); the probes cost about 10 us.
 - What it still misses against the top's search: thin ledges more than
   32 blocks above a gap, mostly over the sea.
-- Not measured: the user's pack (C2ME compiles the density there; the cut
-  may find no cave branch, then the search runs on the full density).
+- In the user's pack (pack server, nobody online, three places: 20,000,
+  20,000; 35,000, 12,000; 400, 300): Terralith rewrites the overworld's
+  terrain as `min(max(sloped_cheese + beardifier, its own terrain),
+  entrances)`; the first cut, which wanted `min(input, ...)`, found nothing
+  and the search on the full density was 17 blocks off on average. The cut
+  now keeps the side of the `min` that holds the choice's input
+  (vanilla's result unchanged). C2ME's compiled density did not hide the
+  structure.
+
+| Search, pack | Time a sample | Mean error | Samples off by more than 8 blocks | Worst |
+|---|---|---|---|---|
+| From the neighbor (today) | 21 to 62 us, growing with the spacing | 3.8 to 34.1 blocks | 145 to 1,237 | 80 to 242 |
+| From the top | 162 to 189 us | 1.3 to 2.6 | 30 to 81 | 38 to 105 |
+| From the estimate, without caves | 27 to 42 us | 1.3 to 3.4 | 31 to 85 | 29 to 143 |
+
+  The pack confirms dev: as right as the search from the top for a fifth
+  of its cost, and far better than today's search, whose errors grow with
+  the spacing (beyond 256 blocks, a third to a half of the checked samples
+  more than 8 blocks off).
 
 ### Step 1b: the ground's share in the pack
 
-Not measured yet: needs the spike jar on the pack server.
+`/farfield spike tile at` on the pack server, four level-0 tiles at three
+places (20,000, 20,000; 35,000, 12,000; 200,000, 200,000 twice), the cost
+guard's findings read from `feature-costs.bin`: 3.7 to 4.3 s a tile, of
+which heights 0.6 to 0.7 s, **ground 1.2 to 1.5 s (31 to 36 %)**, features
+1.6 to 2.1 s. The stand-in chunks' ground costs twice its dev share
+(0.7 s): step 3 (compiled surface rules) targets a third of a level-0
+tile in the pack, and is what a coarse tile's right ground needs.
 
 ## The user's answers (2026-11-11)
 

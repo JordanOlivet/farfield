@@ -11,12 +11,13 @@ import net.minecraft.world.level.levelgen.DensityFunction;
 
 /**
  * A noise router density without its cave branches, for the surface search
- * of {@code docs/analysis/preview-to-the-border.md}: a {@code range_choice}
- * whose in-range branch is {@code min(input, ...)} only ever cuts into its
- * input (vanilla's overworld picks between the sloped terrain cut by cave
- * entrances and the underground caves this way), so it is replaced by its
- * input. The surface of what is left has no cave under it to fall into; the
- * caller checks the full density at the result.
+ * of {@code docs/analysis/preview-to-the-border.md}: vanilla's overworld picks
+ * with a {@code range_choice} on its terrain between that terrain cut by cave
+ * entrances ({@code min(terrain, entrances)}) and the underground caves. Such
+ * a choice is replaced by the side of its {@code min} that holds its input
+ * ({@link #terrainOf}), which also finds a data pack's terrain built around
+ * the same input (Terralith's). The surface of what is left has no cave
+ * under it to fall into; the caller checks the full density at the result.
  *
  * <p>{@code RangeChoice} and the two-argument functions are package-private
  * records; they are recognized by the shape of their components (types and
@@ -53,8 +54,10 @@ final class UncutDensity {
                     mins++;
                 }
             }
-            if (choice != null && cutsItsInput((DensityFunction) choice[0], (DensityFunction) choice[3])) {
-                out = (DensityFunction) choice[0];
+            DensityFunction terrain = choice == null ? null
+                    : terrainOf((DensityFunction) choice[0], (DensityFunction) choice[3]);
+            if (terrain != null) {
+                out = terrain;
                 if (counted.add(f)) {
                     cut[0]++;
                 }
@@ -66,14 +69,34 @@ final class UncutDensity {
         });
     }
 
-    /** True when {@code inRange} is {@code min(input, x)} or {@code min(x, input)}. */
-    private static boolean cutsItsInput(DensityFunction input, DensityFunction inRange) {
+    /**
+     * The terrain a cave branch cuts: when {@code inRange} is {@code min(a, b)}
+     * and only one of {@code a} and {@code b} holds {@code input} (vanilla's
+     * {@code min(sloped_cheese, entrances)}, or a data pack's {@code
+     * min(max(sloped_cheese + beardifier, more terrain), entrances)}), that
+     * one; else null.
+     */
+    private static DensityFunction terrainOf(DensityFunction input, DensityFunction inRange) {
         Object[] min = twoArguments(unwrap(inRange), "min");
         if (min == null) {
-            return false;
+            return null;
         }
         DensityFunction plain = unwrap(input);
-        return plain.equals(unwrap((DensityFunction) min[1])) || plain.equals(unwrap((DensityFunction) min[2]));
+        boolean first = holds((DensityFunction) min[1], plain);
+        boolean second = holds((DensityFunction) min[2], plain);
+        return first == second ? null : (DensityFunction) (first ? min[1] : min[2]);
+    }
+
+    /** True when {@code target} is {@code f} or one of the functions under it, named references unwrapped. */
+    private static boolean holds(DensityFunction f, DensityFunction target) {
+        boolean[] found = {false};
+        f.mapAll(g -> {
+            if (!found[0] && unwrap(g).equals(target)) {
+                found[0] = true;
+            }
+            return g;
+        });
+        return found[0];
     }
 
     /** The function a named reference ({@code HolderHolder}: one {@link Holder} component) stands for. */
