@@ -365,6 +365,18 @@ public final class LodServer {
         return s != null && s.preview != null && s.preview.heightsSpike(level, x, z, report);
     }
 
+    /**
+     * Spike for E.3a: {@link NoisePreview#coarseSpike} on the calling thread;
+     * false without a preview or a store there.
+     */
+    static boolean previewCoarseSpike(ServerLevel level, int tileLevel, int x, int z,
+                                      java.util.function.Consumer<String> report) throws java.io.IOException {
+        LodServer s = instance;
+        LodLevel lod = s == null ? null : s.pipeline.level(level);
+        return s != null && s.preview != null && lod != null
+                && s.preview.coarseSpike(level, lod.world(), tileLevel, x, z, report);
+    }
+
     /** Where the last tile {@link #buildPreviewTileNow} built spent its feature time. */
     static String lastPreviewTiming() {
         LodServer s = instance;

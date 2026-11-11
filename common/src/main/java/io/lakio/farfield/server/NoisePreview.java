@@ -734,6 +734,107 @@ final class NoisePreview {
         return out;
     }
 
+    /**
+     * Spike for E.3a: builds the level-{@code tileLevel} tile over block (x,
+     * z) now on the calling thread, on a fresh tile, and stores it; reports
+     * its time a quarter by stage, then its cells' top and filler against the
+     * level-0 tile stored there (build it first with the tile spike), cell
+     * center by cell center, and the guess's against the same. False without
+     * a preview there.
+     */
+    boolean coarseSpike(ServerLevel level, LodWorld world, int tileLevel, int x, int z,
+                        java.util.function.Consumer<String> report) throws IOException {
+        Optional<Dimension> found = dimensions.computeIfAbsent(level.dimension(), k -> open(level));
+        if (found.isEmpty()) {
+            return false;
+        }
+        Dimension d = found.get();
+        d.world = world;
+        int size = PreviewStore.blocks(tileLevel);
+        int tileX = Math.floorDiv(x, size);
+        int tileZ = Math.floorDiv(z, size);
+        int spacing = PreviewTile.GRID << tileLevel;
+        for (int i = 0; i < STAGES.length; i++) {
+            d.stageNanos.set(i, 0);
+        }
+        PreviewTile tile = new PreviewTile();
+        tile.setLevel(tileLevel);
+        tile.setQuarters(0);
+        long start = System.nanoTime();
+        for (int q = 0; q < 4; q++) {
+            if (buildCoarse(d, tileLevel, tileX, tileZ, q, System.nanoTime(), tile) < 0) {
+                return true;
+            }
+        }
+        long nanos = System.nanoTime() - start;
+        world.preview().write(tileLevel, tileX, tileZ, tile);
+        StringBuilder stages = new StringBuilder();
+        for (int i = 0; i < STAGES.length; i++) {
+            stages.append(i == 0 ? "" : ", ").append(STAGES[i]).append(' ')
+                    .append(d.stageNanos.getAndSet(i, 0) / 4 / 1_000_000);
+        }
+        report.accept(String.format(java.util.Locale.ROOT, "level %d tile %d, %d (%d blocks, cells of %d): %d ms,"
+                + " %d ms a quarter (%s)", tileLevel, tileX, tileZ, size, spacing, nanos / 1_000_000,
+                nanos / 4 / 1_000_000, stages));
+        int fx = Math.floorDiv(x, TILE);
+        int fz = Math.floorDiv(z, TILE);
+        PreviewTile fine = world.preview().load(0, fx, fz);
+        if (fine == null || (fine.quarters() & 0xF) != 0xF) {
+            report.accept("no whole level-0 tile at " + fx + ", " + fz + " to compare with (run the tile spike there)");
+            return true;
+        }
+        Materials m = new Materials(world, d);
+        int cells = 0;
+        int ruledTop = 0;
+        int ruledBoth = 0;
+        int guessedTop = 0;
+        int guessedBoth = 0;
+        StringBuilder examples = new StringBuilder();
+        int x0 = tileX * size;
+        int z0 = tileZ * size;
+        int cliff = CLIFF_RISE * spacing / PreviewTile.GRID;
+        for (int cz = 0; cz < PreviewTile.CELLS; cz++) {
+            for (int cx = 0; cx < PreviewTile.CELLS; cx++) {
+                int bx = x0 + cx * spacing + spacing / 2;
+                int bz = z0 + cz * spacing + spacing / 2;
+                if (Math.floorDiv(bx, TILE) != fx || Math.floorDiv(bz, TILE) != fz) {
+                    continue;
+                }
+                int fcx = (bx - fx * TILE) / PreviewTile.GRID;
+                int fcz = (bz - fz * TILE) / PreviewTile.GRID;
+                int top = fine.top(fcx, fcz);
+                int filler = fine.filler(fcx, fcz);
+                cells++;
+                boolean sameTop = tile.top(cx, cz) == top;
+                ruledTop += sameTop ? 1 : 0;
+                ruledBoth += sameTop && tile.filler(cx, cz) == filler ? 1 : 0;
+                if (!sameTop && examples.length() < 500) {
+                    examples.append(String.format(java.util.Locale.ROOT, " [%d %d: %s, level 0 %s]", bx, bz,
+                            blockName(world, tile.top(cx, cz)), blockName(world, top)));
+                }
+                int h = Math.max(Math.max(tile.sample(cx, cz), tile.sample(cx + 1, cz)),
+                        Math.max(tile.sample(cx, cz + 1), tile.sample(cx + 1, cz + 1)));
+                int low = Math.min(Math.min(tile.sample(cx, cz), tile.sample(cx + 1, cz)),
+                        Math.min(tile.sample(cx, cz + 1), tile.sample(cx + 1, cz + 1)));
+                Holder<Biome> biome = d.biomes.getNoiseBiome(QuartPos.fromBlock(bx), QuartPos.fromBlock(h),
+                        QuartPos.fromBlock(bz), d.columnSampler.get());
+                m.surface(biome, bx - spacing / 2, h, bz - spacing / 2, h - low >= cliff);
+                guessedTop += m.top == top ? 1 : 0;
+                guessedBoth += m.top == top && m.filler == filler ? 1 : 0;
+            }
+        }
+        report.accept(String.format(java.util.Locale.ROOT, "against level 0 at %d cell centers: the rules' top"
+                + " matches %.1f %% (top and filler %.1f %%), the guess's %.1f %% (%.1f %%); differing tops:%s",
+                cells, 100.0 * ruledTop / Math.max(1, cells), 100.0 * ruledBoth / Math.max(1, cells),
+                100.0 * guessedTop / Math.max(1, cells), 100.0 * guessedBoth / Math.max(1, cells), examples));
+        return true;
+    }
+
+    private static String blockName(LodWorld world, int material) {
+        String key = world.blockStates().key(material);
+        return key == null ? "?" : key.replace("minecraft:", "");
+    }
+
     /** Blocks between the samples of the grids {@link #heightsSpike} times: tile levels 0, 2, 4, 6, 8, 12 and 15. */
     private static final int[] SPIKE_SPACINGS = {4, 16, 64, 256, 1024, 16384, 131072};
     /** One agreeing sample in this many is checked against the generator's own height. */
@@ -1129,13 +1230,15 @@ final class NoisePreview {
     /**
      * Sets a tile's cells [c0x, c1x) x [c0z, c1z] (those of built quarters
      * kept) from its samples and biomes: the top and filler blocks (from the
-     * biome's measured ground when {@code profiles} is given and knows it,
-     * else guessed), the icebergs, the frozen sea; then the tile's ground,
-     * sea and ice. Returns the cells icebergs took.
+     * surface rules when {@code rules} is given, else the biome's measured
+     * ground when {@code profiles} is given and knows it, else guessed), the
+     * icebergs, the frozen sea; then the tile's ground, sea and ice. Returns
+     * the cells icebergs took.
      */
     private static boolean[] cells(Dimension d, PreviewTile tile, int x0, int z0, int spacing, Materials m,
                                    Holder<Biome>[] chunkBiomes, boolean[] icebergs, Holder<Biome>[] seaBiomes,
-                                   PreviewProfiles profiles, int c0x, int c1x, int c0z, int c1z, int built) {
+                                   PreviewProfiles profiles, CoarseGround rules, int c0x, int c1x, int c0z, int c1z,
+                                   int built) {
         boolean[] icebergCells = new boolean[PreviewTile.CELLS * PreviewTile.CELLS];
         int cliff = CLIFF_RISE * spacing / PreviewTile.GRID;
         for (int cz = c0z; cz < c1z; cz++) {
@@ -1151,14 +1254,16 @@ final class NoisePreview {
                 int x = x0 + cx * spacing;
                 int z = z0 + cz * spacing;
                 boolean steep = h - low >= cliff;
-                long measured = profiles == null ? -1 : profiles.ground(tile.biome(cx >> 2, cz >> 2),
+                BlockState[] ruled = rules == null ? null : rules.cell(cx, cz, h, low);
+                long measured = ruled != null ? (long) m.cachedId(ruled[0]) << 32 | (m.cachedId(ruled[1]) & 0xFFFFFFFFL)
+                        : profiles == null ? -1 : profiles.ground(tile.biome(cx >> 2, cz >> 2),
                         d.fluid != null && h <= d.seaLevel ? PreviewProfiles.UNDER_SEA
                                 : steep ? PreviewProfiles.STEEP : PreviewProfiles.FLAT);
                 if (measured >= 0) {
                     int top = (int) (measured >>> 32);
                     int filler = (int) measured;
                     // Snow over the rules' top on cold land, as a level-0 tile's cells have it.
-                    if (h > d.seaLevel && d.fluid != null
+                    if (ruled != null ? rules.snow() : h > d.seaLevel && d.fluid != null
                             && biome.value().coldEnoughToSnow(new BlockPos(x + spacing / 2, h, z + spacing / 2))) {
                         filler = top;
                         top = m.snow;
@@ -1231,7 +1336,7 @@ final class NoisePreview {
         Holder<Biome>[] chunkBiomes = biomes(d, tile, x0, z0, 0, world, i0 / 4, (i1 + 3) / 4, k0 / 4, (k1 + 3) / 4);
         t = stage(d, BIOMES, t);
         boolean[] icebergCells = cells(d, tile, x0, z0, PreviewTile.GRID, m, chunkBiomes, icebergs, seaBiomes, null,
-                i0, i1, k0, k1, built);
+                null, i0, i1, k0, k1, built);
         t = stage(d, CELLS, t);
         if (stopped) {
             return -1;
@@ -1286,8 +1391,14 @@ final class NoisePreview {
      * tile's quarters, or -1 when the preview stopped meanwhile.
      */
     private int buildCoarse(Dimension d, int level, int tileX, int tileZ, int q, long start) throws IOException {
+        return buildCoarse(d, level, tileX, tileZ, q, start, null);
+    }
+
+    /** Like {@link #buildCoarse(Dimension, int, int, int, int, long)}, on {@code base} (unstored) when given. */
+    private int buildCoarse(Dimension d, int level, int tileX, int tileZ, int q, long start, PreviewTile base)
+            throws IOException {
         LodWorld world = d.world;
-        PreviewTile tile = world.preview().load(level, tileX, tileZ);
+        PreviewTile tile = base != null ? base : world.preview().load(level, tileX, tileZ);
         if (tile == null) {
             tile = new PreviewTile();
             tile.setLevel(level);
@@ -1313,10 +1424,14 @@ final class NoisePreview {
         int chunks = PreviewTile.CHUNKS / 2;
         Holder<Biome>[] chunkBiomes = biomes(d, tile, x0, z0, level, world, ch0x, ch0x + chunks, ch0z, ch0z + chunks);
         t = stage(d, BIOMES, t);
-        boolean grow = StreamServer.settings().previewFeatures();
+        // From GROUND_ONLY up (E.3a): the surface rules' ground, no plants, canopy or biome sample.
+        boolean groundOnly = level >= PreviewPyramid.GROUND_ONLY;
+        boolean grow = !groundOnly && StreamServer.settings().previewFeatures();
         int[] waiting = grow ? queueSamples(d, tile, x0, z0, level, ch0x, ch0z, chunks) : new int[0];
-        boolean[] icebergCells = cells(d, tile, x0, z0, spacing, m, chunkBiomes, icebergs, seaBiomes, d.profiles(),
-                i0, i0 + half, k0, k0 + half, built);
+        CoarseGround rules = groundOnly ? CoarseGround.create(d.level, d.generator, d.biomes, d.columnSampler.get(),
+                d.fluid, d.seaLevel, tile, x0, z0, spacing) : null;
+        boolean[] icebergCells = cells(d, tile, x0, z0, spacing, m, chunkBiomes, icebergs, seaBiomes,
+                groundOnly ? null : d.profiles(), rules, i0, i0 + half, k0, k0 + half, built);
         if (grow) {
             profileCover(d, tile, x0, z0, m, icebergCells, ch0x, ch0z, chunks);
         }
@@ -1331,7 +1446,9 @@ final class NoisePreview {
         if (stopped) {
             return -1;
         }
-        world.preview().write(level, tileX, tileZ, tile, 1 << q);
+        if (base == null) {
+            world.preview().write(level, tileX, tileZ, tile, 1 << q);
+        }
         stage(d, WRITE, t);
         return tile.quarters();
     }
@@ -1421,7 +1538,7 @@ final class NoisePreview {
         @SuppressWarnings("unchecked")
         Holder<Biome>[] seaBiomes = new Holder[PreviewTile.SAMPLES * PreviewTile.SAMPLES];
         cells(d, tile, x0, z0, PreviewTile.GRID, m, chunkBiomes, new boolean[PreviewTile.SAMPLES * PreviewTile.SAMPLES],
-                seaBiomes, null, i0, i1, k0, k1, 0);
+                seaBiomes, null, null, i0, i1, k0, k1, 0);
         PreviewFeatures features = new PreviewFeatures(d.level, d.biomes, d.columnSampler.get(), d.fluid, d.seaLevel,
                 d.world, StreamServer.settings(), tile, tileX, tileZ, (x, z) -> false, null);
         features.budget(d.budget);

@@ -172,7 +172,8 @@ Each measured before the next.
    features' distance comes down, or if far forests look wrong to the
    user.
 5. **To the border** (2 to 4 days): tile levels to 15, the keys, the
-   store's levels, the renderer (coarse-to-fine study §6).
+   store's levels, the renderer (coarse-to-fine study §6). Split into
+   lots E.3a to E.3e in `docs/plans/milestone-2.md` (2026-11-11).
 6. Only if heights still dominate: the density stopped at its sign.
 
 ## Measures (2026-11-11)

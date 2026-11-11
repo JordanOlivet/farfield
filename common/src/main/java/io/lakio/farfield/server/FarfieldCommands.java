@@ -94,6 +94,13 @@ public final class FarfieldCommands {
                                         .executes(c -> surfaceSpike(c, 8))
                                         .then(Commands.argument("side", IntegerArgumentType.integer(1, 64))
                                                 .executes(c -> surfaceSpike(c, IntegerArgumentType.getInteger(c, "side"))))))
+                        .then(Commands.literal("coarse")
+                                .then(Commands.argument("level", IntegerArgumentType.integer(1,
+                                                io.lakio.farfield.core.preview.PreviewPyramid.LEVELS - 1))
+                                        .then(Commands.literal("at")
+                                                .then(Commands.argument("x", IntegerArgumentType.integer())
+                                                        .then(Commands.argument("z", IntegerArgumentType.integer())
+                                                                .executes(FarfieldCommands::coarseSpikeAt))))))
                         .then(Commands.literal("heights")
                                 .then(Commands.literal("at")
                                         .then(Commands.argument("x", IntegerArgumentType.integer())
@@ -265,6 +272,32 @@ public final class FarfieldCommands {
             return 0;
         }
         source.sendSuccess(() -> Component.literal("Preview tile spike started at " + at.getX() + " " + at.getZ()), true);
+        return 1;
+    }
+
+    /** Spike for E.3a: a coarse tile over a position built now, its time and its ground against level 0's. */
+    private static int coarseSpikeAt(CommandContext<CommandSourceStack> c) {
+        CommandSourceStack source = c.getSource();
+        int tileLevel = IntegerArgumentType.getInteger(c, "level");
+        int x = IntegerArgumentType.getInteger(c, "x");
+        int z = IntegerArgumentType.getInteger(c, "z");
+        var level = source.getLevel();
+        Thread t = new Thread(() -> {
+            java.util.function.Consumer<String> report = line -> {
+                Farfield.LOG.info("Coarse spike: {}", line);
+                source.getServer().execute(() -> source.sendSuccess(() -> Component.literal(line), true));
+            };
+            try {
+                report.accept(LodServer.previewCoarseSpike(level, tileLevel, x, z, report) ? "done"
+                        : "no preview in " + level.dimension().location());
+            } catch (java.io.IOException | RuntimeException e) {
+                Farfield.LOG.warn("Coarse spike failed", e);
+                report.accept("failed: " + e);
+            }
+        }, "farfield-coarse-spike");
+        t.setDaemon(true);
+        t.start();
+        source.sendSuccess(() -> Component.literal("Coarse spike started at " + x + " " + z), true);
         return 1;
     }
 

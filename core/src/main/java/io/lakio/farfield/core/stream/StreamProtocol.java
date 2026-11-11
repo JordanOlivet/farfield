@@ -29,9 +29,10 @@ public final class StreamProtocol {
      * 7: tiles of format 12, ADR-080; 8: tiles of format 17, their light
      * sources, ADR-117; 9: tiles of format 18, the lakes the features dig,
      * ADR-118; 10: tile keys carry the pyramid's level, tiles of format 19,
-     * ADR-126).
+     * ADR-126; 11: tiles of format 22, levels 0 to 5, ADR-135; formats 20 and
+     * 21 had kept 10, and a client of either declined the other's tiles).
      */
-    public static final int VERSION = 10;
+    public static final int VERSION = 11;
     /** Largest body of one message, under the game's custom payload limits. */
     public static final int MAX_PAYLOAD = 30_000;
 

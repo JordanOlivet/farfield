@@ -4,15 +4,22 @@ package io.lakio.farfield.core.preview;
  * The levels of preview tiles a server builds (ADR-126, step 3 of
  * {@code docs/analysis/preview-coarse-to-fine.md}): level 0 with the world's
  * own features within the features' distance (a server setting), level 1
- * within 2,048 blocks, level 2 over the whole drawn range. A level-L tile's
- * samples are {@code 4 << L} blocks apart, the far grid of the tiles before
- * (4 blocks to 1,024, 8 to 2,048, 16 beyond). The coarsest level is built
- * first over the whole range, then each finer one.
+ * within 2,048 blocks, the coarser ones over the whole drawn range. A
+ * level-L tile's samples are {@code 4 << L} blocks apart. The coarsest level
+ * is built first over the whole range, then each finer one; from {@link
+ * #GROUND_ONLY} up a tile holds the ground only.
  */
 public final class PreviewPyramid {
 
     /** Levels built: 0 to {@code LEVELS - 1}. */
-    public static final int LEVELS = 3;
+    public static final int LEVELS = 6;
+    /**
+     * The first level whose tiles hold the ground only (E.3a of milestone 2):
+     * heights, the surface rules' blocks, the sea and ice; no plants, no
+     * canopy, no biome sample for the profiles. 32-block cells, drawn at
+     * 32-block voxels and coarser.
+     */
+    public static final int GROUND_ONLY = 3;
     /** The drawn range, in blocks: the renderer draws nothing farther. */
     public static final int RANGE = 4096;
     /**

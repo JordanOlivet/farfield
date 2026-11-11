@@ -3887,3 +3887,47 @@ Status: accepted, 2026-11-11. Amends ADR-101 and ADR-125 (the rules run by
   Fabric dev server, one tile, 0 of 4,624, 33 ms against 499 ms. The
   spawn's 312 tiles built again in 1.6 min (2.6 min with ADR-133 alone).
   Tile format unchanged: the cells are the same. Not run in the pack.
+
+## ADR-135 — Tile levels 3 to 5, with the ground only, from the surface rules
+
+Status: accepted, 2026-11-11. Amends ADR-126 (the pyramid's levels 0 to
+2, coarse tiles from the profiles). Lot E.3a of milestone 2, the first of
+step 5 of `docs/analysis/preview-to-the-border.md` ("go étape 5").
+
+- **Context**: the preview must reach the world border (E.3). A coarse
+  tile took its ground, plants and canopy from the biome profiles, and a
+  biome not measured yet held the quarter back until a sample of real
+  features ran (1.8 s of a 2.8 s coarse tile in the pack, ADR-126). From
+  32-block voxels up a tree is not drawn anyway (the study's idea 2), and
+  ADR-134 made the surface rules cheap enough to run on every cell.
+- **Decision**: `PreviewPyramid.LEVELS` 3 to 6; from `GROUND_ONLY` (level
+  3, 32-block cells) a tile holds the ground only: its heights, the
+  generator's surface rules on one column a cell at its center
+  (`CoarseGround`, through ADR-134's `SurfaceColumns`; the slope's
+  heightmap laid from the tile's samples interpolated over the cell; one
+  biome sample a cell, no zoom), the sea, ice and icebergs; no plants, no
+  canopy, no biome sample. The snow the rules do not lay is decided at
+  the cell's center by its own biome at its interpolated height (by the
+  coarse chunk's biome at the highest corner, a forest at a snow border
+  came out snowy: 44 % of its tops matched level 0's at level 5, 63 %
+  after). The range stays 4,096 blocks until E.3b: levels 3 to 5 cover it
+  in a few tiles, each level's range is `min(RANGE, 1024 << level)`. Tile
+  format 22; protocol 11 (formats 20 and 21 had kept protocol 10, so a
+  client of one declined the other's tiles). Levels 1 and 2 keep the
+  profiles. Rules that cannot run column by column fall back on the guess
+  (logged once); `Noise preview of <dim>: tiles of level 3 and up hold
+  the ground only, from the surface rules (E.3a)` once a dimension when
+  they run. A spike, `farfield spike coarse <level> at X Z`, builds a
+  coarse tile and compares its cells' tops with the level-0 tile stored
+  there (center against center) and with the guess.
+- **Checked** (NeoForge dev server): a coarse tile of level 3, 4 or 5 in
+  0.69 to 0.86 s (heights about 130 ms a quarter, the rules' ground 44 to
+  75 ms), against 0.52 to 0.56 s for a level-2 tile with the profiles.
+  Tops matching level 0's at three places (forest at 5,888, 160; snowy
+  taiga at 3,050, -170; frozen ocean shore at 2,394, -162): 58 to 83 % at
+  levels 3 to 5 against 76 to 86 % for level 2's profiles; most of the
+  rest is dirt that level 0's trees leave on their ground, which no coarse
+  level grows. The spawn's pregeneration to 4,096 blocks: 328 tiles in 1.6
+  min (312 tiles with three levels, 1.6 min, ADR-134); levels 5, 4 and 3
+  whole 2.5 to 2.7 s after the start, level 2 at 6.6 s, level 1 at 22.5 s,
+  level 0 at 98 s. Not run in a client or in the pack.

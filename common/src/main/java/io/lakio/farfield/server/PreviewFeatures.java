@@ -806,12 +806,25 @@ final class PreviewFeatures {
     /** The noise chunk the surface rules share for the tile, made at the first chunk asked. */
     @SuppressWarnings({"unchecked", "rawtypes"})
     private NoiseChunk noiseChunk(int chunkX, int chunkZ) {
-        var random = level.getChunkSource().randomState();
         if (noiseChunk == null) {
-            // One for the tile, and it computes no density: the rules ask it only for the preliminary
-            // surface level, under which `abovePreliminarySurface` fails; the preview reads the top
-            // block, above it. Computed, it cost 30 to 50 ms a chunk in the user's pack (C2ME's
-            // compiled density functions, and nothing cached across chunks), 1 to 3 ms in dev.
+            noiseChunk = surfaceNoise(level, surface, fluid, seaLevel, chunkX, chunkZ);
+        }
+        return noiseChunk;
+    }
+
+    /**
+     * A noise chunk for the surface rules of one tile, from chunk (chunkX,
+     * chunkZ): it computes no density, the rules ask it only for the
+     * preliminary surface level, under which {@code abovePreliminarySurface}
+     * fails; the preview reads the top block, above it. Computed, it cost 30
+     * to 50 ms a chunk in the user's pack (C2ME's compiled density functions,
+     * and nothing cached across chunks), 1 to 3 ms in dev.
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    static NoiseChunk surfaceNoise(ServerLevel level, NoiseBasedChunkGenerator surface, BlockState fluid,
+                                   int seaLevel, int chunkX, int chunkZ) {
+        var random = level.getChunkSource().randomState();
+        {
             var noiseSettings = surface.generatorSettings().value();
             var clamped = noiseSettings.noiseSettings().clampToHeightAccessor(level);
             Aquifer.FluidStatus sea = new Aquifer.FluidStatus(seaLevel,
@@ -819,10 +832,9 @@ final class PreviewFeatures {
             Beardifier none = new Beardifier((it.unimi.dsi.fastutil.objects.ObjectListIterator) it.unimi.dsi.fastutil
                     .objects.ObjectLists.emptyList().iterator(), (it.unimi.dsi.fastutil.objects.ObjectListIterator) it
                     .unimi.dsi.fastutil.objects.ObjectLists.emptyList().iterator());
-            noiseChunk = new SurfaceNoise(16 / clamped.getCellWidth(), random, chunkX << 4, chunkZ << 4, clamped,
+            return new SurfaceNoise(16 / clamped.getCellWidth(), random, chunkX << 4, chunkZ << 4, clamped,
                     none, noiseSettings, (x, y, z) -> sea, level.getMinBuildHeight());
         }
-        return noiseChunk;
     }
 
     /** What the surface rules read; then all a feature may read. */
