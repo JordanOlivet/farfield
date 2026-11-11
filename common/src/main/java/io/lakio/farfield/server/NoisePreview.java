@@ -134,8 +134,8 @@ final class NoisePreview {
         /** {@link #sampler} with the same caches, shared by its six functions (ADR-057). */
         final ThreadLocal<Climate.Sampler> columnSampler;
         /**
-         * Spike (preview-to-the-border study): {@link #density} without its
-         * cave branches ({@link UncutDensity}), how many were cut, and the
+         * The surface search's densities (ADR-133): {@link #density} without
+         * its cave branches ({@link UncutDensity}), how many were cut, and the
          * density without jaggedness vanilla's preliminary surface reads,
          * each with the per-column caches.
          */
@@ -446,7 +446,10 @@ final class NoisePreview {
         }
         Farfield.LOG.info("Noise preview of {}: building the terrain not generated yet within {} blocks",
                 level.dimension().location(), (int) RANGE);
-        return Optional.of(new Dimension(level, generator));
+        Dimension d = new Dimension(level, generator);
+        Farfield.LOG.info("Noise preview of {}: surface searched on the density without {} cave branch{} (ADR-133)",
+                level.dimension().location(), d.cutBranches, d.cutBranches == 1 ? "" : "es");
+        return Optional.of(d);
     }
 
     /** Blocks a finer level's quarters wait behind the coarser front, per level (ADR-127). */
@@ -920,7 +923,7 @@ final class NoisePreview {
 
     /**
      * The first free block above the ground at (x, z), searched on its own on
-     * {@code density} (the density without caves for the spike): from
+     * {@code density} (the density without caves, ADR-133): from
      * {@code estimate} lowered by {@link #ESTIMATE_MARGIN_CELLS} cells (vanilla's
      * preliminary surface lies below the real one, ADR-037), down while free
      * to the first solid cell, then {@link #climb}. With {@code check}, the
@@ -1087,30 +1090,40 @@ final class NoisePreview {
 
     /**
      * The surface of a tile's samples [i0, i1] x [k0, k1], {@code spacing}
-     * blocks apart from its corner (x0, z0), each searched from its
-     * neighbor's height; the samples of the quarters in {@code built} are
-     * kept. False when the preview stopped meanwhile.
+     * blocks apart from its corner (x0, z0), each column searched on its own
+     * from vanilla's preliminary surface ({@link #surfaceAt}, ADR-133); the
+     * samples of the quarters in {@code built} are kept. False when the
+     * preview stopped meanwhile.
      */
     private boolean heights(Dimension d, PreviewTile tile, int x0, int z0, int spacing, int i0, int i1, int k0,
                             int k1, int built) {
-        int previous = UNKNOWN;
+        int rowEstimate = UNKNOWN;
         for (int k = k0; k <= k1; k++) {
-            // Each row starts from the one above: neighbors are seeds, not results.
-            int seed = k > k0 || k > 0 && kept(built, i0, k - 1) ? tile.sample(i0, k - 1) : UNKNOWN;
+            // The estimate, smooth and without caves, is searched from a near one: the row's first from the
+            // row above's, the others from the previous sample's.
+            int estimate = rowEstimate;
             for (int i = i0; i <= i1; i++) {
                 if (stopped) {
                     return false;
                 }
                 if (kept(built, i, k)) {
-                    previous = tile.sample(i, k);
                     continue;
                 }
-                int h = surface(d, x0 + i * spacing, z0 + k * spacing, i == i0 ? seed : previous);
-                tile.setHeight(i, k, h);
-                previous = h;
+                int x = x0 + i * spacing;
+                int z = z0 + k * spacing;
+                estimate = preliminary(d, x, z, estimate);
+                if (i == i0 || rowEstimate == UNKNOWN) {
+                    rowEstimate = estimate;
+                }
+                tile.setHeight(i, k, surfaceFromEstimate(d, d.columnUncut.get(), true, x, z, estimate));
             }
         }
         return true;
+    }
+
+    /** The surface at (x, z) by {@link #surfaceFromEstimate}, with the estimate searched from the top. */
+    private static int surfaceAt(Dimension d, int x, int z) {
+        return surfaceFromEstimate(d, d.columnUncut.get(), true, x, z, preliminary(d, x, z, UNKNOWN));
     }
 
     /**
@@ -1554,7 +1567,7 @@ final class NoisePreview {
                                                           int hx1, int hz1) {
         int reach = PreviewVillages.RADIUS + 16;
         IntBinaryOperator surface = (x, z) -> x >= hx0 && z >= hz0 && x < hx1 && z < hz1
-                ? tile.height(x - x0, z - z0) : surface(d, x, z, UNKNOWN);
+                ? tile.height(x - x0, z - z0) : surfaceAt(d, x, z);
         List<PreviewVillages.Village> villages = d.villages.within(bx0 - reach, bz0 - reach, bx1 + reach,
                 bz1 + reach, (x, z) -> d.biomes.getNoiseBiome(QuartPos.fromBlock(x),
                         QuartPos.fromBlock(surface.applyAsInt(x, z)), QuartPos.fromBlock(z), d.columnSampler.get()));
@@ -1612,6 +1625,8 @@ final class NoisePreview {
      * (a neighbor's surface) up or down by cell height to the first change,
      * then bisected to the block. A result with solid ground right above it
      * (a cave, an overhang) is searched again from the top of the world.
+     * The tiles' search until ADR-133, which replaced it (it falls into
+     * caves); kept as the heights spike's reference.
      */
     private static int surface(Dimension d, int x, int z, int seed) {
         int minY = d.noise.minY();

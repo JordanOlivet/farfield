@@ -3805,3 +3805,47 @@ never looked at again).
   4 findings written (271 bytes), the next start logged `4 features left out
   for their cost read from feature-costs.bin`; a feature at the threshold
   flipped at its re-check, which led to the margin. Not run in the pack.
+
+## ADR-133 — The preview's heights searched column by column from vanilla's estimate, without caves
+
+Status: accepted, 2026-11-11. Amends ADR-038 and ADR-057 (the search from
+the top, then from a neighbor's height). Step 2 of
+`docs/analysis/preview-to-the-border.md`, an idea taken from the SeedGen
+mods and adapted.
+
+- **Context**: each sample was searched from its neighbor's height on the
+  full density: once a sample fell into a cave or under an overhang the
+  next ones started there, so 1 to 2 % of the heights were tens of blocks
+  low (pits), worse with the spacing (in the pack, beyond 256 blocks a
+  third to a half of the checked samples off by more than 8 blocks). The
+  search from the top is right but costs three to five times more. The
+  border needs coarse tiles whose samples are kilometres apart, where a
+  neighbor tells nothing.
+- **Decision**: each sample on its own. Vanilla's preliminary surface
+  level (`NoiseChunk`'s: the highest cell where the density without
+  jaggedness exceeds 0.390625, searched from the previous sample's, as that
+  density has no caves); from two cells below it, down while free to solid
+  ground, then up by cell height while solid, bisected; where ground stands
+  4, 8, 16, 24 or 32 blocks above the result (a noodle cave under the
+  surface, a ledge over a gap), the climb goes on from there. All of it on
+  the router's density without its cave branch (`UncutDensity`: a
+  `range_choice` whose in-range branch is `min(a, b)` with the choice's
+  input in only one of `a`, `b` is replaced by that one; vanilla's
+  `min(sloped_cheese, entrances)` and Terralith's
+  `min(max(sloped_cheese + beardifier, ...), entrances)` alike; package-
+  private records matched by the shape of their components, named
+  references unwrapped). Then the full density at the result: where a cave
+  opens there, down on it to the ground and the same climb, below the
+  first result. Tile format 21: tiles are built again. The old search
+  stays as the heights spike's reference.
+- **Measured** (`/farfield spike heights at`, 129 x 129 samples, seven
+  spacings, against the generator's `getBaseHeight`): dev, 25 to 28 us a
+  sample, mean error 2.2 to 5.1 blocks (the neighbor's 23 to 38 us, 5.4 to
+  27.2; the top's 76 to 92 us, 2.0 to 5.3); the user's pack, 27 to 42 us,
+  1.3 to 3.4 (21 to 62 us, 3.8 to 34.1; 162 to 189 us, 1.3 to 2.6). Left:
+  ledges more than 32 blocks above a gap, mostly over the sea.
+- **Checked**: NeoForge dev server, `farfield pregen start 16 16 4096`: 312
+  tiles built again in 2.6 min, no error; a far tile 2.4 s (heights 0.54 s).
+  `:neoforge` and `:fabric` compile, `:core:test` passes. Not seen in a
+  client; a data pack that builds its caves another way keeps the full
+  density (the spike logs how many branches were cut).

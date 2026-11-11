@@ -59,9 +59,10 @@ public final class PreviewTile {
      * ADR-104), 16 the plants under the sea (ADR-105), 17 the light sources
      * of the features (ADR-117), 18 the lakes they dig (ADR-118); older
      * tiles are built again; 19 the levels of the pyramid, the canopy, and
-     * no far grid any more (ADR-126); 20 built by quarters (ADR-127).
+     * no far grid any more (ADR-126); 20 built by quarters (ADR-127); 21 the
+     * heights searched from vanilla's estimate without caves (ADR-133).
      */
-    private static final int FORMAT = 20;
+    private static final int FORMAT = 21;
     /** Blocks a side of a feature voxel. */
     public static final int FEATURE_VOXEL = 2;
     /** Blocks around the tile its features may reach. */

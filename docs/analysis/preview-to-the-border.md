@@ -143,7 +143,11 @@ Each measured before the next.
    (`getBaseHeight`), time and error; (b) the compiled surface rule
    against the stand-in chunks (`SurfaceSpike`), time and match rate.
 2. **Coarse levels hold the ground only** (2 to 3 h), with step 1's
-   heights if they win.
+   heights if they win. Done 2026-11-11 for the heights (ADR-133: every
+   tile's samples searched from the estimate, tile format 21). The ground
+   only rule waits for step 5: today's tiles stop at level 2 (16-block
+   voxels), so no tile is at 32-block voxels or coarser yet; step 5 builds
+   levels 3 and up without canopy, plants or biome sampling.
 3. **The compiled surface rules** (about 1 day), for every level.
 4. **Harvested tree shapes on a hashed grid** for levels 1 and 2 and
    beyond the real features' distance (1 to 1.5 days), with the light
