@@ -133,6 +133,15 @@ final class NoisePreview {
         final ThreadLocal<DensityFunction> columnDensity;
         /** {@link #sampler} with the same caches, shared by its six functions (ADR-057). */
         final ThreadLocal<Climate.Sampler> columnSampler;
+        /**
+         * Spike (preview-to-the-border study): {@link #density} without its
+         * cave branches ({@link UncutDensity}), how many were cut, and the
+         * density without jaggedness vanilla's preliminary surface reads,
+         * each with the per-column caches.
+         */
+        final int cutBranches;
+        final ThreadLocal<DensityFunction> columnUncut;
+        final ThreadLocal<DensityFunction> columnInitial;
         final NoiseSettings noise;
         final int seaLevel;
         final BlockState defaultBlock;
@@ -202,6 +211,12 @@ final class NoisePreview {
             density = state.router().finalDensity();
             columnDensity = ThreadLocal.withInitial(() -> ColumnDensity.of(density));
             columnSampler = ThreadLocal.withInitial(() -> ColumnDensity.of(sampler));
+            int[] cut = new int[1];
+            DensityFunction uncut = UncutDensity.of(density, cut);
+            cutBranches = cut[0];
+            columnUncut = ThreadLocal.withInitial(() -> ColumnDensity.of(uncut));
+            DensityFunction initial = state.router().initialDensityWithoutJaggedness();
+            columnInitial = ThreadLocal.withInitial(() -> ColumnDensity.of(initial));
             NoiseGeneratorSettings settings = generator.generatorSettings().value();
             noise = settings.noiseSettings();
             seaLevel = generator.getSeaLevel();
@@ -723,14 +738,17 @@ final class NoisePreview {
 
     /**
      * Spike for the coarse-to-fine study
-     * ({@code docs/analysis/preview-coarse-to-fine.md}): the heights of one
+     * ({@code docs/analysis/preview-coarse-to-fine.md}) and the border study
+     * ({@code docs/analysis/preview-to-the-border.md}): the heights of one
      * tile's grid ({@link PreviewTile#SAMPLES} a side) centered on a block,
-     * at each of {@link #SPIKE_SPACINGS}, each sample searched from its
-     * neighbor's height as {@link #build} does, then from the top of the
-     * world; one line per spacing, with both searches against the generator's
-     * own height ({@code getBaseHeight}, exact and slow) on the samples where
-     * they differ and on one sample in {@link #SPIKE_EXACT_EVERY} of the
-     * others. False when the dimension has no preview.
+     * at each of {@link #SPIKE_SPACINGS}, by three searches: from the
+     * neighbor's height as {@link #build} does, from the top of the world, and
+     * each column on its own from vanilla's preliminary surface on the density
+     * without caves ({@link #surfaceFromEstimate}). One line of times and one
+     * of errors per spacing, against the generator's own height
+     * ({@code getBaseHeight}, exact and slow) on the samples where the searches
+     * differ and on one sample in {@link #SPIKE_EXACT_EVERY} of the others.
+     * False when the dimension has no preview.
      */
     boolean heightsSpike(ServerLevel level, int x, int z, java.util.function.Consumer<String> report) {
         Optional<Dimension> found = dimensions.computeIfAbsent(level.dimension(), k -> open(level));
@@ -738,98 +756,244 @@ final class NoisePreview {
             return false;
         }
         Dimension d = found.get();
+        report.accept("cave branches cut from the density: " + d.cutBranches
+                + (d.cutBranches == 0 ? " (none found: the estimate's search runs on the full density)" : "")
+                + "; " + UncutDensity.seen);
         int n = PreviewTile.SAMPLES;
-        int[] seeded = new int[n * n];
-        int[] fromTop = new int[n * n];
+        int[][] grids = new int[SPIKE_SEARCHES.length][n * n];
         // Once unmeasured: the first grid would pay for the compiler.
-        heightsGrid(d, x, z, PreviewTile.GRID, true, seeded);
-        heightsGrid(d, x, z, PreviewTile.GRID, false, fromTop);
+        for (int s = 0; s < SPIKE_SEARCHES.length; s++) {
+            heightsGrid(d, x, z, PreviewTile.GRID, s, grids[s]);
+        }
         for (int spacing : SPIKE_SPACINGS) {
             if (stopped) {
                 return true;
             }
-            long t0 = System.nanoTime();
-            heightsGrid(d, x, z, spacing, true, seeded);
-            long t1 = System.nanoTime();
-            heightsGrid(d, x, z, spacing, false, fromTop);
-            long t2 = System.nanoTime();
-            int differ = 0;
-            int lower = 0;
-            int worst = 0;
-            long steps = 0;
-            for (int i = 0; i < seeded.length; i++) {
-                int gap = Math.abs(seeded[i] - fromTop[i]);
-                differ += gap != 0 ? 1 : 0;
-                lower += seeded[i] < fromTop[i] ? 1 : 0;
-                worst = Math.max(worst, gap);
-                if (i % n != 0) {
-                    steps += Math.abs(fromTop[i] - fromTop[i - 1]);
-                }
+            long[] nanos = new long[SPIKE_SEARCHES.length];
+            for (int s = 0; s < SPIKE_SEARCHES.length; s++) {
+                long t0 = System.nanoTime();
+                heightsGrid(d, x, z, spacing, s, grids[s]);
+                nanos[s] = System.nanoTime() - t0;
             }
             int x0 = x - spacing * (n / 2);
             int z0 = z - spacing * (n / 2);
-            int nearerNeighbor = 0;
-            int nearerTop = 0;
-            int exactDiffer = 0;
-            int exactSame = 0;
-            long errorNeighbor = 0;
-            long errorTop = 0;
-            long errorSame = 0;
-            int worstSame = 0;
-            for (int i = 0; i < seeded.length && d.generator != null; i++) {
-                boolean differs = seeded[i] != fromTop[i];
+            int checked = 0;
+            int shown = 0;
+            int differ = 0;
+            long[] error = new long[SPIKE_SEARCHES.length];
+            int[] off = new int[SPIKE_SEARCHES.length];
+            int[] worst = new int[SPIKE_SEARCHES.length];
+            for (int i = 0; i < n * n && d.generator != null; i++) {
+                boolean differs = false;
+                for (int s = 1; s < SPIKE_SEARCHES.length; s++) {
+                    differs |= grids[s][i] != grids[0][i];
+                }
+                differ += differs ? 1 : 0;
                 if (!differs && i % SPIKE_EXACT_EVERY != 0) {
                     continue;
                 }
                 int exact = d.generator.getBaseHeight(x0 + i % n * spacing, z0 + i / n * spacing,
                         net.minecraft.world.level.levelgen.Heightmap.Types.OCEAN_FLOOR_WG, level,
                         level.getChunkSource().randomState());
-                int a = Math.abs(seeded[i] - exact);
-                int b = Math.abs(fromTop[i] - exact);
-                if (differs) {
-                    exactDiffer++;
-                    errorNeighbor += a;
-                    errorTop += b;
-                    nearerNeighbor += a < b ? 1 : 0;
-                    nearerTop += b < a ? 1 : 0;
-                } else {
-                    exactSame++;
-                    errorSame += a;
-                    worstSame = Math.max(worstSame, a);
+                checked++;
+                if (Math.abs(grids[2][i] - exact) > SPIKE_OFF && shown < 6 && spacing == SPIKE_SPACINGS[0]) {
+                    shown++;
+                    int bx = x0 + i % n * spacing;
+                    int bz = z0 + i / n * spacing;
+                    int e = preliminary(d, bx, bz, UNKNOWN);
+                    int raw = surfaceFromEstimate(d, d.columnUncut.get(), false, bx, bz, e);
+                    int full = surfaceFromEstimate(d, d.columnDensity.get(), false, bx, bz, e);
+                    report.accept(String.format(java.util.Locale.ROOT, "off at %d %d: exact %d, neighbor %d, top %d,"
+                                    + " estimate %d -> uncut %d (checked %d), full from the estimate %d", bx, bz, exact,
+                            grids[0][i], grids[1][i], e, raw, grids[2][i], full));
+                }
+                for (int s = 0; s < SPIKE_SEARCHES.length; s++) {
+                    int e = Math.abs(grids[s][i] - exact);
+                    error[s] += e;
+                    off[s] += e > SPIKE_OFF ? 1 : 0;
+                    worst[s] = Math.max(worst[s], e);
                 }
             }
-            report.accept(String.format(java.util.Locale.ROOT, "samples every %d blocks, against the generator: where the"
-                            + " searches differ (%d samples) the neighbor's is nearer on %d and the top's on %d, mean error"
-                            + " %.1f and %.1f blocks; where they agree (%d samples checked) mean error %.2f blocks,"
-                            + " worst %d", spacing, exactDiffer, nearerNeighbor, nearerTop,
-                    errorNeighbor / (double) Math.max(1, exactDiffer), errorTop / (double) Math.max(1, exactDiffer),
-                    exactSame, errorSame / (double) Math.max(1, exactSame), worstSame));
-            report.accept(String.format(java.util.Locale.ROOT, "samples every %d blocks (tile level %d, %d blocks a side):"
-                            + " from the neighbor %d ms (%.1f us a sample), from the top %d ms (%.1f us a sample);"
-                            + " %d of %d samples differ (%d lower from the neighbor, worst %d blocks);"
-                            + " mean step between neighbors %.1f blocks",
-                    spacing, Integer.numberOfTrailingZeros(spacing / PreviewTile.GRID), spacing * (n - 1),
-                    (t1 - t0) / 1_000_000, (t1 - t0) / 1e3 / seeded.length, (t2 - t1) / 1_000_000,
-                    (t2 - t1) / 1e3 / seeded.length, differ, seeded.length, lower, worst,
-                    steps / (double) (n * (n - 1))));
+            StringBuilder times = new StringBuilder();
+            StringBuilder errors = new StringBuilder();
+            for (int s = 0; s < SPIKE_SEARCHES.length; s++) {
+                times.append(String.format(java.util.Locale.ROOT, "%s%s %d ms (%.1f us a sample)", s == 0 ? "" : ", ",
+                        SPIKE_SEARCHES[s], nanos[s] / 1_000_000, nanos[s] / 1e3 / (n * n)));
+                errors.append(String.format(java.util.Locale.ROOT, "%s%s mean %.2f, %d off by more than %d, worst %d",
+                        s == 0 ? "" : "; ", SPIKE_SEARCHES[s], error[s] / (double) Math.max(1, checked), off[s],
+                        SPIKE_OFF, worst[s]));
+            }
+            report.accept(String.format(java.util.Locale.ROOT, "samples every %d blocks (tile level %d): %s;"
+                            + " %d of %d samples differ between the searches", spacing,
+                    Integer.numberOfTrailingZeros(spacing / PreviewTile.GRID), times, differ, n * n));
+            report.accept(String.format(java.util.Locale.ROOT, "samples every %d blocks, against the generator"
+                    + " (%d samples checked): %s", spacing, checked, errors));
         }
         return true;
     }
 
-    /** The surface of a grid of {@link PreviewTile#SAMPLES} samples a side centered on (x, z), row by row into {@code out}. */
-    private static void heightsGrid(Dimension d, int x, int z, int spacing, boolean fromNeighbor, int[] out) {
+    /** The searches {@link #heightsSpike} compares, in {@link #heightsGrid}'s order. */
+    private static final String[] SPIKE_SEARCHES = {"from the neighbor", "from the top", "from the estimate"};
+    /** Blocks from the generator's height past which the spike counts a sample as wrong. */
+    private static final int SPIKE_OFF = 8;
+
+    /**
+     * The surface of a grid of {@link PreviewTile#SAMPLES} samples a side
+     * centered on (x, z), row by row into {@code out}, by search {@code s} of
+     * {@link #SPIKE_SEARCHES}.
+     */
+    private static void heightsGrid(Dimension d, int x, int z, int spacing, int s, int[] out) {
         int n = PreviewTile.SAMPLES;
         int x0 = x - spacing * (n / 2);
         int z0 = z - spacing * (n / 2);
         int previous = UNKNOWN;
+        int rowEstimate = UNKNOWN;
+        int estimate = UNKNOWN;
         for (int k = 0; k < n; k++) {
             int seed = k == 0 ? UNKNOWN : out[(k - 1) * n];
             for (int i = 0; i < n; i++) {
-                int h = surface(d, x0 + i * spacing, z0 + k * spacing, !fromNeighbor ? UNKNOWN : i == 0 ? seed : previous);
+                int bx = x0 + i * spacing;
+                int bz = z0 + k * spacing;
+                int h;
+                if (s == 2) {
+                    // The estimate is smooth and has no caves: searched from the previous one.
+                    estimate = preliminary(d, bx, bz, i == 0 ? rowEstimate : estimate);
+                    if (i == 0) {
+                        rowEstimate = estimate;
+                    }
+                    h = surfaceFromEstimate(d, d.columnUncut.get(), true, bx, bz, estimate);
+                } else {
+                    h = surface(d, bx, bz, s == 1 ? UNKNOWN : i == 0 ? seed : previous);
+                }
                 out[k * n + i] = h;
                 previous = h;
             }
         }
+    }
+
+    /** Vanilla's threshold on the density without jaggedness for the preliminary surface ({@code NoiseChunk}). */
+    private static final double PRELIMINARY_THRESHOLD = 0.390625;
+    /** Blocks above a found surface checked for more ground ({@link #surfaceFromEstimate}). */
+    private static final int[] SURFACE_PROBES = {4, 8, 16, 24, 32};
+    /** Cells below the estimate the search from it starts at. */
+    private static final int ESTIMATE_MARGIN_CELLS = 2;
+
+    /**
+     * Vanilla's preliminary surface level at (x, z) ({@code
+     * NoiseChunk.computePreliminarySurfaceLevel}): the highest y of the cell
+     * grid from the top of the world where the density without jaggedness
+     * exceeds {@link #PRELIMINARY_THRESHOLD}. From {@code hint} (a near
+     * column's result) up or down, since that density has no caves; from the
+     * top without one. The bottom of the world when nothing exceeds it.
+     */
+    private static int preliminary(Dimension d, int x, int z, int hint) {
+        DensityFunction f = d.columnInitial.get();
+        int minY = d.noise.minY();
+        int step = d.noise.getCellHeight();
+        int top = minY + d.noise.height();
+        if (hint != UNKNOWN && hint >= minY && hint <= top) {
+            int y = hint;
+            if (above(f, x, y, z)) {
+                while (y + step <= top && above(f, x, y + step, z)) {
+                    y += step;
+                }
+                return y;
+            }
+            for (y -= step; y >= minY; y -= step) {
+                if (above(f, x, y, z)) {
+                    return y;
+                }
+            }
+            return minY;
+        }
+        for (int y = top; y >= minY; y -= step) {
+            if (above(f, x, y, z)) {
+                return y;
+            }
+        }
+        return minY;
+    }
+
+    private static boolean above(DensityFunction f, int x, int y, int z) {
+        return f.compute(new DensityFunction.SinglePointContext(x, y, z)) > PRELIMINARY_THRESHOLD;
+    }
+
+    /**
+     * The first free block above the ground at (x, z), searched on its own on
+     * {@code density} (the density without caves for the spike): from
+     * {@code estimate} lowered by {@link #ESTIMATE_MARGIN_CELLS} cells (vanilla's
+     * preliminary surface lies below the real one, ADR-037), down while free
+     * to the first solid cell, then {@link #climb}. With {@code check}, the
+     * full density at the result: where it is free there (a cave opening at
+     * the surface) the search goes on down on the full density, then climbs
+     * on it again, below the first result.
+     */
+    private static int surfaceFromEstimate(Dimension d, DensityFunction density, boolean check, int x, int z,
+                                           int estimate) {
+        int minY = d.noise.minY();
+        int step = d.noise.getCellHeight();
+        int top = minY + d.noise.height() - 1;
+        int lo = Math.min(top, Math.max(minY, minY + Math.floorDiv(estimate - minY, step) * step
+                - ESTIMATE_MARGIN_CELLS * step));
+        while (lo >= minY && !solid(density, x, lo, z)) {
+            lo -= step;
+        }
+        int h = lo < minY ? minY : climb(density, x, z, lo, step, top);
+        if (check && h > minY && h <= top && !d.solid(x, h - 1, z)) {
+            DensityFunction full = d.columnDensity.get();
+            int ceiling = h - 1;
+            int down = ceiling - step;
+            while (down >= minY && !solid(full, x, down, z)) {
+                down -= step;
+            }
+            h = down < minY ? minY : climb(full, x, z, down, step, ceiling);
+        }
+        return h;
+    }
+
+    /**
+     * From {@code lo}, solid, up by {@code step} while solid, bisected to the
+     * first free block; then, where one of {@link #SURFACE_PROBES} above it is
+     * solid (a ledge over a gap, a noodle cave under the surface), on from
+     * there. Never above {@code top}.
+     */
+    private static int climb(DensityFunction density, int x, int z, int lo, int step, int top) {
+        while (true) {
+            int hi = lo + step;
+            while (hi <= top && solid(density, x, hi, z)) {
+                lo = hi;
+                hi += step;
+            }
+            int h = hi > top ? bisect(density, x, z, lo, top + 1) : bisect(density, x, z, lo, hi);
+            int next = Integer.MIN_VALUE;
+            for (int probe : SURFACE_PROBES) {
+                if (h + probe <= top && solid(density, x, h + probe, z)) {
+                    next = h + probe;
+                    break;
+                }
+            }
+            if (next == Integer.MIN_VALUE) {
+                return h;
+            }
+            lo = next;
+        }
+    }
+
+    private static boolean solid(DensityFunction f, int x, int y, int z) {
+        return f.compute(new DensityFunction.SinglePointContext(x, y, z)) > 0;
+    }
+
+    /** {@link #bisect(Dimension, int, int, int, int)} on another density. */
+    private static int bisect(DensityFunction f, int x, int z, int lo, int hi) {
+        while (hi - lo > 1) {
+            int mid = (lo + hi) >>> 1;
+            if (solid(f, x, mid, z)) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        return lo + 1;
     }
 
     /** Where the last tile {@link #buildNow} built spent its feature time. */

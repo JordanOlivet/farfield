@@ -150,13 +150,53 @@ Each measured before the next.
    store's levels, the renderer (coarse-to-fine study §6).
 6. Only if heights still dominate: the density stopped at its sign.
 
-## Open questions for the user
+## Measures (2026-11-11)
 
-1. The real features' distance: keep 1,250 blocks (the most faithful),
-   or less (500?) with the harvested shapes beyond, so the level-0 tiles
-   cost less?
-2. Coarse levels from 32-block voxels up: ground and water only, no tree
-   cover at all (the forests' color then comes from the ground's top
-   block)?
-3. Order to the border: coarsest first as today (the whole world at once),
-   confirmed?
+### Step 1a: heights from the estimate, on the density without caves
+
+`/farfield spike heights at <x> <z>` now compares three searches on a
+tile's 129 x 129 grid at seven spacings (4 to 131,072 blocks): from the
+neighbor's height (today's), from the top of the world, and each column
+on its own from vanilla's preliminary surface level
+(`NoisePreview.surfaceFromEstimate`): the estimate searched from the
+previous sample's, lowered by two cells, down to solid ground, then up by
+cell height and bisected, on the density without its cave branch
+(`UncutDensity`: the overworld's one `range_choice` whose in-range branch
+is `min(input, ...)`, found through named references); then the full
+density at the result, down again where a cave opens at the surface. Where
+ground stands within 32 blocks above a result (probes at 4, 8, 16, 24, 32),
+the climb goes on: a noodle cave under the surface, or a ledge over a gap.
+Errors against the generator's own height (`getBaseHeight`) on the
+samples where the searches differ and one in 64 of the others (610 to
+1,010 samples a spacing). NeoForge dev server, PC free, three places
+(20,000, 20,000; -35,000, 12,000; 400, -300).
+
+| Search | Time a sample | Mean error | Samples off by more than 8 blocks | Worst |
+|---|---|---|---|---|
+| From the neighbor (today) | 23 to 38 us, growing with the spacing | 5.4 to 27.2 blocks | 104 to 528 | 73 to 215 |
+| From the top | 76 to 92 us | 2.0 to 5.3 | 35 to 129 | 47 to 106 |
+| From the estimate, without caves | 25 to 28 us at every spacing | 2.2 to 5.1 | 45 to 134 | 45 to 115 |
+
+- The search from the estimate is as fast as today's and nearly as right
+  as the one from the top, at every spacing to the border's: it replaces
+  the search from the neighbor. Its columns are independent of each
+  other.
+- Without the probes it took 17 us a sample, but landed in noodle caves
+  and under coastal ledges (thin solid bands between two cell-grid
+  points); the probes cost about 10 us.
+- What it still misses against the top's search: thin ledges more than
+  32 blocks above a gap, mostly over the sea.
+- Not measured: the user's pack (C2ME compiles the density there; the cut
+  may find no cave branch, then the search runs on the full density).
+
+### Step 1b: the ground's share in the pack
+
+Not measured yet: needs the spike jar on the pack server.
+
+## The user's answers (2026-11-11)
+
+1. The real features' distance stays 1,250 blocks for now, "on ajustera
+   si besoin plus tard".
+2. Coarse levels from 32-block voxels up hold the ground and water only;
+   trees come back later "si jamais je vois que c'est bizarre sans".
+3. Coarsest first to the border, as today; adjusted later if needed.
