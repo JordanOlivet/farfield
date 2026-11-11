@@ -246,8 +246,8 @@ public final class LodPipeline {
                 Farfield.LOG.info("LOD store of {} ({}) opened at {}", lod.name(), name, dir);
                 int upgrade = lod.world().mipsToUpgrade();
                 if (upgrade > 0) {
-                    Farfield.LOG.info("LOD store of {}: rebuilding its coarse levels with the current mip rules"
-                            + " (once, {} level-1 sections queued)", lod.name(), upgrade);
+                    Farfield.LOG.info("LOD store of {}: building its coarse levels with the current mip rules,"
+                            + " up to level {} (once, {} sections queued)", lod.name(), LodWorld.LEVELS - 1, upgrade);
                 }
             }
             return lod;

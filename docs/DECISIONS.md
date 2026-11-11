@@ -3983,3 +3983,32 @@ milestone 2 (also plan item E.1).
   already the finest source tells no view listener, so a far section
   reading it is not meshed again (the coarsest are built first, so not met
   in these runs).
+
+## ADR-137 — Real LODs to level 7, built once from level 4
+
+Status: accepted, 2026-11-11. Amends ADR-008 (levels 0 to 4). Lot E.3c of
+milestone 2.
+
+- **Context**: since ADR-136 the LODs are drawn to 32,768 blocks, the
+  preview at levels to 7, but the explored land stopped at level 4
+  (16-block voxels): far away it was drawn finer than the preview around
+  it, and the real selector visited every level-4 section of the distance
+  (16,384 columns to 32,768 blocks).
+- **Decision**: `LodWorld.LEVELS` 5 to 8, real levels 0 to 7 (the
+  preview's keys keep the 8 levels above in `LodKey`'s 4 bits). The mip
+  rules are unchanged; a store of fewer levels builds the levels above its
+  top from it, once, as a rebuild (a new `mips.levels` marker, absent
+  before: 5), the levels under it untouched: `MIPS_VERSION` stays, which
+  would have rebuilt every level from level 0. Log `LOD store of <dim>:
+  building its coarse levels with the current mip rules, up to level 7
+  (once, N sections queued)`. A mirror builds none (ADR-083): the server's
+  come. The server pushes level 7 at any distance and the mirror fetches
+  it in the background, as level 4 before. `rebuild status` lists every
+  level.
+- **Checked**: a unit test (a store of five levels builds levels 5 to 7
+  from its level 4, the levels under it not queued, the marker written,
+  nothing at the next open). NeoForge dev client, `farfield-test`: 82
+  sections queued and built in under a second at open; from 20,048, 400,
+  32 facing the spawn with the preview off and the level colors on, the
+  explored land around the spawn shows white (level 7). Not run in the
+  pack, where the server's store builds them once after the deploy.

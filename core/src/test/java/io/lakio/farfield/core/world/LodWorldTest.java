@@ -236,6 +236,41 @@ class LodWorldTest {
     }
 
     @Test
+    void aStoreBuiltToFiveLevelsBuildsTheLevelsAboveFromItsTop() throws IOException {
+        try (LodWorld world = LodWorld.open(dir, MaterialTable.SIMPLE)) {
+            world.ingest(chunk(world, 0, 0));
+            world.flush(0);
+            world.buildMips();
+            assertNotNull(world.read(LodKey.pack(7, 0, -1, 0)), "a new store builds every level");
+        }
+        // A store of before ADR-137: levels 0 to 4, no marker.
+        java.nio.file.Files.delete(dir.resolve("mips.levels"));
+        for (int level = 5; level < LodWorld.LEVELS; level++) {
+            Path levelDir = dir.resolve("sections").resolve("L" + level);
+            try (var files = java.nio.file.Files.list(levelDir)) {
+                for (Path f : (Iterable<Path>) files::iterator) {
+                    java.nio.file.Files.delete(f);
+                }
+            }
+            java.nio.file.Files.delete(levelDir);
+        }
+        try (LodWorld world = LodWorld.open(dir, MaterialTable.SIMPLE)) {
+            assertNull(world.read(LodKey.pack(5, 0, -1, 0)));
+            assertEquals(6, world.mipsToUpgrade(), "two section heights a level, from 5 to 7");
+            int[] pending = world.coarseLevelsPending();
+            assertEquals(0, pending[1] + pending[2] + pending[3] + pending[4], "the levels under 5 untouched");
+            while (world.rebuilding()) {
+                world.buildRebuildSlice(null, 1_000_000L);
+            }
+            assertNotNull(world.read(LodKey.pack(7, 0, -1, 0)));
+            assertEquals("8", java.nio.file.Files.readString(dir.resolve("mips.levels")).trim());
+        }
+        try (LodWorld world = LodWorld.open(dir, MaterialTable.SIMPLE)) {
+            assertEquals(0, world.mipsToUpgrade(), "built once");
+        }
+    }
+
+    @Test
     void buildMipsPropagatesToTheTopLevel() throws IOException {
         try (LodWorld world = LodWorld.open(dir, MaterialTable.SIMPLE)) {
             int stone = world.blockStates().id("minecraft:stone");

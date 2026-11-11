@@ -334,9 +334,12 @@ public final class LodServer {
             for (int n : pending) {
                 total += n;
             }
+            StringBuilder per = new StringBuilder();
+            for (int level = 1; level < pending.length; level++) {
+                per.append(level == 1 ? "" : ", ").append(pending[level]);
+            }
             lines.add(lod.name() + ": " + (total == 0 ? "nothing left to build"
-                    : total + " sections left (levels 1 to 4: " + pending[1] + ", " + pending[2] + ", " + pending[3]
-                    + ", " + pending[4] + ")"));
+                    : total + " sections left (levels 1 to " + (pending.length - 1) + ": " + per + ")"));
         }
         return lines;
     }

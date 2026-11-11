@@ -354,12 +354,17 @@ from there: D.2, then the sea floor's plants and corals in the preview.
     player to 32,768 blocks (levels 5 to 7 drawn, 2.0 against 1.5 ms of
     GPU a frame at 4,096); a Fabric dev server with `streaming_radius`
     16,384 built its client's preview to 16,384. Remains: the pack.
-  - [ ] E.3c Real LODs above level 4 (about 1 day): `LodWorld.LEVELS` 5 to
+  - [~] E.3c Real LODs above level 4 (about 1 day): `LodWorld.LEVELS` 5 to
     8 (real 0 to 7, preview 8 to 15: still 4 bits), its 30 uses in 6
     files (`FaceTextures.LEVELS` is the texture's mips, not this),
     `MIPS_VERSION` bumped so stored worlds build levels 5 to 7 in the
     background, a protocol bump. Verify: explored land far away drawn at
     the coarse levels, sections and frame time against before.
+    Done 2026-11-11 (ADR-137) without `MIPS_VERSION` (that rebuilds every
+    level from 0): a `mips.levels` marker builds levels 5 to 7 from level 4
+    once; protocol 11 unchanged (not released). Verified: unit test, the
+    dev store's 82 sections at open, explored land at 20,000 blocks drawn
+    at level 7. Remains: the pack.
   - [ ] E.3d Keys and levels to the border (1 to 1.5 days): `LodKey` with
     5 bits of level and a preview bit (y on 10 bits); the section store's
     records converted at open (a new store format); tile levels to 15,

@@ -55,8 +55,13 @@ import java.util.function.LongConsumer;
  */
 public final class LodWorld implements AutoCloseable {
 
-    /** Levels 0 (one voxel per block) to 4 (one voxel per 16 blocks). */
-    public static final int LEVELS = 5;
+    /**
+     * Levels 0 (one voxel per block) to 7 (one voxel per 128 blocks): 4
+     * until E.3c (ADR-137), the explored land drawn as coarse as the far
+     * preview. The preview's keys take the 8 levels above them in {@link
+     * io.lakio.farfield.core.LodKey}'s 4 bits.
+     */
+    public static final int LEVELS = 8;
     private static final int LOCK_STRIPES = 64;
 
     private final Path dir;
@@ -84,6 +89,12 @@ public final class LodWorld implements AutoCloseable {
      */
     private static final String MIPS_VERSION = "4";
     private final Path mipsVersionFile;
+    /**
+     * How many levels the stored coarse levels were built to: a store of
+     * fewer (5 before ADR-137) builds the levels above from its top level
+     * once, the levels under it untouched.
+     */
+    private final Path mipsLevelsFile;
     private volatile int mipsToUpgrade;
     private final List<LongConsumer> listeners = new CopyOnWriteArrayList<>();
     private final ThreadLocal<MipBuilder> mips;
@@ -138,16 +149,56 @@ public final class LodWorld implements AutoCloseable {
         }
         mips = ThreadLocal.withInitial(() -> new MipBuilder(air, materials));
         mipsVersionFile = dir.resolve("mips.version");
+        mipsLevelsFile = dir.resolve("mips.levels");
         String version = Files.exists(mipsVersionFile) ? Files.readString(mipsVersionFile).trim() : "";
+        int builtLevels = storedLevels();
         // A mirror of a server's store builds no coarse level of its own: the server's come with
         // the rest. Built from the mirror's partial level 0 at its close, they replaced the
         // server's and held the client for 46 s (ADR-083).
         if (!mirror && !MIPS_VERSION.equals(version)) {
             queueRebuild();
-            if (mipsToUpgrade == 0) {
-                Files.writeString(mipsVersionFile, MIPS_VERSION);
+        } else if (!mirror && builtLevels < LEVELS) {
+            queueLevelsAbove(builtLevels);
+        }
+        if (!mirror && mipsToUpgrade == 0) {
+            markBuilt();
+        }
+    }
+
+    /** Levels the stored coarse levels reach: the marker's, else 5 (the stores of before ADR-137). */
+    private int storedLevels() throws IOException {
+        if (!Files.exists(mipsLevelsFile)) {
+            return 5;
+        }
+        try {
+            return Integer.parseInt(Files.readString(mipsLevelsFile).trim());
+        } catch (NumberFormatException e) {
+            return 5;
+        }
+    }
+
+    /** The coarse levels are built with the current rules, to every level. */
+    private void markBuilt() throws IOException {
+        Files.writeString(mipsVersionFile, MIPS_VERSION);
+        Files.writeString(mipsLevelsFile, Integer.toString(LEVELS));
+    }
+
+    /**
+     * Queues the levels from {@code from} up, built from the stored level
+     * {@code from - 1} (ADR-137: levels 5 to 7 from level 4), as a rebuild.
+     */
+    private void queueLevelsAbove(int from) throws IOException {
+        store.forEachKey(from - 1, key -> rebuild[from].add(LodKey.parent(key)));
+        for (int level = from + 1; level < LEVELS; level++) {
+            for (long key : rebuild[level - 1]) {
+                rebuild[level].add(LodKey.parent(key));
             }
         }
+        int total = 0;
+        for (int level = from; level < LEVELS; level++) {
+            total += rebuild[level].size();
+        }
+        mipsToUpgrade = total;
     }
 
     /** The level-4 preview sections of ADR-038, replaced by the tiles of ADR-039. */
@@ -201,7 +252,7 @@ public final class LodWorld implements AutoCloseable {
         mipsToUpgrade = total;
     }
 
-    /** Coarse sections a rebuild still has to build, per level from 1 to 4 (index 0 unused). */
+    /** Coarse sections a rebuild still has to build, per level from 1 to {@code LEVELS - 1} (index 0 unused). */
     public int[] coarseLevelsPending() {
         int[] out = new int[LEVELS];
         for (int level = 1; level < LEVELS; level++) {
@@ -266,7 +317,7 @@ public final class LodWorld implements AutoCloseable {
             written += buildAll(executor, keys, false);
         }
         if (mipsToUpgrade > 0 && !rebuilding()) {
-            Files.writeString(mipsVersionFile, MIPS_VERSION);
+            markBuilt();
             mipsToUpgrade = 0;
         }
         return written;
