@@ -94,6 +94,8 @@ final class NoisePreview {
     private static final long SNOW_SALT = 0x5DEECE66DL;
     /** The biome profiles' file, beside the tiles (ADR-130). */
     private static final String PROFILES_FILE = "profiles.bin";
+    /** The features the cost guard left out, beside the profiles (ADR-132). */
+    private static final String FEATURE_COSTS_FILE = "feature-costs.bin";
     private static final int TILE = PreviewTile.BLOCKS;
     private static final int UNKNOWN = Integer.MIN_VALUE;
     /** A rise of this many blocks between two samples (4 blocks apart) shows bare stone. */
@@ -241,6 +243,10 @@ final class NoisePreview {
             return world.preview().dir().resolve(PROFILES_FILE);
         }
 
+        Path featureCostsFile() {
+            return world.preview().dir().resolve(FEATURE_COSTS_FILE);
+        }
+
         /**
          * What the profiles were measured with: the features the settings
          * leave out and the biomes the generator has. Another stamp drops them.
@@ -264,9 +270,16 @@ final class NoisePreview {
             }
             try {
                 world.preview().persistKeys();
-                if (p.save(profilesFile(), profilesStamp())) {
+                String stamp = profilesStamp();
+                if (p.save(profilesFile(), stamp)) {
                     Farfield.LOG.debug("Noise preview of {}: {} biome profiles saved", key.location(), p.size());
                 }
+                var registry = level.registryAccess().registryOrThrow(
+                        net.minecraft.core.registries.Registries.PLACED_FEATURE);
+                budget.save(featureCostsFile(), stamp, f -> {
+                    var id = registry.getKey(f);
+                    return id == null ? "" : id.toString();
+                });
             } catch (IOException | RuntimeException e) {
                 Farfield.LOG.warn("Noise preview of {}: could not save {}", key.location(), PROFILES_FILE, e);
             }
@@ -295,6 +308,17 @@ final class NoisePreview {
                                 : read == -2 ? PROFILES_FILE + " did not read, measured again"
                                 : "no biome profiles yet, measured as tiles are built");
                         profiles = made;
+                        int left = budget.load(featureCostsFile(), profilesStamp(), name -> {
+                            var registry = level.registryAccess().registryOrThrow(
+                                    net.minecraft.core.registries.Registries.PLACED_FEATURE);
+                            var id = net.minecraft.resources.ResourceLocation.tryParse(name);
+                            return id == null ? null : registry.get(id);
+                        });
+                        if (left != 0) {
+                            Farfield.LOG.info("Noise preview of {}: {}", key.location(), left > 0
+                                    ? left + " features left out for their cost read from " + FEATURE_COSTS_FILE
+                                    : FEATURE_COSTS_FILE + " of other settings or unreadable, measured again");
+                        }
                     }
                     p = profiles;
                 }
@@ -1002,6 +1026,7 @@ final class NoisePreview {
     private int buildFine(Dimension d, int tileX, int tileZ, int q, PreviewTile base, FeatureCosts costs, long start)
             throws IOException {
         LodWorld world = d.world;
+        d.profiles(); // read with the features the cost guard left out, before any feature runs
         PreviewTile tile = base != null ? base : world.preview().load(0, tileX, tileZ);
         if (tile == null) {
             tile = new PreviewTile();

@@ -3780,3 +3780,28 @@ Status: accepted, 2026-11-11.
   `glow_lichen` left out with 0 kept blocks; that check also showed the
   need for the per-biome rule. Not run in the pack at the real threshold:
   whether the barnacles fall under it depends on how many blocks they set.
+
+## ADR-132 — The cost guard's findings kept, and re-checked
+
+Status: accepted, 2026-11-11. Amends ADR-131 (findings for the session,
+never looked at again).
+
+- **Context**: in the pack the guard left out `shore_barnacles` and
+  `amethyst_geode` in two ocean biomes (0 kept blocks) and the tile at
+  200,000, 200,000 went from 8.3 to 4.0 s. The user asked to keep what it
+  found across restarts. Kept for good, a feature left out on
+  unrepresentative first chunks, or made cheaper or visible by a mod's
+  update, would stay out for good.
+- **Decision**: `feature-costs.bin` beside `profiles.bin`: the features
+  left out per biome, by name and biome id, with their figures, written
+  with the profiles (every minute when changed, at stop) under the same
+  stamp (ADR-130), read when the preview opens; a name no feature has any
+  more is skipped. A feature left out still runs in one chunk in 64 of its
+  biome, so its figures stay current; it comes back when it no longer meets
+  the rule with a 25 % margin (`Noise preview: feature <id> back in the
+  preview in biome <id>, its cost no longer too high: ...`): without the
+  margin a feature at the threshold went out and in at every re-check.
+- **Checked**: dev server, threshold lowered (a temporary switch, removed):
+  4 findings written (271 bytes), the next start logged `4 features left out
+  for their cost read from feature-costs.bin`; a feature at the threshold
+  flipped at its re-check, which led to the margin. Not run in the pack.

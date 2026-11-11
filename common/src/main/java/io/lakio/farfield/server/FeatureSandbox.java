@@ -225,9 +225,11 @@ final class FeatureSandbox implements WorldGenLevel {
                     costs.ran(current, own);
                     current = null;
                 }
-                if (budget != null && budget.ran(feature, chunkBiomeId, own, keptNow)) {
-                    io.lakio.farfield.Farfield.LOG.info("Noise preview: feature {} left out of the preview in biome {}"
-                            + " for its cost: {} (ADR-131)", name(feature), biomeName(chunkBiomeId),
+                int judged = budget == null ? 0 : budget.ran(feature, chunkBiomeId, own, keptNow);
+                if (judged != 0) {
+                    io.lakio.farfield.Farfield.LOG.info("Noise preview: feature {} {} in biome {}{}: {} (ADR-131)",
+                            name(feature), judged > 0 ? "left out of the preview" : "back in the preview",
+                            biomeName(chunkBiomeId), judged > 0 ? " for its cost" : ", its cost no longer too high",
                             budget.describe(feature, chunkBiomeId));
                 }
                 if (stepNanos != null && step < stepNanos.length) {
