@@ -1,4 +1,4 @@
-Picked up JAVA_TOOL_OPTIONS: -XX:StartFlightRecording=dumponexit=true,settings=profile,filename=C:/Users/Lakio/AppData/Local/Temp/claude/1e895702e83ac8bd/b18e07ff-0990-419f-a261-67a3b16a3bb6/scratchpa
+Picked up JAVA_TOOL_OPTIONS: -XX:StartFlightRecording=dumponexit=true,settings=profile,filename=~/AppData/Local/Temp/claude/1e895702e83ac8bd/b18e07ff-0990-419f-a261-67a3b16a3bb6/scratchpa
 BUILD FAILED in 19s
 FAILURE: Build failed with an exception.
 

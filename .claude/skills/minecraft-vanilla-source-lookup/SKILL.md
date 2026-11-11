@@ -14,4 +14,6 @@ Read the NeoForm-merged vanilla source instead of guessing a method, field, or o
 4. When a stored value disagrees with the game (light, block state, biome), read how vanilla reads it before adding a default. Vanilla keeps no data for some sections and reads a neighbour instead: sky light of a section with none is the bottom layer of the nearest lit section above (`SkyLightSectionStorage.getLightValue`). Mirror that read, not the file's absence.
 5. To see how a world places its features (trees, rocks, surface), read `ChunkGenerator.applyBiomeDecoration`: structures first, then per biome and per `GenerationStep`, each `PlacedFeature.placeWithBiomeCheck`, writing through `WorldGenRegion` (`ensureCanWrite` limits writes to the region). Grep those names in the merged jar before writing placement code.
 
+6. Members that are not public (a rule context, its updates, a rule's `tryApply`): their names change per mapping, so find them by the shape of their parameters in the merged jar, not by name. The lookup must hold on every mapping, NeoForge and Fabric both; check it on each loader's build before trusting it.
+
 Example: `grep -n biomeBlendRadius` on `net/minecraft/client/Options.java` shows the option field, its range (0 to 7) and its default (2).

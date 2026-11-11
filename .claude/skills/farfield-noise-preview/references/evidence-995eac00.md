@@ -1,0 +1,1 @@
+When a piece is missing or a rule throws, the stand-in chunks lay the ground as before (logged once); `Noise preview of <dim>: the surface rules run column by column (ADR-134)` once a dimension when they do.
