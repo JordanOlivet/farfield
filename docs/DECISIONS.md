@@ -3849,3 +3849,41 @@ mods and adapted.
   `:neoforge` and `:fabric` compile, `:core:test` passes. Not seen in a
   client; a data pack that builds its caves another way keeps the full
   density (the spike logs how many branches were cut).
+
+## ADR-134 — The preview's surface rules run column by column
+
+Status: accepted, 2026-11-11. Amends ADR-101 and ADR-125 (the rules run by
+`buildSurface` on a stand-in chunk per chunk of a tile). Step 3 of
+`docs/analysis/preview-to-the-border.md`, another way than the study's.
+
+- **Context**: in the user's pack the ground took 1.2 to 1.5 s of a 3.7 to
+  4.3 s level-0 tile (31 to 36 %). Timed in dev, a quarter's ground was
+  mostly `buildSurface` (115 to 230 ms: it builds the rule tree again for
+  every chunk and walks every block of every column) and the stand-in
+  chunks it runs on (39 to 67 ms), for one top and one filler per 4-block
+  cell. The study proposed compiling the rules into an evaluator of our own;
+  that would have to follow every mod's rule types.
+- **Decision**: the generator's own rule objects, evaluated on the one
+  column a cell keeps (`SurfaceColumns`): one `SurfaceRules.Context` and
+  one rule tree per tile, the generator's `surfaceRule()` (TerraBlender's
+  namespaced rules included); per cell, the context's column and block
+  updates as `buildSurface` makes them (stone depth above 1 then 2, the
+  stone below down to the stand-ins' old bottom, the sea above lower ground)
+  and the rule's `tryApply` for the top and the block under it, down past a
+  fluid or air a rule sets at the top, as the heightmap the stand-ins were
+  read by did. The slope reads a host chunk's world generation heightmap,
+  set from each chunk's heights; the eroded badlands' pillars run on the
+  column first, through vanilla's own method. Context, updates, `tryApply`
+  and the pillars are not public: found by the shape of their parameters
+  (every mapping). Mods' conditions read the same context (Lithostitched's
+  slope reads the heightmap at local coordinates). When a piece is missing
+  or a rule throws, the stand-in chunks lay the ground as before (logged
+  once); `Noise preview of <dim>: the surface rules run column by column
+  (ADR-134)` once a dimension when they do.
+- **Checked**: the tile spike now lays each chunk both ways and compares:
+  NeoForge dev server, three tiles (20,000, 20,000; 35,000, 12,000;
+  200,000, 200,000), 0 of 4,624 cells differ in each, the columns 6 to 25
+  ms a quarter against 150 to 290 ms for the stand-ins' rules and chunks;
+  Fabric dev server, one tile, 0 of 4,624, 33 ms against 499 ms. The
+  spawn's 312 tiles built again in 1.6 min (2.6 min with ADR-133 alone).
+  Tile format unchanged: the cells are the same. Not run in the pack.

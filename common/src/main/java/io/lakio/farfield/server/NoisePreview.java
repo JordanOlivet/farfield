@@ -1248,6 +1248,7 @@ final class NoisePreview {
         features.budget(d.budget);
         if (costs != null) {
             features.measure(costs);
+            features.compareGround();
         }
         int lx0 = qx * PreviewTile.CHUNKS / 2;
         int lz0 = qz * PreviewTile.CHUNKS / 2;

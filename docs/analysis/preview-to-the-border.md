@@ -148,7 +148,13 @@ Each measured before the next.
    only rule waits for step 5: today's tiles stop at level 2 (16-block
    voxels), so no tile is at 32-block voxels or coarser yet; step 5 builds
    levels 3 and up without canopy, plants or biome sampling.
-3. **The compiled surface rules** (about 1 day), for every level.
+3. **The compiled surface rules** (about 1 day), for every level. Done
+   2026-11-11 another way (ADR-134): not compiled into an evaluator of our
+   own, the generator's own rule objects run on the one column a cell
+   keeps, with one rule tree a tile; the same cells as the stand-in chunks
+   (0 of 4,624 differ, three dev tiles), 10 to 20 times faster in dev, the
+   spawn's 312 tiles in 1.6 min instead of 2.6. Coarse tiles keep the
+   profile's ground until step 5 builds them with the rules.
 4. **Harvested tree shapes on a hashed grid** for levels 1 and 2 and
    beyond the real features' distance (1 to 1.5 days), with the light
    virtual world for biomes not harvested yet.

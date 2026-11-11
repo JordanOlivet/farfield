@@ -88,6 +88,8 @@ final class PreviewFeatures {
     static final int RULES_DEPTH = 64;
     /** Dimensions whose surface rules threw once: guessed tops from then on, logged once. */
     private static final Set<String> SURFACE_FAILED = ConcurrentHashMap.newKeySet();
+    /** Dimensions whose surface rules were told to run column by column, logged once per server. */
+    private static final Set<String> COLUMNS_TOLD = ConcurrentHashMap.newKeySet();
 
     private final ServerLevel level;
     private final BiomeSource biomes;
@@ -115,6 +117,19 @@ final class PreviewFeatures {
     private final boolean[] cellsRead = new boolean[PreviewTile.CHUNKS * PreviewTile.CHUNKS];
     private int surfacedChunks;
     private long surfaceNanos;
+    /** The ground's parts, for the spike's report: the rules' chunks built, their cells read, the biomes. */
+    private long rulesChunkNanos;
+    private long readCellsNanos;
+    private long groundBiomesNanos;
+    /** The surface rules column by column (ADR-134); null before the first chunk or when they cannot run so. */
+    private SurfaceColumns columns;
+    private boolean columnsTried;
+    private long columnsNanos;
+    /** The spike's check: the stand-in chunks' cells against the columns', counted. */
+    private boolean compareGround;
+    private int groundCells;
+    private int groundDiffer;
+    private String groundExample = "";
     private final Int2ObjectOpenHashMap<BlockState> states = new Int2ObjectOpenHashMap<>();
     private final Map<PlacedFeature, Boolean> runs = new IdentityHashMap<>();
     private final FeatureSandbox sandbox;
@@ -196,7 +211,11 @@ final class PreviewFeatures {
     /** Where the time went: stand-in chunks (their surface rules), then each decoration step, in milliseconds. */
     String timing() {
         StringBuilder out = new StringBuilder("stand-in chunks " + standInNanos / 1_000_000 + " ms (surface rules "
-                + surfaceNanos / 1_000_000 + " ms, " + surfacedChunks + " chunks)");
+                + surfaceNanos / 1_000_000 + " ms, " + surfacedChunks + " chunks; their chunks built "
+                + rulesChunkNanos / 1_000_000 + " ms, cells read " + readCellsNanos / 1_000_000 + " ms, biomes "
+                + groundBiomesNanos / 1_000_000 + " ms" + (columns != null ? ", column by column " + columnsNanos / 1_000_000 + " ms" : "")
+                + (compareGround ? "; against the stand-in chunks " + groundDiffer + " of " + groundCells
+                + " cells differ" + groundExample : "") + ")");
         for (int i = 0; i < stepNanos.length; i++) {
             if (stepNanos[i] > 0) {
                 out.append(", ").append(GenerationStep.Decoration.values()[i].name().toLowerCase(java.util.Locale.ROOT))
@@ -281,7 +300,9 @@ final class PreviewFeatures {
                 int bz0 = (chunkZ0 + cz) << 4;
                 int[] heights = new int[256];
                 int lowest = columnHeights(bx0, bz0, heights)[0];
+                long b0 = System.nanoTime();
                 groundBiomes(bx0, bz0, heights);
+                groundBiomesNanos += System.nanoTime() - b0;
                 surfaceChunk(chunkX0 + cx, chunkZ0 + cz, heights, lowest, below);
             }
         }
@@ -386,15 +407,130 @@ final class PreviewFeatures {
         return out;
     }
 
-    /** Runs the surface rules on a chunk of the tile and reads its cells; on a throw, guessed tops from then on. */
+    /**
+     * Runs the surface rules on a chunk of the tile and reads its cells:
+     * column by column (ADR-134), else on a stand-in chunk; on a throw,
+     * guessed tops from then on.
+     */
     private void surfaceChunk(int chunkX, int chunkZ, int[] heights, int lowest, BlockState below) {
+        if (!columnsTried) {
+            columnsTried = true;
+            columns = SurfaceColumns.create(level, surface, noiseChunk(chunkX, chunkZ), surfaceBiomes::getBiome,
+                    fluid, seaLevel);
+            if (columns != null && COLUMNS_TOLD.add(level.dimension().location().toString())) {
+                Farfield.LOG.info("Noise preview of {}: the surface rules run column by column (ADR-134)",
+                        level.dimension().location());
+            }
+        }
+        if (columns != null) {
+            int[] direct = compareGround ? new int[PreviewTile.CELLS * PreviewTile.CELLS * 2] : null;
+            try {
+                long start = System.nanoTime();
+                columnsChunk(chunkX, chunkZ, heights, lowest, direct);
+                columnsNanos += System.nanoTime() - start;
+                if (direct == null) {
+                    return;
+                }
+                standInChunk(chunkX, chunkZ, heights, lowest, below);
+                compare(chunkX, chunkZ, direct);
+                return;
+            } catch (ReflectiveOperationException | RuntimeException e) {
+                if (SURFACE_FAILED.add(level.dimension().location() + " columns")) {
+                    Farfield.LOG.warn("Noise preview of {}: the surface rules failed column by column; the stand-in"
+                            + " chunks lay the ground from now on", level.dimension().location(), e);
+                }
+                columns = null;
+            }
+        }
+        standInChunk(chunkX, chunkZ, heights, lowest, below);
+    }
+
+    /** Turns on the spike's check of the columns' cells against the stand-in chunks' ({@link #timing}). */
+    void compareGround() {
+        compareGround = true;
+    }
+
+    /**
+     * Sets the cells of a chunk from the surface rules run on their {@link
+     * #ruled} columns one by one ({@link SurfaceColumns}); with {@code
+     * direct}, keeps them there instead ({@code (cz * CELLS + cx) * 2}: top,
+     * filler) for the spike's check.
+     */
+    private void columnsChunk(int chunkX, int chunkZ, int[] heights, int lowest, int[] direct)
+            throws ReflectiveOperationException {
+        int bottom = Math.max(level.getMinBuildHeight(), Math.floorDiv(lowest - RULES_DEPTH, 16) * 16);
+        columns.chunk(heights);
+        int lx = chunkX - (x0 >> 4);
+        int lz = chunkZ - (z0 >> 4);
+        cellsRead[lz * PreviewTile.CHUNKS + lx] = true;
+        BlockState[] out = new BlockState[2];
+        int per = 16 / PreviewTile.GRID;
+        for (int gz = 0; gz < per; gz++) {
+            for (int gx = 0; gx < per; gx++) {
+                int cx = lx * per + gx;
+                int cz = lz * per + gz;
+                if (keepCells != null && keepCells[cz * PreviewTile.CELLS + cx]) {
+                    continue;
+                }
+                int x = gx * PreviewTile.GRID + PreviewTile.GRID / 2;
+                int z = gz * PreviewTile.GRID + PreviewTile.GRID / 2;
+                columns.column((chunkX << 4) + x, (chunkZ << 4) + z, heights[z * 16 + x], bottom, out);
+                int[] snowed = snow(chunkX, chunkZ, gx, gz, heights, id(out[0]), id(out[1]));
+                if (direct != null) {
+                    direct[(cz * PreviewTile.CELLS + cx) * 2] = snowed[0];
+                    direct[(cz * PreviewTile.CELLS + cx) * 2 + 1] = snowed[1];
+                } else {
+                    tile.setCell(cx, cz, snowed[0], snowed[1]);
+                }
+            }
+        }
+    }
+
+    /** Counts the cells of a chunk where the columns' tops or fillers ({@code direct}) differ from the tile's. */
+    private void compare(int chunkX, int chunkZ, int[] direct) {
+        int lx = chunkX - (x0 >> 4);
+        int lz = chunkZ - (z0 >> 4);
+        int per = 16 / PreviewTile.GRID;
+        for (int gz = 0; gz < per; gz++) {
+            for (int gx = 0; gx < per; gx++) {
+                int cx = lx * per + gx;
+                int cz = lz * per + gz;
+                if (keepCells != null && keepCells[cz * PreviewTile.CELLS + cx]) {
+                    continue;
+                }
+                int top = direct[(cz * PreviewTile.CELLS + cx) * 2];
+                int filler = direct[(cz * PreviewTile.CELLS + cx) * 2 + 1];
+                groundCells++;
+                if (top != tile.top(cx, cz) || filler != tile.filler(cx, cz)) {
+                    groundDiffer++;
+                    if (groundExample.length() < 600) {
+                        groundExample += String.format(java.util.Locale.ROOT, " [%d %d: %s/%s, chunks %s/%s]",
+                                x0 + cx * PreviewTile.GRID + 2, z0 + cz * PreviewTile.GRID + 2, name(top),
+                                name(filler), name(tile.top(cx, cz)), name(tile.filler(cx, cz)));
+                    }
+                }
+            }
+        }
+    }
+
+    private String name(int material) {
+        String key = world.blockStates().key(material);
+        return key == null ? "?" : key.replace("minecraft:", "");
+    }
+
+    /** The surface rules on a stand-in chunk, its cells read (the way before ADR-134). */
+    private void standInChunk(int chunkX, int chunkZ, int[] heights, int lowest, BlockState below) {
+        long c0 = System.nanoTime();
         ProtoChunk ground = rulesChunk(chunkX, chunkZ, heights, lowest, below);
+        rulesChunkNanos += System.nanoTime() - c0;
         try {
             long start = System.nanoTime();
             layGround(ground);
             surfaceNanos += System.nanoTime() - start;
             surfacedChunks++;
+            long r0 = System.nanoTime();
             readCells(ground, heights);
+            readCellsNanos += System.nanoTime() - r0;
         } catch (RuntimeException e) {
             if (SURFACE_FAILED.add(level.dimension().location().toString())) {
                 Farfield.LOG.warn("Noise preview of {}: the surface rules failed in the preview's stand-in"
@@ -657,6 +793,19 @@ final class PreviewFeatures {
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
     private void layGround(ProtoChunk chunk) {
+        NoiseChunk shared = noiseChunk(chunk.getPos().x, chunk.getPos().z);
+        chunk.getOrCreateNoiseChunk(c -> shared);
+        // Rules may raise the ground (badlands pillars, icebergs) or open it (a swamp's water, powder
+        // snow): each block they set updates the chunk's heightmaps (ProtoChunk.setBlockState at the
+        // noise status), no priming again after them.
+        surface.buildSurface(chunk, new WorldGenerationContext(surface, level), level.getChunkSource().randomState(),
+                level.structureManager(), surfaceBiomes, level.registryAccess().registryOrThrow(Registries.BIOME),
+                Blender.empty());
+    }
+
+    /** The noise chunk the surface rules share for the tile, made at the first chunk asked. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private NoiseChunk noiseChunk(int chunkX, int chunkZ) {
         var random = level.getChunkSource().randomState();
         if (noiseChunk == null) {
             // One for the tile, and it computes no density: the rules ask it only for the preliminary
@@ -670,16 +819,10 @@ final class PreviewFeatures {
             Beardifier none = new Beardifier((it.unimi.dsi.fastutil.objects.ObjectListIterator) it.unimi.dsi.fastutil
                     .objects.ObjectLists.emptyList().iterator(), (it.unimi.dsi.fastutil.objects.ObjectListIterator) it
                     .unimi.dsi.fastutil.objects.ObjectLists.emptyList().iterator());
-            noiseChunk = new SurfaceNoise(16 / clamped.getCellWidth(), random, chunk.getPos().getMinBlockX(),
-                    chunk.getPos().getMinBlockZ(), clamped, none, noiseSettings, (x, y, z) -> sea, level.getMinBuildHeight());
+            noiseChunk = new SurfaceNoise(16 / clamped.getCellWidth(), random, chunkX << 4, chunkZ << 4, clamped,
+                    none, noiseSettings, (x, y, z) -> sea, level.getMinBuildHeight());
         }
-        NoiseChunk shared = noiseChunk;
-        chunk.getOrCreateNoiseChunk(c -> shared);
-        // Rules may raise the ground (badlands pillars, icebergs) or open it (a swamp's water, powder
-        // snow): each block they set updates the chunk's heightmaps (ProtoChunk.setBlockState at the
-        // noise status), no priming again after them.
-        surface.buildSurface(chunk, new WorldGenerationContext(surface, level), random, level.structureManager(),
-                surfaceBiomes, level.registryAccess().registryOrThrow(Registries.BIOME), Blender.empty());
+        return noiseChunk;
     }
 
     /** What the surface rules read; then all a feature may read. */
@@ -752,23 +895,33 @@ final class PreviewFeatures {
                 int y = chunk.getHeight(Heightmap.Types.OCEAN_FLOOR_WG, x, z); // the top block itself
                 int top = id(chunk.getBlockState(pos.set(x, y, z)));
                 int filler = id(chunk.getBlockState(pos.set(x, y - 1, z)));
-                int highest = Integer.MIN_VALUE;
-                for (int hz = gz * PreviewTile.GRID; hz < (gz + 1) * PreviewTile.GRID; hz++) {
-                    for (int hx = gx * PreviewTile.GRID; hx < (gx + 1) * PreviewTile.GRID; hx++) {
-                        highest = Math.max(highest, heights[hz * 16 + hx]);
-                    }
-                }
-                int bx = (chunkX << 4) + gx * PreviewTile.GRID + PreviewTile.GRID / 2;
-                int bz = (chunkZ << 4) + gz * PreviewTile.GRID + PreviewTile.GRID / 2;
-                if (highest > seaLevel && fluid != null
-                        && quartBiome(QuartPos.fromBlock(bx), QuartPos.fromBlock(highest), QuartPos.fromBlock(bz))
-                        .value().coldEnoughToSnow(pos.set(bx, highest, bz))) {
-                    filler = top;
-                    top = id(Blocks.SNOW_BLOCK.defaultBlockState());
-                }
-                tile.setCell(cx, cz, top, filler);
+                int[] snowed = snow(chunkX, chunkZ, gx, gz, heights, top, filler);
+                tile.setCell(cx, cz, snowed[0], snowed[1]);
             }
         }
+    }
+
+    /**
+     * A cell's top and filler with the snow the surface rules do not lay:
+     * above the sea a cell cold enough to snow keeps a snow top over the
+     * rules' block, as the guess had it (the game's snow layers come with a
+     * feature, freeze_top_layer).
+     */
+    private int[] snow(int chunkX, int chunkZ, int gx, int gz, int[] heights, int top, int filler) {
+        int highest = Integer.MIN_VALUE;
+        for (int hz = gz * PreviewTile.GRID; hz < (gz + 1) * PreviewTile.GRID; hz++) {
+            for (int hx = gx * PreviewTile.GRID; hx < (gx + 1) * PreviewTile.GRID; hx++) {
+                highest = Math.max(highest, heights[hz * 16 + hx]);
+            }
+        }
+        int bx = (chunkX << 4) + gx * PreviewTile.GRID + PreviewTile.GRID / 2;
+        int bz = (chunkZ << 4) + gz * PreviewTile.GRID + PreviewTile.GRID / 2;
+        if (highest > seaLevel && fluid != null
+                && quartBiome(QuartPos.fromBlock(bx), QuartPos.fromBlock(highest), QuartPos.fromBlock(bz))
+                .value().coldEnoughToSnow(new BlockPos(bx, highest, bz))) {
+            return new int[]{id(Blocks.SNOW_BLOCK.defaultBlockState()), top};
+        }
+        return new int[]{top, filler};
     }
 
     private int id(BlockState state) {
