@@ -157,7 +157,20 @@ Each measured before the next.
    profile's ground until step 5 builds them with the rules.
 4. **Harvested tree shapes on a hashed grid** for levels 1 and 2 and
    beyond the real features' distance (1 to 1.5 days), with the light
-   virtual world for biomes not harvested yet.
+   virtual world for biomes not harvested yet. Put off 2026-11-11 after
+   a visual spike: tile levels 1 and 2 draw at 8 and 16-block voxels,
+   where a tree is one voxel at most and today's canopy (ADR-126) already
+   fills each cell by a hash at the biome's measured share. NeoForge dev
+   client, `farfield-test`, forests around 5,776 to 5,968, 0 to 320, seen
+   from 1,500 and 3,000 blocks east (7,276, 220, 320 and 8,776, 260, 320,
+   facing west), once with the default `preview_features_distance` (1,250)
+   and once at 4,096 (real trees in every tile, the log's `every tile
+   within 4096 blocks is built` before each capture): 1.1 % and 0.8 % of
+   the pixels differ (854 x 480 window), scattered specks in the band
+   beyond about 2,000 blocks, the nearer forests identical, the bands
+   side by side indistinguishable by eye. Worth building only if the real
+   features' distance comes down, or if far forests look wrong to the
+   user.
 5. **To the border** (2 to 4 days): tile levels to 15, the keys, the
    store's levels, the renderer (coarse-to-fine study §6).
 6. Only if heights still dominate: the density stopped at its sign.
