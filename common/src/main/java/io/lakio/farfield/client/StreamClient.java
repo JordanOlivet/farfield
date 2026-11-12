@@ -532,8 +532,9 @@ public final class StreamClient {
 
     /**
      * Asks for the preview tiles within the radius not checked yet this
-     * session: every level of the pyramid (ADR-126), in rings as the server
-     * builds them ({@link PreviewPyramid#order}, ADR-127). Levels finer than the coarsest within their own range
+     * session: every level of the pyramid (ADR-126), in rings and a far
+     * front as the server builds them ({@link PreviewPyramid#twoFronts},
+     * ADR-127, ADR-139). Levels finer than the coarsest within their own range
      * only ({@link PreviewPyramid#range}, level 0 at the farthest features'
      * distance a server may set): the server answers absent for those it
      * does not build.
@@ -564,12 +565,22 @@ public final class StreamClient {
                     double dz = Math.max(0, Math.max((double) tz * tile - pz, pz - ((double) tz + 1) * tile));
                     double d = dx * dx + dz * dz;
                     if (d <= range * range) {
-                        candidates.add(new long[]{key, (long) PreviewPyramid.order(level, Math.sqrt(d))});
+                        candidates.add(new long[]{key, (long) PreviewPyramid.order(level, Math.sqrt(d)),
+                                (long) PreviewPyramid.farOrder(level, Math.sqrt(d))});
                     }
                 }
             }
         }
         candidates.sort((a, b) -> Long.compare(a[1], b[1]));
+        // The server's two fronts (ADR-139): the coarsest levels' tiles in turn with the rings.
+        java.util.List<long[]> far = new java.util.ArrayList<>();
+        for (long[] c : candidates) {
+            if (PreviewPyramid.inFarFront(PreviewStore.level(c[0]))) {
+                far.add(c);
+            }
+        }
+        far.sort((a, b) -> Long.compare(a[2], b[2]));
+        candidates = PreviewPyramid.twoFronts(candidates, far);
         int n = Math.min(candidates.size(), tileWindow.size() - tilesInFlight.size());
         if (n <= 0) {
             return;

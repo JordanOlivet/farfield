@@ -296,7 +296,9 @@ maximum (2^25 blocks), window 854 x 480, after ADR-138.
   levels come after the nearer finer ones (the order's lag is 1,024
   blocks a level, the coarsest quarters millions of blocks away): a
   first image to the border sooner would order the coarsest levels first
-  outright.
+  outright. Done on 2026-11-12 (ADR-139), for the coarsest level only, in
+  turn with the rings: whole at 11 s instead of 72 s; a front of every
+  ground-only level held the near detail back by 25 s.
 
 Recommendation: keep the depth as is; check a shader pack at a large
 distance before the default goes past 4,096; the default stays 4,096.

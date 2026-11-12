@@ -4062,3 +4062,40 @@ real levels 0 to 7, 32,768 blocks). Lot E.3d of milestone 2.
   32 and facing the border, 430 sections, 1.3 ms of GPU; the levels 6 to
   15 of a place built in about 30 s, about 40 tiles a level; the whole
   preview store 17 MB. Not run on a server or in the pack.
+
+## ADR-139 — Two fronts: the coarsest level to the border first
+
+Status: accepted, 2026-11-12. Amends ADR-127 (quarters in rings) and
+ADR-128 (shared threads). Decision 2 of E.3e, milestone 2.
+
+- **Context**: the rings of ADR-127 order a quarter by its distance plus
+  1,024 blocks a level coarser than it. The lag is tiny next to the
+  coarsest levels' distances (a level-15 quarter is 8.4 million blocks a
+  side): the far quarters of level 15 came after every finer quarter
+  nearer, last of all, so the terrain to the border was whole only once
+  the whole pyramid was built. The coarsest level alone covers the whole
+  drawn distance: it is the first image to the border, the finer levels
+  only refine it.
+- **Decision**: two fronts taken in turn (`PreviewPyramid.twoFronts`):
+  the rings as before, and a far front of the coarsest level's quarters
+  by distance (`FAR_FRONT_FROM` = 15, `inFarFront`, `farOrder`, which
+  orders coarser levels first should the front ever take more). A
+  quarter in both is taken at its first turn. The server's scheduler
+  submits in that order within ADR-128's shares, and a client asks a
+  server for tiles in the same order. The fill line gives `coarsest level
+  whole at`. A front of every ground-only level (3 to 15) was tried
+  first and rejected: it held the near rings at half speed for a minute.
+- **Checked**: unit tests (the far order, the turns, each quarter once,
+  one front running out). NeoForge dev client, `farfield-test`, fog at
+  33,554,432, the preview folder removed before each run, the same spot
+  (970 quarters to build):
+
+  | Order | Coarsest level whole | Within 1,024 blocks | All built |
+  |---|---|---|---|
+  | Rings only (ADR-127) | 71.7 s | 30.7 s | 71.7 s |
+  | Far front of levels 3 to 15 | 11.7 s | 56.2 s | 66.2 s |
+  | Far front of level 15 (kept) | 11.3 s | 32.3 s | 66.3 s |
+
+  The captures at 8 s and 30 s from 48, 600, 32 look alike in the three
+  runs: from the spawn the band past the explored land's real LODs is a
+  few pixels high. Not run on a server or in the pack.

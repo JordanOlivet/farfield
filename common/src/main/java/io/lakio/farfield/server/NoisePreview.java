@@ -202,6 +202,8 @@ final class NoisePreview {
         long frontDone;
         /** When the coarse disc was whole: no coarse quarter left to build (its canopy aside). */
         long coarseDone;
+        /** When the coarsest level was whole (ADR-139): the first image to the drawn distance, or the border. */
+        long topDone;
 
         Dimension(ServerLevel level, NoiseBasedChunkGenerator generator) {
             key = level.dimension();
@@ -486,8 +488,10 @@ final class NoisePreview {
      * (ADR-126, ADR-127), in rings: by their distance alone (a pure circle:
      * counting those behind farther filled the view no sooner, ADR-127), a
      * finer level's {@link #LEVEL_LAG} blocks behind the coarser one, so a
-     * coarse disc grows from the player and the detail follows it; one
-     * quarter of a tile at a time; up to
+     * coarse disc grows from the player and the detail follows it; in turn
+     * with a far front, the coarsest level's quarters by distance, so it
+     * reaches the border early (ADR-139); one quarter of a
+     * tile at a time; up to
      * {@link #MAX_IN_FLIGHT} (or two per thread) at a time, the biomes'
      * samples given part of the threads first.
      */
@@ -540,7 +544,7 @@ final class NoisePreview {
                         double score = distance
                                 + LEVEL_LAG * (PreviewPyramid.LEVELS - 1 - level) + (refine ? REFINE_LAG : 0);
                         candidates.add(new long[]{tile, (long) score, distance <= NEAR ? 1 : 0,
-                                facing >= FRONT_COS ? 1 : 0, q, refine ? 1 : 0});
+                                facing >= FRONT_COS ? 1 : 0, q, refine ? 1 : 0, (long) distance});
                     }
                 }
             }
@@ -551,6 +555,17 @@ final class NoisePreview {
             trackFill(d, players.get(0), candidates);
         }
         candidates.sort((a, b) -> Long.compare(a[1], b[1]));
+        // Two fronts (ADR-139): the rings above, and in turn with them the coarsest level's quarters, so it
+        // reaches the border in seconds instead of after every finer quarter nearer.
+        List<long[]> far = new ArrayList<>();
+        for (long[] c : candidates) {
+            if (c[5] == 0 && PreviewPyramid.inFarFront(PreviewStore.level(c[0]))) {
+                far.add(c);
+            }
+        }
+        far.sort((a, b) -> Double.compare(PreviewPyramid.farOrder(PreviewStore.level(a[0]), a[6]),
+                PreviewPyramid.farOrder(PreviewStore.level(b[0]), b[6])));
+        candidates = PreviewPyramid.twoFronts(candidates, far);
         int threads = pool.getCorePoolSize();
         int limit = Math.max(MAX_IN_FLIGHT, 2 * threads);
         // Shared threads (ADR-128): while both have quarters to build, level 0 holds at most half the
@@ -643,6 +658,7 @@ final class NoisePreview {
             d.nearDone = 0;
             d.frontDone = 0;
             d.coarseDone = 0;
+            d.topDone = 0;
         }
         if (d.fillStart == 0) {
             return;
@@ -650,14 +666,17 @@ final class NoisePreview {
         boolean near = false;
         boolean front = false;
         boolean coarse = false;
+        boolean top = false;
         for (long[] c : candidates) {
             near |= c[2] != 0;
             front |= c[3] != 0;
             coarse |= PreviewStore.level(c[0]) > 0 && c[5] == 0;
+            top |= PreviewStore.level(c[0]) == PreviewPyramid.LEVELS - 1;
         }
         d.nearDone = near || d.nearDone != 0 ? d.nearDone : now;
         d.frontDone = front || d.frontDone != 0 ? d.frontDone : now;
         d.coarseDone = coarse || d.coarseDone != 0 ? d.coarseDone : now;
+        d.topDone = top || d.topDone != 0 ? d.topDone : now;
         if (candidates.isEmpty()) {
             logFill(d, now, "all built");
         } else if (now - d.fillStart > FILL_GIVE_UP_NANOS) {
@@ -667,9 +686,9 @@ final class NoisePreview {
 
     private static void logFill(Dimension d, long now, String end) {
         if (RenderSettings.performanceLogs()) {
-            Farfield.LOG.info("Noise preview fill after {}: {} quarters to build; coarse disc whole at {}, within {}"
-                            + " blocks done at {}, in front at {}, {} at {} s", d.fillCause, d.fillTiles,
-                    seconds(d, d.coarseDone), (int) NEAR, seconds(d, d.nearDone), seconds(d, d.frontDone), end,
+            Farfield.LOG.info("Noise preview fill after {}: {} quarters to build; coarsest level whole at {}, coarse"
+                            + " disc whole at {}, within {} blocks done at {}, in front at {}, {} at {} s",
+                    d.fillCause, d.fillTiles, seconds(d, d.topDone), seconds(d, d.coarseDone), (int) NEAR, seconds(d, d.nearDone), seconds(d, d.frontDone), end,
                     String.format("%.1f", (now - d.fillStart) / 1e9));
         }
         d.fillStart = 0;

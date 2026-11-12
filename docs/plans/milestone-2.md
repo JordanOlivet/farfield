@@ -385,6 +385,10 @@ from there: D.2, then the sea floor's plants and corals in the preview.
     Studied 2026-11-11 (`docs/analysis/preview-to-the-border.md`, step 5):
     no depth change for now, the captures at the border show no artifact;
     the shader packs' far plane is untested. Waits for the user's look.
+    Decision 2 done 2026-11-12 (ADR-139): the coarsest level is built in
+    turn with the rings, whole at 11 s instead of 72 s in a dev client;
+    remains to be seen in the pack. The default distance (4,096) and a
+    shader pack at a large distance are still open.
 
 ## M2.F — Tooling
 
