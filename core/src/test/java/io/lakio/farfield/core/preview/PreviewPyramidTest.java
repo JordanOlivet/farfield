@@ -16,6 +16,21 @@ class PreviewPyramidTest {
     }
 
     @Test
+    void theNearRingComesBeforeEveryOtherQuarter() {
+        double ring = 12 * 16 + PreviewPyramid.NEAR_RING_MARGIN;
+        // Level 0 at 300 blocks: before level 10 at 0 and the coarsest level anywhere (ADR-151).
+        assertTrue(PreviewPyramid.order(0, 300, ring) < PreviewPyramid.order(10, 0, ring));
+        // The coarsest level before the ring: every selection descends from it.
+        assertTrue(PreviewPyramid.order(15, 30_000_000, ring) < PreviewPyramid.order(5, 0, ring));
+        // Within the ring, a whole level before the next finer one: level 1 at its edge before level 0 at 0.
+        assertTrue(PreviewPyramid.order(5, ring, ring) < PreviewPyramid.order(4, 0, ring));
+        assertTrue(PreviewPyramid.order(1, ring, ring) < PreviewPyramid.order(0, 0, ring));
+        // Out of the ring, or a level no near view is cut from: the usual order.
+        assertEquals(PreviewPyramid.order(0, ring + 1), PreviewPyramid.order(0, ring + 1, ring));
+        assertEquals(PreviewPyramid.order(6, 100), PreviewPyramid.order(6, 100, ring));
+    }
+
+    @Test
     void theFarFrontTakesTheCoarsestLevelFirstWhateverItsDistance() {
         assertTrue(PreviewPyramid.farOrder(15, 30_000_000) < PreviewPyramid.farOrder(14, 0));
         assertTrue(PreviewPyramid.farOrder(15, 0) < PreviewPyramid.farOrder(15, 1_000));

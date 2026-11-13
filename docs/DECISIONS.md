@@ -4574,3 +4574,40 @@ the generation front. Answered "Oui va appliquer ces fix".
   tiles, built late on the server (level 0 behind the coarse levels and at
   most half the preview threads while the coarse disc grows, ADR-128):
   within 1,024 blocks done at 57 to 59 s. Proposed to the user, not done.
+
+## ADR-151 — The near ring of the preview first
+
+Status: accepted, 2026-11-14. The user, on ADR-150's giant blocks: "comment
+ça se fait que ces blocs, proche de moi n'ait pas été priorisé par rapport
+aux niveaux fins autour ou même lointains ?", "le cercle proche n'est pas
+rempli de manière homogène". Answered "go cercle proche".
+
+- **Context**: a quarter's order was its distance plus 1,024 blocks per
+  level finer than the coarsest (ADR-127): a level-0 quarter 300 blocks
+  away came after every coarse quarter within about 15,000 blocks, and
+  level 0 held at most half the preview threads while the coarse disc grew
+  (ADR-128), three threads in the pack while the spawn generates. The
+  detail within 1,024 blocks was whole at 38 to 59 s.
+- **Decision** (`PreviewPyramid.order(level, distance, ring)`, used by the
+  server's scheduler and a client's tile requests):
+  - The coarsest level first, whatever its distance: the selection
+    descends from it, and nothing under one of its sections shows before
+    its tile is built. A first version that put the ring before it left
+    the ring's holes open until 20 s.
+  - Then the near ring: levels 0 to 5 (the levels a near view is cut from)
+    within the game's view distance plus 1,024 blocks
+    (`NEAR_RING_MARGIN`), a whole level of the ring before the next finer
+    one, so the ring shows at level 5 first and level 0 comes last. With
+    the usual lag inside the ring, costly level-0 quarters under the game's
+    own chunks held the cheap coarser ones at the ring's edge.
+  - Then the rest as before.
+  - While level-0 quarters of a ring wait, level 0 is no longer held to
+    half the threads; the order decides.
+- **Checked**: unit test of the order. Fabric pack in production, a new
+  world (seed 4242), 4K minimized, ADR-150's jar (two runs) against this
+  one: the detail within 1,024 blocks whole at 26 to 28 s instead of 38;
+  the coarsest level whole at 1.3 s as before; the holes within 512 blocks
+  all closed by 20 s on both, the first batch sooner (5.7 s on average
+  against 7.7 to 8.3), the second later (15.3 s against 10.3 to 11.6), one
+  run each, not explained. Not checked: a dedicated server (the NeoForge
+  pack), by eye.

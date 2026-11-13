@@ -46,6 +46,46 @@ public final class PreviewPyramid {
     }
 
     /**
+     * Blocks past the game's own view distance the near ring reaches
+     * (ADR-151): the LODs drawn first around the player.
+     */
+    public static final int NEAR_RING_MARGIN = 1024;
+    /** Taken off a near-ring order: before every other (those are at least 0, at most a few times MAX_RANGE). */
+    private static final double NEAR_RING_FIRST = 8.0 * MAX_RANGE;
+
+    /**
+     * Whether a quarter belongs to the near ring (ADR-151): a level a
+     * near view is cut from ({@link PreviewStore#VIEW_MAX_LEVEL} at most)
+     * within {@code ring} blocks.
+     */
+    public static boolean inNearRing(int level, double distance, double ring) {
+        return level <= PreviewStore.VIEW_MAX_LEVEL && distance <= ring;
+    }
+
+    /**
+     * The order with a near ring of {@code ring} blocks (ADR-151): its
+     * quarters before any other, a whole level of the ring before the next
+     * finer one, so its views come at level 5 in seconds and refine down to
+     * level 0 last; the rest as {@link #order(int, double)}. At a new world
+     * the ring waited behind every coarse quarter within 15,000 blocks, its
+     * detail whole at 38 to 59 s in the pack; with the usual lag inside the
+     * ring, the costly level-0 quarters under the game's own chunks held
+     * the cheap coarser ones of the ring's edge, and its holes closed later.
+     * The coarsest level still comes before the ring: the selection descends
+     * from it, nothing under a section of it shows before its tile is built
+     * (the ring first, its holes closed at 20 s instead of 8).
+     */
+    public static double order(int level, double distance, double ring) {
+        if (level == LEVELS - 1) {
+            return distance - 2 * NEAR_RING_FIRST;
+        }
+        if (inNearRing(level, distance, ring)) {
+            return distance + (ring + 1) * (PreviewStore.VIEW_MAX_LEVEL - level) - NEAR_RING_FIRST;
+        }
+        return order(level, distance);
+    }
+
+    /**
      * The far front's order (ADR-139): the coarsest level first, every one of
      * its quarters by distance, then the next finer level; only the levels
      * {@link #inFarFront} take part. Lower first.

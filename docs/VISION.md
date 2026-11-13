@@ -39,6 +39,20 @@ thousands of chunks, chosen by the player or the server operator.
 - A public API, a Paper/Folia server plugin, an optional side channel or HTTP
   tiles for LOD data.
 - Minecraft 26.x with a native Vulkan backend.
+- Preview built by the clients too (the user's idea, 2026-11-14, to study):
+  on a server slower than its players' PCs, clients that volunteer build
+  preview tiles the server hands out, and the server keeps them and serves
+  them to every player, as it does its own. Only the preview gains: the
+  real LODs come from chunks only the server generates. Open points:
+  - The seed: a client needs it to build tiles, and it gives away
+    structures and ores. Given to trusted players only (operators, a
+    server setting), which fits a server among friends, not a public one.
+  - Trust: a modified client could send false tiles. The server checks a
+    few columns of each tile itself (heights cost little) and rejects
+    tiles from a client whose world generation differs (a fingerprint of
+    the mods, datapacks and settings that shape it).
+  - The protocol: work handed out and taken back when a client leaves,
+    tiles uploaded within the stream's budget.
 
 ## Non-goals (for now)
 

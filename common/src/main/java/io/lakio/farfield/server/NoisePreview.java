@@ -504,6 +504,8 @@ final class NoisePreview {
             double lookLength = Math.sqrt(look.x * look.x + look.z * look.z);
             int drawn = distance(p);
             farthest = Math.max(farthest, drawn);
+            // The near ring first (ADR-151): past the chunks the game itself sends, by its view distance.
+            double ring = p.server.getPlayerList().getViewDistance() * 16.0 + PreviewPyramid.NEAR_RING_MARGIN;
             for (int level = PreviewPyramid.LEVELS - 1; level >= 0; level--) {
                 if (level == 0 && features <= 0) {
                     continue;
@@ -540,10 +542,10 @@ final class NoisePreview {
                         // Looking straight up or down, or standing in the quarter: no side is behind.
                         double facing = lookLength < 1e-3 || centerDistance < 1 ? 1
                                 : (look.x * cx + look.z * cz) / (lookLength * centerDistance);
-                        double score = distance
-                                + LEVEL_LAG * (PreviewPyramid.LEVELS - 1 - level) + (refine ? REFINE_LAG : 0);
+                        double score = PreviewPyramid.order(level, distance, ring) + (refine ? REFINE_LAG : 0);
                         candidates.add(new long[]{tile, (long) score, distance <= NEAR ? 1 : 0,
-                                facing >= FRONT_COS ? 1 : 0, q, refine ? 1 : 0, (long) distance});
+                                facing >= FRONT_COS ? 1 : 0, q, refine ? 1 : 0, (long) distance,
+                                PreviewPyramid.inNearRing(level, distance, ring) ? 1 : 0});
                     }
                 }
             }
@@ -581,14 +583,22 @@ final class NoisePreview {
         boolean disc = false;
         boolean coarseRest = !d.sampleQueue.isEmpty();
         boolean fineWaiting = false;
+        boolean nearFine = false;
         for (long[] c : candidates) {
             boolean coarse = PreviewStore.level(c[0]) > 0;
             disc |= coarse && c[5] == 0;
             coarseRest |= coarse && c[5] != 0;
             fineWaiting |= !coarse;
+            nearFine |= !coarse && c[7] != 0;
         }
         int fineCap = disc ? Math.max(1, threads / 2) : coarseRest ? threads : limit;
         int coarseCap = fineWaiting ? limit - fineCap : limit;
+        if (nearFine) {
+            // The near ring's detail is not held to half the threads (ADR-151): the order puts its
+            // quarters first, coarse and fine alike take every thread, the coarse disc what they leave.
+            fineCap = limit;
+            coarseCap = limit;
+        }
         // The biomes' samples first, on part of the coarse share: the canopy of the coarse quarters waits for them.
         int sampleSlots = Math.max(1, threads / 2);
         int[] request;

@@ -556,6 +556,8 @@ public final class StreamClient {
         }
         double px = player.getX();
         double pz = player.getZ();
+        // The near ring first (ADR-151), as the server builds it.
+        double ring = mc.options.getEffectiveRenderDistance() * 16.0 + PreviewPyramid.NEAR_RING_MARGIN;
         java.util.List<long[]> candidates = new java.util.ArrayList<>();
         for (int level = PreviewPyramid.LEVELS - 1; level >= 0; level--) {
             int tile = PreviewStore.blocks(level);
@@ -575,7 +577,7 @@ public final class StreamClient {
                     double dz = Math.max(0, Math.max((double) tz * tile - pz, pz - ((double) tz + 1) * tile));
                     double d = dx * dx + dz * dz;
                     if (d <= range * range) {
-                        candidates.add(new long[]{key, (long) PreviewPyramid.order(level, Math.sqrt(d)),
+                        candidates.add(new long[]{key, (long) PreviewPyramid.order(level, Math.sqrt(d), ring),
                                 (long) PreviewPyramid.farOrder(level, Math.sqrt(d)), (long) Math.sqrt(d)});
                     }
                 }
