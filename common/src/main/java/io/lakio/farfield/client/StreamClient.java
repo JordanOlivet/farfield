@@ -566,7 +566,7 @@ public final class StreamClient {
                     double d = dx * dx + dz * dz;
                     if (d <= range * range) {
                         candidates.add(new long[]{key, (long) PreviewPyramid.order(level, Math.sqrt(d)),
-                                (long) PreviewPyramid.farOrder(level, Math.sqrt(d))});
+                                (long) PreviewPyramid.farOrder(level, Math.sqrt(d)), (long) Math.sqrt(d)});
                     }
                 }
             }
@@ -574,10 +574,15 @@ public final class StreamClient {
         candidates.sort((a, b) -> Long.compare(a[1], b[1]));
         // The server's two fronts (ADR-139): the coarsest levels' tiles in turn with the rings.
         java.util.List<long[]> far = new java.util.ArrayList<>();
+        boolean nearPending = false;
         for (long[] c : candidates) {
             if (PreviewPyramid.inFarFront(PreviewStore.level(c[0]))) {
                 far.add(c);
             }
+            nearPending |= PreviewPyramid.nearFirst(PreviewStore.level(c[0]), c[3]);
+        }
+        if (nearPending) {
+            far.clear(); // the near disc first (ADR-145), as the server builds it
         }
         far.sort((a, b) -> Long.compare(a[2], b[2]));
         candidates = PreviewPyramid.twoFronts(candidates, far);

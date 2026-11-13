@@ -62,6 +62,19 @@ public final class PreviewPyramid {
      */
     public static final int FAR_FRONT_FROM = LEVELS - 1;
 
+    /**
+     * The near disc built before the far front starts (ADR-145): the levels up
+     * to this one within {@link #NEAR_FIRST_DISTANCE} blocks; at a new world
+     * the far front halved the threads the near detail had (3 in the pack).
+     */
+    public static final int NEAR_FIRST_LEVEL = 6;
+    public static final int NEAR_FIRST_DISTANCE = 8192;
+
+    /** Whether a quarter belongs to the near disc built before the far front (ADR-145). */
+    public static boolean nearFirst(int level, double distance) {
+        return level <= NEAR_FIRST_LEVEL && distance <= NEAR_FIRST_DISTANCE;
+    }
+
     /** Whether quarters of {@code level} also go to the far front (ADR-139). */
     public static boolean inFarFront(int level) {
         return level >= FAR_FRONT_FROM;

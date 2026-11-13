@@ -1679,6 +1679,11 @@ public final class LodRenderer {
         if (!Float.isFinite(focal) || focal <= 0) {
             return; // degenerate projection (seen on the first frame): keep the last detail
         }
+        // Never coarser than the options' field of view (ADR-145): sprinting and flying widen the
+        // projection, and each start or stop of a sprint moved the detail by half (7.5 to 4.7 and back
+        // in the user's pack), every section's level with it: 15,000 meshes again each 10 s in flight.
+        // A spyglass, narrower, still raises it (ADR-063).
+        focal = (float) Math.max(focal, usualFocal);
         double detail = Math.max(1, focal / (LodSection.SIZE * RenderSettings.voxelPixels()));
         // A value must hold for two frames: the first frame's projection can be off
         // (seen at 20 times the right detail), which would request level-0 meshes for nothing.

@@ -4325,3 +4325,44 @@ size ("go 1 et 3").
   session starting at 256 MB and 32,768 slots, no growth, 2 windows over
   30 ms (45 ms at most, the first frames: colors and blends). Not checked:
   the NeoForge pack.
+
+## ADR-145 — The detail follows the options' field of view; near views from tiles of level 5 at most; the near disc before the far front
+
+Status: accepted, 2026-11-13. The user's Fabric pack test after ADR-144:
+"à la création du monde ... d'immenses blocs rectangulaires de stone ou de
+dirt" near the player while the rest showed in detail; and 40 to 50 fps
+while moving at a 4K screen against 120 standing still. Answered "go 1 et
+2".
+
+- **Context**:
+  - The user's log: 15 detail changes in the session, 7.5 to 4.7 and back.
+    The detail came from the projection, which sprinting and flying widen
+    (FOV 70 in the options): each start or stop of a sprint moved every
+    section's level, and the meshers rebuilt about 15,000 meshes each 10 s.
+    The agent's pack runs used a FOV of 90 and never sprinted.
+  - A level-0 view took the finest tile over its place, the level-15 one
+    at first (a sample every 131,072 blocks): flat plateaus with cliffs
+    around a new world's spawn, near detail whole after 67 s in the pack (3
+    preview threads while the first chunks generate).
+- **Decision**:
+  - The detail's focal length is never below the one of the options' field
+    of view: sprinting and flying no longer move it; a spyglass, narrower,
+    still raises it (ADR-063).
+  - A level-0 view is cut from tiles of level 5 at most
+    (`PreviewStore.VIEW_MAX_LEVEL`); nothing is drawn there before. Up to
+    level 5 a write tells every place under it, so the view shows as soon as
+    its tile is built. The far sections still read coarser tiles as stored.
+  - The far front of ADR-139 waits until the quarters of levels 6 and finer
+    within 8,192 blocks are built (`PreviewPyramid.nearFirst`), on the
+    server's scheduler and in a client's tile requests.
+- **Checked**: unit test (a view not cut from a level-6 tile, made once a
+  level-5 one is written, its places told). Fabric pack in production,
+  3840 x 2019 minimized, FOV 70, ZGC, the ADR-144 jar against this one:
+  speed effects on and off twice (the projection widens as with a sprint):
+  before, 3 to 4 detail changes each (6.6 down to 4.1) and about 10,900
+  meshes again at each return; after, one detail line in the whole session
+  and no meshes on a toggle. The detail now holds at the options' 7.5 while
+  flying (6.6 before in spectator flight): about 8,000 sections drawn
+  instead of 6,900. A new world, the same spot, after 5 s: nothing drawn
+  near the player, no plateau; after 15 s the near detail. Not checked: the
+  user's own sprinting flight, the NeoForge pack.

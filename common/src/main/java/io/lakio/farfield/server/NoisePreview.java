@@ -557,10 +557,15 @@ final class NoisePreview {
         // Two fronts (ADR-139): the rings above, and in turn with them the coarsest level's quarters, so it
         // reaches the border in seconds instead of after every finer quarter nearer.
         List<long[]> far = new ArrayList<>();
+        boolean nearPending = false;
         for (long[] c : candidates) {
             if (c[5] == 0 && PreviewPyramid.inFarFront(PreviewStore.level(c[0]))) {
                 far.add(c);
             }
+            nearPending |= PreviewPyramid.nearFirst(PreviewStore.level(c[0]), c[6]);
+        }
+        if (nearPending) {
+            far.clear(); // the near disc first (ADR-145): the far front waits for it
         }
         far.sort((a, b) -> Double.compare(PreviewPyramid.farOrder(PreviewStore.level(a[0]), a[6]),
                 PreviewPyramid.farOrder(PreviewStore.level(b[0]), b[6])));

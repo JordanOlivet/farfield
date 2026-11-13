@@ -307,6 +307,29 @@ class PreviewTest {
     }
 
     @Test
+    void aViewIsNotCutFromATileCoarserThanTheViewLimit() throws IOException {
+        PreviewStore store = new PreviewStore(dir);
+        PreviewTile far = coarse();
+        far.setLevel(PreviewStore.VIEW_MAX_LEVEL + 1);
+        store.write(PreviewStore.VIEW_MAX_LEVEL + 1, 0, 0, far);
+        // The far sections still read it as stored; a level-0 place under it has no view yet.
+        assertTrue(store.contains(PreviewStore.VIEW_MAX_LEVEL + 1, 0, 0));
+        assertFalse(store.contains(3, 5));
+        assertNull(store.summary(3, 5));
+        assertNull(store.read(3, 5));
+        assertTrue(store.coarseSource(4, 3 * PreviewTile.BLOCKS, 5 * PreviewTile.BLOCKS) >= 0);
+        // A tile at the limit makes the view, and tells the places under it.
+        List<Long> views = new ArrayList<>();
+        store.addListener(views::add);
+        PreviewTile near = coarse();
+        near.setLevel(PreviewStore.VIEW_MAX_LEVEL);
+        store.write(PreviewStore.VIEW_MAX_LEVEL, 0, 0, near);
+        assertTrue(views.contains(PreviewStore.key(3, 5)));
+        assertTrue(store.contains(3, 5));
+        assertNotNull(store.read(3, 5));
+    }
+
+    @Test
     void theStoreShowsTheFinestTileOverEachPlace() throws IOException {
         PreviewStore store = new PreviewStore(dir);
         List<Long> views = new ArrayList<>();

@@ -346,9 +346,22 @@ public final class PreviewStore {
         return out;
     }
 
-    /** The key of the finest tile with quarter {@code q} of level-0 place (tileX, tileZ) built; -1 for none. */
+    /**
+     * The coarsest tile a level-0 view is cut from (ADR-145): a level-15
+     * tile, a sample every 131,072 blocks, cut down to a near section made a
+     * flat plateau of stone or dirt with cliffs at its edges, shown around a
+     * new world's spawn for a minute. Up to this level a write tells every
+     * place under it ({@link #WALK_LEVEL}), so a view waiting here shows as
+     * soon as its tile is built.
+     */
+    public static final int VIEW_MAX_LEVEL = 5;
+
+    /**
+     * The key of the finest tile with quarter {@code q} of level-0 place
+     * (tileX, tileZ) built, of {@link #VIEW_MAX_LEVEL} at most; -1 for none.
+     */
     private long source(int tileX, int tileZ, int q) {
-        int held = levels;
+        int held = levels & ((1 << (VIEW_MAX_LEVEL + 1)) - 1);
         while (held != 0) {
             int level = Integer.numberOfTrailingZeros(held);
             held &= held - 1;
