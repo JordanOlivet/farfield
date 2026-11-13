@@ -53,6 +53,20 @@ class PreviewPyramidTest {
     }
 
     @Test
+    void spreadTileKeysComeBackAndNoLongerShareHashesAlongADiagonal() {
+        java.util.Set<Integer> hashes = new java.util.HashSet<>();
+        for (int i = -64; i < 64; i++) {
+            long key = PreviewStore.key(3, i, i);
+            assertEquals(key, PreviewStore.unspread(PreviewStore.spread(key)));
+            if (i >= 0) {
+                assertEquals(0, Long.hashCode(PreviewStore.key(0, i, i)), "a diagonal's plain keys share one hash");
+            }
+            hashes.add(Long.hashCode(PreviewStore.spread(PreviewStore.key(0, i, i))));
+        }
+        assertTrue(hashes.size() > 120, "spread: " + hashes.size() + " hashes of 128");
+    }
+
+    @Test
     void eitherFrontRunningOutLeavesTheOtherAlone() {
         List<String> rings = List.of("a", "b", "c", "d");
         List<String> far = List.of("x");

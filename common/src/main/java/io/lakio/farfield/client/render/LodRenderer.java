@@ -166,6 +166,14 @@ public final class LodRenderer {
      * 4 million blocks.
      */
     private static final float DEPTH_RATIO = 1 << 20;
+    /**
+     * The LOD distance under a shader pack (ADR-141): Photon rebuilds a
+     * combined depth from the game's near plane (0.05) to the LODs' extent;
+     * in float it reaches 1 past about 800,000 blocks, and its frames came
+     * out black from 1,048,576 blocks (fine at 262,144, Fabric pack, 4K).
+     */
+    private static final int PACK_MAX_DISTANCE = 1 << 18;
+    private boolean packCapLogged;
     /** ...or after this long anyway... */
     private static final long RESELECT_NANOS = 1_000_000_000L;
     /** ...but never sooner than this after the last one (ADR-140). */
@@ -354,6 +362,12 @@ public final class LodRenderer {
      * LOD distance and the depth range follow it (ADR-140).
      */
     private double drawnExtent = RenderConfig.DEFAULT_DRAW_DISTANCE;
+    /**
+     * The nearest drawn LOD geometry from the camera at the last selection,
+     * in blocks, less the reselection step: the depth range's near plane
+     * moves out to half of it (ADR-141).
+     */
+    private double drawnNearest;
     /** The LODs' depth range of this frame, set at {@link #beginLevel} (ADR-140). */
     private float depthNear = 8f;
     private float depthFar = 2f * RenderConfig.DEFAULT_DRAW_DISTANCE;
@@ -546,6 +560,21 @@ public final class LodRenderer {
     // Statistics for the periodic log line.
     private long frame;
     private long frameNanos;
+    /** The longest LOD frame on the render thread, the longest time between two frames, since the last stat line. */
+    private long maxFrameNanos;
+    private long maxFrameGapNanos;
+    private long previousFrameStart;
+    /** Frames that came more than {@link #LONG_FRAME_NANOS} after the one before, since the last stat line. */
+    private int longFrames;
+    private static final long LONG_FRAME_NANOS = 50_000_000L;
+    /** The steps of a frame, timed for {@link #worstFrame} (ADR-141). */
+    private static final String[] PHASES = {"blends", "rewrites", "uploads", "colors", "selection", "wanted",
+            "commands", "eviction", "draw"};
+    /** A constant, not {@code PHASES.length}: the instance is built before the array in the class's init. */
+    private static final int TIMED_PHASES = 8;
+    private final long[] phase = new long[TIMED_PHASES];
+    /** The steps of the longest LOD frame since the last stat line. */
+    private String worstFrame = "";
     private long timedFrames;
     /** GPU time of the depth pre-pass, the opaque pass and the translucent pass. */
     private final long[] gpuPassNanos = new long[TIMESTAMPS - 1];
@@ -927,6 +956,16 @@ public final class LodRenderer {
         if (distance == RenderConfig.FOG_VANILLA) {
             return 0; // the game's thick fog is opaque within its render distance
         }
+        if (packLink != null && (packLink.mode() == ShaderPackLink.VOXY || packLink.mode() == ShaderPackLink.DH)
+                && distance > PACK_MAX_DISTANCE) {
+            if (!packCapLogged) {
+                packCapLogged = true;
+                Farfield.LOG.info("Shader pack LODs: drawn to {} blocks, not {}: past about 800,000 blocks a pack's"
+                        + " combined depth (Photon's, near plane 0.05) holds nothing and draws black (ADR-141)",
+                        PACK_MAX_DISTANCE, distance);
+            }
+            return PACK_MAX_DISTANCE;
+        }
         return Math.min(MAX_DISTANCE, distance);
     }
 
@@ -942,7 +981,10 @@ public final class LodRenderer {
         // (67 million blocks) against a near plane of 8 lost the packs' inverse projection in float,
         // and Photon drew black squares over the LODs at every distance.
         r.depthFar = (float) Math.max(1024, 2 * r.drawnExtent);
-        r.depthNear = Math.max(8f, r.depthFar / DEPTH_RATIO);
+        // The near plane at half the nearest drawn geometry (ADR-141): the LODs' depth is cleared before the
+        // game's terrain draws, so nothing nearer needs it; seen from 2 million blocks up, a near plane of 64
+        // left the preview's surfaces fighting over a few thousand blocks of depth (a grey cast over it).
+        r.depthNear = (float) Math.max(Math.max(8, r.drawnNearest * 0.5), r.depthFar / DEPTH_RATIO);
         if (r.packLink != null && !r.disabled) {
             try {
                 // The farthest LOD geometry, not the selection's radius: square sections cross it, and
@@ -1220,11 +1262,16 @@ public final class LodRenderer {
         RenderSettings.resize(meshers, RenderSettings.effectiveThreads(RenderSettings.meshThreads()), "LOD mesher");
         frame++;
         readGpuTimers();
+        int uploadedBefore = meshesUploaded;
         updateBlends();
+        phase[0] = System.nanoTime();
         applyRewrites();
+        phase[1] = System.nanoTime();
         uploadMeshes();
+        phase[2] = System.nanoTime();
         uploadColors(mc, level, looksBudget(frameStart));
         updateDrawnSections(mc, level, camera);
+        phase[3] = System.nanoTime();
 
         Vec3 cam = camera.getPosition();
         double jx = cam.x - lastCamX;
@@ -1281,6 +1328,7 @@ public final class LodRenderer {
                 && (selectionTime == 0 || frameStart - selectionTime >= MIN_RESELECT_NANOS)) {
             select(level, cam, look, frameStart);
         }
+        phase[4] = System.nanoTime();
         requestWanted();
         // The hole detector is a diagnostic: it runs only with the performance logs on.
         if (!RenderSettings.performanceLogs()) {
@@ -1292,6 +1340,7 @@ public final class LodRenderer {
         updateHandOver(cam, frameStart);
         watchColumns(mc.options.getEffectiveRenderDistance());
         logFill(frameStart, false);
+        phase[5] = System.nanoTime();
         for (int l = 0; l < commands.length; l++) {
             commands[l].clear();
             draws[l] = 0;
@@ -1342,15 +1391,39 @@ public final class LodRenderer {
             long e = translucentOrder.getLong(i);
             addCommands(resident.get(drawList.getLong((int) e >>> 6)), TRANSLUCENT, (int) e & 63);
         }
+        phase[6] = System.nanoTime();
         if (frame % 60 == 0) {
             evictUnused(frameStart);
             shrinkArena(frameStart);
         }
+        phase[7] = System.nanoTime();
         lastDrawn = count;
         if (count > 0) {
             draw(cam, viewRotation, projection, mc);
         }
-        frameNanos += System.nanoTime() - frameStart;
+        long took = System.nanoTime() - frameStart;
+        frameNanos += took;
+        if (took > maxFrameNanos) {
+            // The steps of the longest frame (ADR-141): what a stutter spent its time on.
+            long before = frameStart;
+            StringBuilder steps = new StringBuilder();
+            for (int i = 0; i < PHASES.length; i++) {
+                long end = i < phase.length ? phase[i] : frameStart + took;
+                steps.append(i == 0 ? "" : ", ").append(PHASES[i]).append(' ').append((end - before) / 1000);
+                before = end;
+            }
+            worstFrame = steps.append(" us; ").append(meshesUploaded - uploadedBefore).append(" meshes uploaded")
+                    .toString();
+        }
+        maxFrameNanos = Math.max(maxFrameNanos, took);
+        // The whole frame, the game's own work included: the stutters a mean hides (ADR-141).
+        if (previousFrameStart != 0) {
+            maxFrameGapNanos = Math.max(maxFrameGapNanos, frameStart - previousFrameStart);
+            if (frameStart - previousFrameStart > LONG_FRAME_NANOS) {
+                longFrames++;
+            }
+        }
+        previousFrameStart = frameStart;
         timedFrames++;
         if (frameStart > nextStats) {
             logStats(count);
@@ -1567,14 +1640,22 @@ public final class LodRenderer {
         selectedMinY = level.getMinBuildHeight();
         selectedMaxY = level.getMaxBuildHeight();
         double extentSq = 0;
+        double nearestSq = Double.MAX_VALUE;
         for (int i = 0, n = drawList.size(); i < n; i++) {
             long key = drawList.getLong(i);
             int size = LodSection.SIZE << drawLevel(key);
-            double fx = Math.max(Math.abs(LodKey.x(key) * (double) size - cam.x),
-                    Math.abs((LodKey.x(key) + 1.0) * size - cam.x));
-            double fz = Math.max(Math.abs(LodKey.z(key) * (double) size - cam.z),
-                    Math.abs((LodKey.z(key) + 1.0) * size - cam.z));
-            extentSq = Math.max(extentSq, fx * fx + fz * fz);
+            double x0 = LodKey.x(key) * (double) size - cam.x;
+            double y0 = LodKey.y(key) * (double) size - cam.y;
+            double z0 = LodKey.z(key) * (double) size - cam.z;
+            double fx = Math.max(Math.abs(x0), Math.abs(x0 + size));
+            double fy = Math.max(Math.abs(y0), Math.abs(y0 + size));
+            double fz = Math.max(Math.abs(z0), Math.abs(z0 + size));
+            // In 3D (ADR-141): far above the ground, the horizontal extent alone put the far plane short.
+            extentSq = Math.max(extentSq, fx * fx + fy * fy + fz * fz);
+            double nx = Math.max(0, Math.max(x0, -(x0 + size)));
+            double ny = Math.max(0, Math.max(y0, -(y0 + size)));
+            double nz = Math.max(0, Math.max(z0, -(z0 + size)));
+            nearestSq = Math.min(nearestSq, nx * nx + ny * ny + nz * nz);
             Resident r = resident.get(key);
             if (r != null) {
                 r.lastUsed = now;
@@ -1590,8 +1671,9 @@ public final class LodRenderer {
         }
         maxOutdatedDrawn = Math.max(maxOutdatedDrawn, outdatedDrawn);
         // The camera moves up to the reselection distance before the next selection.
-        drawnExtent = Math.min(MAX_DISTANCE * 2, Math.max(lastSelectionDistance, Math.sqrt(extentSq))
+        drawnExtent = Math.min(MAX_DISTANCE * 4, Math.max(lastSelectionDistance, Math.sqrt(extentSq))
                 + Math.sqrt(RESELECT_DISTANCE_SQ));
+        drawnNearest = nearestSq == Double.MAX_VALUE ? 0 : Math.max(0, Math.sqrt(nearestSq) - Math.sqrt(RESELECT_DISTANCE_SQ));
         if (drawnBefore != null) {
             LongIterator added = drawn.iterator();
             while (added.hasNext()) {
@@ -2159,7 +2241,8 @@ public final class LodRenderer {
                             + " {} of {} quads sent (face directions), {} of them plants, {} sections may discard, {} left"
                             + " to the game, over {}"
                             + " frames; detail {}; at most {} coarse fallbacks, {} finer fallbacks and {} outdated"
-                            + " sections drawn per selection", count, resident.size(),
+                            + " sections drawn per selection; the longest LOD frame {} us ({}), the longest frame {} ms, {}"
+                            + " frames over 50 ms", count, resident.size(),
                     arena.used() * 8 >> 20, arena.capacity() * 8 >> 20, requested.size(), meshesUploaded, meshesEvicted,
                     selections, frameNanos / 1000 / Math.max(1, timedFrames),
                     (gpuPassNanos[0] + gpuPassNanos[1] + gpuPassNanos[2] + gpuPassNanos[3]) / 1000 / Math.max(1, gpuFrames),
@@ -2170,7 +2253,8 @@ public final class LodRenderer {
                     quadsSubmitted / Math.max(1, timedFrames), quadsInView / Math.max(1, timedFrames),
                     plantQuadsSubmitted / Math.max(1, timedFrames),
                     discardSections / Math.max(1, timedFrames), leftToGame / Math.max(1, timedFrames), timedFrames,
-                    String.format("%.1f", selector.detail()), maxFallbacks, maxFinerFallbacks, maxOutdatedDrawn);
+                    String.format("%.1f", selector.detail()), maxFallbacks, maxFinerFallbacks, maxOutdatedDrawn,
+                    maxFrameNanos / 1000, worstFrame, maxFrameGapNanos / 1_000_000, longFrames);
         }
         if (RenderSettings.performanceLogs()) {
             Farfield.LOG.info("LOD holes: at most {} chunk columns without anything drawn within {} chunks;"
@@ -2207,6 +2291,9 @@ public final class LodRenderer {
         discardSections = 0;
         leftToGame = 0;
         frameNanos = 0;
+        maxFrameNanos = 0;
+        maxFrameGapNanos = 0;
+        longFrames = 0;
         timedFrames = 0;
         java.util.Arrays.fill(gpuPassNanos, 0);
         gpuFrames = 0;
@@ -3248,7 +3335,8 @@ public final class LodRenderer {
         float fovY = (float) (2 * Math.atan(1 / m11)) * 1.1f;
         // Far plane past the farthest selected section; near plane no closer than far / 4e6, or the
         // far plane's row is lost in float (at the border's 67 M blocks every section was culled, E.3d).
-        float far = (float) Math.min(MAX_DISTANCE * 2, Math.max(1024, selectionDistance() * 2 + (32 << 15) * 2.0));
+        float far = (float) Math.min(MAX_DISTANCE * 4, Math.max(Math.max(1024, selectionDistance() * 2 + (32 << 15) * 2.0),
+                drawnExtent * 1.25)); // the ground seen from far above too (ADR-141)
         cullMatrix.setPerspective(fovY, m11 / m00, Math.max(1f, far / 4_000_000f), far).mul(viewRotation);
         frustum.set(cullMatrix);
     }

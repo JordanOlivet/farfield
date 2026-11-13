@@ -1077,10 +1077,21 @@ final class PreviewLayer {
         int level = drawLevel(key);
         if (level > TILE_LEVEL) {
             // The coarse tile over each place as stored, of level - 2 or coarser (E.3b).
+            // Each place looked up once per section (ADR-141): read per column and its neighbors, the boxed keys
+            // of the store's maps made a fifth of the client's garbage in flight, and a young GC every second.
+            it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<PreviewTile> seen =
+                    new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
             PreviewVoxels.Tiles coarse = (x, z) -> {
+                long place = (long) x << 32 | (z & 0xFFFFFFFFL);
+                PreviewTile known = seen.get(place);
+                if (known != null || seen.containsKey(place)) {
+                    return known;
+                }
                 long source = store.coarseSource(level - 2, x * PreviewTile.BLOCKS, z * PreviewTile.BLOCKS);
                 try {
-                    return source < 0 ? null : store.read(source);
+                    PreviewTile t = source < 0 ? null : store.read(source);
+                    seen.put(place, t);
+                    return t;
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 }

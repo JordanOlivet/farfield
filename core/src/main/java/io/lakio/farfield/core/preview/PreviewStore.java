@@ -108,7 +108,7 @@ public final class PreviewStore {
                     if (t.level() != level) {
                         throw new IOException("a level-" + t.level() + " tile among level " + level);
                     }
-                    summaries.put(key(level, x, z), t.summary());
+                    summaries.put(spread(key(level, x, z)), t.summary());
                     levels |= 1 << level;
                 } catch (IOException | RuntimeException e) {
                     Files.deleteIfExists(f); // a damaged tile is built again
@@ -166,18 +166,18 @@ public final class PreviewStore {
 
     /** Whether that very tile is stored. */
     public boolean contains(int level, int tileX, int tileZ) {
-        return summaries.containsKey(key(level, tileX, tileZ));
+        return summaries.containsKey(spread(key(level, tileX, tileZ)));
     }
 
     /** The summary of a stored tile, or null. */
     public PreviewTile.Summary summary(int level, int tileX, int tileZ) {
-        return summaries.get(key(level, tileX, tileZ));
+        return summaries.get(spread(key(level, tileX, tileZ)));
     }
 
     /** The summary of the level-0 view there, or null. */
     public PreviewTile.Summary summary(int tileX, int tileZ) {
         long view = key(tileX, tileZ);
-        PreviewTile.Summary cached = viewSummaries.get(view);
+        PreviewTile.Summary cached = viewSummaries.get(spread(view));
         if (cached != null) {
             return cached;
         }
@@ -214,7 +214,7 @@ public final class PreviewStore {
             return null;
         }
         if (s != null && writes.get() == before) {
-            viewSummaries.put(view, s);
+            viewSummaries.put(spread(view), s);
         }
         return s;
     }
@@ -223,7 +223,7 @@ public final class PreviewStore {
     private PreviewTile.Summary sourceSummary(long source, int tileX, int tileZ) throws IOException {
         int level = level(source);
         if (level == 0) {
-            return summaries.get(source);
+            return summaries.get(spread(source));
         }
         PreviewTile tile = coarse(source);
         return tile == null ? null
@@ -246,7 +246,7 @@ public final class PreviewStore {
     public PreviewTile read(int tileX, int tileZ) throws IOException {
         long view = key(tileX, tileZ);
         synchronized (cache) {
-            PreviewTile t = cache.get(view);
+            PreviewTile t = cache.get(spread(view));
             if (t != null) {
                 return t;
             }
@@ -288,7 +288,7 @@ public final class PreviewStore {
         }
         if (t != null && writes.get() == before) {
             synchronized (cache) {
-                cache.put(view, t);
+                cache.put(spread(view), t);
             }
         }
         return t;
@@ -306,7 +306,7 @@ public final class PreviewStore {
             held &= held - 1;
             int size = blocks(level);
             long key = key(level, Math.floorDiv(bx, size), Math.floorDiv(bz, size));
-            PreviewTile.Summary s = summaries.get(key);
+            PreviewTile.Summary s = summaries.get(spread(key));
             int q = (Math.floorMod(bz, size) >= size / 2 ? 2 : 0) + (Math.floorMod(bx, size) >= size / 2 ? 1 : 0);
             if (s != null && s.built(q)) {
                 return key;
@@ -317,7 +317,7 @@ public final class PreviewStore {
 
     /** The summary of a stored tile by its key, or null. */
     public PreviewTile.Summary summary(long key) {
-        return summaries.get(key);
+        return summaries.get(spread(key));
     }
 
     /** A stored tile by its key, as written, or null. */
@@ -328,7 +328,7 @@ public final class PreviewStore {
     /** A stored tile as written (a coarse one not cut), or null. */
     public PreviewTile read(int level, int tileX, int tileZ) throws IOException {
         long key = key(level, tileX, tileZ);
-        if (!summaries.containsKey(key)) {
+        if (!summaries.containsKey(spread(key))) {
             return null;
         }
         return level == 0 ? load(file(key)) : coarse(key);
@@ -353,7 +353,7 @@ public final class PreviewStore {
             int level = Integer.numberOfTrailingZeros(held);
             held &= held - 1;
             long key = key(level, tileX >> level, tileZ >> level);
-            PreviewTile.Summary s = summaries.get(key);
+            PreviewTile.Summary s = summaries.get(spread(key));
             if (s != null && s.built(quarterIn(level, tileX, tileZ, q))) {
                 return key;
             }
@@ -375,12 +375,12 @@ public final class PreviewStore {
 
     private PreviewTile coarse(long key) throws IOException {
         synchronized (coarse) {
-            PreviewTile t = coarse.get(key);
+            PreviewTile t = coarse.get(spread(key));
             if (t != null) {
                 return t;
             }
         }
-        if (!summaries.containsKey(key)) {
+        if (!summaries.containsKey(spread(key))) {
             return null;
         }
         PreviewTile t;
@@ -390,7 +390,7 @@ public final class PreviewStore {
             return null;
         }
         synchronized (coarse) {
-            coarse.put(key, t);
+            coarse.put(spread(key), t);
         }
         return t;
     }
@@ -435,24 +435,24 @@ public final class PreviewStore {
         // The cached copy is decoded from the bytes written: the caller's tile goes on changing.
         PreviewTile stored = decode(java.util.Arrays.copyOf(out, n + 4));
         writes.incrementAndGet();
-        summaries.put(key, stored.summary());
+        summaries.put(spread(key), stored.summary());
         levels |= 1 << level;
         long[] places = placesUnder(level, tileX, tileZ);
         synchronized (cache) {
             for (long place : places) {
-                cache.remove(place);
+                cache.remove(spread(place));
             }
             if (level == 0 && (stored.quarters() & 0xF) == 0xF) {
-                cache.put(key, stored.hasCanopy() ? stored.expand(0, 0) : stored);
+                cache.put(spread(key), stored.hasCanopy() ? stored.expand(0, 0) : stored);
             }
         }
         if (level > 0) {
             synchronized (coarse) {
-                coarse.put(key, stored);
+                coarse.put(spread(key), stored);
             }
         }
         for (long place : places) {
-            viewSummaries.remove(place);
+            viewSummaries.remove(spread(place));
         }
         writes.incrementAndGet();
         for (LongConsumer l : tileListeners) {
@@ -497,9 +497,14 @@ public final class PreviewStore {
             }
             return out;
         }
-        java.util.Set<Long> read = new java.util.HashSet<>(viewSummaries.keySet());
+        java.util.Set<Long> read = new java.util.HashSet<>();
+        for (long spread : viewSummaries.keySet()) {
+            read.add(unspread(spread));
+        }
         synchronized (cache) {
-            read.addAll(cache.keySet());
+            for (long spread : cache.keySet()) {
+                read.add(unspread(spread));
+            }
         }
         return read.stream().filter(place -> {
             int x = tileX(place);
@@ -511,7 +516,7 @@ public final class PreviewStore {
     /** A stored tile decoded from its file, never shared with the caches: a builder adds a quarter to it. */
     public PreviewTile load(int level, int tileX, int tileZ) throws IOException {
         long key = key(level, tileX, tileZ);
-        if (!summaries.containsKey(key)) {
+        if (!summaries.containsKey(spread(key))) {
             return null;
         }
         try {
@@ -532,7 +537,7 @@ public final class PreviewStore {
      */
     public byte[] readFile(int level, int tileX, int tileZ) throws IOException {
         long key = key(level, tileX, tileZ);
-        if (!summaries.containsKey(key)) {
+        if (!summaries.containsKey(spread(key))) {
             return null;
         }
         try {
@@ -581,6 +586,34 @@ public final class PreviewStore {
 
     private Path file(long key) {
         return dir.resolve("L" + level(key)).resolve("t." + tileX(key) + "." + tileZ(key) + ".ffp");
+    }
+
+    /**
+     * A tile key as these maps hold it (ADR-141): a key's {@code Long} hash is
+     * its tile z XOR its tile x, so every tile of a diagonal fell in one bin;
+     * the bins turned into trees, and each lookup in them walked a tree and
+     * allocated through {@code ConcurrentHashMap.comparableClassFor} (a tenth of
+     * the client's garbage in flight). A multiplication by an odd constant is a
+     * bijection of the longs that spreads them; {@link #unspread} undoes it.
+     */
+    static long spread(long key) {
+        return key * SPREAD;
+    }
+
+    static long unspread(long spread) {
+        return spread * UNSPREAD;
+    }
+
+    private static final long SPREAD = 0x9E3779B97F4A7C15L;
+    /** The inverse of {@link #SPREAD} modulo 2^64 (Newton's iteration doubles the bits right each step). */
+    private static final long UNSPREAD;
+
+    static {
+        long inverse = SPREAD;
+        for (int i = 0; i < 6; i++) {
+            inverse *= 2 - SPREAD * inverse;
+        }
+        UNSPREAD = inverse;
     }
 
     private static Map<Long, PreviewTile> lru(int size) {

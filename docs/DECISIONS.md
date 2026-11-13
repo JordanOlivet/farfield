@@ -4156,3 +4156,55 @@ distance, and a fog to show or hide apart from the distance.
   (7bb72c6) and new: the old one's day frame all black and its night sky
   black, the new one's day and night drawn. Not checked: the NeoForge
   pack, Photon past a few thousand blocks.
+
+## ADR-141 — Shader packs to 262,144 blocks; the near plane at the nearest LOD; GC pauses behind the stutters
+
+Status: accepted, 2026-11-13. Amends ADR-140. The user's second Fabric
+pack test of the day: the stutters while flying in creative with sprint,
+Photon still drawing black squares, and seen from 2 million blocks up a
+grey cast fighting over the preview.
+
+- **Context**:
+  - Photon (read from its `lod_mod_support.glsl`) rebuilds a combined
+    depth from the game's near plane (0.05) to `16 * vxRenderDistance`,
+    the LODs' extent. In float that depth reaches 1 past about 800,000
+    blocks: in the Fabric pack in production, Photon drew right at 4,096,
+    65,536 and 262,144 blocks and black from 1,048,576 on. ADR-140's
+    capture was at 4,096 only.
+  - ADR-140's extent was horizontal: far above the ground the far plane
+    could fall short of it; and from 2.2 million blocks up a near plane of
+    64 left the preview's surfaces a few thousand blocks of depth apart
+    (z-fighting, the grey cast).
+  - The stat line's mean hid the stutters: in the pack, flying at 262,144
+    blocks without shaders, the longest LOD frame of each 10 s was 20 to
+    50 ms, in a different step each time. A JFR: 78 young G1 pauses a
+    minute, 17 ms on average, 34 at most; about 4 GB allocated a second.
+    A fifth of it was boxed `Long` keys from far sections looking up their
+    coarse tiles per column, and a tenth `ConcurrentHashMap` trees: a tile
+    key's `Long` hash is its z XOR its x, so a diagonal's tiles shared one
+    bin.
+- **Decision**:
+  - Under a shader pack (Voxy or DH contract) the LODs are drawn to
+    262,144 blocks at most, logged once (`Shader pack LODs: drawn to
+    262144 blocks, not N`).
+  - The depth range: far twice the farthest drawn geometry in 3D, near
+    half the nearest drawn section (the LODs' depth is cleared before the
+    game's terrain draws, so nothing nearer needs it), at least 8 and far
+    / 2^20. The frustum's far plane reaches the drawn extent too.
+  - A far section looks each place's coarse tile up once
+    (`Long2ObjectOpenHashMap` per build); `PreviewStore` keeps its tile
+    maps under spread keys (a multiplication by an odd constant, undone by
+    its inverse), the key format unchanged.
+  - The stat line gives the longest LOD frame with its steps (blends,
+    rewrites, uploads, colors, selection, wanted, commands, eviction,
+    draw), the longest frame and the frames over 50 ms.
+- **Checked**: unit test (spread keys come back, a diagonal's hashes
+  spread). Fabric pack in production, 4K: Photon with the distance at
+  33,554,432 drawn at 262,144, day and night, no black; the view from
+  2,200,000 up without the grey cast; the flight's young G1 pauses 15.2
+  ms on average instead of 17.2, 35 over 15 ms instead of 58, their count
+  unchanged (78 a minute: the allocation moved to the meshers' arrays and
+  the zstd reads). The same flight with `-XX:+UseZGC -XX:+ZGenerational`
+  (Java 21): 157 pauses a minute, 0.023 ms at most (the window minimized,
+  so its frame times are not compared). Not checked: the NeoForge pack,
+  other shader packs, a client joined to a server.
