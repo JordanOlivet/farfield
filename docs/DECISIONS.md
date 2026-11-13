@@ -4499,3 +4499,39 @@ application and the evictions, (c) more meshes in flight.
   - Left: the quad copies the driver makes wait (one mesh, 14 to 33 ms, a
     few times a minute in flight): a persistent mapped staging buffer with
     GPU copies would remove the wait; the user decides.
+
+## ADR-149 — The quads go to the GPU through a mapped ring
+
+Status: accepted, 2026-11-13. Item 2 of the day, set aside at first for its
+mean (about 0.25 ms of uploads a frame), then asked for once ADR-148's
+measures showed the frames it costs ("go 2").
+
+- **Context**: after ADR-148 the worst frames left in flight were one
+  `glNamedBufferSubData` of one mesh into the quad buffer taking 6 to 33 ms,
+  a few times a minute: the driver waiting for the GPU to finish with the
+  buffer before it copies.
+- **Decision**:
+  - The quads are written into a 64 MB buffer mapped persistently
+    (coherent) and copied on the GPU into the quad buffer
+    (`glCopyNamedBufferSubData`), so the render thread never waits
+    (`StagingRing`). The writes of a frame are fenced after the uploads;
+    a span is written again once the GPU passed its fence.
+  - A copy that finds no free span, or a mesh over a quarter of the ring,
+    is sent directly as before: the ring never waits.
+  - `-Dfarfield.directUploads=true` sends everything directly. The stat
+    line gives the megabytes through the ring and the meshes sent directly.
+  - A fix to ADR-148: the quad buffer is never packed smaller while a swap
+    holds quads sent ahead of it (the packing moves the residents' quads
+    only); it is tried again once the swaps are in.
+- **Checked**: Fabric pack in production, 3840 x 2019 minimized, FOV 70,
+  ZGC, ADR-148's jar then this one back to back: the frames where one quad
+  copy took 6 to 12 ms (four in that run) are gone; 40 to 150 MB of quads
+  each 10 s through the ring, no mesh sent directly; render thread in
+  flight 1.42 to 1.65 ms against 1.42 to 1.61 (the GPU at 3.5 ms a frame
+  on both sides). The spawn captures fall in two families of tree
+  placement whichever the jar (ADR-148's jar against the same earlier jar:
+  0.08 % in one run, 2.65 % in the next), the preview's known
+  nondeterminism; this jar is 0.24 % from one of them, and a crop of the
+  difference shows the same clean terrain with other trees.
+  Not checked: multiplayer, shader packs, the NeoForge pack, AMD or Intel
+  drivers.

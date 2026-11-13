@@ -144,6 +144,8 @@ public final class LodRenderer {
      * view went in one frame, 41 to 116 ms.
      */
     private static final long UPLOAD_BUDGET_NANOS = 3_000_000L;
+    /** The mapped ring the quads go through (ADR-149): a frame's uploads, three frames in flight, and room. */
+    private static final long UPLOAD_RING_BYTES = 64L << 20;
     private static final long INITIAL_QUADS = 8L << 20;
     /** The quad buffer's size reached in the last session, its start in this one (ADR-144). */
     private static final String QUADS_FILE = "farfield-quad-buffer.txt";
@@ -318,6 +320,8 @@ public final class LodRenderer {
     private GlBuffer occupancy;
     /** Per section slot, the slots of its resident same-level neighbors ({@link #NEIGHBOR_INTS}). */
     private GlBuffer neighborSlots;
+    /** The quads' way to the GPU without waiting on the driver (ADR-149); null: sent directly. */
+    private StagingRing uploadRing;
     /** Per section slot, its columns' surface biomes ({@link #BIOME_COLUMN_INTS}), for biome blending. */
     private GlBuffer biomeColumns;
     /**
@@ -1231,6 +1235,15 @@ public final class LodRenderer {
         startQuads = rememberedQuads();
         startedNanos = System.nanoTime();
         quads = new GlBuffer(startQuads * 8, false);
+        if (!Boolean.getBoolean("farfield.directUploads")) {
+            try {
+                uploadRing = new StagingRing(UPLOAD_RING_BYTES);
+                Farfield.LOG.info("LOD meshes uploaded through a {} MB mapped ring", UPLOAD_RING_BYTES >> 20);
+            } catch (RuntimeException e) {
+                uploadRing = null;
+                Farfield.LOG.warn("LOD upload ring unavailable, meshes sent directly", e);
+            }
+        }
         arena = new RangeAllocator(startQuads);
         // The per-slot buffers at the slots the last session used (ADR-144): each doubling is a copy.
         long slots = Math.max(1024, rememberedSlots);
@@ -1491,6 +1504,9 @@ public final class LodRenderer {
         applyRewrites();
         phase[1] = System.nanoTime();
         uploadMeshes();
+        if (uploadRing != null) {
+            uploadRing.endFrame();
+        }
         phase[2] = System.nanoTime();
         uploadColors(mc, level, looksBudget(frameStart));
         updateDrawnSections(mc, level, camera);
@@ -2825,6 +2841,7 @@ public final class LodRenderer {
                         cacheCounts[1] == 0 ? 0 : cacheCounts[0] * 100 / cacheCounts[1], cacheCounts[1]);
             }
         }
+        long[] ringCounts = uploadRing == null ? new long[2] : uploadRing.takeCounts();
         if (RenderSettings.performanceLogs()) {
             Farfield.LOG.info("LOD renderer: {} sections drawn, {} resident, {} MB of {} MB quads used, {} meshing,"
                             + " {} meshes uploaded and {} freed, {} selections since last line; per frame {} us on the"
@@ -2834,7 +2851,8 @@ public final class LodRenderer {
                             + " frames; detail {}; at most {} coarse fallbacks, {} finer fallbacks and {} outdated"
                             + " sections drawn per selection; the longest LOD frame {} us ({}), the longest frame {} ms, {}"
                             + " frames over 50 ms; the longest preview selection {} ms on its thread; steps per frame {};"
-                            + " {} sections culled on the GPU, {} on the CPU {}",
+                            + " {} sections culled on the GPU, {} on the CPU {}; {} MB of quads through the upload ring,"
+                            + " {} meshes sent directly",
                     count, resident.size(),
                     arena.used() * 8 >> 20, arena.capacity() * 8 >> 20, requested.size(), meshesUploaded, meshesEvicted,
                     selections, frameNanos / 1000 / Math.max(1, timedFrames),
@@ -2848,7 +2866,8 @@ public final class LodRenderer {
                     discardSections / Math.max(1, timedFrames), leftToGame / Math.max(1, timedFrames), timedFrames,
                     String.format("%.1f", selector.detail()), maxFallbacks, maxFinerFallbacks, maxOutdatedDrawn,
                     maxFrameNanos / 1000, worstFrame, maxFrameGapNanos / 1_000_000, longFrames,
-                    previewSelectNanos / 1_000_000, stepMeans(timedFrames), gpuCandidates, cpuList.size(), java.util.Arrays.toString(cpuWhy));
+                    previewSelectNanos / 1_000_000, stepMeans(timedFrames), gpuCandidates, cpuList.size(), java.util.Arrays.toString(cpuWhy),
+                    ringCounts[0] >> 20, ringCounts[1]);
         }
         if (RenderSettings.performanceLogs()) {
             Farfield.LOG.info("LOD holes: at most {} chunk columns without anything drawn within {} chunks;"
@@ -3390,14 +3409,33 @@ public final class LodRenderer {
             if (m.quads.length > 0) {
                 start = arena.allocate(m.quads.length); // no growth nor eviction here: sent at the swap if full
                 if (start >= 0) {
-                    long sent = System.nanoTime();
-                    quads.upload(start * 8, m.quads, m.quads.length);
-                    uploadQuadsNanos += System.nanoTime() - sent;
+                    sendQuads(start, m.quads);
                 }
             }
             swap.ready.add(new Staged(m, start));
         }
         return true;
+    }
+
+    /** Sends a mesh's quads to the quad buffer at quad {@code start}: through the ring, or directly when it is full. */
+    private void sendQuads(long start, long[] data) {
+        long sent = System.nanoTime();
+        if (uploadRing == null || !uploadRing.copy(data, data.length, quads, start * 8)) {
+            quads.upload(start * 8, data, data.length);
+        }
+        uploadQuadsNanos += System.nanoTime() - sent;
+    }
+
+    /** Whether a swap holds quads sent ahead of it: their ranges are in the arena but no resident's. */
+    private boolean hasStagedQuads() {
+        for (Swap swap : swaps.values()) {
+            for (Staged st : swap.ready) {
+                if (st.start() >= 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /** Frees a staged mesh's quads; true, for removeIf. */
@@ -3559,9 +3597,7 @@ public final class LodRenderer {
         if (r.quadCount > 0) {
             r.start = start;
             if (staged < 0) {
-                long sent = System.nanoTime();
-                quads.upload(start * 8, m.quads, m.quads.length);
-                uploadQuadsNanos += System.nanoTime() - sent;
+                sendQuads(start, m.quads);
             }
         }
         writeSection(m.key, r);
@@ -3700,8 +3736,8 @@ public final class LodRenderer {
             arenaLowSince = now;
             return;
         }
-        if (now - arenaLowSince < SHRINK_AFTER_NANOS) {
-            return;
+        if (now - arenaLowSince < SHRINK_AFTER_NANOS || hasStagedQuads()) {
+            return; // the packing moves the residents' quads only: tried again once the swaps are in
         }
         arenaLowSince = -1;
         GlBuffer smaller = new GlBuffer(target * 8);
