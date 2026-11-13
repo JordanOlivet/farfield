@@ -4208,3 +4208,35 @@ grey cast fighting over the preview.
   (Java 21): 157 pauses a minute, 0.023 ms at most (the window minimized,
   so its frame times are not compared). Not checked: the NeoForge pack,
   other shader packs, a client joined to a server.
+
+## ADR-142 — Less garbage while meshing the preview
+
+Status: accepted, 2026-11-13. Follows ADR-141 (the stutters are young
+G1 pauses). The user: "Fais la baisse de l'allocation dans la foulée".
+
+- **Context**: a JFR of the Fabric pack flying at 262,144 blocks (the
+  stack parser of the first reading dropped frames whose signatures hold
+  spaces; read again): a preview build's column arrays (nine arrays of
+  34 x 34) and a coarse tree stamp's two arrays of 32^3 ints, new for each
+  build and each neighbor layer; a zstd decode per section the meshers'
+  cache missed (aircompressor 0.27 allocates in its own sequence loop);
+  boxed keys in the preview masks' map; a new map per far section build;
+  two work arrays in every decoded `LodSection`.
+- **Decision**: the build's column arrays are the thread's, cleared per
+  build (a nested build takes new ones); a coarse stamp borrows the
+  thread's counts, materials and snow arrays at its first tree block and
+  gives them back after (counts and snow blocks cleared; a material is
+  read only where counted); the preview masks' map is keyed by
+  `PreviewStore.spread` keys; a far section's tile memo is a thread's map
+  cleared per build; `LodSection` makes its work arrays at their first
+  use; the meshers' section cache holds 4,096 decoded sections (1,024
+  before).
+- **Checked**: `gradlew build` green. Fabric pack in production, G1,
+  window minimized, the same 90 s flight, about 85,000 mesh jobs each, the
+  ADR-141 jar against the new one twice: Farfield's allocation 88 GB a
+  minute against 59 and 63 (the whole client 218 against 179 and 182);
+  young pauses 14.8 ms on average against 11.8 and 13.2, those over 15 ms
+  34 against 6 and 10; their count unchanged (73 against 81 and 76): the
+  rest of the garbage is the game's and the pack's other mods' (a third of
+  it Vec3 and iterators). Generational ZGC (ADR-141) stays the fix for the
+  pauses themselves. Not checked: the NeoForge pack, a 4K window.

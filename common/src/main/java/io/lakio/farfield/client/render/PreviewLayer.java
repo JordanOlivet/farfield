@@ -73,6 +73,7 @@ final class PreviewLayer {
     /** Selection existence of plain keys, render thread; cleared whenever tiles or masks change. */
     private final Long2ByteOpenHashMap existence = new Long2ByteOpenHashMap();
     /** Per tile, its chunks with real data: 32 rows (z) of bits (x). */
+    /** Under {@link PreviewStore#spread} keys (ADR-141): tile keys collide along diagonals. */
     private final Map<Long, int[]> masks = new ConcurrentHashMap<>();
     private final Set<Long> maskPending = ConcurrentHashMap.newKeySet();
     /** Tiles whose real data changed since their mask was last read. */
@@ -223,7 +224,7 @@ final class PreviewLayer {
         }
         if (LodKey.level(key) == TILE_LEVEL) {
             long tile = PreviewStore.key(LodKey.x(key), LodKey.z(key));
-            if (masks.containsKey(tile)) {
+            if (masks.containsKey(PreviewStore.spread(tile))) {
                 maskDirty.add(tile);
                 requestMask(w, tile);
             }
@@ -231,7 +232,7 @@ final class PreviewLayer {
             int sx = LodKey.x(key);
             int sz = LodKey.z(key);
             long tile = PreviewStore.key(Math.floorDiv(sx, SECTIONS_PER_TILE), Math.floorDiv(sz, SECTIONS_PER_TILE));
-            int[] mask = masks.get(tile);
+            int[] mask = masks.get(PreviewStore.spread(tile));
             if (mask == null) {
                 return; // read whole with the tile's mask
             }
@@ -535,7 +536,7 @@ final class PreviewLayer {
     /** Whether the preview hides a chunk for real terrain, for {@code debug here}. Render thread. */
     String describeChunk(int chunkX, int chunkZ) {
         long tile = PreviewStore.key(Math.floorDiv(chunkX, PreviewTile.CHUNKS), Math.floorDiv(chunkZ, PreviewTile.CHUNKS));
-        int[] mask = masks.get(tile);
+        int[] mask = masks.get(PreviewStore.spread(tile));
         if (mask == null) {
             return "mask of its tile not built";
         }
@@ -607,7 +608,7 @@ final class PreviewLayer {
         boolean far = LodKey.level(plain) > TILE_LEVEL;
         boolean exists = far ? computeFarExists(plain) : computeExists(plain);
         // A tile whose mask is not known yet is asked again at the next selection.
-        if (exists || far || masks.containsKey(tileOf(plain))) {
+        if (exists || far || masks.containsKey(PreviewStore.spread(tileOf(plain)))) {
             existence.put(plain, exists ? EXISTS : ABSENT);
         }
         return exists;
@@ -631,7 +632,7 @@ final class PreviewLayer {
         int chunks = size >> 4;
         int y0 = LodKey.y(plain) * size;
         long tile = PreviewStore.key(tileX, tileZ);
-        int[] mask = masks.get(tile);
+        int[] mask = masks.get(PreviewStore.spread(tile));
         if (mask == null) {
             requestMask(w, tile);
             return false;
@@ -697,7 +698,7 @@ final class PreviewLayer {
                 do {
                     maskDirty.remove(tile);
                     int[] fresh = readMask(w, tile);
-                    int[] old = masks.get(tile);
+                    int[] old = masks.get(PreviewStore.spread(tile));
                     if (old != null && hidesMore(old, fresh)) {
                         // Real chunks came in: the preview stays over them until the real
                         // terrain drawn there is meshed (applyHeld), or it showed a hole meanwhile.
@@ -710,7 +711,7 @@ final class PreviewLayer {
                     if (old != null) {
                         countHidden(tile, old, fresh, System.nanoTime());
                     }
-                    masks.put(tile, fresh);
+                    masks.put(PreviewStore.spread(tile), fresh);
                     if (old == null || !Arrays.equals(old, fresh)) {
                         masksChanged = true;
                         if (old != null) {
@@ -833,7 +834,7 @@ final class PreviewLayer {
         for (Map.Entry<Long, int[]> e : heldMasks.entrySet()) {
             long tile = e.getKey();
             int[] fresh = e.getValue();
-            int[] old = masks.get(tile);
+            int[] old = masks.get(PreviewStore.spread(tile));
             Long since = heldSince.get(tile);
             boolean go = old == null || since == null || now - since > HOLD_NANOS;
             // Chunk by chunk: the preview leaves each new real chunk once that one is drawn. Held for
@@ -868,14 +869,14 @@ final class PreviewLayer {
                         countHeld(old, fresh, now - since, now - since > HOLD_NANOS);
                         countHidden(tile, old, fresh, now);
                     }
-                    masks.put(tile, fresh);
+                    masks.put(PreviewStore.spread(tile), fresh);
                     masksChanged = true;
                     changed(tile, changedChunks(old, fresh));
                 }
             } else if (!Arrays.equals(partial, old) && heldMasks.get(tile) == fresh) {
                 countHeld(old, partial, now - since, false);
                 countHidden(tile, old, partial, now);
-                masks.put(tile, partial);
+                masks.put(PreviewStore.spread(tile), partial);
                 masksChanged = true;
                 changed(tile, changedChunks(old, partial));
             }
@@ -948,12 +949,12 @@ final class PreviewLayer {
 
     /** The tile's mask, read from the real level-4 sections when not known. Any thread. */
     private int[] mask(LodWorld w, long tile) throws IOException {
-        int[] mask = masks.get(tile);
+        int[] mask = masks.get(PreviewStore.spread(tile));
         if (mask != null) {
             return mask;
         }
         mask = readMask(w, tile);
-        int[] raced = masks.putIfAbsent(tile, mask);
+        int[] raced = masks.putIfAbsent(PreviewStore.spread(tile), mask);
         return raced != null ? raced : mask;
     }
 
@@ -1054,8 +1055,8 @@ final class PreviewLayer {
                 int nz = cz + dz;
                 int[] m = mask;
                 if (nx < 0 || nz < 0 || nx >= PreviewTile.CHUNKS || nz >= PreviewTile.CHUNKS) {
-                    m = masks.get(PreviewStore.key(tileX + Math.floorDiv(nx, PreviewTile.CHUNKS),
-                            tileZ + Math.floorDiv(nz, PreviewTile.CHUNKS)));
+                    m = masks.get(PreviewStore.spread(PreviewStore.key(tileX + Math.floorDiv(nx, PreviewTile.CHUNKS),
+                            tileZ + Math.floorDiv(nz, PreviewTile.CHUNKS))));
                     nx = Math.floorMod(nx, PreviewTile.CHUNKS);
                     nz = Math.floorMod(nz, PreviewTile.CHUNKS);
                 }
@@ -1066,6 +1067,10 @@ final class PreviewLayer {
         }
         return false;
     }
+
+    /** Per mesher thread, a far section's coarse tiles by place, cleared per build: a new map each was garbage. */
+    private static final ThreadLocal<it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<PreviewTile>> SEEN =
+            ThreadLocal.withInitial(it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap::new);
 
     /** The section of a preview key, real chunks left empty; null when empty. Mesher threads. */
     LodSection build(LodWorld w, long key) throws IOException {
@@ -1079,8 +1084,8 @@ final class PreviewLayer {
             // The coarse tile over each place as stored, of level - 2 or coarser (E.3b).
             // Each place looked up once per section (ADR-141): read per column and its neighbors, the boxed keys
             // of the store's maps made a fifth of the client's garbage in flight, and a young GC every second.
-            it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<PreviewTile> seen =
-                    new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+            it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<PreviewTile> seen = SEEN.get();
+            seen.clear();
             PreviewVoxels.Tiles coarse = (x, z) -> {
                 long place = (long) x << 32 | (z & 0xFFFFFFFFL);
                 PreviewTile known = seen.get(place);

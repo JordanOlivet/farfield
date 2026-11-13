@@ -596,11 +596,11 @@ public final class PreviewStore {
      * the client's garbage in flight). A multiplication by an odd constant is a
      * bijection of the longs that spreads them; {@link #unspread} undoes it.
      */
-    static long spread(long key) {
+    public static long spread(long key) {
         return key * SPREAD;
     }
 
-    static long unspread(long spread) {
+    public static long unspread(long spread) {
         return spread * UNSPREAD;
     }
 

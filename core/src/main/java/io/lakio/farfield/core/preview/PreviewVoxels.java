@@ -222,17 +222,71 @@ public final class PreviewVoxels {
         int oy = sy * size;
         int oz = sz * size;
         TileCache cache = new TileCache(tiles);
-        int n = (S + 2) * (S + 2);
-        int[] h = new int[n];
-        int[] low = new int[n];
-        int[] cells = new int[n];
-        boolean[] real = new boolean[n];
-        int[] ground = new int[n];
-        int[] fluid = new int[n];
-        int[] lake = new int[n]; // per column, a dug lake's fluid (ADR-118); -1 for none
-        int[] lakeTop = new int[n];
-        boolean[] dug = new boolean[n];
-        java.util.Arrays.fill(lake, -1);
+        // The columns' arrays are the thread's, cleared (ADR-141): a new set per build, neighbors' layers
+        // included, was a sixth of the client's garbage in flight.
+        Scratch scratch = Scratch.take();
+        try {
+            return build(level, sx, sy, sz, tiles, mask, air, minY, maskGround, maskFluid, layerAxis, layerIndex,
+                    covers, blockLight, shown, far, s, size, ox, oy, oz, cache, scratch);
+        } finally {
+            scratch.give();
+        }
+    }
+
+    /** Per thread, the arrays of a build's columns; a nested build takes new ones. */
+    private static final class Scratch {
+        private static final int N = (S + 2) * (S + 2);
+        private static final ThreadLocal<Scratch> MINE = ThreadLocal.withInitial(Scratch::new);
+        final int[] h = new int[N];
+        final int[] low = new int[N];
+        final int[] cells = new int[N];
+        final boolean[] real = new boolean[N];
+        final int[] ground = new int[N];
+        final int[] fluid = new int[N];
+        final int[] lake = new int[N];
+        final int[] lakeTop = new int[N];
+        final boolean[] dug = new boolean[N];
+        final int[] seas = new int[S * S];
+        private boolean taken;
+        private boolean shared;
+
+        static Scratch take() {
+            Scratch t = MINE.get();
+            Scratch s = t.taken ? new Scratch() : t;
+            s.taken = true;
+            s.shared = s == t;
+            java.util.Arrays.fill(s.h, 0);
+            java.util.Arrays.fill(s.low, 0);
+            java.util.Arrays.fill(s.cells, 0);
+            java.util.Arrays.fill(s.real, false);
+            java.util.Arrays.fill(s.ground, 0);
+            java.util.Arrays.fill(s.fluid, 0);
+            java.util.Arrays.fill(s.lake, -1); // per column, a dug lake's fluid (ADR-118); -1 for none
+            java.util.Arrays.fill(s.lakeTop, 0);
+            java.util.Arrays.fill(s.dug, false);
+            return s;
+        }
+
+        void give() {
+            if (shared) {
+                taken = false;
+            }
+        }
+    }
+
+    private static LodSection build(int level, int sx, int sy, int sz, Tiles tiles, Mask mask, int air, int minY,
+                                    int maskGround, int maskFluid, int layerAxis, int layerIndex,
+                                    MipBuilder.Shapes covers, boolean blockLight, Shown shown, boolean far, int s,
+                                    int size, int ox, int oy, int oz, TileCache cache, Scratch scratch) {
+        int[] h = scratch.h;
+        int[] low = scratch.low;
+        int[] cells = scratch.cells;
+        boolean[] real = scratch.real;
+        int[] ground = scratch.ground;
+        int[] fluid = scratch.fluid;
+        int[] lake = scratch.lake;
+        int[] lakeTop = scratch.lakeTop;
+        boolean[] dug = scratch.dug;
         int[] cell = new int[2];
         int[] pit = new int[3];
         // The lakes are read per column, so the few tiles around the section are looked up once each.
@@ -263,7 +317,7 @@ public final class PreviewVoxels {
             }
         }
         LodSection section = null;
-        int[] seas = new int[S * S]; // per column, the sea's first free block; NONE without a preview sea
+        int[] seas = scratch.seas; // per column, the sea's first free block; NONE without a preview sea
         java.util.Arrays.fill(seas, NONE);
         for (int k = 0; k < S; k++) {
             if (layerAxis == 2 && k != layerIndex) {
@@ -705,6 +759,15 @@ public final class PreviewVoxels {
         int s = 1 << level;
         int size = S * s;
         Stamp stamp = new Stamp(section, level, ox, oy, oz, size, mask, air, layerAxis, layerIndex);
+        try {
+            return trees(stamp, level, ox, oy, oz, size, cache, mask, shown);
+        } finally {
+            stamp.giveBack();
+        }
+    }
+
+    private static LodSection trees(Stamp stamp, int level, int ox, int oy, int oz, int size, TileCache cache, Mask mask,
+                                    Shown shown) {
         // Crowns reach less than a chunk: the chunks around the footprint are enough.
         for (int chunkZ = (oz >> 4) - 1; chunkZ <= ((oz + size - 1) >> 4) + 1; chunkZ++) {
             for (int chunkX = (ox >> 4) - 1; chunkX <= ((ox + size - 1) >> 4) + 1; chunkX++) {
@@ -784,6 +847,17 @@ public final class PreviewVoxels {
         }
     }
 
+    /** Per thread, a coarse stamp's per-voxel arrays (ADR-141). */
+    private static final class StampArrays {
+        static final ThreadLocal<StampArrays> MINE = ThreadLocal.withInitial(StampArrays::new);
+        final int[] counts = new int[S * S * S];
+        final int[] materials = new int[S * S * S];
+        final int[] snow = new int[S * S * S];
+        final int[] snowBlocks = new int[S * S * S];
+        boolean taken;
+        boolean snowTaken;
+    }
+
     /** Writes tree blocks into a section, or counts them per voxel on coarse levels. */
     private static final class Stamp {
         private final int level;
@@ -802,8 +876,11 @@ public final class PreviewVoxels {
         int water = -1;
         private final int layerAxis;
         private final int layerIndex;
-        private final int[] counts;
-        private final int[] materials;
+        /** Coarse levels: per voxel the tree blocks counted and their material; null until the first. */
+        private int[] counts;
+        private int[] materials;
+        /** The thread's arrays when this stamp holds them (ADR-141): two of 128 KB per stamp were garbage. */
+        private StampArrays borrowed;
         /** Coarse levels: per voxel the snow layers in it and their material; null until a snowy crown. */
         private int[] snowBlocks;
         private int[] snow;
@@ -828,8 +905,32 @@ public final class PreviewVoxels {
             this.air = air;
             this.layerAxis = layerAxis;
             this.layerIndex = layerIndex;
-            counts = level > 0 ? new int[S * S * S] : null;
-            materials = level > 0 ? new int[S * S * S] : null;
+        }
+
+        /** The counts and materials, the thread's when free (counts cleared; a material is read only where counted). */
+        private void counting() {
+            if (counts != null) {
+                return;
+            }
+            StampArrays a = StampArrays.MINE.get();
+            if (!a.taken) {
+                a.taken = true;
+                borrowed = a;
+                java.util.Arrays.fill(a.counts, 0);
+                counts = a.counts;
+                materials = a.materials;
+            } else {
+                counts = new int[S * S * S];
+                materials = new int[S * S * S];
+            }
+        }
+
+        void giveBack() {
+            if (borrowed != null) {
+                borrowed.taken = false;
+                borrowed.snowTaken = false;
+                borrowed = null;
+            }
         }
 
         void tree(PreviewTile.TreeKind k, int x, int ground, int z, int chunkX, int chunkZ) {
@@ -963,8 +1064,15 @@ public final class PreviewVoxels {
                 return;
             }
             if (snow == null) {
-                snow = new int[S * S * S];
-                snowBlocks = new int[S * S * S];
+                if (borrowed != null && !borrowed.snowTaken) {
+                    borrowed.snowTaken = true;
+                    java.util.Arrays.fill(borrowed.snowBlocks, 0);
+                    snow = borrowed.snow;
+                    snowBlocks = borrowed.snowBlocks;
+                } else {
+                    snow = new int[S * S * S];
+                    snowBlocks = new int[S * S * S];
+                }
             }
             snowBlocks[i] += blocks;
             snow[i] = material;
@@ -1082,6 +1190,7 @@ public final class PreviewVoxels {
 
         private void add(int vx, int vy, int vz, int blocks, int material) {
             int i = (vy * S + vz) * S + vx;
+            counting();
             counts[i] += blocks;
             materials[i] = material;
         }
@@ -1137,6 +1246,7 @@ public final class PreviewVoxels {
                             setIfAir(i, material);
                         } else {
                             int dx = Math.min(x1, ox + (vx + 1) * s) - Math.max(x0, ox + vx * s);
+                            counting();
                             counts[i] += dx * dy * dz;
                             materials[i] = material;
                         }
@@ -1154,6 +1264,7 @@ public final class PreviewVoxels {
                 setIfAir(i, material);
                 return;
             }
+            counting();
             counts[i]++;
             materials[i] = material;
         }
@@ -1207,6 +1318,9 @@ public final class PreviewVoxels {
             int threshold = Math.max(1, s * s * s / 4);
             // The real mip rule's view from above: snow where it tops half the voxel's columns or more.
             int snowy = s * s / 2;
+            if (counts == null) {
+                return section; // no tree block counted
+            }
             for (int i = 0; i < counts.length; i++) {
                 if (counts[i] >= threshold) {
                     setIfAir(i, snow != null && snowBlocks[i] >= snowy ? snow[i] : materials[i]);

@@ -57,9 +57,24 @@ public final class LodSection {
     private int[] biomes;
     private int uniformBiome = -1;
 
-    private final int[] scratch = new int[BRICK_VOLUME];
-    private final byte[] nibbleScratch = new byte[NibbleBricks.BRICK_BYTES];
+    /** Work arrays, made at their first use (ADR-141): a section decoded only to be read never needs them. */
+    private int[] scratch;
+    private byte[] nibbleScratch;
     private int[] remap = new int[16];
+
+    private int[] scratch() {
+        if (scratch == null) {
+            scratch = new int[BRICK_VOLUME];
+        }
+        return scratch;
+    }
+
+    private byte[] nibbleScratch() {
+        if (nibbleScratch == null) {
+            nibbleScratch = new byte[NibbleBricks.BRICK_BYTES];
+        }
+        return nibbleScratch;
+    }
 
     /** A section filled with one material (typically air), full sky light, unknown biome. */
     public LodSection(int fillMaterial) {
@@ -296,9 +311,9 @@ public final class LodSection {
             long[] data = bricks[b];
             if (data != null) {
                 for (int v = 0; v < BRICK_VOLUME; v++) {
-                    scratch[v] = unpack(data, oldBits, v);
+                    scratch()[v] = unpack(data, oldBits, v);
                 }
-                bricks[b] = pack(scratch, newBits);
+                bricks[b] = pack(scratch(), newBits);
             }
         }
     }
@@ -320,8 +335,8 @@ public final class LodSection {
             if (uniform[b] == index) {
                 return;
             }
-            Arrays.fill(scratch, uniform[b]);
-            data = pack(scratch, bits);
+            Arrays.fill(scratch(), uniform[b]);
+            data = pack(scratch(), bits);
             bricks[b] = data;
         }
         int v = voxelInBrick(x, y, z);
@@ -390,7 +405,7 @@ public final class LodSection {
                             int row = sy | ((bz * 8 + lz) << 4) | (bx * 8);
                             for (int lx = 0; lx < 8; lx++) {
                                 int index = remap[indices[row + lx]];
-                                scratch[v++] = index;
+                                scratch()[v++] = index;
                                 if (index != first) {
                                     if (first < 0) {
                                         first = index;
@@ -405,7 +420,7 @@ public final class LodSection {
                         bricks[b] = null;
                         uniform[b] = first;
                     } else {
-                        bricks[b] = pack(scratch, bits);
+                        bricks[b] = pack(scratch(), bits);
                     }
                 }
             }
@@ -417,7 +432,7 @@ public final class LodSection {
             for (int bz = 0; bz < 2; bz++) {
                 for (int bx = 0; bx < 2; bx++) {
                     int b = brickIndex(dx * 2 + bx, dy * 2 + by, dz * 2 + bz);
-                    byte[] out = nibbleScratch;
+                    byte[] out = nibbleScratch();
                     int v = 0;
                     for (int ly = 0; ly < 8; ly++) {
                         for (int lz = 0; lz < 8; lz++) {
@@ -508,9 +523,9 @@ public final class LodSection {
                 continue;
             }
             for (int v = 0; v < BRICK_VOLUME; v++) {
-                scratch[v] = newIndex[unpack(data, oldBits, v)];
+                scratch()[v] = newIndex[unpack(data, oldBits, v)];
             }
-            bricks[b] = pack(scratch, newBits);
+            bricks[b] = pack(scratch(), newBits);
         }
         palette = newPalette;
         paletteSize = n;

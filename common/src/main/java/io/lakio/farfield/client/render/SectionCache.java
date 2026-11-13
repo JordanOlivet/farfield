@@ -20,7 +20,12 @@ import java.util.Map;
  */
 final class SectionCache {
 
-    private static final int CAPACITY = 1024;
+    /**
+     * 4,096 decoded sections (ADR-141): at 1,024, in flight, about a third of
+     * the reads missed and each miss ran a zstd decode whose own objects were
+     * a seventh of the client's garbage.
+     */
+    private static final int CAPACITY = 4096;
     /** Stamps kept per key before they are forgotten and a floor takes over. */
     private static final int STAMPS = 8192;
 
