@@ -333,6 +333,26 @@ public final class LodRenderer {
     private int blendRadius = -1;
     private final int[] neighborScratch = new int[NEIGHBOR_INTS];
     private final int[] oneInt = new int[1];
+    /**
+     * Per slot (ADR-148): the resident section's key and the last time the
+     * selection used it (drawn, or relied on to descend), {@link Long#MAX_VALUE}
+     * for a free slot. The evictions scan these arrays in order: walking the
+     * resident map read every section's object, 1 to 1.5 ms each 60 frames.
+     */
+    private long[] slotKeys = new long[1024];
+    private long[] slotLastUsed = new long[1024];
+    /**
+     * Single ints written into the neighbor tables this frame, by int index,
+     * the last write kept: one compute pass writes them all before the draws
+     * (ADR-148). One buffer call per int cost 8 us a mesh and 5 to 10 ms for
+     * 512 evictions.
+     */
+    private final it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap neighborWrites =
+            new it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap();
+    private java.nio.IntBuffer scatterScratch = org.lwjgl.BufferUtils.createIntBuffer(4096);
+    private GlProgram scatterProgram;
+    private int scatterCountU;
+    private GlBuffer scatterPairs;
     private final LongArrayList evicted = new LongArrayList();
     /**
      * Sections the terrain renderer has compiled around the camera, one bit
@@ -374,11 +394,15 @@ public final class LodRenderer {
     /** The slots the last selection gave the GPU, and the most commands a list of theirs may hold. */
     private int gpuCandidates;
     private int gpuMaxCommands;
-    private final it.unimi.dsi.fastutil.ints.IntArrayList gpuSlots = new it.unimi.dsi.fastutil.ints.IntArrayList();
+    private it.unimi.dsi.fastutil.ints.IntArrayList gpuSlots = new it.unimi.dsi.fastutil.ints.IntArrayList();
     /** The selection's sections the CPU loop still draws: near the game's terrain, or not eligible. */
-    private final LongArrayList cpuList = new LongArrayList();
+    private LongArrayList cpuList = new LongArrayList();
     /** GPU-culled sections with translucent faces: those stay sorted on the CPU, far to near. */
-    private final LongArrayList gpuTranslucent = new LongArrayList();
+    private LongArrayList gpuTranslucent = new LongArrayList();
+    /** The same lists of the selection being applied (ADR-148), swapped in when it is whole. */
+    private it.unimi.dsi.fastutil.ints.IntArrayList nextGpuSlots = new it.unimi.dsi.fastutil.ints.IntArrayList();
+    private LongArrayList nextCpuList = new LongArrayList();
+    private LongArrayList nextGpuTranslucent = new LongArrayList();
     /** Translucent sections of this frame, the translucent order's indexes point here. */
     private final LongArrayList frameTranslucent = new LongArrayList();
     /** Slots freed since the last selection: reused only after it, so no culled slot draws another section. */
@@ -552,7 +576,30 @@ public final class LodRenderer {
     private long holeMaxNanos;
     private int holeExamples;
     /** The sections the last selection draws, real and preview, and the build height it ran with. */
-    private final LongOpenHashSet drawn = new LongOpenHashSet();
+    private LongOpenHashSet drawn = new LongOpenHashSet();
+    /** The sections of the selection being applied (ADR-148), {@link #drawn} once it is whole. */
+    private LongOpenHashSet nextDrawn = new LongOpenHashSet();
+    /**
+     * A selection's draw list is applied a slice a frame (ADR-148): resident
+     * lookups, the GPU/CPU split and the extent took 3 to 12 ms a selection
+     * in flight (25,000 sections, cache misses), a frame each time. The last
+     * applied lists are drawn meanwhile.
+     */
+    private static final long APPLY_BUDGET_NANOS = 1_000_000L;
+    private boolean applying;
+    private int applyCursor;
+    private long applyTime;
+    private double applyX;
+    private double applyY;
+    private double applyZ;
+    private double applyExtentSq;
+    private double applyNearestSq;
+    private int applyOutdated;
+    private long applyNanos;
+    private int applyMinY;
+    private int applyMaxY;
+    /** The time of the last selection applied whole: what it drew has a later last use. */
+    private long appliedSelectionTime;
     private int selectedMinY;
     private int selectedMaxY;
     private double loggedDetail = 1e-9;
@@ -819,8 +866,6 @@ public final class LodRenderer {
         boolean looksReady;
         /** Its opaque voxels are in the occupancy buffer (ambient occlusion). */
         boolean occluders;
-        /** Last time the selection used it: drawn, or relied on to descend to its children. */
-        long lastUsed;
         /** Its columns' surface biomes as uploaded ({@link #BIOME_COLUMN_INTS}), for blending it and its neighbors. */
         int[] biomeColumns;
         /** Directions whose neighbor lights some of its faces ({@link BinaryGreedyMesher#borderFaces}). */
@@ -1203,6 +1248,14 @@ public final class LodRenderer {
         cullCandidates = new GlBuffer(4096L * 4);
         gpuCommands = new GlBuffer(3L * 4096 * COMMAND_BYTES);
         gpuCounts = new GlBuffer(16);
+        scatterPairs = new GlBuffer(16384L * 8);
+        try {
+            scatterProgram = GlProgram.compute("lod_scatter.comp");
+            scatterCountU = scatterProgram.uniform("u_count");
+        } catch (RuntimeException e) {
+            scatterProgram = null;
+            Farfield.LOG.warn("LOD neighbor writes in one pass unavailable, written one by one", e);
+        }
         if (!Boolean.getBoolean("farfield.cpuCulling")) {
             try {
                 cullProgram = GlProgram.compute("lod_cull.comp");
@@ -1499,13 +1552,13 @@ public final class LodRenderer {
         }
         // At most one selection per MIN_RESELECT_NANOS (ADR-140): in flight each new mesh made the
         // next frame select again, a selection every frame.
-        if ((selectionDirty || turned || dx * dx + dy * dy + dz * dz > RESELECT_DISTANCE_SQ
+        if (applying) {
+            continueApply(System.nanoTime() + APPLY_BUDGET_NANOS);
+        } else if ((selectionDirty || turned || dx * dx + dy * dy + dz * dz > RESELECT_DISTANCE_SQ
                 || frameStart - selectionTime > RESELECT_NANOS)
                 && (selectionTime == 0 || frameStart - selectionTime
                         >= Math.max(MIN_RESELECT_NANOS, SELECTION_SHARE * lastSelectNanos))) {
-            long selectStart = System.nanoTime();
             select(level, cam, look, frameStart);
-            lastSelectNanos = System.nanoTime() - selectStart;
         }
         phase[4] = System.nanoTime();
         requestWanted();
@@ -1598,6 +1651,7 @@ public final class LodRenderer {
         }
         phase[7] = System.nanoTime();
         lastDrawn = count;
+        flushNeighborWrites();
         if (count > 0) {
             cullOnGpu(cam);
             draw(cam, viewRotation, projection, mc);
@@ -1814,6 +1868,7 @@ public final class LodRenderer {
     }
 
     private void select(ClientLevel level, Vec3 cam, org.joml.Vector3f look, long now) {
+        long start = System.nanoTime();
         selectionTime = now;
         selectedX = cam.x;
         selectedY = cam.y;
@@ -1828,7 +1883,6 @@ public final class LodRenderer {
         }
         drawList.clear();
         wanted.clear();
-        freePendingSlots();
         // The selection runs on its own thread (ADR-143, ADR-147): its last result is drawn, and the next
         // one starts with what the render thread knows now.
         selectedPreview = RenderSettings.noisePreview();
@@ -1856,62 +1910,120 @@ public final class LodRenderer {
         // marking each of their tens of thousands of sections at every selection cost the render thread.
         reliedReal = p.realRelied;
         reliedPreview = p.relied;
-        int outdatedDrawn = 0;
+        beginApply(cam, now);
+        applyMinY = level.getMinBuildHeight();
+        applyMaxY = level.getMaxBuildHeight();
+        applyNanos = System.nanoTime() - start;
+        continueApply(start + APPLY_BUDGET_NANOS);
+    }
+
+    private void beginApply(Vec3 cam, long now) {
         beginSplit(cam);
-        LongOpenHashSet drawnBefore = FrameProbe.enabled() ? new LongOpenHashSet(drawn) : null;
-        drawn.clear();
-        selectedMinY = level.getMinBuildHeight();
-        selectedMaxY = level.getMaxBuildHeight();
-        double extentSq = 0;
-        double nearestSq = Double.MAX_VALUE;
-        for (int i = 0, n = drawList.size(); i < n; i++) {
-            long key = drawList.getLong(i);
+        nextDrawn.clear();
+        applying = true;
+        applyCursor = 0;
+        applyTime = now;
+        applyX = cam.x;
+        applyY = cam.y;
+        applyZ = cam.z;
+        applyExtentSq = 0;
+        applyNearestSq = Double.MAX_VALUE;
+        applyOutdated = 0;
+    }
+
+    /** Applies the selection's draw list until {@code deadline}, then whole: the lists swapped in. */
+    private void continueApply(long deadline) {
+        long start = System.nanoTime();
+        int n = drawList.size();
+        int i = applyCursor;
+        while (i < n) {
+            long key = drawList.getLong(i++);
             int size = LodSection.SIZE << drawLevel(key);
-            double x0 = LodKey.x(key) * (double) size - cam.x;
-            double y0 = LodKey.y(key) * (double) size - cam.y;
-            double z0 = LodKey.z(key) * (double) size - cam.z;
+            double x0 = LodKey.x(key) * (double) size - applyX;
+            double y0 = LodKey.y(key) * (double) size - applyY;
+            double z0 = LodKey.z(key) * (double) size - applyZ;
             double fx = Math.max(Math.abs(x0), Math.abs(x0 + size));
             double fy = Math.max(Math.abs(y0), Math.abs(y0 + size));
             double fz = Math.max(Math.abs(z0), Math.abs(z0 + size));
             // In 3D (ADR-141): far above the ground, the horizontal extent alone put the far plane short.
-            extentSq = Math.max(extentSq, fx * fx + fy * fy + fz * fz);
+            applyExtentSq = Math.max(applyExtentSq, fx * fx + fy * fy + fz * fz);
             double nx = Math.max(0, Math.max(x0, -(x0 + size)));
             double ny = Math.max(0, Math.max(y0, -(y0 + size)));
             double nz = Math.max(0, Math.max(z0, -(z0 + size)));
-            nearestSq = Math.min(nearestSq, nx * nx + ny * ny + nz * nz);
+            applyNearestSq = Math.min(applyNearestSq, nx * nx + ny * ny + nz * nz);
             Resident r = resident.get(key);
             if (r != null) {
-                r.lastUsed = now;
+                slotLastUsed[r.slot] = applyTime;
             }
-            drawn.add(key);
-            splitForCulling(key, r, size, cam);
+            nextDrawn.add(key);
+            splitForCulling(key, r, size);
             // A drawn copy older than the server's: fetched with the meshes this selection wants, not
             // after the whole background queue; the preview already hides itself for the newer data,
             // so the old copy can leave a hole where the new chunks are (ADR-074).
             if (stream != null && !PreviewLayer.isPreview(key) && stream.needsFetch(key)) {
                 stale.add(key);
-                outdatedDrawn++;
+                applyOutdated++;
+            }
+            if ((i & 255) == 0 && System.nanoTime() > deadline) {
+                break;
             }
         }
-        maxOutdatedDrawn = Math.max(maxOutdatedDrawn, outdatedDrawn);
+        applyCursor = i;
+        applyNanos += System.nanoTime() - start;
+        if (i >= n) {
+            finishApply();
+        }
+    }
+
+    private void finishApply() {
+        long start = System.nanoTime();
+        applying = false;
+        maxOutdatedDrawn = Math.max(maxOutdatedDrawn, applyOutdated);
+        LongOpenHashSet drawnBefore = drawn;
+        drawn = nextDrawn;
+        nextDrawn = drawnBefore;
+        selectedMinY = applyMinY; // with drawn: the columns' tests walk the sections it holds
+        selectedMaxY = applyMaxY;
+        LongArrayList cpu = cpuList;
+        cpuList = nextCpuList;
+        nextCpuList = cpu;
+        LongArrayList translucent = gpuTranslucent;
+        gpuTranslucent = nextGpuTranslucent;
+        nextGpuTranslucent = translucent;
+        it.unimi.dsi.fastutil.ints.IntArrayList slots = gpuSlots;
+        gpuSlots = nextGpuSlots;
+        nextGpuSlots = slots;
+        System.arraycopy(nextWhy, 0, cpuWhy, 0, cpuWhy.length);
+        // Slots freed while the list was built: out of it, then free for new sections (no list names them now).
+        if (!pendingFreeSlots.isEmpty()) {
+            it.unimi.dsi.fastutil.ints.IntOpenHashSet freed = new it.unimi.dsi.fastutil.ints.IntOpenHashSet(pendingFreeSlots);
+            gpuSlots.removeIf(freed::contains);
+            freePendingSlots();
+        }
         uploadCandidates();
         // The camera moves up to the reselection distance before the next selection.
-        drawnExtent = Math.min(MAX_DISTANCE * 4, Math.max(lastSelectionDistance, Math.sqrt(extentSq))
+        drawnExtent = Math.min(MAX_DISTANCE * 4, Math.max(lastSelectionDistance, Math.sqrt(applyExtentSq))
                 + Math.sqrt(RESELECT_DISTANCE_SQ));
-        drawnNearest = nearestSq == Double.MAX_VALUE ? 0 : Math.max(0, Math.sqrt(nearestSq) - Math.sqrt(RESELECT_DISTANCE_SQ));
-        if (drawnBefore != null) {
+        drawnNearest = applyNearestSq == Double.MAX_VALUE ? 0
+                : Math.max(0, Math.sqrt(applyNearestSq) - Math.sqrt(RESELECT_DISTANCE_SQ));
+        if (FrameProbe.enabled()) {
             LongIterator added = drawn.iterator();
             while (added.hasNext()) {
                 long k = added.nextLong();
-                if (!drawnBefore.remove(k)) {
+                if (!drawnBefore.contains(k)) {
                     FrameProbe.note("+" + probeName(k));
                 }
             }
             LongIterator removed = drawnBefore.iterator();
             while (removed.hasNext()) {
-                FrameProbe.note("-" + probeName(removed.nextLong()));
+                long k = removed.nextLong();
+                if (!drawn.contains(k)) {
+                    FrameProbe.note("-" + probeName(k));
+                }
             }
         }
+        Vec3 cam = new Vec3(applyX, applyY, applyZ);
+        long now = applyTime;
         // The traversal walks the grid from one corner: ask for what is near and in view first,
         // or the meshes in flight go to far sections behind the camera (ADR-056).
         wantOrder.clear();
@@ -1950,6 +2062,9 @@ public final class LodRenderer {
                 fillSettledSince = now;
             }
         }
+        appliedSelectionTime = applyTime;
+        applyNanos += System.nanoTime() - start;
+        lastSelectNanos = applyNanos;
     }
 
     /**
@@ -2082,16 +2197,17 @@ public final class LodRenderer {
     private boolean splitGpu;
     /** Why sections stayed on the CPU at the last selection: off, no mesh (dropped), unused, looks, near the game. */
     private final int[] cpuWhy = new int[5];
+    private final int[] nextWhy = new int[5];
     private double nearX0;
     private double nearX1;
     private double nearZ0;
     private double nearZ1;
 
     private void beginSplit(Vec3 cam) {
-        java.util.Arrays.fill(cpuWhy, 0);
-        cpuList.clear();
-        gpuSlots.clear();
-        gpuTranslucent.clear();
+        java.util.Arrays.fill(nextWhy, 0);
+        nextCpuList.clear();
+        nextGpuSlots.clear();
+        nextGpuTranslucent.clear();
         splitGpu = cullProgram != null && selector.forcedLevel() < 0;
         int reach = (Minecraft.getInstance().options.getEffectiveRenderDistance() + 4) * 16;
         nearX0 = cam.x - reach;
@@ -2101,26 +2217,26 @@ public final class LodRenderer {
     }
 
     /** One drawn section to the GPU or the CPU list (see the class of rules above), {@code r} its resident or null. */
-    private void splitForCulling(long key, Resident r, int size, Vec3 cam) {
+    private void splitForCulling(long key, Resident r, int size) {
         if (r == null || r.quadCount == 0) {
-            cpuWhy[1]++;
+            nextWhy[1]++;
             return; // nothing to draw: a mesh that comes asks for another selection
         }
         if (!splitGpu || !looksReady(r)) {
-            cpuWhy[!splitGpu ? 0 : 3]++;
-            cpuList.add(key);
+            nextWhy[!splitGpu ? 0 : 3]++;
+            nextCpuList.add(key);
             return;
         }
         double x0 = LodKey.x(key) * (double) size;
         double z0 = LodKey.z(key) * (double) size;
         if (x0 < nearX1 && x0 + size > nearX0 && z0 < nearZ1 && z0 + size > nearZ0) {
-            cpuWhy[4]++;
-            cpuList.add(key);
+            nextWhy[4]++;
+            nextCpuList.add(key);
             return;
         }
-        gpuSlots.add(r.slot);
+        nextGpuSlots.add(r.slot);
         if (r.groups[PLANT_GROUP] > r.opaqueCount) {
-            gpuTranslucent.add(key);
+            nextGpuTranslucent.add(key);
         }
     }
 
@@ -2800,6 +2916,11 @@ public final class LodRenderer {
         requested.clear();
         rewrittenWhileMeshing.clear();
         waitingStore.clear();
+        for (Swap swap : swaps.values()) {
+            for (Staged st : swap.ready) {
+                unstage(st);
+            }
+        }
         swaps.clear();
         swapOf.clear();
         stale.clear();
@@ -2814,6 +2935,7 @@ public final class LodRenderer {
         lastCamX = Double.NaN; // the first frame of a world is a join, not a teleport
         done.clear();
         rewritten.clear();
+        neighborWrites.clear();
         colors.reset();
         tints.reset();
         freeSlotCount = 0;
@@ -2822,6 +2944,10 @@ public final class LodRenderer {
         gpuCandidates = 0;
         cpuList.clear();
         gpuTranslucent.clear();
+        gpuSlots.clear();
+        drawn.clear();
+        applying = false;
+        appliedSelectionTime = 0;
         selectionDirty = true;
         world = next;
         previewGeneration++;
@@ -3195,9 +3321,18 @@ public final class LodRenderer {
      * its new sea top without its new floor (lighter bands on the sea) or
      * the other way round (a dark strip) (ADR-092). Render thread.
      */
+    /**
+     * A swap's mesh whose quads are already in the quad buffer at
+     * {@code start} (-1: not sent yet), outside any drawn range (ADR-148):
+     * the swap's frame then only points the sections at them. 400 to 600
+     * meshes sent in that frame took 10 to 17 ms.
+     */
+    private record Staged(MeshResult mesh, long start) {
+    }
+
     private static final class Swap {
         final LongOpenHashSet waiting = new LongOpenHashSet();
-        final java.util.List<MeshResult> ready = new java.util.ArrayList<>();
+        final java.util.List<Staged> ready = new java.util.ArrayList<>();
         final long since;
 
         Swap(long since) {
@@ -3229,7 +3364,7 @@ public final class LodRenderer {
             Swap o = swaps.get(old);
             if (o != null) {
                 o.waiting.remove(key);
-                o.ready.removeIf(r -> r.key == key); // a newer mesh replaces it
+                o.ready.removeIf(st -> st.mesh().key == key && unstage(st)); // a newer mesh replaces it
             }
         }
         swaps.computeIfAbsent(swap, b -> new Swap(now)).waiting.add(key);
@@ -3251,7 +3386,24 @@ public final class LodRenderer {
         }
         swap.waiting.remove(m.key);
         if (m.generation == generation.get()) {
-            swap.ready.add(m);
+            long start = -1;
+            if (m.quads.length > 0) {
+                start = arena.allocate(m.quads.length); // no growth nor eviction here: sent at the swap if full
+                if (start >= 0) {
+                    long sent = System.nanoTime();
+                    quads.upload(start * 8, m.quads, m.quads.length);
+                    uploadQuadsNanos += System.nanoTime() - sent;
+                }
+            }
+            swap.ready.add(new Staged(m, start));
+        }
+        return true;
+    }
+
+    /** Frees a staged mesh's quads; true, for removeIf. */
+    private boolean unstage(Staged st) {
+        if (st.start() >= 0) {
+            arena.release(st.start(), st.mesh().quads.length);
         }
         return true;
     }
@@ -3272,8 +3424,8 @@ public final class LodRenderer {
             if (FrameProbe.enabled()) {
                 FrameProbe.note("swap" + swap.ready.size() + (swap.waiting.isEmpty() ? "" : "timedOut"));
             }
-            for (MeshResult m : swap.ready) {
-                upload(m);
+            for (Staged st : swap.ready) {
+                upload(st.mesh(), st.start());
             }
             LongIterator keys = swap.waiting.iterator();
             while (keys.hasNext()) {
@@ -3293,9 +3445,12 @@ public final class LodRenderer {
         while (budget > 0 && (m = done.poll()) != null) {
             requested.remove(m.key);
             if (deferSwap(m)) {
+                if (System.nanoTime() > deadline) {
+                    break; // a swap's quads count in the frame's time too
+                }
                 continue;
             }
-            budget -= upload(m);
+            budget -= upload(m, -1);
             if (System.nanoTime() > deadline) {
                 break; // the rest on the next frames
             }
@@ -3303,11 +3458,18 @@ public final class LodRenderer {
         flushSwaps(System.nanoTime());
     }
 
-    /** Uploads one mesh; returns the quads it uploaded. Render thread. */
-    private long upload(MeshResult m) {
+    /**
+     * Uploads one mesh; returns the quads it uploaded. {@code staged} is
+     * where its quads already are (a swap's, ADR-148), -1 when not sent yet.
+     * Render thread.
+     */
+    private long upload(MeshResult m, long staged) {
         // Written while its first mesh was being built: that mesh may hold the old data.
         boolean rewrittenMeanwhile = rewrittenWhileMeshing.remove(m.key);
         if (m.generation != generation.get()) {
+            if (staged >= 0) {
+                arena.release(staged, m.quads.length);
+            }
             return 0;
         }
         if (stale.contains(m.key)) {
@@ -3316,8 +3478,8 @@ public final class LodRenderer {
         fillMeshes++;
         // Room for the quads first: a section kept empty for want of room was taken
         // as ready and never meshed again (holes for minutes after a spyglass).
-        long start = 0;
-        if (m.quads.length > 0) {
+        long start = staged;
+        if (m.quads.length > 0 && staged < 0) {
             start = allocateQuads(m.quads.length);
             if (start < 0) {
                 if (resident.containsKey(m.key)) {
@@ -3337,7 +3499,8 @@ public final class LodRenderer {
         }
         if (r == null) {
             r = new Resident(allocateSlot());
-            r.lastUsed = System.nanoTime();
+            slotKeys[r.slot] = m.key;
+            slotLastUsed[r.slot] = System.nanoTime();
             resident.put(m.key, r);
             if (PreviewLayer.isPreview(m.key)) {
                 previewResident.add(m.key);
@@ -3395,14 +3558,21 @@ public final class LodRenderer {
         meshesUploaded++;
         if (r.quadCount > 0) {
             r.start = start;
-            long sent = System.nanoTime();
-            quads.upload(start * 8, m.quads, m.quads.length);
-            uploadQuadsNanos += System.nanoTime() - sent;
+            if (staged < 0) {
+                long sent = System.nanoTime();
+                quads.upload(start * 8, m.quads, m.quads.length);
+                uploadQuadsNanos += System.nanoTime() - sent;
+            }
         }
         writeSection(m.key, r);
         linkNeighbors(m.key, r);
         long blend = System.nanoTime();
-        blendSection(m.key, r);
+        if (fresh) {
+            blendSection(m.key, r);
+        } else {
+            // A new mesh of a drawn section: its slot holds its last blend meanwhile (ADR-148).
+            blendDirty.add(m.key);
+        }
         markBlendNeighbors(m.key);
         uploadBlendNanos += System.nanoTime() - blend;
         return r.quadCount;
@@ -3428,21 +3598,9 @@ public final class LodRenderer {
     /** Frees every resident section the last selection did not use. */
     private void evictNotSelected() {
         evicted.clear();
-        ObjectIterator<Long2ObjectOpenHashMap.Entry<Resident>> it = resident.long2ObjectEntrySet().fastIterator();
-        while (it.hasNext()) {
-            Long2ObjectOpenHashMap.Entry<Resident> e = it.next();
-            Resident r = e.getValue();
-            if (r.lastUsed < selectionTime && !relied(e.getLongKey())) {
-                evicted.add(e.getLongKey());
-                previewResident.remove(e.getLongKey());
-                realResident.remove(e.getLongKey());
-                realOctants.remove(e.getLongKey());
-                if (r.quadCount > 0) {
-                    arena.release(r.start, r.quadCount);
-                }
-                releaseSlot(r.slot);
-                meshesEvicted++;
-                it.remove();
+        for (int slot = 0; slot < slotCount; slot++) {
+            if (slotLastUsed[slot] < appliedSelectionTime && !relied(slotKeys[slot])) {
+                evict(slotKeys[slot]);
             }
         }
         for (int i = 0, n = evicted.size(); i < n; i++) {
@@ -3451,6 +3609,23 @@ public final class LodRenderer {
         if (!evicted.isEmpty()) {
             selectionDirty = true;
         }
+    }
+
+    /** Frees a resident section, its key added to {@link #evicted} (the neighbors unlinked after). */
+    private void evict(long key) {
+        Resident r = resident.remove(key);
+        if (r == null) {
+            return;
+        }
+        evicted.add(key);
+        previewResident.remove(key);
+        realResident.remove(key);
+        realOctants.remove(key);
+        if (r.quadCount > 0) {
+            arena.release(r.start, r.quadCount);
+        }
+        releaseSlot(r.slot);
+        meshesEvicted++;
     }
 
     private boolean growArena(long needed) {
@@ -3558,6 +3733,10 @@ public final class LodRenderer {
             return freeSlots[--freeSlotCount];
         }
         int slot = slotCount++;
+        if (slotCount > slotKeys.length) {
+            slotKeys = java.util.Arrays.copyOf(slotKeys, slotKeys.length * 2);
+            slotLastUsed = java.util.Arrays.copyOf(slotLastUsed, slotLastUsed.length * 2);
+        }
         if (slotCount > rememberedSlots) {
             // The per-slot buffers double past a power of two: the next session starts at the one reached.
             rememberedSlots = Integer.highestOneBit(slotCount - 1) << 1;
@@ -3574,6 +3753,7 @@ public final class LodRenderer {
     }
 
     private void releaseSlot(int slot) {
+        slotLastUsed[slot] = Long.MAX_VALUE;
         // Its GPU record emptied, and the slot kept until the next selection (ADR-146): the culled
         // candidates of the last selection may still name it.
         cullGroups.upload((long) slot * CULL_INTS * 4, NO_CULL_GROUPS);
@@ -3637,10 +3817,58 @@ public final class LodRenderer {
             if (n.occluders) {
                 neighborScratch[i] = n.slot + 1;
             }
-            oneInt[0] = r.occluders ? r.slot + 1 : 0;
-            neighborSlots.upload(((long) n.slot * NEIGHBOR_INTS + (26 - i)) * 4, oneInt);
+            writeNeighbor((long) n.slot * NEIGHBOR_INTS + (26 - i), r.occluders ? r.slot + 1 : 0);
         }
         neighborSlots.upload((long) r.slot * NEIGHBOR_INTS * 4, neighborScratch);
+        if (!neighborWrites.isEmpty()) {
+            // The row just written holds the current neighbors: an earlier write into it is outdated.
+            int row = r.slot * NEIGHBOR_INTS;
+            for (int i = 0; i < NEIGHBOR_INTS; i++) {
+                neighborWrites.remove(row + i);
+            }
+        }
+    }
+
+    /** One int of the neighbor tables, written by the next {@link #flushNeighborWrites}. */
+    private void writeNeighbor(long index, int value) {
+        if (scatterProgram == null) {
+            oneInt[0] = value;
+            neighborSlots.upload(index * 4, oneInt);
+            return;
+        }
+        neighborWrites.put((int) index, value);
+    }
+
+    /** Writes this frame's single ints into the neighbor tables in one compute pass (ADR-148). */
+    private void flushNeighborWrites() {
+        int n = neighborWrites.size();
+        if (n == 0) {
+            return;
+        }
+        if (scatterScratch.capacity() < n * 2) {
+            scatterScratch = org.lwjgl.BufferUtils.createIntBuffer(Math.max(n * 2, scatterScratch.capacity() * 2));
+        }
+        scatterScratch.clear();
+        var it = neighborWrites.int2IntEntrySet().fastIterator();
+        while (it.hasNext()) {
+            var e = it.next();
+            scatterScratch.put(e.getIntKey()).put(e.getIntValue());
+        }
+        scatterScratch.flip();
+        neighborWrites.clear();
+        long bytes = (long) n * 8;
+        if (bytes > scatterPairs.size()) {
+            scatterPairs.grow(Math.max(bytes, scatterPairs.size() * 2), 0);
+        }
+        scatterPairs.upload(0, scatterScratch);
+        GlStateManager._glUseProgram(scatterProgram.id());
+        glUniform1i(scatterCountU, n);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, neighborSlots.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, scatterPairs.id());
+        glDispatchCompute((n + 63) / 64, 1, 1);
+        // Read by the draws as storage, and copied when the buffer grows.
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT);
+        GlStateManager._glUseProgram(0);
     }
 
     /**
@@ -3723,7 +3951,6 @@ public final class LodRenderer {
     /** Removes an evicted section from its resident neighbors' tables. */
     private void unlinkNeighbors(long key) {
         int level = LodKey.level(key);
-        oneInt[0] = 0;
         for (int i = 0; i < NEIGHBOR_INTS; i++) {
             int ny = LodKey.y(key) + i / 3 % 3 - 1;
             if (i == 13 || ny < LodKey.Y_MIN || ny > LodKey.Y_MAX) {
@@ -3731,7 +3958,7 @@ public final class LodRenderer {
             }
             Resident n = resident.get(LodKey.pack(level, LodKey.x(key) + i / 9 - 1, ny, LodKey.z(key) + i % 3 - 1));
             if (n != null) {
-                neighborSlots.upload(((long) n.slot * NEIGHBOR_INTS + (26 - i)) * 4, oneInt);
+                writeNeighbor((long) n.slot * NEIGHBOR_INTS + (26 - i), 0);
             }
         }
     }
@@ -3745,27 +3972,17 @@ public final class LodRenderer {
     private boolean evictUnused(long now) {
         evicted.clear();
         boolean more = false;
-        ObjectIterator<Long2ObjectOpenHashMap.Entry<Resident>> it = resident.long2ObjectEntrySet().fastIterator();
-        while (it.hasNext()) {
+        for (int slot = 0; slot < slotCount; slot++) {
+            // A free slot's MAX_VALUE gives a negative difference.
+            if (now - slotLastUsed[slot] <= EVICT_AFTER_NANOS || relied(slotKeys[slot])) {
+                continue;
+            }
             if (evicted.size() >= EVICT_PER_FRAME) {
                 more = true;
                 break;
             }
-            Long2ObjectOpenHashMap.Entry<Resident> e = it.next();
-            Resident r = e.getValue();
-            if (now - r.lastUsed > EVICT_AFTER_NANOS && !relied(e.getLongKey())) {
-                evicted.add(e.getLongKey());
-                previewResident.remove(e.getLongKey());
-                realResident.remove(e.getLongKey());
-                realOctants.remove(e.getLongKey());
-                if (r.quadCount > 0) {
-                    arena.release(r.start, r.quadCount);
-                }
-                releaseSlot(r.slot);
-                meshesEvicted++;
-                it.remove();
-                selectionDirty = true;
-            }
+            evict(slotKeys[slot]);
+            selectionDirty = true;
         }
         for (int i = 0, n = evicted.size(); i < n; i++) {
             unlinkNeighbors(evicted.getLong(i));

@@ -4434,3 +4434,68 @@ Status: accepted, 2026-11-13. Item 3 of the same list.
   Multiplayer (Fabric dev server, NeoForge dev client): streaming works,
   render thread 1.5 to 1.8 ms in flight, no exception. Not checked: the
   user's own sprinting flight, the NeoForge pack.
+
+## ADR-148 — The selection applied a slice a frame; a swap's quads sent as they come; evictions over per-slot arrays; neighbor links in one pass
+
+Status: accepted, 2026-11-13. Asked after the upload measure ("go a b
+et c"): (a) spread the preview's swaps, (b) slice the selection's
+application and the evictions, (c) more meshes in flight.
+
+- **Context** (temporary probes, Fabric pack, same flight and teleport):
+  - Uploads were never behind: at most 64 meshes waiting, 2 to 3 ms from a
+    finished mesh to its upload, the 3 ms budget cut 0 to 7 frames of
+    1,000 to 3,000 each 10 s; the quad copy 2 to 5 ns a quad.
+  - The worst frames in flight (12 to 17 ms each 10 s) were the selection's
+    application on the render thread: the walk over its 25,000 drawn
+    sections (resident lookups, the GPU/CPU split, the extent) took 3 to 12
+    ms a selection, about 170 ns a section, cache misses.
+  - While the view loads, a preview swap put 300 to 600 meshes in one frame
+    (10 to 23 ms): their quads, their blends (up to 9 ms) and one buffer
+    call per neighbor-table int (up to 27 a mesh, about 8 us a mesh).
+  - The evictions walked the whole resident map every 60 frames (1 to 1.5
+    ms with nothing to evict) and unlinked 512 sections with 13,000 buffer
+    calls after a teleport (5 to 10 ms).
+  - (c) The 5 mesher threads were busy all the time (49.7 s of meshing in
+    10 s) and a job waited 21 to 66 ms to start: more meshes in flight
+    would only lengthen the queue. Left at 64.
+- **Decision**:
+  - A selection's draw list is applied within 1 ms a frame
+    (`APPLY_BUDGET_NANOS`) into a second set of lists (drawn, CPU, GPU,
+    translucent), swapped in when whole with the build height the column
+    tests read; the last applied lists are drawn meanwhile. The slots freed
+    while a list was built are taken out of it before they are freed.
+    `evictNotSelected` keeps what the last applied selection used.
+  - A swap's mesh has its quads sent into a free range when it arrives
+    (within the upload budget); the swap's frame only points the sections
+    at them. A staged range is freed when its mesh is replaced, dropped or
+    the world changes.
+  - A new mesh of a section already resident keeps its slot's last blend
+    and is blended again within the blends' own budget.
+  - Each slot keeps its key and last use in arrays; the evictions scan
+    them in order.
+  - The neighbor tables' single ints are collected per frame (the last
+    write per int kept) and written by one compute pass
+    (`shaders/lod_scatter.comp`) before the draws; a row written whole
+    drops the earlier writes into it. Without the program they are written
+    one by one, as before.
+- **Checked**: Fabric pack in production, 3840 x 2019 minimized, FOV 70,
+  ZGC, the 8a94e22 jar against this one in the same session (both with a
+  GPU at about 6.9 ms a frame, twice the earlier runs', standing still as
+  in flight: the PC's state, not the code):
+  - In flight, render thread 2.2 to 2.55 down to 2.1 to 2.45 ms a frame;
+    uploads 420 to 490 down to 260 to 350 us, evictions 48 down to 18 us.
+  - The worst frame of each 10 s in flight: 12 to 17 ms (selection 7 to 12
+    ms) in every window before; 5.5 to 6.8 ms after, except three windows
+    with one quad copy of 18 to 33 ms (the driver waiting in
+    `glNamedBufferSubData`, seen once at 14 ms before).
+  - While the view loads: swap frames of 300 to 500 meshes 7.5 to 10.6 ms
+    instead of 10 to 23 ms, their quads already sent (83 to 124 us).
+  - Captures against the 8a94e22 jar: 0.08 % and 0.29 % of pixels differ;
+    the view's fill and the holes' timeline unchanged.
+  - Multiplayer (Fabric dev server, NeoForge dev client): streaming works,
+    1.5 to 1.8 ms of render thread in flight, no exception, the captures
+    whole.
+  - Not checked: shader packs, the NeoForge pack.
+  - Left: the quad copies the driver makes wait (one mesh, 14 to 33 ms, a
+    few times a minute in flight): a persistent mapped staging buffer with
+    GPU copies would remove the wait; the user decides.

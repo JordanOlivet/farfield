@@ -1,0 +1,25 @@
+#version 460
+// Writes single ints into a storage buffer (ADR-148): the neighbor tables'
+// links and unlinks of a frame, one invocation per (index, value) pair,
+// instead of one buffer call per int. The CPU keeps one pair per index.
+
+layout(local_size_x = 64) in;
+
+layout(std430, binding = 0) buffer Target {
+    uint target[];
+};
+
+layout(std430, binding = 1) readonly buffer Pairs {
+    uvec2 pairs[];
+};
+
+uniform int u_count;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= uint(u_count)) {
+        return;
+    }
+    uvec2 pair = pairs[i];
+    target[pair.x] = pair.y;
+}
