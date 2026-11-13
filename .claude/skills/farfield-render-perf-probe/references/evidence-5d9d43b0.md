@@ -1,0 +1,1 @@
+user: "ok go a b et c" followed by the assistant's A/B run of the HEAD jar against the working-tree jar on the Fabric pack bench (bench.sh head ab148c).
