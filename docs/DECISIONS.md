@@ -4099,3 +4099,60 @@ ADR-128 (shared threads). Decision 2 of E.3e, milestone 2.
   The captures at 8 s and 30 s from 48, 600, 32 look alike in the three
   runs: from the spawn the band past the explored land's real LODs is a
   few pixels high. Not run on a server or in the pack.
+
+## ADR-140 — The depth range follows the drawn distance; the fog has its own switch; a lighter render thread in flight
+
+Status: accepted, 2026-11-13. Amends ADR-113 (the packs' LOD far plane),
+ADR-136 (the fog distance is the draw distance) and ADR-138. The user's
+report on the Fabric pack after ADR-138: black squares with the shader
+pack on the LODs and the preview, stutters while moving at a large
+distance, and a fog to show or hide apart from the distance.
+
+- **Context**:
+  - ADR-136 tied the LODs' depth range and the projection handed to
+    shader packs (`vxProj`) to the maximum distance: near 8, far
+    67,108,864 blocks at every distance (8,192 before). With ADR-138 the
+    packs' LOD distance also took the coarsest section's diagonal (1.5
+    million blocks) at the default 4,096. Photon's inverse projection lost
+    its precision in float: in the Fabric pack with Photon, the old jar's
+    day frame came out wholly black and the night sky lost its stars.
+  - `fog_distance=off` was the only way to hide the fog, and it held the
+    LODs to 4,096 blocks.
+  - Flying at 60 blocks a second at a 262,144-block distance in a 4K
+    window (dev client), the render thread took 5.4 ms a frame against 0.7
+    standing still. A profile: a selection every frame (each new mesh
+    asked for one), the preview's section existence all forgotten at each
+    tile change, so each selection computed it again (a third of the
+    thread), the remeshing test walking every changed tile per resident
+    section (9 %), and the quad allocator walking its free ranges in
+    address order (8 %).
+- **Decision**:
+  - The farthest drawn geometry is measured at each selection (the
+    farthest corner of a drawn section, plus the reselection step). The
+    depth range is near 8, far twice that, the near plane moved out only
+    past a far / near ratio of 2^20 (past about 4 million blocks); the
+    packs get the same range and that extent as their LOD distance.
+  - A client setting `fog` (default true; "LOD Fog" in the screen,
+    `/farfield fog on|off`): the fog distance key keeps the draw distance
+    ("LOD Distance"), and the fog shows at it or not. `fog_distance=off`
+    from an older file reads as the default distance without fog. The
+    thick-fog setting keeps its own off. The LODs' own fallback fog (when
+    the fog mixin does not run) follows the switch too.
+  - Selections at most every 40 ms. A tile change forgets the existence of
+    the sections over it only (a near section by its tile, any section
+    under a coarse tile written); a first mask forgets nothing, as a
+    section is not remembered while its tile's mask is unknown. The far
+    sections over the changed tiles are listed once per remeshing batch.
+    The range allocator is best fit, indexed by length (the smallest free
+    range that holds it, the lowest start of equal ones).
+- **Checked**: unit tests (the fog key read and written, an older `off`,
+  the allocator's best fit and coalescing). NeoForge dev client, 3840 x
+  2018 window, distance 262,144 without fog, a 90 s flight east at 60
+  blocks a second (`dev/rehearsal/flights/far-east.flight`): the render
+  thread 5.4 ms a frame in flight before, 3.4 ms with the existence,
+  touched and allocator fixes, 1.5 ms with the 40 ms selections too (0.7
+  standing still), about 5,000 meshes uploaded each 10 s instead of
+  15,000. Fabric pack in production with Photon, the same pose, old jar
+  (7bb72c6) and new: the old one's day frame all black and its night sky
+  black, the new one's day and night drawn. Not checked: the NeoForge
+  pack, Photon past a few thousand blocks.

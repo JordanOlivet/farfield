@@ -51,7 +51,9 @@ public final class RenderCommands {
                 .then(LiteralArgumentBuilder.<S>literal("fog")
                         .executes(c -> run.run(c.getSource(), () -> showFog(command)))
                         .then(LiteralArgumentBuilder.<S>literal("off").executes(c -> run.run(c.getSource(),
-                                () -> fog(command, false, RenderConfig.FOG_OFF))))
+                                () -> fogShown(command, false))))
+                        .then(LiteralArgumentBuilder.<S>literal("on").executes(c -> run.run(c.getSource(),
+                                () -> fogShown(command, true))))
                         .then(RequiredArgumentBuilder.<S, Integer>argument("blocks", IntegerArgumentType.integer(
                                         RenderConfig.MIN_FOG_DISTANCE, RenderConfig.MAX_FOG_DISTANCE))
                                 .executes(c -> run.run(c.getSource(),
@@ -181,16 +183,25 @@ public final class RenderCommands {
             RenderSettings.setFogDistance(blocks);
         }
         RenderSettings.save();
-        Farfield.LOG.info("LOD {}fog distance set to {} by command", thick ? "thick " : "",
-                fogText(thick ? RenderSettings.thickFogDistance() : RenderSettings.fogDistance()));
+        Farfield.LOG.info("LOD {} set to {} by command", thick ? "thick fog distance" : "distance",
+                fogText(thick ? RenderSettings.thickFogDistance() : RenderSettings.drawDistance()));
+        return showFog(command);
+    }
+
+    /** The fog shown or hidden in normal dimensions, the draw distance kept (ADR-140). */
+    private static String fogShown(String command, boolean shown) {
+        RenderSettings.setFog(shown);
+        RenderSettings.save();
+        Farfield.LOG.info("LOD fog {} by command, LODs to {} blocks", shown ? "shown" : "hidden",
+                RenderSettings.drawDistance());
         return showFog(command);
     }
 
     private static String showFog(String command) {
-        return "LOD fog: " + fogText(RenderSettings.fogDistance()) + " (thick fog: "
-                + fogText(RenderSettings.thickFogDistance()) + "); /" + command + " fog [thick] off|<"
+        return "LOD distance: " + RenderSettings.drawDistance() + " blocks, fog " + (RenderSettings.fog() ? "on" : "off")
+                + " (thick fog: " + fogText(RenderSettings.thickFogDistance()) + "); /" + command + " fog on|off|<"
                 + RenderConfig.MIN_FOG_DISTANCE + ".." + RenderConfig.MAX_FOG_DISTANCE + ">, /" + command
-                + " fog thick vanilla.";
+                + " fog thick vanilla|off|<blocks>.";
     }
 
     private static String fogText(int blocks) {

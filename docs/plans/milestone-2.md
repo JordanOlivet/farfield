@@ -389,6 +389,13 @@ from there: D.2, then the sea floor's plants and corals in the preview.
     turn with the rings, whole at 11 s instead of 72 s in a dev client;
     remains to be seen in the pack. The default distance (4,096) and a
     shader pack at a large distance are still open.
+    The user's Fabric pack test (2026-11-13) and ADR-140: the black frames
+    with Photon fixed (the depth range follows the drawn distance; the old
+    and new jars compared in the Fabric pack with Photon at 4,096), the
+    stutters in flight lighter (the render thread 5.4 to 1.5 ms a frame in
+    a 4K dev client at 262,144 blocks), and a fog switch apart from the
+    distance. Remains: the NeoForge pack, Photon at a large distance, the
+    user's look at the settings screen.
 
 ## M2.F — Tooling
 

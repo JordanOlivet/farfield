@@ -193,12 +193,16 @@ public final class FarfieldSettingsScreen extends OptionsSubScreen {
                 new OptionInstance.IntRange(0, TEXTURE_ALL),
                 textureStep(RenderSettings.textureDistance()),
                 step -> RenderSettings.setTextureDistance(textureDistance(step))));
+        // The draw distance, then the fog shown or not over it (ADR-140): "off" held the LODs to 4,096 blocks.
         list.addBig(new OptionInstance<>("farfield.options.fog",
                 OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.fog.tooltip")),
                 (caption, step) -> Options.genericValueLabel(caption, fogLabel(fogDistance(step, false))),
-                new OptionInstance.IntRange(0, FOG_STEPS),
-                fogStep(RenderSettings.fogDistance(), false),
+                new OptionInstance.IntRange(0, FOG_STEPS - 1),
+                fogStep(RenderSettings.drawDistance(), false),
                 step -> RenderSettings.setFogDistance(fogDistance(step, false))));
+        list.addBig(OptionInstance.createBoolean("farfield.options.fog_shown",
+                OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.fog_shown.tooltip")),
+                RenderSettings.fog(), RenderSettings::setFog));
         list.addBig(new OptionInstance<>("farfield.options.thick_fog",
                 OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.thick_fog.tooltip")),
                 (caption, step) -> Options.genericValueLabel(caption, fogLabel(fogDistance(step, true))),

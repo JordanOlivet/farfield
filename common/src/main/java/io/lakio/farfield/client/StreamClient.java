@@ -650,10 +650,10 @@ public final class StreamClient {
      * The renderer's split detail ({@link StreamProtocol.Hint}): told the
      * server when it moves, so it pushes each level where it is drawn.
      */
-    /** The blocks this client draws to (its fog distance), for the hint and the tiles asked (E.3b). */
+    /** The blocks this client draws to, for the hint and the tiles asked (E.3b, ADR-140). */
     static int drawDistance() {
         return Math.min(io.lakio.farfield.core.preview.PreviewPyramid.MAX_RANGE,
-                io.lakio.farfield.core.config.RenderConfig.drawDistance(io.lakio.farfield.lod.RenderSettings.fogDistance()));
+                io.lakio.farfield.lod.RenderSettings.drawDistance());
     }
 
     public void setDetail(double detail) {

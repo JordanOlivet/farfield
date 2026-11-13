@@ -430,13 +430,12 @@ final class NoisePreview {
     /** A tile's quarters built and complete ({@link PreviewTile#quarters()}), 0 when not stored. */
     /**
      * The blocks a player's preview is built to (E.3b): the single player's
-     * own draw distance (its fog distance, the client in this process), else
+     * own draw distance (the client in this process), else
      * what its client's hint asks, at most the streaming radius.
      */
     private static int distance(ServerPlayer p) {
         if (!p.server.isDedicatedServer() && p.server.isSingleplayerOwner(p.getGameProfile())) {
-            return Math.min(PreviewPyramid.MAX_RANGE, io.lakio.farfield.core.config.RenderConfig.drawDistance(
-                    RenderSettings.fogDistance()));
+            return Math.min(PreviewPyramid.MAX_RANGE, RenderSettings.drawDistance());
         }
         return Math.min(PreviewPyramid.MAX_RANGE, StreamServer.previewDistance(p));
     }

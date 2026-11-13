@@ -1,24 +1,34 @@
 package io.lakio.farfield.core.util;
 
+import java.util.Comparator;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.TreeSet;
 
 /**
- * First-fit allocator of ranges in a linear space of {@code capacity} units
- * (a GPU buffer of quads, for instance). Free ranges are coalesced on
+ * Best-fit allocator of ranges in a linear space of {@code capacity} units
+ * (a GPU buffer of quads, for instance): the smallest free range that holds
+ * the length, the lowest of equal ones. Free ranges are coalesced on
  * release. Not thread-safe.
+ * <p>
+ * It was first-fit over the free ranges in address order: with the buffer
+ * fragmented by a flight's churn the walk took 8 % of the render thread
+ * (ADR-140); the free ranges are now indexed by length too.
  */
 public final class RangeAllocator {
 
     /** Free ranges: start -> length. */
     private final TreeMap<Long, Long> free = new TreeMap<>();
+    /** The same free ranges as {length, start}, by length then start. */
+    private final TreeSet<long[]> bySize = new TreeSet<>(
+            Comparator.<long[]>comparingLong(r -> r[0]).thenComparingLong(r -> r[1]));
     private long capacity;
     private long used;
 
     public RangeAllocator(long capacity) {
         this.capacity = capacity;
         if (capacity > 0) {
-            free.put(0L, capacity);
+            put(0L, capacity);
         }
     }
 
@@ -27,20 +37,28 @@ public final class RangeAllocator {
         if (length <= 0) {
             throw new IllegalArgumentException("length must be positive: " + length);
         }
-        for (Map.Entry<Long, Long> e : free.entrySet()) {
-            long size = e.getValue();
-            if (size >= length) {
-                // Read the entry before removing it: TreeMap may reuse its node.
-                long start = e.getKey();
-                free.remove(start);
-                if (size > length) {
-                    free.put(start + length, size - length);
-                }
-                used += length;
-                return start;
-            }
+        long[] fit = bySize.ceiling(new long[]{length, Long.MIN_VALUE});
+        if (fit == null) {
+            return -1;
         }
-        return -1;
+        long size = fit[0];
+        long start = fit[1];
+        remove(start, size);
+        if (size > length) {
+            put(start + length, size - length);
+        }
+        used += length;
+        return start;
+    }
+
+    private void put(long start, long length) {
+        free.put(start, length);
+        bySize.add(new long[]{length, start});
+    }
+
+    private void remove(long start, long length) {
+        free.remove(start);
+        bySize.remove(new long[]{length, start});
     }
 
     public void release(long start, long length) {
@@ -54,14 +72,14 @@ public final class RangeAllocator {
         if (before != null && before.getKey() + before.getValue() == start) {
             newStart = before.getKey();
             newLength += before.getValue();
-            free.remove(before.getKey());
+            remove(before.getKey(), before.getValue());
         }
         Long after = free.get(end);
         if (after != null) {
             newLength += after;
-            free.remove(end);
+            remove(end, after);
         }
-        free.put(newStart, newLength);
+        put(newStart, newLength);
         used -= length;
     }
 

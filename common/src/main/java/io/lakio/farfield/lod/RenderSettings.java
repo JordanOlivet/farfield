@@ -36,6 +36,7 @@ public final class RenderSettings {
     private static volatile boolean debugLevels = RenderConfig.DEFAULTS.levelColors();
     private static volatile int textureDistance = RenderConfig.DEFAULTS.textureDistance();
     private static volatile int fogDistance = RenderConfig.DEFAULTS.fogDistance();
+    private static volatile boolean fog = RenderConfig.DEFAULTS.fog();
     private static volatile int thickFogDistance = RenderConfig.DEFAULTS.thickFogDistance();
     private static volatile boolean noisePreview = RenderConfig.DEFAULTS.noisePreview();
     private static volatile boolean previewLight = RenderConfig.DEFAULTS.previewLight();
@@ -208,14 +209,33 @@ public final class RenderSettings {
 
     /**
      * Where the fog becomes opaque in normal dimensions, in blocks, or
-     * {@link RenderConfig#FOG_OFF} (ADR-034).
+     * {@link RenderConfig#FOG_OFF} with the fog hidden (ADR-034, ADR-140).
      */
     public static int fogDistance() {
+        return fog ? fogDistance : RenderConfig.FOG_OFF;
+    }
+
+    /** How far LODs are drawn in normal dimensions, in blocks, the fog shown or not (ADR-140). */
+    public static int drawDistance() {
         return fogDistance;
     }
 
+    /** The draw distance in normal dimensions; {@link RenderConfig#FOG_OFF} hides the fog instead. */
     public static void setFogDistance(int blocks) {
-        fogDistance = RenderConfig.clampFogDistance(blocks);
+        if (blocks == RenderConfig.FOG_OFF) {
+            fog = false;
+        } else {
+            fogDistance = RenderConfig.clampFogDistance(blocks);
+        }
+    }
+
+    /** Whether the fog shows at the edge of the LODs in normal dimensions (ADR-140). */
+    public static boolean fog() {
+        return fog;
+    }
+
+    public static void setFog(boolean shown) {
+        fog = shown;
     }
 
     /**
@@ -297,6 +317,7 @@ public final class RenderSettings {
             textureDistance = config.textureDistance();
             debugLevels = config.levelColors();
             fogDistance = config.fogDistance();
+            fog = config.fog();
             thickFogDistance = config.thickFogDistance();
             noisePreview = config.noisePreview();
             meshThreads = config.meshThreads();
@@ -319,7 +340,7 @@ public final class RenderSettings {
         Path file = file();
         RenderConfig config = new RenderConfig(enabled, voxelPixels, textureDistance, debugLevels, fogDistance,
                 thickFogDistance, noisePreview, meshThreads, previewThreads, performanceLogs, previewLight,
-                previewFeatures);
+                previewFeatures, fog);
         try {
             config.write(file);
             Farfield.LOG.info("LOD settings saved to {}: {}", file.getFileName(), config);

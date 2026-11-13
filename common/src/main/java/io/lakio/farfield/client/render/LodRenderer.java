@@ -160,8 +160,16 @@ public final class LodRenderer {
     private static final long EVICT_AFTER_NANOS = 10_000_000_000L;
     /** The selection runs again when the camera moved this far (squared blocks)... */
     private static final double RESELECT_DISTANCE_SQ = 8 * 8;
+    /**
+     * The largest far / near ratio of the LODs' depth range (ADR-140): the
+     * near plane moves out past 8 blocks only for draw distances past about
+     * 4 million blocks.
+     */
+    private static final float DEPTH_RATIO = 1 << 20;
     /** ...or after this long anyway... */
     private static final long RESELECT_NANOS = 1_000_000_000L;
+    /** ...but never sooner than this after the last one (ADR-140). */
+    private static final long MIN_RESELECT_NANOS = 40_000_000L;
     /** ...or when the view turned by more than about 25 degrees: the wanted meshes go in view order. */
     private static final double RESELECT_TURN_COS = 0.9;
     /** A camera jump this far between two frames (squared blocks) counts as a teleport for the fill line. */
@@ -340,6 +348,15 @@ public final class LodRenderer {
     /** Fog distance meaning no fog: beyond anything drawn. */
     private static final float NO_FOG = 1e7f;
     private double lastSelectionDistance = -1;
+    /**
+     * The farthest drawn LOD geometry from the camera at the last selection,
+     * in blocks (square sections cross the selection's radius): the packs'
+     * LOD distance and the depth range follow it (ADR-140).
+     */
+    private double drawnExtent = RenderConfig.DEFAULT_DRAW_DISTANCE;
+    /** The LODs' depth range of this frame, set at {@link #beginLevel} (ADR-140). */
+    private float depthNear = 8f;
+    private float depthFar = 2f * RenderConfig.DEFAULT_DRAW_DISTANCE;
     /** Per slot: before the passes, after the depth pre-pass, after the opaque pass, at the end. */
     private final int[] timerQueries = new int[TIMER_SLOTS * TIMESTAMPS];
     private final boolean[] timerPending = new boolean[TIMER_SLOTS];
@@ -903,7 +920,7 @@ public final class LodRenderer {
      * go, and would evict every mesh).
      */
     private double selectionDistance() {
-        int distance = thickFogDimension ? RenderSettings.thickFogDistance() : RenderSettings.fogDistance();
+        int distance = thickFogDimension ? RenderSettings.thickFogDistance() : RenderSettings.drawDistance();
         if (distance == RenderConfig.FOG_OFF) {
             return RenderConfig.DEFAULT_DRAW_DISTANCE; // no fog: the 4,096 blocks of before E.3b
         }
@@ -921,14 +938,17 @@ public final class LodRenderer {
     public static void beginLevel(Matrix4f viewRotation, Matrix4f projection) {
         LodRenderer r = INSTANCE;
         r.translucentPending = false;
+        // The depth range follows the drawn extent (ADR-140): a fixed far plane at twice the maximum
+        // (67 million blocks) against a near plane of 8 lost the packs' inverse projection in float,
+        // and Photon drew black squares over the LODs at every distance.
+        r.depthFar = (float) Math.max(1024, 2 * r.drawnExtent);
+        r.depthNear = Math.max(8f, r.depthFar / DEPTH_RATIO);
         if (r.packLink != null && !r.disabled) {
             try {
-                // The farthest LOD geometry, not the selection's radius: square sections cross it by up
-                // to a coarsest section's diagonal, and packs put their LOD far plane there (Photon's
-                // combined_far = 16 * vxRenderDistance), so geometry past it came out as fog.
-                double coarsest = 32 << (PreviewLayer.LEVELS - 1);
-                int extent = (int) Math.min(MAX_DISTANCE * 2.0, r.selectionDistance() + coarsest * Math.sqrt(2));
-                r.packLink.frame(projection, viewRotation, 8f, (float) MAX_DISTANCE * 2, extent);
+                // The farthest LOD geometry, not the selection's radius: square sections cross it, and
+                // packs put their LOD far plane there (Photon's combined_far = 16 * vxRenderDistance), so
+                // geometry past it came out as fog.
+                r.packLink.frame(projection, viewRotation, r.depthNear, r.depthFar, (int) Math.ceil(r.drawnExtent));
             } catch (RuntimeException e) {
                 r.packFailed(e);
             }
@@ -1254,8 +1274,11 @@ public final class LodRenderer {
             }
         }
         updateFrustum(viewRotation, projection);
-        if (selectionDirty || turned || dx * dx + dy * dy + dz * dz > RESELECT_DISTANCE_SQ
-                || frameStart - selectionTime > RESELECT_NANOS) {
+        // At most one selection per MIN_RESELECT_NANOS (ADR-140): in flight each new mesh made the
+        // next frame select again, a selection every frame.
+        if ((selectionDirty || turned || dx * dx + dy * dy + dz * dz > RESELECT_DISTANCE_SQ
+                || frameStart - selectionTime > RESELECT_NANOS)
+                && (selectionTime == 0 || frameStart - selectionTime >= MIN_RESELECT_NANOS)) {
             select(level, cam, look, frameStart);
         }
         requestWanted();
@@ -1543,8 +1566,15 @@ public final class LodRenderer {
         drawn.clear();
         selectedMinY = level.getMinBuildHeight();
         selectedMaxY = level.getMaxBuildHeight();
+        double extentSq = 0;
         for (int i = 0, n = drawList.size(); i < n; i++) {
             long key = drawList.getLong(i);
+            int size = LodSection.SIZE << drawLevel(key);
+            double fx = Math.max(Math.abs(LodKey.x(key) * (double) size - cam.x),
+                    Math.abs((LodKey.x(key) + 1.0) * size - cam.x));
+            double fz = Math.max(Math.abs(LodKey.z(key) * (double) size - cam.z),
+                    Math.abs((LodKey.z(key) + 1.0) * size - cam.z));
+            extentSq = Math.max(extentSq, fx * fx + fz * fz);
             Resident r = resident.get(key);
             if (r != null) {
                 r.lastUsed = now;
@@ -1559,6 +1589,9 @@ public final class LodRenderer {
             }
         }
         maxOutdatedDrawn = Math.max(maxOutdatedDrawn, outdatedDrawn);
+        // The camera moves up to the reselection distance before the next selection.
+        drawnExtent = Math.min(MAX_DISTANCE * 2, Math.max(lastSelectionDistance, Math.sqrt(extentSq))
+                + Math.sqrt(RESELECT_DISTANCE_SQ));
         if (drawnBefore != null) {
             LongIterator added = drawn.iterator();
             while (added.hasNext()) {
@@ -2560,6 +2593,7 @@ public final class LodRenderer {
         if (!changedTiles.isEmpty() || previewLayer.coarseChanged()) {
             long swap = swapSeq++;
             long now = System.nanoTime();
+            previewLayer.prepareTouched(changedTiles);
             LongIterator keys = resident.keySet().iterator();
             while (keys.hasNext()) {
                 long k = keys.nextLong();
@@ -3440,7 +3474,7 @@ public final class LodRenderer {
         glUniformMatrix4fv(s.viewProj, false, viewProj.get(matrix));
         glUniform3i(s.cameraBlock, blockX, blockY, blockZ);
         glUniform3f(s.cameraFrac, (float) (cam.x - blockX), (float) (cam.y - blockY), (float) (cam.z - blockZ));
-        glUniform2f(s.depthRange, 8f, (float) MAX_DISTANCE * 2);
+        glUniform2f(s.depthRange, depthNear, depthFar);
         glUniform1i(s.renderDistance, mc.options.getEffectiveRenderDistance());
         glUniform3i(s.gridMin, gridMinX, gridMinY, gridMinZ);
         // A level lock draws the LODs where the game draws too: an empty grid gives way nowhere.
@@ -3457,7 +3491,10 @@ public final class LodRenderer {
             glUniform1i(s.fogCylinder, followVanillaFog && RenderSystem.getShaderFogShape() == FogShape.CYLINDER ? 1 : 0);
         } else {
             // The fog mixin did not run or left a mod's fog alone: the LODs' own far fog.
-            float end = (float) Math.max(RenderConfig.MIN_FOG_DISTANCE, selectionDistance());
+            // None when the player hid it (ADR-140): far past anything drawn.
+            int shown = thickFogDimension ? RenderSettings.thickFogDistance() : RenderSettings.fogDistance();
+            float end = shown == RenderConfig.FOG_OFF ? 1e30f
+                    : (float) Math.max(RenderConfig.MIN_FOG_DISTANCE, selectionDistance());
             glUniform2f(s.fog, end * 0.6f, end);
             glUniform1i(s.fogCylinder, 0);
         }

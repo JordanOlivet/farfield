@@ -10,6 +10,7 @@ import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RenderConfigTest {
 
@@ -40,6 +41,31 @@ class RenderConfigTest {
             assertEquals(config, RenderConfig.read(file));
         }
         assertFalse(Files.exists(file.resolveSibling("farfield-client.properties.tmp")), "temporary file moved");
+    }
+
+    @Test
+    void theFogIsShownOrHiddenApartFromTheDistance() throws IOException {
+        Path file = dir.resolve("farfield-client.properties");
+        // A file from before ADR-140: off hid the fog and held the LODs to 4,096 blocks.
+        Files.writeString(file, "fog_distance=off\n", StandardCharsets.UTF_8);
+        RenderConfig config = RenderConfig.read(file);
+        assertFalse(config.fog());
+        assertEquals(RenderConfig.DEFAULT_DRAW_DISTANCE, config.fogDistance());
+        // No fog key: the fog shows.
+        Files.writeString(file, "fog_distance=65536\n", StandardCharsets.UTF_8);
+        assertTrue(RenderConfig.read(file).fog());
+        assertEquals(65536, RenderConfig.read(file).fogDistance());
+        // Hidden at a far distance, written and read back.
+        RenderConfig far = new RenderConfig(true, 6f, RenderConfig.ALL_DISTANCES, false, 1 << 20,
+                RenderConfig.FOG_VANILLA, true, RenderConfig.AUTO, RenderConfig.AUTO, false, true,
+                RenderConfig.ALL_FEATURES, false);
+        far.write(file);
+        assertEquals(far, RenderConfig.read(file));
+        assertEquals(1 << 20, RenderConfig.read(file).fogDistance());
+        // The thick fog keeps its own off.
+        Files.writeString(file, "thick_fog_distance=off\n", StandardCharsets.UTF_8);
+        assertEquals(RenderConfig.FOG_OFF, RenderConfig.read(file).thickFogDistance());
+        assertTrue(RenderConfig.read(file).fog());
     }
 
     @Test

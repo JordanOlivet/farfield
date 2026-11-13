@@ -27,7 +27,7 @@ import java.util.Properties;
 public record RenderConfig(boolean enabled, float voxelPixels, int textureDistance, boolean levelColors,
                            int fogDistance, int thickFogDistance, boolean noisePreview, int meshThreads,
                            int previewThreads, boolean performanceLogs, boolean previewLight,
-                           int previewFeatures) {
+                           int previewFeatures, boolean fog) {
 
     /** Bits of {@link #previewFeatures}: the preview's trees, plants, and its other features and villages. */
     public static final int FEATURE_TREES = 1;
@@ -45,7 +45,11 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
     public static final int DEFAULT_TEXTURE_DISTANCE = ALL_DISTANCES;
     public static final int MAX_TEXTURE_DISTANCE = 4096;
 
-    /** Fog distance meaning no fog at all, the edge of the LODs included. */
+    /**
+     * Fog distance meaning no fog at all, the edge of the LODs included: in
+     * dimensions with thick fog only since ADR-140; in normal dimensions it
+     * is read as {@link #fog} off at {@link #DEFAULT_DRAW_DISTANCE}.
+     */
     public static final int FOG_OFF = Integer.MAX_VALUE;
     /** Thick fog distance meaning the game's own thick fog, LODs fading into it (ADR-033). */
     public static final int FOG_VANILLA = 0;
@@ -67,7 +71,8 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
     public static final int MAX_THREADS = 8;
 
     public static final RenderConfig DEFAULTS = new RenderConfig(true, DEFAULT_VOXEL_PIXELS, DEFAULT_TEXTURE_DISTANCE,
-            false, DEFAULT_FOG_DISTANCE, DEFAULT_THICK_FOG_DISTANCE, true, AUTO, AUTO, false, true, ALL_FEATURES);
+            false, DEFAULT_FOG_DISTANCE, DEFAULT_THICK_FOG_DISTANCE, true, AUTO, AUTO, false, true, ALL_FEATURES,
+            true);
 
     static final String ENABLED = "lod_rendering";
     static final String VOXEL_PIXELS = "detail_pixels_per_voxel";
@@ -83,6 +88,7 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
     static final String PREVIEW_TREES = "preview_trees";
     static final String PREVIEW_PLANTS = "preview_plants";
     static final String PREVIEW_OTHERS = "preview_others";
+    static final String FOG = "fog";
     /** Before ADR-034: true meant thick fog pushed back to the LOD horizon. Read only. */
     static final String EXTEND_DIMENSION_FOG = "extend_dimension_fog";
     private static final String ALL = "all";
@@ -93,11 +99,24 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
     public RenderConfig {
         voxelPixels = clampVoxelPixels(voxelPixels);
         textureDistance = clampTextureDistance(textureDistance);
+        if (fogDistance == FOG_OFF) {
+            // Before ADR-140 "off" was the only way to hide the fog, and it held the LODs to 4,096 blocks.
+            fogDistance = DEFAULT_DRAW_DISTANCE;
+            fog = false;
+        }
         fogDistance = clampFogDistance(fogDistance);
         thickFogDistance = clampThickFogDistance(thickFogDistance);
         meshThreads = clampThreads(meshThreads);
         previewThreads = clampThreads(previewThreads);
         previewFeatures &= ALL_FEATURES;
+    }
+
+    /** The settings with the fog on (or off when {@code fogDistance} is {@link #FOG_OFF}). */
+    public RenderConfig(boolean enabled, float voxelPixels, int textureDistance, boolean levelColors,
+                        int fogDistance, int thickFogDistance, boolean noisePreview, int meshThreads,
+                        int previewThreads, boolean performanceLogs, boolean previewLight, int previewFeatures) {
+        this(enabled, voxelPixels, textureDistance, levelColors, fogDistance, thickFogDistance, noisePreview,
+                meshThreads, previewThreads, performanceLogs, previewLight, previewFeatures, true);
     }
 
     /** The settings with every kind of feature in the preview. */
@@ -218,7 +237,8 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
                 bool(p, PREVIEW_LIGHT, DEFAULTS.previewLight),
                 (bool(p, PREVIEW_TREES, true) ? FEATURE_TREES : 0)
                         | (bool(p, PREVIEW_PLANTS, true) ? FEATURE_PLANTS : 0)
-                        | (bool(p, PREVIEW_OTHERS, true) ? FEATURE_OTHERS : 0));
+                        | (bool(p, PREVIEW_OTHERS, true) ? FEATURE_OTHERS : 0),
+                bool(p, FOG, DEFAULTS.fog));
     }
 
     /** Writes the file through a temporary file, so a crash mid-write keeps the previous one. */
@@ -240,11 +260,13 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
             out.write("# Tint LOD faces by level (red 1 block, orange 2, yellow 4, green 8, blue 16,\n");
             out.write("# purple 32, pink 64, white 128).\n");
             out.write(LEVEL_COLORS + "=" + levelColors + "\n");
-            out.write("# Distance in blocks where the fog becomes opaque in normal dimensions, "
-                    + MIN_FOG_DISTANCE + " to " + MAX_FOG_DISTANCE + ", or off. Nothing is drawn beyond it\n");
-            out.write("# (off: LODs to " + DEFAULT_DRAW_DISTANCE + " blocks, without fog). Default "
-                    + DEFAULT_FOG_DISTANCE + ".\n");
+            out.write("# How far LODs are drawn in normal dimensions, in blocks, " + MIN_FOG_DISTANCE + " to "
+                    + MAX_FOG_DISTANCE + "; with the fog on, it\n");
+            out.write("# becomes opaque there. Default " + DEFAULT_FOG_DISTANCE + ".\n");
             out.write(FOG_DISTANCE + "=" + fogText(fogDistance) + "\n");
+            out.write("# Fog at the edge of the LODs in normal dimensions, true or false; the distance\n");
+            out.write("# stays. Default true.\n");
+            out.write(FOG + "=" + fog + "\n");
             out.write("# The same in dimensions with thick fog (the Nether), or vanilla: LODs fade into\n");
             out.write("# the game's own fog. Default vanilla.\n");
             out.write(THICK_FOG_DISTANCE + "=" + fogText(thickFogDistance) + "\n");

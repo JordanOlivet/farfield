@@ -12,6 +12,8 @@ import io.lakio.farfield.core.preview.RealGround;
 import io.lakio.farfield.core.select.LodSelector;
 import io.lakio.farfield.core.world.LodWorld;
 import it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongIterator;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -107,6 +109,15 @@ final class PreviewLayer {
     };
     /** The coarse tiles drained by the last {@link #drainChanges}, for {@link #touched}. Render thread. */
     private final java.util.List<Long> drainedCoarse = new java.util.ArrayList<>();
+    /** The level-0 tiles drained by the last {@link #drainChanges}: their sections' existence is forgotten. */
+    private final LongOpenHashSet drainedTiles = new LongOpenHashSet();
+    /**
+     * The far sections over a changed tile, as {@code LodKey.pack(drawLevel,
+     * x, 0, z)}, built once per {@link #touched} batch ({@link
+     * #prepareTouched}): checking every changed tile per resident section
+     * took 9 % of the render thread in flight (ADR-140). Render thread.
+     */
+    private final LongOpenHashSet farTouched = new LongOpenHashSet();
     private volatile boolean masksChanged;
     private volatile LodWorld world;
     private volatile int minY;
@@ -457,6 +468,7 @@ final class PreviewLayer {
         boolean changed = masksChanged;
         masksChanged = false;
         drainedCoarse.clear();
+        drainedTiles.clear();
         Long raw;
         while ((raw = changedCoarse.poll()) != null) {
             drainedCoarse.add(raw);
@@ -464,6 +476,7 @@ final class PreviewLayer {
         }
         Long tile;
         while ((tile = changedTiles.poll()) != null) {
+            drainedTiles.add(tile.longValue());
             int[] rows = changedChunks.remove(tile);
             if (rows != null) {
                 tiles.merge(tile, rows, (a, b) -> {
@@ -475,10 +488,48 @@ final class PreviewLayer {
             }
             changed = true;
         }
-        if (changed) {
-            existence.clear();
+        if (!drainedTiles.isEmpty() || !drainedCoarse.isEmpty()) {
+            forgetExistence();
         }
         return changed;
+    }
+
+    /**
+     * Forgets the existence of the sections the drained tiles change (ADR-140):
+     * a near section by its tile, any section under a coarse tile written. It
+     * was all forgotten at every change: in flight, new tiles came every frame
+     * and every selection recomputed the existence of every preview section it
+     * visited (a third of the render thread). A first mask needs nothing: a
+     * section is not remembered while its tile's mask is unknown.
+     */
+    private void forgetExistence() {
+        LongIterator it = existence.keySet().iterator();
+        while (it.hasNext()) {
+            long plain = it.nextLong();
+            if (LodKey.level(plain) <= TILE_LEVEL && drainedTiles.contains(tileOf(plain))
+                    || underCoarse(plain)) {
+                it.remove();
+            }
+        }
+    }
+
+    /** Whether a section lies over a coarse tile drained by the last {@link #drainChanges}. */
+    private boolean underCoarse(long plain) {
+        if (drainedCoarse.isEmpty()) {
+            return false;
+        }
+        long size = (long) LodSection.SIZE << drawLevel(plain);
+        long bx = LodKey.x(plain) * size;
+        long bz = LodKey.z(plain) * size;
+        for (long raw : drainedCoarse) {
+            long blocks = PreviewStore.blocks(PreviewStore.level(raw));
+            long tx = PreviewStore.tileX(raw) * blocks;
+            long tz = PreviewStore.tileZ(raw) * blocks;
+            if (tx < bx + size && bx < tx + blocks && tz < bz + size && bz < tz + blocks) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** Whether the preview hides a chunk for real terrain, for {@code debug here}. Render thread. */
@@ -533,27 +584,19 @@ final class PreviewLayer {
                 return true;
             }
         }
-        int n = 1 << (shift - TILE_LEVEL);
-        int x0 = LodKey.x(key) * n;
-        int z0 = LodKey.z(key) * n;
-        if (tiles.size() < n * n) {
-            for (long tile : tiles.keySet()) {
-                int tx = PreviewStore.tileX(tile) - x0;
-                int tz = PreviewStore.tileZ(tile) - z0;
-                if (tx >= 0 && tz >= 0 && tx < n && tz < n) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        for (int z = 0; z < n; z++) {
-            for (int x = 0; x < n; x++) {
-                if (tiles.containsKey(PreviewStore.key(x0 + x, z0 + z))) {
-                    return true;
-                }
+        return farTouched.contains(LodKey.pack(shift, LodKey.x(key), 0, LodKey.z(key)));
+    }
+
+    /** Before a batch of {@link #touched} calls on {@code tiles}: the far sections over them. Render thread. */
+    void prepareTouched(Map<Long, int[]> tiles) {
+        farTouched.clear();
+        for (long tile : tiles.keySet()) {
+            int tx = PreviewStore.tileX(tile);
+            int tz = PreviewStore.tileZ(tile);
+            for (int shift = TILE_LEVEL + 1; shift < TILE_LEVEL + LEVELS && shift <= LodKey.MAX_LEVEL; shift++) {
+                farTouched.add(LodKey.pack(shift, tx >> (shift - TILE_LEVEL), 0, tz >> (shift - TILE_LEVEL)));
             }
         }
-        return false;
     }
 
     private boolean sectionExists(long plain) {

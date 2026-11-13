@@ -13,22 +13,38 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RangeAllocatorTest {
 
     @Test
-    void firstFitAndCoalescing() {
+    void bestFitAndCoalescing() {
         RangeAllocator a = new RangeAllocator(100);
         assertEquals(0, a.allocate(30));
         assertEquals(30, a.allocate(30));
         assertEquals(60, a.allocate(30));
         assertEquals(-1, a.allocate(20));
         a.release(30, 30);
+        assertEquals(90, a.allocate(10), "the smallest free range that holds it, not the first");
         assertEquals(30, a.allocate(10));
         a.release(0, 30);
         a.release(30, 10);
         assertEquals(0, a.allocate(60), "the two freed ranges and the gap merged");
+        assertEquals(100, a.used());
+        a.release(90, 10);
         assertEquals(90, a.used());
         assertThrows(IllegalStateException.class, () -> a.release(95, 5), "already free");
         a.grow(200);
         assertEquals(90, a.allocate(100));
         assertEquals(190, a.used());
+    }
+
+    @Test
+    void equalLengthsTakeTheLowestStart() {
+        RangeAllocator a = new RangeAllocator(100);
+        for (int i = 0; i < 10; i++) {
+            assertEquals(i * 10, a.allocate(10));
+        }
+        a.release(60, 10);
+        a.release(20, 10);
+        assertEquals(20, a.allocate(10));
+        assertEquals(60, a.allocate(10));
+        assertEquals(-1, a.allocate(1));
     }
 
     @Test
