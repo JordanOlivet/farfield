@@ -1,0 +1,1 @@
+`core` ne dépend pas de fastutil, et je ne vais pas lui ajouter une dépendance pour ça. Je regarde s'il existe déjà un ensemble de `long` maison dans `core`. ... I'll add a small open-addressing `LongSet` to `core/util` (with a unit test) instead of a new dependency.

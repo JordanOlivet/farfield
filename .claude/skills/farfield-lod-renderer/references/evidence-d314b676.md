@@ -1,0 +1,3 @@
+./shaders/include/misc/lod_mod_support.glsl:75:float combined_near = near;
+./shaders/include/misc/lod_mod_support.glsl:76:float combined_far = float(16 * vxRenderDistance);
+Java comment in the cap: "The LOD distance under a shader pack (ADR-141): Photon rebuilds a combined depth from the game's near plane (0.05) to the LODs' extent; in float it reaches 1 past about 800,000 blocks, and its frames came out black from 1,048,576 blocks (fine at 262,144, Fabric pack, 4K)."

@@ -15,6 +15,7 @@ Client commands live under `/farfieldclient`, never under `/farfield`: a server 
 - A command that moves or closes a store closes it first and waits, then reopens it. Log one `info` line on the success branch.
 - Debug subcommands are chained in `common/src/main/java/io/lakio/farfield/lod/RenderCommands.java`; find one with `grep -n 'literal(' RenderCommands.java`.
 - A debug level lock (`debug level N`) is a floor over the whole displayed distance, not a radius, and the preview obeys it too. Do not clip the range to a block count.
+- A setting whose `off` value also means something else breaks both meanings. The LOD fog used `fog_distance=off` to hide the fog, and that also held the LODs to 4,096 blocks. Keep the visibility toggle as its own key (`fog`, with a `fog on|off` subcommand) and the distance as a number. An old file's `fog_distance=off` must still read as "fog hidden, default distance" (`RenderConfig`, ADR-140), and a test must pin that.
 - A command that reloads a shader pack runs the reload on the render thread: `Minecraft.getInstance().execute(link::reloadPack)`, never inline. Confirm a forced setting with the log line `Shader pack LODs: contract forced to`.
 - Adding a `.then(` branch to the long Brigadier chain can break the closing parentheses: count the run on the branch's last line, then compile `:common:compileJava` before any other edit.
 - Test in a dev client by grepping the game log for its `[CHAT]` reply; no reply line means the command did not run. Launch rules: `farfield-dev-client-check`.

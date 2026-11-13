@@ -1,0 +1,1 @@
+Je viens de tester sur mon modpack fabric, ça marche plutôt bien mais les shader sont cassées, sur nos LOD et la preview, il y a des carrés noirs.

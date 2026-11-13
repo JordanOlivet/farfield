@@ -1,0 +1,1 @@
+Sinon j'ai tester le rebdu jusqu'à la bordure et un peu avant, ça s'affiche bien mais parcontre les perfs ne sont pas folle et ça saccade même un peu quand on se déplace.

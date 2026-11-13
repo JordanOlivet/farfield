@@ -1,0 +1,1 @@
+for i in $(seq 1 150); do if [ -f $P ] && [ $(stat -c %Y $P) -ge $T0 ] && grep -aq "line 6 'tp 48 260" $P; then echo "commands running after $(( $(date +%s) - T0 )) s"; break; fi; sleep 2; done

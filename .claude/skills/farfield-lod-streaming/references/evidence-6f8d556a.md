@@ -1,0 +1,1 @@
+Les formats 20 et 21 n'avaient pas relevé le protocole, alors qu'un ancien client rejette leurs tuiles. Je passe le protocole à 11 pour couvrir les formats 20 à 22.

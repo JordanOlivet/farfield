@@ -1,0 +1,1 @@
+$ find "$R" -name "jfr_*.py" → ./.claude/skills/farfield-jfr-profiling/scripts/jfr_top.py (jfr_under.py sits beside it in the same folder)

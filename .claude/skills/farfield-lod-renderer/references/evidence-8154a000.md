@@ -1,0 +1,1 @@
+Aussi, il faudra prévoir de rajouter une option dédiée pour afficher ou masquer le fog indépendamment de la distane de rendue.

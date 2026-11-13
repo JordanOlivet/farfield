@@ -1,0 +1,1 @@
+15:42:11 worst 60 ms | uploads 58 ms, 1 meshes, grown 0 ms, quads 57 ms, blends 0 ms ... // GlBuffer(size, cleared) doc: clearing a 256 MB store made the first upload after it wait 57 ms.

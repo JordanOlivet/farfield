@@ -1,0 +1,1 @@
+user: "Je viens de tester sur le modpack fabric, je t'ai fais des screens par rapport au fog, à grande distance, le fog off met plus de fog que fog on. Tu checkera." assistant: "Brouillard corrigé (`NO_FOG` repoussé au-delà de toute portée dessinée)."

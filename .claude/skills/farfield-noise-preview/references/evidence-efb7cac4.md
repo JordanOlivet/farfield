@@ -1,0 +1,1 @@
+Noise preview fill after joining: 970 quarters to build; coarsest level whole at 11,3 s, coarse disc whole at 66,3 s, within 1024 blocks done at 32,3 s, in front at 59,8 s, all built at 66,3 s. | candidates = Boolean.getBoolean("farfield.previewOneFront") ? candidates // TEMP A/B : PreviewPyramid.twoFronts(candidates, far);
