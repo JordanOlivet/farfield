@@ -553,6 +553,8 @@ public final class LodRenderer {
     private final Map<Long, int[]> changedTiles = new java.util.HashMap<>();
     /** Most sections a selection drew coarser than wanted since the last stat line. */
     private int maxFallbacks;
+    /** Sections a selection split at most since the last report although too coarse to stand in (ADR-150). */
+    private int maxTooCoarse;
     /** A few of those sections since the last stat line, with why (ADR-093). */
     private final java.util.List<String> fallbackReasons = new java.util.ArrayList<>();
     private static final int FALLBACK_REASONS = 6;
@@ -696,6 +698,7 @@ public final class LodRenderer {
         final LongOpenHashSet realRelied = new LongOpenHashSet();
         int fallbacks;
         int finerFallbacks;
+        int tooCoarse;
         final java.util.List<String> reasons = new java.util.ArrayList<>();
         boolean preview;
         long nanos;
@@ -1910,6 +1913,7 @@ public final class LodRenderer {
         drawList.addAll(p.realDraw);
         wanted.addAll(p.realWant);
         maxFallbacks = Math.max(maxFallbacks, p.fallbacks);
+        maxTooCoarse = Math.max(maxTooCoarse, p.tooCoarse);
         for (String reason : p.reasons) {
             if (fallbackReasons.size() < FALLBACK_REASONS) {
                 fallbackReasons.add(reason);
@@ -2154,6 +2158,7 @@ public final class LodRenderer {
             }, p.realDraw::add, p.realWant::add);
             p.fallbacks = selector.fallbacks();
             p.finerFallbacks = selector.finerFallbacks();
+            p.tooCoarse = selector.tooCoarse();
             p.reasons.addAll(selector.fallbackReasons());
             if (!preview) {
                 p.nanos = System.nanoTime() - start;
@@ -2891,11 +2896,13 @@ public final class LodRenderer {
         holeNanos = 0;
         holeMaxNanos = 0;
         holeExamples = 0;
-        if (RenderSettings.performanceLogs() && !fallbackReasons.isEmpty()) {
-            Farfield.LOG.info("LOD coarse fallbacks, a few: {}", String.join("; ", fallbackReasons));
+        if (RenderSettings.performanceLogs() && (!fallbackReasons.isEmpty() || maxTooCoarse > 0)) {
+            Farfield.LOG.info("LOD coarse fallbacks, a few: {}; at most {} sections a selection too coarse to stand"
+                    + " in, split anyway", String.join("; ", fallbackReasons), maxTooCoarse);
         }
         fallbackReasons.clear();
         maxFallbacks = 0;
+        maxTooCoarse = 0;
         maxFinerFallbacks = 0;
         maxOutdatedDrawn = 0;
         quadsInView = 0;

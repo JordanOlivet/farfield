@@ -4535,3 +4535,42 @@ measures showed the frames it costs ("go 2").
   difference shows the same clean terrain with other trees.
   Not checked: multiplayer, shader packs, the NeoForge pack, AMD or Intel
   drivers.
+
+## ADR-150 — A section stands in for its children at most two levels coarser
+
+Status: accepted, 2026-11-14. The user's Fabric pack test of ADR-145 to
+ADR-149 (the same seen on the NeoForge pack with its server): "des gros
+blocs lors du changement du monde dans les régions encore proches du
+joueur", and "des LOD qui s'affichent en premier en version grossière" at
+the generation front. Answered "Oui va appliquer ces fix".
+
+- **Context** (the user's log and screenshots):
+  - At a new world, the real sections of levels 5 to 15 over the spawn
+    exist (the spawn's chunks propagated up the mips); levels 14 and 13
+    were drawn for their children not meshed yet ("L14[-1, 0, 0] for 1
+    children not meshed (L13[-1, 0, 0])"): voxels of thousands of blocks
+    around the player, for 12 to 30 s.
+  - At the generation front, new real sections refine from level 3 down
+    to level 0, one mesh a step; the level-3 one (8-block voxels) drew
+    for a frame where the preview's level 0 had shown, since the preview
+    leaves a column as soon as any real section draws it.
+- **Decision**: a section stands in for children not meshed only when its
+  voxels are at most `LodSelector.MAX_FALLBACK_LEVELS` (2) levels coarser
+  than what its distance wants (`distance * 4 >= split * size`). A coarser
+  one splits anyway: its ready children draw, nothing where they are not
+  (the vanilla terrain near the player, the preview held at a generation
+  front), and the missing levels are asked for at once instead of one per
+  step. The coarse fallbacks line counts these splits.
+- **Checked**: unit test (a level-3 section over a level-0 child and its
+  missing parents splits, its ready siblings draw, levels 1 and 2 are
+  asked for; a level-2 one still stands in). Fabric pack in production,
+  a new world (seed 4242) with the deployed jar then this one: the coarse
+  fallbacks went from levels 15, 14 and 13 to level 1 over level 0 only,
+  187 sections a selection split instead; the view's holes closed in the
+  same time. The captures of both runs faced a hill and show no horizon:
+  not judged by eye. Not checked: the generation front by eye, the
+  NeoForge pack.
+- **Left**: the near ring of a new world waits for the preview's fine
+  tiles, built late on the server (level 0 behind the coarse levels and at
+  most half the preview threads while the coarse disc grows, ADR-128):
+  within 1,024 blocks done at 57 to 59 s. Proposed to the user, not done.

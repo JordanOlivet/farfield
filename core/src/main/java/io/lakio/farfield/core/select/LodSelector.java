@@ -59,6 +59,16 @@ public final class LodSelector {
     private double outsideDetail = Double.MAX_VALUE;
     private int fallbacks;
     private int finerFallbacks;
+    private int tooCoarse;
+    /**
+     * A section stands in for children not meshed yet only when its voxels are
+     * at most this many levels coarser than what its distance wants (ADR-150);
+     * a coarser one descends anyway: its ready children draw, nothing where
+     * they are not. Level-14 sections over a new world's spawn drew blocks of
+     * thousands of blocks around the player, and level-3 ones at a generation
+     * front coarse patches over the preview's finer terrain.
+     */
+    public static final int MAX_FALLBACK_LEVELS = 2;
     /** Why sections were drawn coarser than wanted in the last selection, a few of them (ADR-093). */
     private final java.util.List<String> fallbackReasons = new java.util.ArrayList<>();
     private static final int FALLBACK_REASONS = 4;
@@ -132,6 +142,11 @@ public final class LodSelector {
         return finerFallbacks;
     }
 
+    /** Sections the last selection split although children were not meshed: too coarse to stand in (ADR-150). */
+    public int tooCoarse() {
+        return tooCoarse;
+    }
+
     /** What the store and the mesh cache know about sections. */
     public interface Sections {
         /** True if the store has the section (it holds non-air voxels). */
@@ -160,6 +175,7 @@ public final class LodSelector {
                        Sections sections, LongConsumer draw, LongConsumer want) {
         fallbacks = 0;
         finerFallbacks = 0;
+        tooCoarse = 0;
         fallbackReasons.clear();
         descending.clear();
         int top = levels - 1;
@@ -221,8 +237,11 @@ public final class LodSelector {
                     }
                 }
             }
+            // Too coarse to stand in for them (ADR-150): its ready children draw, a hole where they are not.
+            boolean coarse = notReady != 0 && distance * (1 << MAX_FALLBACK_LEVELS) < split * size;
+            tooCoarse += coarse ? 1 : 0;
             // A parent not ready draws nothing anywhere: its ready children are better than a hole.
-            if (notReady == 0 || descended.contains(key)
+            if (notReady == 0 || coarse || descended.contains(key)
                     && (!sections.ready(key) || (notReady & sections.octants(key)) == 0)) {
                 descending.add(key);
                 for (int i = 0; i < 8; i++) {

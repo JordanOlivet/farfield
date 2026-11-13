@@ -108,6 +108,32 @@ class LodSelectorTest {
     }
 
     @Test
+    void aSectionTooCoarseForItsDistanceDoesNotStandInForItsChildren() {
+        // Level 0 wanted 70 blocks below the camera; levels 0 to 2 over it not meshed yet. The level-3
+        // section, 3 levels coarser, would draw 8-block voxels there (ADR-150): it splits anyway.
+        LodSelector selector = new LodSelector(5, 2.0);
+        long l0 = LodKey.pack(0, 0, -1, 0);
+        long l1 = LodKey.parent(l0);
+        long l2 = LodKey.parent(l1);
+        long l3 = LodKey.parent(l2);
+        List<Long> draw = new ArrayList<>();
+        List<Long> want = new ArrayList<>();
+        selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of(l0, l1, l2)), draw::add, want::add);
+        assertTrue(!draw.contains(l3), "the level-3 section stands in for nothing");
+        assertTrue(!draw.contains(l2) && !draw.contains(l1) && !draw.contains(l0));
+        assertTrue(want.contains(l2) && want.contains(l1), "the missing levels are asked for at once");
+        // Its ready siblings of level 2 draw their own detail meanwhile.
+        assertTrue(draw.contains(LodKey.pack(1, 2, -1, 0)), "a sibling's level-1 section, 146 blocks away");
+        assertTrue(selector.tooCoarse() >= 1);
+        // Two levels coarser stands in, as before: level 2 over a level-0 child alone not meshed.
+        LodSelector near = new LodSelector(5, 2.0);
+        draw.clear();
+        near.select(0, 70, 0, -64, 320, 4000, terrain(Set.of(l0, l1)), draw::add, want::add);
+        assertTrue(draw.contains(l2), "a level-2 section stands in two levels above level 0");
+        assertEquals(0, near.tooCoarse());
+    }
+
+    @Test
     void anUnmeshedSectionWhoseChildrenAreReadyDoesNotHoldItsParentCoarse() {
         // A level-1 section never meshed (the view drew level 0 there), its level-0 children ready:
         // the level-2 parent splits through it instead of flashing coarse (ADR-093).
