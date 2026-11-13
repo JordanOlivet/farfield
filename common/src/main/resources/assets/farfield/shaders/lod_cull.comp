@@ -1,0 +1,125 @@
+#version 460
+// GPU culling of the far LOD sections (ADR-146): one invocation per candidate
+// section (a slot), as LodRenderer's command loop did on the CPU: the frustum
+// test, the face directions that can face the camera (FaceDirections), then
+// one draw command per run of adjacent visible direction groups, appended to
+// the solid or the cutout list, and the plants' command. The draws read the
+// lists with glMultiDrawElementsIndirectCount.
+
+layout(local_size_x = 64) in;
+
+struct Section {
+    ivec4 originLevel; // origin in blocks (xyz), level (w)
+    uvec4 info;
+};
+
+// Per slot (LodRenderer.CULL_INTS ints): the quad group bounds, opaque by
+// direction [0..6], translucent [6..12], plants [12..13]; [14] flags (bit 0: cutout).
+layout(std430, binding = 0) readonly buffer Groups {
+    int groups[];
+};
+
+layout(std430, binding = 1) readonly buffer Sections {
+    Section sections[];
+};
+
+layout(std430, binding = 2) readonly buffer Candidates {
+    int candidates[];
+};
+
+// Three lists of u_maxCommands commands each (solid, cutout, plants), 5 uints a command.
+layout(std430, binding = 3) writeonly buffer Commands {
+    uint commands[];
+};
+
+// The draw count of each list.
+layout(std430, binding = 4) buffer Counts {
+    uint counts[];
+};
+
+uniform int u_count;
+uniform int u_maxCommands;
+uniform vec4 u_planes[6];
+uniform ivec3 u_cameraBlock;
+uniform vec3 u_cameraFrac;
+uniform int u_plants;
+
+const int CULL_INTS = 16;
+const int INDEXED_QUADS = 131072;
+const float MARGIN = 1.0;
+
+void emitOne(uint list, int start, int end, int slot) {
+    uint i = atomicAdd(counts[list], 1u);
+    if (i >= uint(u_maxCommands)) {
+        return; // the CPU sizes the lists for every candidate's commands: never reached
+    }
+    uint base = (list * uint(u_maxCommands) + i) * 5u;
+    commands[base] = uint(end - start) * 6u;
+    commands[base + 1u] = 1u;
+    commands[base + 2u] = 0u;
+    commands[base + 3u] = uint(start) * 4u;
+    commands[base + 4u] = uint(slot);
+}
+
+void emit(uint list, int start, int end, int slot) {
+    if (end == start) {
+        return;
+    }
+    while (end - start > INDEXED_QUADS) {
+        emitOne(list, start, start + INDEXED_QUADS, slot);
+        start += INDEXED_QUADS;
+    }
+    emitOne(list, start, end, slot);
+}
+
+// Bit 0: the negative direction can face the camera, bit 1: the positive one.
+int axis(float lo, float size) {
+    int mask = 0;
+    if (lo + size > -MARGIN) {
+        mask |= 1;
+    }
+    if (lo < MARGIN) {
+        mask |= 2;
+    }
+    return mask;
+}
+
+void main() {
+    int index = int(gl_GlobalInvocationID.x);
+    if (index >= u_count) {
+        return;
+    }
+    int slot = candidates[index];
+    Section s = sections[slot];
+    float size = float(32 << s.originLevel.w);
+    vec3 lo = vec3(s.originLevel.xyz - u_cameraBlock) - u_cameraFrac;
+    vec3 hi = lo + size;
+    for (int p = 0; p < 6; p++) {
+        vec4 plane = u_planes[p];
+        vec3 far = mix(lo, hi, greaterThanEqual(plane.xyz, vec3(0.0)));
+        if (dot(plane.xyz, far) + plane.w < 0.0) {
+            return;
+        }
+    }
+    int faces = axis(lo.x, size) | axis(lo.y, size) << 2 | axis(lo.z, size) << 4;
+    int g = slot * CULL_INTS;
+    uint list = (groups[g + 14] & 1) != 0 ? 1u : 0u;
+    int runStart = groups[g];
+    int runEnd = runStart;
+    for (int d = 0; d < 6; d++) {
+        int start = groups[g + d];
+        int end = groups[g + d + 1];
+        if ((faces & (1 << d)) == 0 || start == end) {
+            continue;
+        }
+        if (start != runEnd) {
+            emit(list, runStart, runEnd, slot);
+            runStart = start;
+        }
+        runEnd = end;
+    }
+    emit(list, runStart, runEnd, slot);
+    if (u_plants != 0) {
+        emit(2u, groups[g + 12], groups[g + 13], slot);
+    }
+}

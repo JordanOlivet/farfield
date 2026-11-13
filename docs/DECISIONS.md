@@ -4366,3 +4366,71 @@ while moving at a 4K screen against 120 standing still. Answered "go 1 et
   instead of 6,900. A new world, the same spot, after 5 s: nothing drawn
   near the player, no plateau; after 15 s the near detail. Not checked: the
   user's own sprinting flight, the NeoForge pack.
+
+## ADR-146 — The far sections culled on the GPU
+
+Status: accepted, 2026-11-13. The fourth test's 40 to 50 fps while moving
+at 4K; item 4 of the next steps of the day ("fais le 2,3 et 4").
+
+- **Context**: after ADR-145, the render thread in flight (Fabric pack,
+  3840 x 2019, FOV 70, ZGC, 60 blocks a second) spent 3.4 to 3.7 ms a
+  frame, of which 2.0 to 2.4 ms built the draw commands: the frustum test,
+  the face directions that can face the camera, and the runs of adjacent
+  direction groups, for about 22,000 sections each frame.
+- **Decision**:
+  - A compute shader (`shaders/lod_cull.comp`, one invocation per section)
+    does that work: the frustum test against the six planes, the face mask
+    as `FaceDirections` does, the runs of direction groups split at
+    `INDEXED_QUADS`, appended with `atomicAdd` to three command lists
+    (solid, cutout, plants). The passes draw them with
+    `glMultiDrawElementsIndirectCount`.
+  - Per slot, 16 ints of group bounds and flags (`CULL_INTS`) are written
+    when a section's mesh is written; a freed slot is zeroed and reused only
+    at the next selection, so a frame in flight never reads a slot that
+    changed under it.
+  - The selection splits its draw list once: to the GPU go the resident
+    sections with quads, of level 2 or coarser, that look ready and lie
+    outside a box of the render distance plus 4 chunks around the camera.
+    The rest stays on the CPU loop (the near sections, whose order and
+    blending with the game's chunks matter). Sections with a translucent
+    group keep their sorted translucent pass on the CPU.
+  - Sections without a mesh are dropped from both lists.
+  - `-Dfarfield.cpuCulling=true` turns the GPU path off. The stat line
+    gives the split: "N sections culled on the GPU, M on the CPU [why]".
+- **Checked**: Fabric pack in production, same flight, same conditions:
+  render thread 1.75 to 2.1 ms a frame (commands 0.54 to 0.66 ms) against
+  3.4 to 3.7; about 21,800 sections on the GPU against 112 on the CPU.
+  Captures at the spawn and far away against `cpuCulling`: 0.12 % and
+  0.06 % of pixels differ. A NeoForge dev client joined to a Fabric dev
+  server: 8,571 sections on the GPU against 455 on the CPU, no exception.
+  Not checked: shader packs with GPU culling, the NeoForge pack.
+
+## ADR-147 — The real sections' selection on the preview's selection thread
+
+Status: accepted, 2026-11-13. Item 3 of the same list.
+
+- **Context**: after ADR-146 the selection of the real LOD sections was
+  the render thread's largest step left in flight; ADR-143 had already
+  moved the preview's selection to the thread `farfield-preview-selection`.
+  Each selection also marked every section it relied on to descend (tens of
+  thousands) as used.
+- **Decision**:
+  - The selection job runs the real selector, then the preview's, on that
+    thread; the render thread applies the result. It reads snapshots kept
+    up to date incrementally by the render thread: the resident real
+    sections, their octant masks, the resident preview sections.
+  - A worker-owned existence cache; the render thread queues its changes
+    (`existenceOps`) instead of touching it.
+  - `StreamClient`'s server index (`remote`, `knownRegions`) is written
+    under a read-write lock and read under its read side by the selection;
+    the regions the selection wants an index of are queued and asked for on
+    the client thread at each frame.
+  - The detail and the forced level are taken at the job's start.
+  - The relied-on sections are no longer marked: the evictions ask the last
+    selection's relied sets before evicting a section.
+- **Checked**: Fabric pack, same flight: render thread 1.5 to 1.65 ms a
+  frame in flight (selection 0.37 to 0.52 ms, commands 0.34 to 0.40 ms),
+  GPU about 3.5 ms; holes only while loading and right after a teleport.
+  Multiplayer (Fabric dev server, NeoForge dev client): streaming works,
+  render thread 1.5 to 1.8 ms in flight, no exception. Not checked: the
+  user's own sprinting flight, the NeoForge pack.

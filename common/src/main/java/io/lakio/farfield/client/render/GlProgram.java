@@ -122,6 +122,24 @@ final class GlProgram implements AutoCloseable {
         }
     }
 
+    /** A compute program from one source of the class path (ADR-146). */
+    static GlProgram compute(String resource) {
+        return new GlProgram(compile(org.lwjgl.opengl.GL43C.GL_COMPUTE_SHADER, read(resource), resource), resource);
+    }
+
+    private GlProgram(int shader, String name) {
+        id = glCreateProgram();
+        glAttachShader(id, shader);
+        glLinkProgram(id);
+        glDeleteShader(shader);
+        if (glGetProgrami(id, GL_LINK_STATUS) == 0) {
+            String log = glGetProgramInfoLog(id);
+            glDeleteProgram(id);
+            id = 0;
+            throw new IllegalStateException("cannot link " + name + ": " + log);
+        }
+    }
+
     /** A shader source of the class path, its includes expanded. */
     static String resource(String resource) {
         return read(resource);

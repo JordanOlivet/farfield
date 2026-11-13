@@ -114,6 +114,16 @@ public final class StreamClient {
     private final Long2LongOpenHashMap remote = new Long2LongOpenHashMap();
     private final Long2LongOpenHashMap local = new Long2LongOpenHashMap();
     private final LongOpenHashSet knownRegions = new LongOpenHashSet();
+    /**
+     * The selection reads the server's index on its own thread (ADR-147):
+     * {@link #remote} and {@link #knownRegions} change under this lock's
+     * write side (on the client thread, which reads them without it), and the
+     * selection reads them under its read side.
+     */
+    private final java.util.concurrent.locks.ReentrantReadWriteLock indexLock =
+            new java.util.concurrent.locks.ReentrantReadWriteLock();
+    /** Regions the selection wants an index of, asked for on the client thread ({@link #askRegions}). */
+    private final java.util.Set<Long> regionAsks = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final Long2LongOpenHashMap askedRegions = new Long2LongOpenHashMap();
     private final LongLinkedOpenHashSet wishes = new LongLinkedOpenHashSet();
     /**
@@ -613,10 +623,15 @@ public final class StreamClient {
      */
     public boolean exists(long key) {
         long region = regionOf(key);
-        if (knownRegions.contains(region)) {
-            return remote.containsKey(key);
+        indexLock.readLock().lock();
+        try {
+            if (knownRegions.contains(region)) {
+                return remote.containsKey(key);
+            }
+        } finally {
+            indexLock.readLock().unlock();
         }
-        askRegion(region);
+        regionAsks.add(region); // asked for on the client thread (askRegions)
         try {
             return mirror.exists(key);
         } catch (IOException e) {
@@ -685,6 +700,19 @@ public final class StreamClient {
     private static long regionOf(long key) {
         return LodKey.pack(LodKey.level(key), LodKey.x(key) >> SectionStore.REGION_SHIFT, 0,
                 LodKey.z(key) >> SectionStore.REGION_SHIFT);
+    }
+
+    /** Asks for the regions the selection wanted an index of. Client thread. */
+    public void askRegions() {
+        if (regionAsks.isEmpty()) {
+            return;
+        }
+        java.util.Iterator<Long> it = regionAsks.iterator();
+        while (it.hasNext()) {
+            long region = it.next();
+            it.remove();
+            askRegion(region);
+        }
     }
 
     private void askRegion(long region) {
@@ -760,8 +788,13 @@ public final class StreamClient {
         radius = welcome.radiusBlocks();
         blockStatesExpected = welcome.blockStates();
         biomesExpected = welcome.biomes();
-        remote.clear();
-        knownRegions.clear();
+        indexLock.writeLock().lock();
+        try {
+            remote.clear();
+            knownRegions.clear();
+        } finally {
+            indexLock.writeLock().unlock();
+        }
         askedRegions.clear();
         inFlight.clear();
         window.reset(StreamProtocol.Fetch.MAX_KEYS);
@@ -808,7 +841,13 @@ public final class StreamClient {
         boolean refresh = knownRegions.contains(region);
         for (int i = 0; i < index.keys().length; i++) {
             long key = index.keys()[i];
-            long before = remote.put(key, index.versions()[i]);
+            long before;
+            indexLock.writeLock().lock();
+            try {
+                before = remote.put(key, index.versions()[i]);
+            } finally {
+                indexLock.writeLock().unlock();
+            }
             if (refresh && before != index.versions()[i] && index.level() > 0) {
                 // A coarse section moved: its children did first. Their region's index is asked
                 // again now, or the renderer would split the new parent over children it does not
@@ -828,7 +867,12 @@ public final class StreamClient {
             }
         }
         if (index.last()) {
-            knownRegions.add(region);
+            indexLock.writeLock().lock();
+            try {
+                knownRegions.add(region);
+            } finally {
+                indexLock.writeLock().unlock();
+            }
             askedRegions.remove(region);
             generation++;
         }
@@ -897,7 +941,12 @@ public final class StreamClient {
             pushedReceived++; // unasked: the server pushed it (ADR-075)
         }
         local.put(part.key(), part.version());
-        remote.put(part.key(), part.version());
+        indexLock.writeLock().lock();
+        try {
+            remote.put(part.key(), part.version());
+        } finally {
+            indexLock.writeLock().unlock();
+        }
         landed(part.key());
         refreshedNow(part.key());
         sectionsReceived++;
@@ -1038,7 +1087,12 @@ public final class StreamClient {
             unchangedReceived++;
             mirror.touch(answer.key());
         } else {
-            remote.remove(answer.key());
+            indexLock.writeLock().lock();
+            try {
+                remote.remove(answer.key());
+            } finally {
+                indexLock.writeLock().unlock();
+            }
             generation++;
         }
     }

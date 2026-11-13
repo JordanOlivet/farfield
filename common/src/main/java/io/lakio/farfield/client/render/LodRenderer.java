@@ -353,6 +353,40 @@ public final class LodRenderer {
     private int gridWidth = -1;
     private int gridHeight;
     private GlBuffer indirect;
+    /**
+     * GPU culling of the far sections (ADR-146): a compute pass does the
+     * command loop's frustum and face tests and writes their draw commands.
+     * Per slot, its groups and flags ({@link #CULL_INTS} ints, written with
+     * the mesh); per selection, the slots to cull; per frame, three command
+     * lists (solid, cutout, plants) and their counts.
+     */
+    private GlProgram cullProgram;
+    private int cullCountU;
+    private int cullMaxU;
+    private int cullPlanesU;
+    private int cullCameraBlockU;
+    private int cullCameraFracU;
+    private int cullPlantsU;
+    private GlBuffer cullGroups;
+    private GlBuffer cullCandidates;
+    private GlBuffer gpuCommands;
+    private GlBuffer gpuCounts;
+    /** The slots the last selection gave the GPU, and the most commands a list of theirs may hold. */
+    private int gpuCandidates;
+    private int gpuMaxCommands;
+    private final it.unimi.dsi.fastutil.ints.IntArrayList gpuSlots = new it.unimi.dsi.fastutil.ints.IntArrayList();
+    /** The selection's sections the CPU loop still draws: near the game's terrain, or not eligible. */
+    private final LongArrayList cpuList = new LongArrayList();
+    /** GPU-culled sections with translucent faces: those stay sorted on the CPU, far to near. */
+    private final LongArrayList gpuTranslucent = new LongArrayList();
+    /** Translucent sections of this frame, the translucent order's indexes point here. */
+    private final LongArrayList frameTranslucent = new LongArrayList();
+    /** Slots freed since the last selection: reused only after it, so no culled slot draws another section. */
+    private final it.unimi.dsi.fastutil.ints.IntArrayList pendingFreeSlots = new it.unimi.dsi.fastutil.ints.IntArrayList();
+    private static final int CULL_INTS = 16;
+    private static final int[] NO_CULL_GROUPS = new int[CULL_INTS];
+    private final org.joml.Vector4f plane = new org.joml.Vector4f();
+    private final float[] planes = new float[24];
     /** The shared index buffer of {@link #INDEXED_QUADS} quads. */
     private GlBuffer quadIndices;
     private int vao;
@@ -479,30 +513,6 @@ public final class LodRenderer {
     private final WantOrder wantOrder = new WantOrder();
     /** The next entry of {@link #wantOrder} to request. */
     private int wantCursor;
-    private final LodSelector.Sections sections = new LodSelector.Sections() {
-        @Override
-        public boolean exists(long key) {
-            return sectionExists(key);
-        }
-
-        @Override
-        public boolean ready(long key) {
-            // A section the selection relies on to descend is in use even when
-            // only its children are drawn: freeing it would make its parent fall
-            // back to the coarse level until it is meshed again (flicker).
-            Resident r = resident.get(key);
-            if (r != null) {
-                r.lastUsed = selectionTime;
-            }
-            return r != null;
-        }
-
-        @Override
-        public int octants(long key) {
-            Resident r = resident.get(key);
-            return r != null ? r.octants : 0;
-        }
-    };
     private boolean selectionDirty = true;
     /** The noise preview setting the last selection ran with. */
     private boolean selectedPreview;
@@ -595,8 +605,32 @@ public final class LodRenderer {
     /** Bumped when a running preview selection's result no longer applies (another world, the preview off). */
     private int previewGeneration;
     private PreviewSelection previewResult = new PreviewSelection(0);
+    /** The sections the last selection relied on to descend (ADR-147): never evicted while it stands. */
+    private LongOpenHashSet reliedReal = new LongOpenHashSet();
+    private LongOpenHashSet reliedPreview = new LongOpenHashSet();
+
+    private boolean relied(long key) {
+        return PreviewLayer.isPreview(key) ? reliedPreview.contains(key) : reliedReal.contains(key);
+    }
+
     /** The resident preview sections, kept with {@link #resident}: what a preview selection takes as ready. */
     private final LongOpenHashSet previewResident = new LongOpenHashSet();
+    /** The resident real sections and their octants, kept with {@link #resident} for the selection (ADR-147). */
+    private final LongOpenHashSet realResident = new LongOpenHashSet();
+    private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap realOctants =
+            new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+    /**
+     * The real sections' existence cache belongs to the selection's thread
+     * (ADR-147): the render thread queues the sections the store wrote, and a
+     * clear on a new world.
+     */
+    private final java.util.concurrent.ConcurrentLinkedQueue<Long> existenceOps =
+            new java.util.concurrent.ConcurrentLinkedQueue<>();
+    private final java.util.concurrent.atomic.AtomicBoolean clearExistence =
+            new java.util.concurrent.atomic.AtomicBoolean();
+    /** The detail and level lock the next selection takes (set on its thread at its start, ADR-147). */
+    private double wantedDetail = Double.NaN;
+    private int wantedForcedLevel = -1;
     private boolean previewFailureLogged;
 
     /** A preview selection's result: preview keys to draw and to mesh, and those it relied on as ready. */
@@ -605,6 +639,14 @@ public final class LodRenderer {
         final LongArrayList draw = new LongArrayList();
         final LongArrayList want = new LongArrayList();
         final LongOpenHashSet relied = new LongOpenHashSet();
+        /** The real sections' part (ADR-147): drawn, wanted, relied on, and the selector's fallbacks. */
+        final LongArrayList realDraw = new LongArrayList();
+        final LongArrayList realWant = new LongArrayList();
+        final LongOpenHashSet realRelied = new LongOpenHashSet();
+        int fallbacks;
+        int finerFallbacks;
+        final java.util.List<String> reasons = new java.util.ArrayList<>();
+        boolean preview;
         long nanos;
 
         PreviewSelection(int generation) {
@@ -620,7 +662,13 @@ public final class LodRenderer {
                 return fingerprint;
             }
             fingerprinted = true;
-            long h = draw.size() * 31L + want.size();
+            long h = draw.size() * 31L + want.size() + realDraw.size() * 961L + realWant.size() * 29791L;
+            for (int i = 0, n = realDraw.size(); i < n; i++) {
+                h = h * 0x9E3779B97F4A7C15L + realDraw.getLong(i);
+            }
+            for (int i = 0, n = realWant.size(); i < n; i++) {
+                h = h * 0x9E3779B97F4A7C15L + realWant.getLong(i);
+            }
             for (int i = 0, n = draw.size(); i < n; i++) {
                 h = h * 0x9E3779B97F4A7C15L + draw.getLong(i);
             }
@@ -650,12 +698,23 @@ public final class LodRenderer {
     private static final long LONG_FRAME_NANOS = 50_000_000L;
     /** The longest preview selection on its thread since the last stat line (ADR-143). */
     private long previewSelectNanos;
+    /** Each step's mean time a frame, in microseconds, since the last stat line (ADR-146). */
+    private String stepMeans(long frames) {
+        StringBuilder out = new StringBuilder("(");
+        for (int i = 0; i < PHASES.length; i++) {
+            out.append(i == 0 ? "" : ", ").append(PHASES[i]).append(' ').append(stepNanos[i] / 1000 / Math.max(1, frames));
+        }
+        return out.append(" us)").toString();
+    }
+
     /** The steps of a frame, timed for {@link #worstFrame} (ADR-141). */
     private static final String[] PHASES = {"blends", "rewrites", "uploads", "colors", "selection", "wanted",
             "commands", "eviction", "draw"};
     /** A constant, not {@code PHASES.length}: the instance is built before the array in the class's init. */
     private static final int TIMED_PHASES = 8;
     private final long[] phase = new long[TIMED_PHASES];
+    /** Each step's time summed over the frames since the last stat line, for its mean (ADR-146). */
+    private final long[] stepNanos = new long[TIMED_PHASES + 1];
     /** Within this frame's uploads: the quads sent and the biome blends (ADR-144). */
     private long uploadQuadsNanos;
     private long uploadBlendNanos;
@@ -1140,6 +1199,25 @@ public final class LodRenderer {
         drawnSections = new GlBuffer(4096L * 4);
         previewHidden = new GlBuffer((long) HIDDEN_SIDE * HIDDEN_SIDE / 8);
         indirect = new GlBuffer(1024L * COMMAND_BYTES);
+        cullGroups = new GlBuffer(Math.max(4096, slots) * CULL_INTS * 4);
+        cullCandidates = new GlBuffer(4096L * 4);
+        gpuCommands = new GlBuffer(3L * 4096 * COMMAND_BYTES);
+        gpuCounts = new GlBuffer(16);
+        if (!Boolean.getBoolean("farfield.cpuCulling")) {
+            try {
+                cullProgram = GlProgram.compute("lod_cull.comp");
+                cullCountU = cullProgram.uniform("u_count");
+                cullMaxU = cullProgram.uniform("u_maxCommands");
+                cullPlanesU = cullProgram.uniform("u_planes");
+                cullCameraBlockU = cullProgram.uniform("u_cameraBlock");
+                cullCameraFracU = cullProgram.uniform("u_cameraFrac");
+                cullPlantsU = cullProgram.uniform("u_plants");
+                Farfield.LOG.info("LOD far sections culled on the GPU");
+            } catch (RuntimeException e) {
+                cullProgram = null;
+                Farfield.LOG.warn("LOD GPU culling unavailable, the CPU culls every section", e);
+            }
+        }
         vao = glCreateVertexArrays();
         int[] indices = new int[INDEXED_QUADS * 6];
         for (int q = 0; q < INDEXED_QUADS; q++) {
@@ -1339,8 +1417,8 @@ public final class LodRenderer {
             return;
         }
         stream = StreamClient.of(world);
-        if (RenderSettings.forcedLevel() != selector.forcedLevel()) {
-            selector.setForcedLevel(RenderSettings.forcedLevel()); // the level lock, a diagnostic
+        if (RenderSettings.forcedLevel() != wantedForcedLevel) {
+            wantedForcedLevel = RenderSettings.forcedLevel(); // the level lock, a diagnostic: the next selection takes it
             selectionDirty = true;
         }
         if (stream != null && stream.generation() != streamGeneration) {
@@ -1413,8 +1491,11 @@ public final class LodRenderer {
             }
         }
         updateFrustum(viewRotation, projection);
+        if (stream != null) {
+            stream.askRegions(); // the regions the selection's thread wanted an index of (ADR-147)
+        }
         if (takePreviewSelection()) {
-            selectionDirty = true; // a new preview result: drawn with the next selection
+            selectionDirty = true; // a new selection result: drawn with the next selection
         }
         // At most one selection per MIN_RESELECT_NANOS (ADR-140): in flight each new mesh made the
         // next frame select again, a selection every frame.
@@ -1446,8 +1527,9 @@ public final class LodRenderer {
         int count = 0;
         int renderDistance = mc.options.getEffectiveRenderDistance();
         translucentOrder.clear();
-        for (int i = 0, n = drawList.size(); i < n; i++) {
-            long key = drawList.getLong(i);
+        frameTranslucent.clear();
+        for (int i = 0, n = cpuList.size(); i < n; i++) {
+            long key = cpuList.getLong(i);
             Resident r = resident.get(key);
             if (r == null || r.quadCount == 0) {
                 continue;
@@ -1478,16 +1560,34 @@ public final class LodRenderer {
                 addCommand(PLANTS, r.groups[PLANT_GROUP], r.groups[PLANT_GROUP + 1], r.slot);
             }
             if (r.groups[PLANT_GROUP] > r.opaqueCount) {
-                translucentOrder.add((long) Float.floatToIntBits(centerDistanceSq(key, cam)) << 32 | (long) i << 6 | faces);
+                translucentOrder.add((long) Float.floatToIntBits(centerDistanceSq(key, cam)) << 32
+                        | (long) frameTranslucent.size() << 6 | faces);
+                frameTranslucent.add(key);
             }
         }
+        // The GPU-culled sections' translucent faces, sorted with the others (ADR-146).
+        for (int i = 0, n = gpuTranslucent.size(); i < n; i++) {
+            long key = gpuTranslucent.getLong(i);
+            Resident r = resident.get(key);
+            if (r == null || r.quadCount == 0) {
+                continue;
+            }
+            int faces = visibleFaces(key, cam);
+            if (faces == 0) {
+                continue;
+            }
+            translucentOrder.add((long) Float.floatToIntBits(centerDistanceSq(key, cam)) << 32
+                    | (long) frameTranslucent.size() << 6 | faces);
+            frameTranslucent.add(key);
+        }
+        count += gpuCandidates; // culled on the GPU: counted before its frustum test
         // Translucent sections far to near, as vanilla: a ray through one section's ice
         // can reach a neighbor's water surface, which must be blended first (ADR-055).
         // Positive floats sort as their bits.
         java.util.Arrays.sort(translucentOrder.elements(), 0, translucentOrder.size());
         for (int i = translucentOrder.size() - 1; i >= 0; i--) {
             long e = translucentOrder.getLong(i);
-            addCommands(resident.get(drawList.getLong((int) e >>> 6)), TRANSLUCENT, (int) e & 63);
+            addCommands(resident.get(frameTranslucent.getLong((int) (e & 0xFFFFFFFFL) >>> 6)), TRANSLUCENT, (int) e & 63);
         }
         phase[6] = System.nanoTime();
         if (frame % 60 == 0 || evictBacklog) {
@@ -1499,10 +1599,17 @@ public final class LodRenderer {
         phase[7] = System.nanoTime();
         lastDrawn = count;
         if (count > 0) {
+            cullOnGpu(cam);
             draw(cam, viewRotation, projection, mc);
         }
         long took = System.nanoTime() - frameStart;
         frameNanos += took;
+        long stepStart = frameStart;
+        for (int i = 0; i < PHASES.length; i++) {
+            long end = i < phase.length ? phase[i] : frameStart + took;
+            stepNanos[i] += end - stepStart;
+            stepStart = end;
+        }
         if (took > maxFrameNanos) {
             // The steps of the longest frame (ADR-141): what a stutter spent its time on.
             long before = frameStart;
@@ -1691,9 +1798,9 @@ public final class LodRenderer {
             pendingDetail = detail;
             return;
         }
-        double current = selector.detail();
+        double current = Double.isNaN(wantedDetail) ? selector.detail() : wantedDetail;
         if (Math.abs(detail - current) > current * 0.02) {
-            selector.setDetail(detail);
+            wantedDetail = detail; // the next selection takes it (ADR-147)
             selectionDirty = true;
             if (Math.abs(detail - loggedDetail) > loggedDetail * 0.1) {
                 loggedDetail = detail;
@@ -1721,42 +1828,36 @@ public final class LodRenderer {
         }
         drawList.clear();
         wanted.clear();
-        LongPredicate viewed = key -> inView(key, cam);
-        selector.setOutsideView(viewed, outsideDetail);
-        selector.select(cam.x, cam.y, cam.z, level.getMinBuildHeight(), level.getMaxBuildHeight(), lastSelectionDistance,
-                sections, drawSink, wantSink);
-        maxFallbacks = Math.max(maxFallbacks, selector.fallbacks());
-        for (String reason : selector.fallbackReasons()) {
+        freePendingSlots();
+        // The selection runs on its own thread (ADR-143, ADR-147): its last result is drawn, and the next
+        // one starts with what the render thread knows now.
+        selectedPreview = RenderSettings.noisePreview();
+        takePreviewSelection();
+        if (previewJob == null) {
+            startPreviewSelection(level, cam);
+        }
+        PreviewSelection p = previewResult;
+        drawList.addAll(p.realDraw);
+        wanted.addAll(p.realWant);
+        maxFallbacks = Math.max(maxFallbacks, p.fallbacks);
+        for (String reason : p.reasons) {
             if (fallbackReasons.size() < FALLBACK_REASONS) {
                 fallbackReasons.add(reason);
             }
         }
-        maxFinerFallbacks = Math.max(maxFinerFallbacks, selector.finerFallbacks());
+        maxFinerFallbacks = Math.max(maxFinerFallbacks, p.finerFallbacks);
         // The preview stays under a level lock, locked the same way: on a server most of the
         // far view is preview, and without it the lock left only the stored terrain nearby.
-        selectedPreview = RenderSettings.noisePreview();
-        if (selectedPreview) {
-            takePreviewSelection();
-            if (previewJob == null) {
-                startPreviewSelection(level, cam);
-            }
-            PreviewSelection p = previewResult;
+        if (selectedPreview && p.preview) {
             drawList.addAll(p.draw);
             wanted.addAll(p.want);
-            // As the synchronous selection's ready test did: what it relied on stays resident.
-            LongIterator relied = p.relied.iterator();
-            while (relied.hasNext()) {
-                Resident r = resident.get(relied.nextLong());
-                if (r != null) {
-                    r.lastUsed = now;
-                }
-            }
-        } else if (!previewResult.draw.isEmpty() || previewJob != null) {
-            previewGeneration++;
-            previewJob = null;
-            previewResult = new PreviewSelection(previewGeneration);
         }
+        // What the selection relied on to descend stays resident: the evictions ask these sets (ADR-147);
+        // marking each of their tens of thousands of sections at every selection cost the render thread.
+        reliedReal = p.realRelied;
+        reliedPreview = p.relied;
         int outdatedDrawn = 0;
+        beginSplit(cam);
         LongOpenHashSet drawnBefore = FrameProbe.enabled() ? new LongOpenHashSet(drawn) : null;
         drawn.clear();
         selectedMinY = level.getMinBuildHeight();
@@ -1783,6 +1884,7 @@ public final class LodRenderer {
                 r.lastUsed = now;
             }
             drawn.add(key);
+            splitForCulling(key, r, size, cam);
             // A drawn copy older than the server's: fetched with the meshes this selection wants, not
             // after the whole background queue; the preview already hides itself for the newer data,
             // so the old copy can leave a hole where the new chunks are (ADR-074).
@@ -1792,6 +1894,7 @@ public final class LodRenderer {
             }
         }
         maxOutdatedDrawn = Math.max(maxOutdatedDrawn, outdatedDrawn);
+        uploadCandidates();
         // The camera moves up to the reselection distance before the next selection.
         drawnExtent = Math.min(MAX_DISTANCE * 4, Math.max(lastSelectionDistance, Math.sqrt(extentSq))
                 + Math.sqrt(RESELECT_DISTANCE_SQ));
@@ -1856,6 +1959,11 @@ public final class LodRenderer {
      */
     private void startPreviewSelection(ClientLevel level, Vec3 cam) {
         LongOpenHashSet ready = previewResident.clone(); // an array copy: walking the residents cost a millisecond
+        LongOpenHashSet realReady = realResident.clone();
+        it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap octants = realOctants.clone();
+        boolean preview = selectedPreview;
+        StreamClient streamAt = stream;
+        LodWorld worldAt = world;
         FrustumIntersection view = new FrustumIntersection(new Matrix4f(cullMatrix));
         double cx = cam.x;
         double cy = cam.y;
@@ -1864,18 +1972,62 @@ public final class LodRenderer {
         int maxY = level.getMaxBuildHeight();
         double distance = lastSelectionDistance;
         int generation = previewGeneration;
-        previewLayer.setDetail(selector.detail());
-        previewLayer.setForcedLevel(RenderSettings.forcedLevel());
-        previewLayer.setOutsideView(key -> {
+        // The selectors' settings, set here while no selection runs (ADR-147).
+        if (!Double.isNaN(wantedDetail)) {
+            selector.setDetail(wantedDetail);
+        }
+        selector.setForcedLevel(wantedForcedLevel);
+        LongPredicate viewed = key -> {
             int size = LodSection.SIZE << drawLevel(key);
             float x = (float) (LodKey.x(key) * (double) size - cx);
             float y = (float) (LodKey.y(key) * (double) size - cy);
             float z = (float) (LodKey.z(key) * (double) size - cz);
             return view.testAab(x, y, z, x + size, y + size, z + size);
-        }, outsideDetail);
+        };
+        selector.setOutsideView(viewed, outsideDetail);
+        previewLayer.setDetail(selector.detail());
+        previewLayer.setForcedLevel(wantedForcedLevel);
+        previewLayer.setOutsideView(viewed, outsideDetail);
         previewJob = previewSelector.submit(() -> {
             long start = System.nanoTime();
             PreviewSelection p = new PreviewSelection(generation);
+            p.preview = preview;
+            if (clearExistence.getAndSet(false)) {
+                existence.clear();
+            }
+            Long written;
+            while ((written = existenceOps.poll()) != null) {
+                existence.put(written.longValue(), EXISTS);
+            }
+            selector.select(cx, cy, cz, minY, maxY, distance, new LodSelector.Sections() {
+                @Override
+                public boolean exists(long key) {
+                    return streamAt != null ? streamAt.exists(key) : sectionExists(worldAt, key);
+                }
+
+                @Override
+                public boolean ready(long key) {
+                    // A section the selection relies on to descend stays resident even when only its
+                    // children are drawn: freed, its parent would fall back coarse until it is meshed again.
+                    if (realReady.contains(key)) {
+                        p.realRelied.add(key);
+                        return true;
+                    }
+                    return false;
+                }
+
+                @Override
+                public int octants(long key) {
+                    return octants.get(key);
+                }
+            }, p.realDraw::add, p.realWant::add);
+            p.fallbacks = selector.fallbacks();
+            p.finerFallbacks = selector.finerFallbacks();
+            p.reasons.addAll(selector.fallbackReasons());
+            if (!preview) {
+                p.nanos = System.nanoTime() - start;
+                return p;
+            }
             previewLayer.select(cx, cy, cz, minY, maxY, distance, key -> {
                 if (ready.contains(key)) {
                     p.relied.add(key);
@@ -1916,6 +2068,128 @@ public final class LodRenderer {
         boolean changed = p.fingerprint() != previewResult.fingerprint();
         previewResult = p;
         return changed;
+    }
+
+    /**
+     * The selection's split between the GPU culling and the CPU loop
+     * (ADR-146): a section goes to the GPU when its mesh shows and it lies
+     * wholly outside the game's render distance and a margin of 4 chunks:
+     * there it never gives way to the game's terrain, so its only cutout is
+     * its own; the hand-over and the cutouts near the game's terrain stay on
+     * the CPU. A section without quads, or not resident yet, is in neither
+     * list: a mesh that comes asks for another selection.
+     */
+    private boolean splitGpu;
+    /** Why sections stayed on the CPU at the last selection: off, no mesh (dropped), unused, looks, near the game. */
+    private final int[] cpuWhy = new int[5];
+    private double nearX0;
+    private double nearX1;
+    private double nearZ0;
+    private double nearZ1;
+
+    private void beginSplit(Vec3 cam) {
+        java.util.Arrays.fill(cpuWhy, 0);
+        cpuList.clear();
+        gpuSlots.clear();
+        gpuTranslucent.clear();
+        splitGpu = cullProgram != null && selector.forcedLevel() < 0;
+        int reach = (Minecraft.getInstance().options.getEffectiveRenderDistance() + 4) * 16;
+        nearX0 = cam.x - reach;
+        nearX1 = cam.x + reach;
+        nearZ0 = cam.z - reach;
+        nearZ1 = cam.z + reach;
+    }
+
+    /** One drawn section to the GPU or the CPU list (see the class of rules above), {@code r} its resident or null. */
+    private void splitForCulling(long key, Resident r, int size, Vec3 cam) {
+        if (r == null || r.quadCount == 0) {
+            cpuWhy[1]++;
+            return; // nothing to draw: a mesh that comes asks for another selection
+        }
+        if (!splitGpu || !looksReady(r)) {
+            cpuWhy[!splitGpu ? 0 : 3]++;
+            cpuList.add(key);
+            return;
+        }
+        double x0 = LodKey.x(key) * (double) size;
+        double z0 = LodKey.z(key) * (double) size;
+        if (x0 < nearX1 && x0 + size > nearX0 && z0 < nearZ1 && z0 + size > nearZ0) {
+            cpuWhy[4]++;
+            cpuList.add(key);
+            return;
+        }
+        gpuSlots.add(r.slot);
+        if (r.groups[PLANT_GROUP] > r.opaqueCount) {
+            gpuTranslucent.add(key);
+        }
+    }
+
+    /** Uploads the GPU's slots of this selection and sizes its command lists. */
+    private void uploadCandidates() {
+        gpuCandidates = gpuSlots.size();
+        if (gpuCandidates == 0) {
+            return;
+        }
+        long bytes = (long) gpuCandidates * 4;
+        if (bytes > cullCandidates.size()) {
+            cullCandidates.grow(Math.max(bytes, cullCandidates.size() * 2), 0);
+        }
+        cullCandidates.upload(0, gpuSlots.toIntArray());
+        // Seven commands at most per section and list: six runs of directions and the plants'.
+        gpuMaxCommands = gpuCandidates * 8;
+        long commandBytes = 3L * gpuMaxCommands * COMMAND_BYTES;
+        if (commandBytes > gpuCommands.size()) {
+            gpuCommands.grow(Math.max(commandBytes, gpuCommands.size() * 2), 0);
+        }
+    }
+
+    /**
+     * The GPU culling pass of this frame (ADR-146): writes the far sections'
+     * commands and their counts, read by the draws after a command barrier.
+     */
+    private void cullOnGpu(Vec3 cam) {
+        if (gpuCandidates == 0 || cullProgram == null) {
+            return;
+        }
+        for (int p = 0; p < 6; p++) {
+            cullMatrix.frustumPlane(p, plane);
+            planes[p * 4] = plane.x;
+            planes[p * 4 + 1] = plane.y;
+            planes[p * 4 + 2] = plane.z;
+            planes[p * 4 + 3] = plane.w;
+        }
+        int blockX = (int) Math.floor(cam.x);
+        int blockY = (int) Math.floor(cam.y);
+        int blockZ = (int) Math.floor(cam.z);
+        glClearNamedBufferData(gpuCounts.id(), GL_R32UI, GL_RED_INTEGER, GL_UNSIGNED_INT, (java.nio.ByteBuffer) null);
+        GlStateManager._glUseProgram(cullProgram.id());
+        glUniform1i(cullCountU, gpuCandidates);
+        glUniform1i(cullMaxU, gpuMaxCommands);
+        glUniform4fv(cullPlanesU, planes);
+        glUniform3i(cullCameraBlockU, blockX, blockY, blockZ);
+        glUniform3f(cullCameraFracU, (float) (cam.x - blockX), (float) (cam.y - blockY), (float) (cam.z - blockZ));
+        glUniform1i(cullPlantsU, RenderSettings.drawPlants() ? 1 : 0);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, cullGroups.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, sectionInfo.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, cullCandidates.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, gpuCommands.id());
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, gpuCounts.id());
+        glDispatchCompute((gpuCandidates + 63) / 64, 1, 1);
+        glMemoryBarrier(GL_COMMAND_BARRIER_BIT | GL_SHADER_STORAGE_BARRIER_BIT);
+        GlStateManager._glUseProgram(0);
+    }
+
+    /** Draws a GPU-culled list (0 solid, 1 cutout, 2 plants) with its count from the culling pass (ADR-146). */
+    private void drawCulled(int list) {
+        if (gpuCandidates == 0 || cullProgram == null) {
+            return;
+        }
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, gpuCommands.id());
+        glBindBuffer(GL_PARAMETER_BUFFER, gpuCounts.id());
+        glMultiDrawElementsIndirectCount(GL_TRIANGLES, GL_UNSIGNED_INT, (long) list * gpuMaxCommands * COMMAND_BYTES,
+                (long) list * 4, gpuMaxCommands, 0);
+        glBindBuffer(GL_PARAMETER_BUFFER, 0);
+        glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirect.id());
     }
 
     /** Requests the meshes of {@link #wantOrder} in its order, while there is room in flight. */
@@ -2081,7 +2355,7 @@ public final class LodRenderer {
             for (int y = Math.floorDiv(selectedMinY, size); y <= Math.floorDiv(selectedMaxY - 1, size); y++) {
                 long key = LodKey.pack(level, x, y, z);
                 long preview = PreviewLayer.toPreview(key);
-                boolean exists = stream != null ? stream.exists(key) : sectionExists(key);
+                boolean exists = stream != null ? stream.exists(key) : storeHas(key);
                 if (!exists && !resident.containsKey(key) && !resident.containsKey(preview) && !drawn.contains(preview)) {
                     continue;
                 }
@@ -2390,9 +2664,19 @@ public final class LodRenderer {
         return PreviewLayer.drawLevel(key);
     }
 
-    private boolean sectionExists(long key) {
-        if (stream != null) {
-            return stream.exists(key); // the server's index: a hash lookup, not cached here
+    /** Whether the store holds a real section, read directly (debug lines). Render thread. */
+    private boolean storeHas(long key) {
+        try {
+            return world != null && world.exists(key);
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /** Whether the store holds a real section; the selection's thread, its cache (ADR-147). */
+    private boolean sectionExists(LodWorld w, long key) {
+        if (w == null) {
+            return false;
         }
         byte known = existence.get(key);
         if (known != 0) {
@@ -2400,7 +2684,7 @@ public final class LodRenderer {
         }
         boolean exists;
         try {
-            exists = world.exists(key);
+            exists = w.exists(key);
         } catch (IOException e) {
             exists = false;
         }
@@ -2433,7 +2717,9 @@ public final class LodRenderer {
                             + " to the game, over {}"
                             + " frames; detail {}; at most {} coarse fallbacks, {} finer fallbacks and {} outdated"
                             + " sections drawn per selection; the longest LOD frame {} us ({}), the longest frame {} ms, {}"
-                            + " frames over 50 ms; the longest preview selection {} ms on its thread", count, resident.size(),
+                            + " frames over 50 ms; the longest preview selection {} ms on its thread; steps per frame {};"
+                            + " {} sections culled on the GPU, {} on the CPU {}",
+                    count, resident.size(),
                     arena.used() * 8 >> 20, arena.capacity() * 8 >> 20, requested.size(), meshesUploaded, meshesEvicted,
                     selections, frameNanos / 1000 / Math.max(1, timedFrames),
                     (gpuPassNanos[0] + gpuPassNanos[1] + gpuPassNanos[2] + gpuPassNanos[3]) / 1000 / Math.max(1, gpuFrames),
@@ -2446,7 +2732,7 @@ public final class LodRenderer {
                     discardSections / Math.max(1, timedFrames), leftToGame / Math.max(1, timedFrames), timedFrames,
                     String.format("%.1f", selector.detail()), maxFallbacks, maxFinerFallbacks, maxOutdatedDrawn,
                     maxFrameNanos / 1000, worstFrame, maxFrameGapNanos / 1_000_000, longFrames,
-                    previewSelectNanos / 1_000_000);
+                    previewSelectNanos / 1_000_000, stepMeans(timedFrames), gpuCandidates, cpuList.size(), java.util.Arrays.toString(cpuWhy));
         }
         if (RenderSettings.performanceLogs()) {
             Farfield.LOG.info("LOD holes: at most {} chunk columns without anything drawn within {} chunks;"
@@ -2484,6 +2770,7 @@ public final class LodRenderer {
         leftToGame = 0;
         frameNanos = 0;
         maxFrameNanos = 0;
+        java.util.Arrays.fill(stepNanos, 0);
         previewSelectNanos = 0;
         maxFrameGapNanos = 0;
         longFrames = 0;
@@ -2507,6 +2794,8 @@ public final class LodRenderer {
         }
         resident.clear();
         previewResident.clear();
+        realResident.clear();
+        realOctants.clear();
         blendDirty.clear();
         requested.clear();
         rewrittenWhileMeshing.clear();
@@ -2515,7 +2804,8 @@ public final class LodRenderer {
         swapOf.clear();
         stale.clear();
         provisional.clear();
-        existence.clear();
+        clearExistence.set(true); // the selection's cache (ADR-147)
+        existenceOps.clear();
         sectionCache.clear();
         drawList.clear();
         wanted.clear();
@@ -2528,6 +2818,10 @@ public final class LodRenderer {
         tints.reset();
         freeSlotCount = 0;
         slotCount = 0;
+        pendingFreeSlots.clear();
+        gpuCandidates = 0;
+        cpuList.clear();
+        gpuTranslucent.clear();
         selectionDirty = true;
         world = next;
         previewGeneration++;
@@ -2835,9 +3129,8 @@ public final class LodRenderer {
         }
         Long key;
         while ((key = rewritten.poll()) != null) {
-            if (existence.put(key.longValue(), EXISTS) != EXISTS) {
-                selectionDirty = true;
-            }
+            existenceOps.add(key); // the selection's cache learns it (ADR-147)
+            selectionDirty = true;
             if (resident.containsKey(key.longValue())) {
                 stale.add(key.longValue());
                 previewLayer.realWritten(key);
@@ -3048,6 +3341,8 @@ public final class LodRenderer {
             resident.put(m.key, r);
             if (PreviewLayer.isPreview(m.key)) {
                 previewResident.add(m.key);
+            } else {
+                realResident.add(m.key);
             }
             selectionDirty = true; // a parent may now descend
         } else if (r.quadCount > 0) {
@@ -3059,6 +3354,9 @@ public final class LodRenderer {
         r.cutout = m.cutout;
         r.borderFaces = m.borderFaces;
         r.octants = m.octants;
+        if (!PreviewLayer.isPreview(m.key)) {
+            realOctants.put(m.key, m.octants);
+        }
         if (!PreviewLayer.isPreview(m.key)) {
             noteHandOver(m.key, r.columns, m.columns);
         }
@@ -3134,9 +3432,11 @@ public final class LodRenderer {
         while (it.hasNext()) {
             Long2ObjectOpenHashMap.Entry<Resident> e = it.next();
             Resident r = e.getValue();
-            if (r.lastUsed < selectionTime) {
+            if (r.lastUsed < selectionTime && !relied(e.getLongKey())) {
                 evicted.add(e.getLongKey());
                 previewResident.remove(e.getLongKey());
+                realResident.remove(e.getLongKey());
+                realOctants.remove(e.getLongKey());
                 if (r.quadCount > 0) {
                     arena.release(r.start, r.quadCount);
                 }
@@ -3267,10 +3567,28 @@ public final class LodRenderer {
         if (needed > sectionInfo.size()) {
             sectionInfo.grow(sectionInfo.size() * 2, sectionInfo.size());
         }
+        if ((long) slotCount * CULL_INTS * 4 > cullGroups.size()) {
+            cullGroups.grow(cullGroups.size() * 2, cullGroups.size());
+        }
         return slot;
     }
 
     private void releaseSlot(int slot) {
+        // Its GPU record emptied, and the slot kept until the next selection (ADR-146): the culled
+        // candidates of the last selection may still name it.
+        cullGroups.upload((long) slot * CULL_INTS * 4, NO_CULL_GROUPS);
+        pendingFreeSlots.add(slot);
+    }
+
+    /** The slots freed since the last selection go back to the free list: no candidate names them now. */
+    private void freePendingSlots() {
+        for (int i = 0, n = pendingFreeSlots.size(); i < n; i++) {
+            freeSlot(pendingFreeSlots.getInt(i));
+        }
+        pendingFreeSlots.clear();
+    }
+
+    private void freeSlot(int slot) {
         if (freeSlots.length == freeSlotCount) {
             freeSlots = java.util.Arrays.copyOf(freeSlots, Math.max(64, freeSlotCount * 2));
         }
@@ -3283,6 +3601,10 @@ public final class LodRenderer {
         sectionInfo.upload((long) r.slot * SECTION_BYTES, new int[]{
                 LodKey.x(key) * size, LodKey.y(key) * size, LodKey.z(key) * size, level,
                 (int) r.start, r.quadCount, r.occluders ? 1 : 0, PreviewLayer.isPreview(key) ? 1 : 0});
+        int[] record = new int[CULL_INTS];
+        System.arraycopy(r.groups, 0, record, 0, Math.min(PLANT_GROUP + 2, r.groups.length));
+        record[PLANT_GROUP + 2] = r.cutout ? 1 : 0;
+        cullGroups.upload((long) r.slot * CULL_INTS * 4, record);
     }
 
     /**
@@ -3431,9 +3753,11 @@ public final class LodRenderer {
             }
             Long2ObjectOpenHashMap.Entry<Resident> e = it.next();
             Resident r = e.getValue();
-            if (now - r.lastUsed > EVICT_AFTER_NANOS) {
+            if (now - r.lastUsed > EVICT_AFTER_NANOS && !relied(e.getLongKey())) {
                 evicted.add(e.getLongKey());
                 previewResident.remove(e.getLongKey());
+                realResident.remove(e.getLongKey());
+                realOctants.remove(e.getLongKey());
                 if (r.quadCount > 0) {
                     arena.release(r.start, r.quadCount);
                 }
@@ -4099,29 +4423,40 @@ public final class LodRenderer {
         boolean prepass = RenderSettings.depthPrepass() && !dh;
         Shader shaded = dh ? dhOpaque : packed ? (prepass ? packShaded : packPlain) : (prepass ? earlyZ : plain);
         int opaqueDraws = solidDraws + discardDraws;
-        if (prepass && opaqueDraws > 0) {
+        boolean culled = gpuCandidates > 0 && cullProgram != null;
+        if (prepass && (opaqueDraws > 0 || culled)) {
             RenderSystem.colorMask(false, false, false, false);
-            if (solidDraws > 0) {
+            if (solidDraws > 0 || culled) {
                 use(packed && packDepthSolid != null ? packDepthSolid : depthSolid, cam, mc, false);
-                glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, 0, solidDraws, 0);
+                if (solidDraws > 0) {
+                    glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, 0, solidDraws, 0);
+                }
+                drawCulled(0);
             }
-            if (discardDraws > 0) {
+            if (discardDraws > 0 || culled) {
                 use(packed && packDepthOnly != null ? packDepthOnly : depthOnly, cam, mc, false);
-                glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, (long) solidDraws * COMMAND_BYTES,
-                        discardDraws, 0);
+                if (discardDraws > 0) {
+                    glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, (long) solidDraws * COMMAND_BYTES,
+                            discardDraws, 0);
+                }
+                drawCulled(1);
             }
             RenderSystem.colorMask(true, true, true, true);
         }
         if (timed) {
             glQueryCounter(timerQueries[slot * TIMESTAMPS + 1], GL_TIMESTAMP);
         }
-        if (opaqueDraws > 0) {
+        if (opaqueDraws > 0 || culled) {
             use(shaded, cam, mc, false);
             if (prepass) {
                 RenderSystem.depthFunc(GL_EQUAL);
                 RenderSystem.depthMask(false);
             }
-            glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, 0, opaqueDraws, 0);
+            if (opaqueDraws > 0) {
+                glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, 0, opaqueDraws, 0);
+            }
+            drawCulled(0);
+            drawCulled(1);
             RenderSystem.depthFunc(GL_LEQUAL);
             RenderSystem.depthMask(true);
         }
@@ -4129,11 +4464,14 @@ public final class LodRenderer {
             glQueryCounter(timerQueries[slot * TIMESTAMPS + 2], GL_TIMESTAMP);
         }
         // Under DH's contract plants are left out: without their texture to cut, each would be a solid rectangle.
-        if (plantDraws > 0 && !dh) {
+        if ((plantDraws > 0 || culled && RenderSettings.drawPlants()) && !dh) {
             // Plants: once, depth-tested against the opaque faces and writing their own,
             // holes cut out; the pre-pass would draw their thin quads twice.
             use(packed ? packPlants : plants, cam, mc, false);
-            glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, plantOffset, plantDraws, 0);
+            if (plantDraws > 0) {
+                glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, plantOffset, plantDraws, 0);
+            }
+            drawCulled(2);
         }
         if (timed) {
             glQueryCounter(timerQueries[slot * TIMESTAMPS + 3], GL_TIMESTAMP);
