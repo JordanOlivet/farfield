@@ -31,6 +31,8 @@ Dev-only diagnostics stay behind the Performance Logs toggle of the config page,
 
 Repeated fixes that did not hold cost the user trust: before asking for another deploy, show the measurement from steps 2 or 3 on the reported case, not only a passing build.
 
+Coarse patches or blocks of thousands of blocks around the player, with `storeHoles` at 0 (ADR-150): a section stands in for children not meshed yet only when it is at most `LodSelector.MAX_FALLBACK_LEVELS` (2) levels coarser than its distance wants. Further up it splits, its ready children draw, and the gap stays until the children mesh. Read the `LOD coarse fallbacks` line of the performance log: its "at most N sections ... too coarse to stand in" figure counts those splits. Raising the cap brings back the coarse patches; check the children's fetch first.
+
 Old worlds keep their holes. Re-import with `/farfield import` or re-visit the area, then repeat step 2.
 
 A hole near the camera that is not a store hole (`storeHoles` reports 0) is a render cull, not missing data. Check the vertical reach first: vanilla's Sodium draws sections only within the render distance on both axes, so LOD fragments discarded on the horizontal distance alone leave a hole under a high player (seen at y=245 over a lake). Compare with `/farfield render off` at the same spot: if the frame is only sky with LODs off, the LOD path is what fills the gap; fix the discard in `farfield-lod-renderer`.
