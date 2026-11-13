@@ -138,7 +138,20 @@ public final class LodRenderer {
     /** Mesh jobs in flight: 32 to 128 filled the view as fast (ADR-056). */
     private static final int MAX_IN_FLIGHT = 64;
     private static final long UPLOAD_BUDGET_QUADS = 1 << 20;
+    /**
+     * Time a frame may spend uploading meshes, the first always going in
+     * (ADR-144): with only the quad budget, 64 to 112 meshes of the first
+     * view went in one frame, 41 to 116 ms.
+     */
+    private static final long UPLOAD_BUDGET_NANOS = 3_000_000L;
     private static final long INITIAL_QUADS = 8L << 20;
+    /** The quad buffer's size reached in the last session, its start in this one (ADR-144). */
+    private static final String QUADS_FILE = "farfield-quad-buffer.txt";
+    /** The quad buffer's start, and its floor when compacted for the first minute (the first view loading). */
+    private long startQuads = INITIAL_QUADS;
+    private long startedNanos;
+    /** Section slots the last session reached, a power of two (ADR-144); kept as this one passes them. */
+    private static int rememberedSlots;
     private static final long MAX_QUADS = 128L << 20;
     /** The quad buffer is compacted down after staying at most a quarter used this long (a spyglass zoom grows it). */
     private static final long SHRINK_AFTER_NANOS = 10_000_000_000L;
@@ -643,6 +656,9 @@ public final class LodRenderer {
     /** A constant, not {@code PHASES.length}: the instance is built before the array in the class's init. */
     private static final int TIMED_PHASES = 8;
     private final long[] phase = new long[TIMED_PHASES];
+    /** Within this frame's uploads: the quads sent and the biome blends (ADR-144). */
+    private long uploadQuadsNanos;
+    private long uploadBlendNanos;
     /** The steps of the longest LOD frame since the last stat line. */
     private String worstFrame = "";
     private long timedFrames;
@@ -1108,15 +1124,19 @@ public final class LodRenderer {
         }
         glGenQueries(timerQueries);
         glGenQueries(packTranslucentQueries);
-        quads = new GlBuffer(INITIAL_QUADS * 8);
-        arena = new RangeAllocator(INITIAL_QUADS);
-        sectionInfo = new GlBuffer(4096L * SECTION_BYTES);
+        startQuads = rememberedQuads();
+        startedNanos = System.nanoTime();
+        quads = new GlBuffer(startQuads * 8, false);
+        arena = new RangeAllocator(startQuads);
+        // The per-slot buffers at the slots the last session used (ADR-144): each doubling is a copy.
+        long slots = Math.max(1024, rememberedSlots);
+        sectionInfo = new GlBuffer(Math.max(4096, slots) * SECTION_BYTES);
         colorBuffer = new GlBuffer(4096L * MaterialColors.STRIDE * 4);
         biomeBuffer = new GlBuffer(256L * BiomeTints.KINDS * 4);
-        occupancy = new GlBuffer(1024L * OCCUPANCY_INTS * 4);
-        neighborSlots = new GlBuffer(1024L * NEIGHBOR_INTS * 4);
-        biomeColumns = new GlBuffer(1024L * BIOME_COLUMN_INTS * 4);
-        blendedTints = new GlBuffer(1024L * BLEND_SLOT_INTS * 4);
+        occupancy = new GlBuffer(slots * OCCUPANCY_INTS * 4);
+        neighborSlots = new GlBuffer(slots * NEIGHBOR_INTS * 4);
+        biomeColumns = new GlBuffer(slots * BIOME_COLUMN_INTS * 4);
+        blendedTints = new GlBuffer(slots * BLEND_SLOT_INTS * 4);
         drawnSections = new GlBuffer(4096L * 4);
         previewHidden = new GlBuffer((long) HIDDEN_SIDE * HIDDEN_SIDE / 8);
         indirect = new GlBuffer(1024L * COMMAND_BYTES);
@@ -1137,7 +1157,7 @@ public final class LodRenderer {
         quadIndices.upload(0, indices);
         glVertexArrayElementBuffer(vao, quadIndices.id());
         Farfield.LOG.info("LOD renderer ready on {}, OpenGL {} ({} MB of quads to start, {} meshes in flight at most)",
-                glGetString(GL_RENDERER), glGetString(GL_VERSION), INITIAL_QUADS * 8 >> 20, MAX_IN_FLIGHT);
+                glGetString(GL_RENDERER), glGetString(GL_VERSION), startQuads * 8 >> 20, MAX_IN_FLIGHT);
         return true;
     }
 
@@ -1332,6 +1352,9 @@ public final class LodRenderer {
         frame++;
         readGpuTimers();
         int uploadedBefore = meshesUploaded;
+        long growBefore = GlBuffer.growNanos;
+        uploadQuadsNanos = 0;
+        uploadBlendNanos = 0;
         updateBlends();
         phase[0] = System.nanoTime();
         applyRewrites();
@@ -1490,6 +1513,8 @@ public final class LodRenderer {
                 before = end;
             }
             worstFrame = steps.append(" us; ").append(meshesUploaded - uploadedBefore).append(" meshes uploaded")
+                    .append(", buffers grown ").append((GlBuffer.growNanos - growBefore) / 1000).append(" us, quads sent ")
+                    .append(uploadQuadsNanos / 1000).append(" us, blends ").append(uploadBlendNanos / 1000).append(" us")
                     .toString();
         }
         maxFrameNanos = Math.max(maxFrameNanos, took);
@@ -2965,6 +2990,7 @@ public final class LodRenderer {
 
     private void uploadMeshes() {
         long budget = UPLOAD_BUDGET_QUADS;
+        long deadline = System.nanoTime() + UPLOAD_BUDGET_NANOS;
         MeshResult m;
         while (budget > 0 && (m = done.poll()) != null) {
             requested.remove(m.key);
@@ -2972,6 +2998,9 @@ public final class LodRenderer {
                 continue;
             }
             budget -= upload(m);
+            if (System.nanoTime() > deadline) {
+                break; // the rest on the next frames
+            }
         }
         flushSwaps(System.nanoTime());
     }
@@ -3063,12 +3092,16 @@ public final class LodRenderer {
         meshesUploaded++;
         if (r.quadCount > 0) {
             r.start = start;
+            long sent = System.nanoTime();
             quads.upload(start * 8, m.quads, m.quads.length);
+            uploadQuadsNanos += System.nanoTime() - sent;
         }
         writeSection(m.key, r);
         linkNeighbors(m.key, r);
+        long blend = System.nanoTime();
         blendSection(m.key, r);
         markBlendNeighbors(m.key);
+        uploadBlendNanos += System.nanoTime() - blend;
         return r.quadCount;
     }
 
@@ -3121,10 +3154,47 @@ public final class LodRenderer {
         if (target > MAX_QUADS) {
             return false;
         }
+        long start = System.nanoTime();
         quads.grow(target * 8, capacity * 8);
         arena.grow(target);
-        Farfield.LOG.info("LOD quad buffer grown to {} MB", target * 8 >> 20);
+        Farfield.LOG.info("LOD quad buffer grown to {} MB in {} ms", target * 8 >> 20,
+                (System.nanoTime() - start) / 1_000_000);
+        rememberQuads(target);
         return true;
+    }
+
+    /**
+     * The quad buffer's start: the size the last session grew it to (ADR-144),
+     * so a view that needs 256 MB does not stall on two growths, each a copy of
+     * the whole buffer (89 and 178 ms frames while the first view loaded).
+     */
+    private static long rememberedQuads() {
+        try {
+            java.nio.file.Path file = Services.PLATFORM.getConfigDir().resolve(QUADS_FILE);
+            if (java.nio.file.Files.exists(file)) {
+                String[] parts = java.nio.file.Files.readString(file).trim().split("\\s+");
+                long mb = Long.parseLong(parts[0]);
+                if (parts.length > 1) {
+                    rememberedSlots = Math.max(0, Math.min(1 << 20, Integer.parseInt(parts[1])));
+                }
+                long quads = Math.max(INITIAL_QUADS, Math.min(MAX_QUADS, (mb << 20) / 8));
+                Farfield.LOG.info("LOD quad buffer starts at {} MB and {} section slots, what the last session needed",
+                        quads * 8 >> 20, Math.max(1024, rememberedSlots));
+                return quads;
+            }
+        } catch (java.io.IOException | RuntimeException e) {
+            // A missing or unreadable file starts small, as before.
+        }
+        return INITIAL_QUADS;
+    }
+
+    private static void rememberQuads(long quads) {
+        try {
+            java.nio.file.Files.writeString(Services.PLATFORM.getConfigDir().resolve(QUADS_FILE),
+                    (quads * 8 >> 20) + " " + rememberedSlots);
+        } catch (java.io.IOException | RuntimeException e) {
+            // The next session grows again.
+        }
     }
 
     /**
@@ -3138,7 +3208,10 @@ public final class LodRenderer {
     private void shrinkArena(long now) {
         long capacity = arena.capacity();
         long used = arena.used();
-        long target = RangeAllocator.shrunkCapacity(capacity, used, INITIAL_QUADS);
+        // The remembered start holds while the first view loads (still mostly empty), then the buffer may go
+        // down to fit a smaller view, and that size is remembered instead.
+        long floor = now - startedNanos < 60_000_000_000L ? startQuads : INITIAL_QUADS;
+        long target = RangeAllocator.shrunkCapacity(capacity, used, floor);
         if (target < 0) {
             arenaLowSince = -1;
             return;
@@ -3172,6 +3245,7 @@ public final class LodRenderer {
         arena = packed;
         Farfield.LOG.info("LOD quad buffer shrunk from {} to {} MB ({} MB used, {} sections moved)",
                 capacity * 8 >> 20, target * 8 >> 20, used * 8 >> 20, moved);
+        rememberQuads(arena.capacity());
     }
 
     private int allocateSlot() {
@@ -3179,6 +3253,11 @@ public final class LodRenderer {
             return freeSlots[--freeSlotCount];
         }
         int slot = slotCount++;
+        if (slotCount > rememberedSlots) {
+            // The per-slot buffers double past a power of two: the next session starts at the one reached.
+            rememberedSlots = Integer.highestOneBit(slotCount - 1) << 1;
+            rememberQuads(arena.capacity());
+        }
         long needed = (long) slotCount * SECTION_BYTES;
         if (needed > sectionInfo.size()) {
             sectionInfo.grow(sectionInfo.size() * 2, sectionInfo.size());

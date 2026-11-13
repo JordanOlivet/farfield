@@ -4290,3 +4290,38 @@ foulée".
   Left: upload frames of 86 to 177 ms while the first view loads (quad
   buffer growth). Not checked: the hidden fog by a capture, the NeoForge
   pack, a client joined to a server.
+
+## ADR-144 — Uploads bounded in time; the GPU buffers start at the last session's sizes
+
+Status: accepted, 2026-11-13. The upload frames left by ADR-143 while the
+first view loads; the user chose a time budget and a start at the useful
+size ("go 1 et 3").
+
+- **Context**: in the Fabric pack at 4K, the worst frames of the first
+  view were uploads of 41 to 178 ms. Broken down: the quad buffer doubling
+  (a copy of the whole buffer, 46 and 86 ms), the per-slot buffers
+  doubling (occupancy, biome columns, section info, neighbors, blended
+  tints: 21 to 80 ms), the quad budget letting 64 to 112 meshes go in one
+  frame, and, once the quad buffer started large, its zero clear making the
+  first upload wait 57 ms. The needed sizes follow the terrain more than
+  the distance or the resolution (128 MB at 4,096 blocks in 4K as at
+  262,144 blocks in 480p).
+- **Decision**:
+  - Uploads stop after 3 ms a frame (the first mesh always goes in); the
+    quad budget stays.
+  - `config/farfield-quad-buffer.txt` holds the quad buffer's size and the
+    section slots (a power of two) the last session reached; the next
+    session creates the quad buffer and the per-slot buffers at those
+    sizes. The quad buffer's compaction keeps that size as its floor for
+    the first minute (the first view loading, mostly empty), then may go
+    down, and the size it goes to is remembered.
+  - The quad buffer is no longer cleared at creation or growth: it is only
+    read where meshes were written.
+  - The worst frame's uploads give the buffer growth, the quads sent and
+    the biome blends.
+- **Checked**: Fabric pack in production, 3840 x 2019 minimized, ZGC, the
+  ADR-143 script: before, 4 windows of 10 s with a frame over 30 ms (178 ms
+  at most, during growths); a first session, the same growths; the next
+  session starting at 256 MB and 32,768 slots, no growth, 2 windows over
+  30 ms (45 ms at most, the first frames: colors and blends). Not checked:
+  the NeoForge pack.

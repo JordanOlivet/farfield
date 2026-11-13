@@ -11,10 +11,22 @@ final class GlBuffer implements AutoCloseable {
 
     private int id;
     private long size;
+    /** Whether a new store is filled with zeros ({@link #create}). */
+    private final boolean cleared;
 
     GlBuffer(long size) {
+        this(size, true);
+    }
+
+    /**
+     * {@code cleared} false for a buffer only ever read where it was written
+     * (the quads, ADR-144): clearing a 256 MB store made the first upload
+     * after it wait 57 ms.
+     */
+    GlBuffer(long size, boolean cleared) {
         this.size = size;
-        this.id = create(size);
+        this.cleared = cleared;
+        this.id = create(size, cleared);
     }
 
     /**
@@ -24,10 +36,12 @@ final class GlBuffer implements AutoCloseable {
      * hand-over) then hid the preview's water over random chunk columns:
      * dark squares on the sea, in some runs only (2026-11-04).
      */
-    private static int create(long size) {
+    private static int create(long size, boolean cleared) {
         int id = glCreateBuffers();
         glNamedBufferStorage(id, size, GL_DYNAMIC_STORAGE_BIT);
-        glClearNamedBufferData(id, GL_R8UI, GL_RED_INTEGER, GL_UNSIGNED_BYTE, (java.nio.ByteBuffer) null);
+        if (cleared) {
+            glClearNamedBufferData(id, GL_R8UI, GL_RED_INTEGER, GL_UNSIGNED_BYTE, (java.nio.ByteBuffer) null);
+        }
         return id;
     }
 
@@ -62,12 +76,21 @@ final class GlBuffer implements AutoCloseable {
         glCopyNamedBufferSubData(id, target.id, from, to, bytes);
     }
 
+    /** Time spent growing buffers, all of them, for the renderer's frame steps (ADR-144). Render thread. */
+    static long growNanos;
+
     /** Reallocates to {@code newSize} bytes, keeping the first {@code keep} bytes. */
     void grow(long newSize, long keep) {
         if (newSize <= size) {
             return;
         }
-        int bigger = create(newSize);
+        long start = System.nanoTime();
+        growTo(newSize, keep);
+        growNanos += System.nanoTime() - start;
+    }
+
+    private void growTo(long newSize, long keep) {
+        int bigger = create(newSize, cleared);
         if (keep > 0) {
             glCopyNamedBufferSubData(id, bigger, 0, 0, keep);
         }
