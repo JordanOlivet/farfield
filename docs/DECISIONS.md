@@ -4240,3 +4240,53 @@ G1 pauses). The user: "Fais la baisse de l'allocation dans la foulée".
   rest of the garbage is the game's and the pack's other mods' (a third of
   it Vec3 and iterators). Generational ZGC (ADR-141) stays the fix for the
   pauses themselves. Not checked: the NeoForge pack, a 4K window.
+
+## ADR-143 — The preview's selection on its own thread; the hidden fog past the LODs; evictions in slices
+
+Status: accepted, 2026-11-13. The user's third Fabric pack test of the
+day: "le fog off met plus de fog que fog on" at a large distance, "Pas de
+saccades mais baisse de fps notamment quand même en se déplaçant", and an
+optimisation pass wanted; answered "go 1 et fais les 3 opti dans la
+foulée".
+
+- **Context**:
+  - The hidden fog was pushed to a fixed 10 million blocks (start) and 20
+    million (opaque): past 16 million drawn, nearer than the shown fog
+    (60 % of the distance).
+  - The user's stat lines at about 7,000 sections drawn: a selection of
+    5 to 14 ms up to 25 times a second while moving, 1 to 1.2 s after a
+    teleport or a distance change, evictions of 25 to 50 ms. A JFR of the
+    pack at 4K and 33,554,432 blocks: two thirds of a selection were the
+    preview's (its sections' existence and readiness, hash lookups), and a
+    tenth `HashSet<Long>` trees in the selector (a `LodKey`'s `Long` hash).
+- **Decision**:
+  - The hidden fog starts at 8 times the maximum distance.
+  - The preview's selection runs on a thread of its own
+    (`farfield-preview-selection`) with what the render thread knows when
+    it starts: the resident preview sections (a set kept with the resident
+    map, copied whole), the frustum and camera, the settings. Its existence
+    cache is that thread's, the render thread queuing what to forget. Each
+    selection of the real sections draws the last preview result with
+    them and starts the next preview selection; a result that differs from
+    the last asks for a selection, so an idle view settles. The real
+    sections' selection stays on the render thread: it reads the server's
+    index, which is not thread-safe.
+  - The selector's sets are a primitive `LongSet` (core util, keys mixed).
+  - A selection waits at least five times the last one's own time (40 ms
+    at least): it keeps at most about a fifth of the render thread.
+  - Evictions free at most 512 sections a frame, the rest on the next
+    frames.
+- **Checked**: unit tests (`LongSet`). Fabric pack in production, window
+  3840 x 2019 minimized, generational ZGC both sides (G1's pauses made the
+  worst frames land anywhere), the same script (150 s at the spawn, the 90 s
+  flight at 60 blocks a second at 33,554,432 blocks, a teleport to
+  2,000,000): the ADR-142 jar against this one: in flight 1.71 against 1.42
+  ms of render thread a frame, 3,011 against 3,282 frames each 10 s, the
+  worst flight frame 98 ms (a selection) against 24 (an upload); the worst
+  frames after the teleport 97 to 175 ms (selection) against 12; holes
+  alike (only while loading and just after the teleport); the far
+  captures alike. A first version that rebuilt the resident preview set at
+  each selection cost more than it saved in flight (2.25 ms a frame).
+  Left: upload frames of 86 to 177 ms while the first view loads (quad
+  buffer growth). Not checked: the hidden fog by a capture, the NeoForge
+  pack, a client joined to a server.

@@ -3,8 +3,6 @@ package io.lakio.farfield.core.select;
 import io.lakio.farfield.core.LodKey;
 import io.lakio.farfield.core.lod.LodSection;
 
-import java.util.HashSet;
-import java.util.Set;
 import java.util.function.LongConsumer;
 import java.util.function.LongPredicate;
 
@@ -67,8 +65,10 @@ public final class LodSelector {
     /** A diagnostic lock: no section drawn finer than this level, or -1 for the usual split. */
     private int forcedLevel = -1;
     /** Sections that descended in the previous selection, and in the current one. */
-    private Set<Long> descended = new HashSet<>();
-    private Set<Long> descending = new HashSet<>();
+    // Primitive sets (ADR-143): a LodKey's Long hash put many keys of a selection in one bin of a HashSet,
+    // which turned into trees, a tenth of a selection's time at a large distance.
+    private io.lakio.farfield.core.util.LongSet descended = new io.lakio.farfield.core.util.LongSet();
+    private io.lakio.farfield.core.util.LongSet descending = new io.lakio.farfield.core.util.LongSet();
 
     /**
      * @param levels number of levels (0 to {@code levels - 1})
@@ -177,7 +177,7 @@ public final class LodSelector {
                 }
             }
         }
-        Set<Long> previous = descended;
+        io.lakio.farfield.core.util.LongSet previous = descended;
         descended = descending;
         descending = previous;
     }

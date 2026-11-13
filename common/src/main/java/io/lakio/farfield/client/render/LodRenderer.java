@@ -176,8 +176,19 @@ public final class LodRenderer {
     private boolean packCapLogged;
     /** ...or after this long anyway... */
     private static final long RESELECT_NANOS = 1_000_000_000L;
-    /** ...but never sooner than this after the last one (ADR-140). */
+    /** ...but never sooner than this after the last one (ADR-140)... */
     private static final long MIN_RESELECT_NANOS = 40_000_000L;
+    /**
+     * ...nor than this many times the last one's own time (ADR-143): a
+     * selection keeps at most about a fifth of the render thread, however far
+     * it reaches.
+     */
+    private static final long SELECTION_SHARE = 5;
+    /** The last selection's time on the render thread. */
+    private long lastSelectNanos;
+    /** Sections freed by one eviction call; the rest go on the next frames (ADR-143). */
+    private static final int EVICT_PER_FRAME = 512;
+    private boolean evictBacklog;
     /** ...or when the view turned by more than about 25 degrees: the wanted meshes go in view order. */
     private static final double RESELECT_TURN_COS = 0.9;
     /** A camera jump this far between two frames (squared blocks) counts as a teleport for the fill line. */
@@ -353,8 +364,13 @@ public final class LodRenderer {
     private static boolean pushedFog;
     private static boolean followVanillaFog;
     private static boolean thickFogDimension;
-    /** Fog distance meaning no fog: beyond anything drawn. */
-    private static final float NO_FOG = 1e7f;
+    /**
+     * Fog distance meaning no fog: beyond anything drawn, the LODs' farthest
+     * extent included (ADR-143). It was 10 million blocks: past 16 million
+     * drawn, the hidden fog began nearer than the shown one (60 % of the
+     * distance), and hiding the fog showed more of it.
+     */
+    private static final float NO_FOG = (float) (MAX_DISTANCE * 8);
     private double lastSelectionDistance = -1;
     /**
      * The farthest drawn LOD geometry from the camera at the last selection,
@@ -550,6 +566,58 @@ public final class LodRenderer {
     private long fillSettledSince;
     private final FrustumIntersection frustum = new FrustumIntersection();
     private final Matrix4f cullMatrix = new Matrix4f();
+    /**
+     * The preview's selection, on a thread of its own (ADR-143): at a large
+     * distance it walked tens of thousands of preview sections, 5 to 25 ms of
+     * the render thread at each selection. Its last result is drawn with each
+     * selection of the real sections; a new one starts with them.
+     */
+    private final java.util.concurrent.ExecutorService previewSelector =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "farfield-preview-selection");
+                t.setDaemon(true);
+                return t;
+            });
+    private java.util.concurrent.Future<PreviewSelection> previewJob;
+    /** Bumped when a running preview selection's result no longer applies (another world, the preview off). */
+    private int previewGeneration;
+    private PreviewSelection previewResult = new PreviewSelection(0);
+    /** The resident preview sections, kept with {@link #resident}: what a preview selection takes as ready. */
+    private final LongOpenHashSet previewResident = new LongOpenHashSet();
+    private boolean previewFailureLogged;
+
+    /** A preview selection's result: preview keys to draw and to mesh, and those it relied on as ready. */
+    private static final class PreviewSelection {
+        final int generation;
+        final LongArrayList draw = new LongArrayList();
+        final LongArrayList want = new LongArrayList();
+        final LongOpenHashSet relied = new LongOpenHashSet();
+        long nanos;
+
+        PreviewSelection(int generation) {
+            this.generation = generation;
+        }
+
+        private long fingerprint;
+        private boolean fingerprinted;
+
+        /** What tells two results apart: the keys drawn and wanted, in order; computed once. */
+        long fingerprint() {
+            if (fingerprinted) {
+                return fingerprint;
+            }
+            fingerprinted = true;
+            long h = draw.size() * 31L + want.size();
+            for (int i = 0, n = draw.size(); i < n; i++) {
+                h = h * 0x9E3779B97F4A7C15L + draw.getLong(i);
+            }
+            for (int i = 0, n = want.size(); i < n; i++) {
+                h = h * 0x9E3779B97F4A7C15L + want.getLong(i);
+            }
+            fingerprint = h;
+            return h;
+        }
+    }
     private final Matrix4f viewProj = new Matrix4f();
     private final float[] matrix = new float[16];
     /** Draw commands per list ({@link #SOLID}, {@link #DISCARD}, {@link #TRANSLUCENT}, {@link #PLANTS}), in indirect buffer order. */
@@ -567,6 +635,8 @@ public final class LodRenderer {
     /** Frames that came more than {@link #LONG_FRAME_NANOS} after the one before, since the last stat line. */
     private int longFrames;
     private static final long LONG_FRAME_NANOS = 50_000_000L;
+    /** The longest preview selection on its thread since the last stat line (ADR-143). */
+    private long previewSelectNanos;
     /** The steps of a frame, timed for {@link #worstFrame} (ADR-141). */
     private static final String[] PHASES = {"blends", "rewrites", "uploads", "colors", "selection", "wanted",
             "commands", "eviction", "draw"};
@@ -1251,7 +1321,6 @@ public final class LodRenderer {
         stream = StreamClient.of(world);
         if (RenderSettings.forcedLevel() != selector.forcedLevel()) {
             selector.setForcedLevel(RenderSettings.forcedLevel()); // the level lock, a diagnostic
-            previewLayer.setForcedLevel(RenderSettings.forcedLevel());
             selectionDirty = true;
         }
         if (stream != null && stream.generation() != streamGeneration) {
@@ -1321,12 +1390,18 @@ public final class LodRenderer {
             }
         }
         updateFrustum(viewRotation, projection);
+        if (takePreviewSelection()) {
+            selectionDirty = true; // a new preview result: drawn with the next selection
+        }
         // At most one selection per MIN_RESELECT_NANOS (ADR-140): in flight each new mesh made the
         // next frame select again, a selection every frame.
         if ((selectionDirty || turned || dx * dx + dy * dy + dz * dz > RESELECT_DISTANCE_SQ
                 || frameStart - selectionTime > RESELECT_NANOS)
-                && (selectionTime == 0 || frameStart - selectionTime >= MIN_RESELECT_NANOS)) {
+                && (selectionTime == 0 || frameStart - selectionTime
+                        >= Math.max(MIN_RESELECT_NANOS, SELECTION_SHARE * lastSelectNanos))) {
+            long selectStart = System.nanoTime();
             select(level, cam, look, frameStart);
+            lastSelectNanos = System.nanoTime() - selectStart;
         }
         phase[4] = System.nanoTime();
         requestWanted();
@@ -1392,9 +1467,11 @@ public final class LodRenderer {
             addCommands(resident.get(drawList.getLong((int) e >>> 6)), TRANSLUCENT, (int) e & 63);
         }
         phase[6] = System.nanoTime();
-        if (frame % 60 == 0) {
-            evictUnused(frameStart);
-            shrinkArena(frameStart);
+        if (frame % 60 == 0 || evictBacklog) {
+            evictBacklog = evictUnused(frameStart);
+            if (frame % 60 == 0) {
+                shrinkArena(frameStart);
+            }
         }
         phase[7] = System.nanoTime();
         lastDrawn = count;
@@ -1587,7 +1664,6 @@ public final class LodRenderer {
         double current = selector.detail();
         if (Math.abs(detail - current) > current * 0.02) {
             selector.setDetail(detail);
-            previewLayer.setDetail(detail);
             selectionDirty = true;
             if (Math.abs(detail - loggedDetail) > loggedDetail * 0.1) {
                 loggedDetail = detail;
@@ -1617,7 +1693,6 @@ public final class LodRenderer {
         wanted.clear();
         LongPredicate viewed = key -> inView(key, cam);
         selector.setOutsideView(viewed, outsideDetail);
-        previewLayer.setOutsideView(viewed, outsideDetail);
         selector.select(cam.x, cam.y, cam.z, level.getMinBuildHeight(), level.getMaxBuildHeight(), lastSelectionDistance,
                 sections, drawSink, wantSink);
         maxFallbacks = Math.max(maxFallbacks, selector.fallbacks());
@@ -1631,8 +1706,25 @@ public final class LodRenderer {
         // far view is preview, and without it the lock left only the stored terrain nearby.
         selectedPreview = RenderSettings.noisePreview();
         if (selectedPreview) {
-            previewLayer.select(cam.x, cam.y, cam.z, level.getMinBuildHeight(), level.getMaxBuildHeight(),
-                    lastSelectionDistance, sections::ready, drawSink, wantSink);
+            takePreviewSelection();
+            if (previewJob == null) {
+                startPreviewSelection(level, cam);
+            }
+            PreviewSelection p = previewResult;
+            drawList.addAll(p.draw);
+            wanted.addAll(p.want);
+            // As the synchronous selection's ready test did: what it relied on stays resident.
+            LongIterator relied = p.relied.iterator();
+            while (relied.hasNext()) {
+                Resident r = resident.get(relied.nextLong());
+                if (r != null) {
+                    r.lastUsed = now;
+                }
+            }
+        } else if (!previewResult.draw.isEmpty() || previewJob != null) {
+            previewGeneration++;
+            previewJob = null;
+            previewResult = new PreviewSelection(previewGeneration);
         }
         int outdatedDrawn = 0;
         LongOpenHashSet drawnBefore = FrameProbe.enabled() ? new LongOpenHashSet(drawn) : null;
@@ -1725,6 +1817,75 @@ public final class LodRenderer {
                 fillSettledSince = now;
             }
         }
+    }
+
+    /**
+     * Starts a preview selection on its thread with what the render thread
+     * knows now: the preview sections resident, the frustum, the camera and
+     * the settings. Render thread, no preview selection running.
+     */
+    private void startPreviewSelection(ClientLevel level, Vec3 cam) {
+        LongOpenHashSet ready = previewResident.clone(); // an array copy: walking the residents cost a millisecond
+        FrustumIntersection view = new FrustumIntersection(new Matrix4f(cullMatrix));
+        double cx = cam.x;
+        double cy = cam.y;
+        double cz = cam.z;
+        int minY = level.getMinBuildHeight();
+        int maxY = level.getMaxBuildHeight();
+        double distance = lastSelectionDistance;
+        int generation = previewGeneration;
+        previewLayer.setDetail(selector.detail());
+        previewLayer.setForcedLevel(RenderSettings.forcedLevel());
+        previewLayer.setOutsideView(key -> {
+            int size = LodSection.SIZE << drawLevel(key);
+            float x = (float) (LodKey.x(key) * (double) size - cx);
+            float y = (float) (LodKey.y(key) * (double) size - cy);
+            float z = (float) (LodKey.z(key) * (double) size - cz);
+            return view.testAab(x, y, z, x + size, y + size, z + size);
+        }, outsideDetail);
+        previewJob = previewSelector.submit(() -> {
+            long start = System.nanoTime();
+            PreviewSelection p = new PreviewSelection(generation);
+            previewLayer.select(cx, cy, cz, minY, maxY, distance, key -> {
+                if (ready.contains(key)) {
+                    p.relied.add(key);
+                    return true;
+                }
+                return false;
+            }, p.draw::add, p.want::add);
+            p.nanos = System.nanoTime() - start;
+            return p;
+        });
+    }
+
+    /**
+     * Takes the preview selection that ended, if any: drawn from the next
+     * selection on. Whether its result differs from the last one. Render thread.
+     */
+    private boolean takePreviewSelection() {
+        if (previewJob == null || !previewJob.isDone()) {
+            return false;
+        }
+        PreviewSelection p;
+        try {
+            p = previewJob.get();
+        } catch (InterruptedException | java.util.concurrent.ExecutionException
+                 | java.util.concurrent.CancellationException e) {
+            previewJob = null;
+            if (!previewFailureLogged) {
+                previewFailureLogged = true;
+                Farfield.LOG.warn("LOD preview selection failed, tried again at the next selection", e);
+            }
+            return false;
+        }
+        previewJob = null;
+        if (p.generation != previewGeneration) {
+            return false;
+        }
+        previewSelectNanos = Math.max(previewSelectNanos, p.nanos);
+        boolean changed = p.fingerprint() != previewResult.fingerprint();
+        previewResult = p;
+        return changed;
     }
 
     /** Requests the meshes of {@link #wantOrder} in its order, while there is room in flight. */
@@ -2242,7 +2403,7 @@ public final class LodRenderer {
                             + " to the game, over {}"
                             + " frames; detail {}; at most {} coarse fallbacks, {} finer fallbacks and {} outdated"
                             + " sections drawn per selection; the longest LOD frame {} us ({}), the longest frame {} ms, {}"
-                            + " frames over 50 ms", count, resident.size(),
+                            + " frames over 50 ms; the longest preview selection {} ms on its thread", count, resident.size(),
                     arena.used() * 8 >> 20, arena.capacity() * 8 >> 20, requested.size(), meshesUploaded, meshesEvicted,
                     selections, frameNanos / 1000 / Math.max(1, timedFrames),
                     (gpuPassNanos[0] + gpuPassNanos[1] + gpuPassNanos[2] + gpuPassNanos[3]) / 1000 / Math.max(1, gpuFrames),
@@ -2254,7 +2415,8 @@ public final class LodRenderer {
                     plantQuadsSubmitted / Math.max(1, timedFrames),
                     discardSections / Math.max(1, timedFrames), leftToGame / Math.max(1, timedFrames), timedFrames,
                     String.format("%.1f", selector.detail()), maxFallbacks, maxFinerFallbacks, maxOutdatedDrawn,
-                    maxFrameNanos / 1000, worstFrame, maxFrameGapNanos / 1_000_000, longFrames);
+                    maxFrameNanos / 1000, worstFrame, maxFrameGapNanos / 1_000_000, longFrames,
+                    previewSelectNanos / 1_000_000);
         }
         if (RenderSettings.performanceLogs()) {
             Farfield.LOG.info("LOD holes: at most {} chunk columns without anything drawn within {} chunks;"
@@ -2292,6 +2454,7 @@ public final class LodRenderer {
         leftToGame = 0;
         frameNanos = 0;
         maxFrameNanos = 0;
+        previewSelectNanos = 0;
         maxFrameGapNanos = 0;
         longFrames = 0;
         timedFrames = 0;
@@ -2313,6 +2476,7 @@ public final class LodRenderer {
             }
         }
         resident.clear();
+        previewResident.clear();
         blendDirty.clear();
         requested.clear();
         rewrittenWhileMeshing.clear();
@@ -2336,6 +2500,9 @@ public final class LodRenderer {
         slotCount = 0;
         selectionDirty = true;
         world = next;
+        previewGeneration++;
+        previewJob = null;
+        previewResult = new PreviewSelection(previewGeneration);
         previewLayer.attach(next);
         if (world != null) {
             world.addListener(listener);
@@ -2845,6 +3012,9 @@ public final class LodRenderer {
             r = new Resident(allocateSlot());
             r.lastUsed = System.nanoTime();
             resident.put(m.key, r);
+            if (PreviewLayer.isPreview(m.key)) {
+                previewResident.add(m.key);
+            }
             selectionDirty = true; // a parent may now descend
         } else if (r.quadCount > 0) {
             arena.release(r.start, r.quadCount);
@@ -2928,6 +3098,7 @@ public final class LodRenderer {
             Resident r = e.getValue();
             if (r.lastUsed < selectionTime) {
                 evicted.add(e.getLongKey());
+                previewResident.remove(e.getLongKey());
                 if (r.quadCount > 0) {
                     arena.release(r.start, r.quadCount);
                 }
@@ -3159,14 +3330,26 @@ public final class LodRenderer {
         }
     }
 
-    private void evictUnused(long now) {
+    /**
+     * Frees resident sections unused for {@link #EVICT_AFTER_NANOS}, at most
+     * {@link #EVICT_PER_FRAME} a call (ADR-143): after a teleport tens of
+     * thousands went at once, each freed in the quad buffer and unlinked from
+     * its neighbors, a frame of 25 to 50 ms. Returns whether some were left.
+     */
+    private boolean evictUnused(long now) {
         evicted.clear();
+        boolean more = false;
         ObjectIterator<Long2ObjectOpenHashMap.Entry<Resident>> it = resident.long2ObjectEntrySet().fastIterator();
         while (it.hasNext()) {
+            if (evicted.size() >= EVICT_PER_FRAME) {
+                more = true;
+                break;
+            }
             Long2ObjectOpenHashMap.Entry<Resident> e = it.next();
             Resident r = e.getValue();
             if (now - r.lastUsed > EVICT_AFTER_NANOS) {
                 evicted.add(e.getLongKey());
+                previewResident.remove(e.getLongKey());
                 if (r.quadCount > 0) {
                     arena.release(r.start, r.quadCount);
                 }
@@ -3179,6 +3362,7 @@ public final class LodRenderer {
         for (int i = 0, n = evicted.size(); i < n; i++) {
             unlinkNeighbors(evicted.getLong(i));
         }
+        return more;
     }
 
     /**

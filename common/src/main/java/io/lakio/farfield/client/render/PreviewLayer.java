@@ -70,8 +70,15 @@ final class PreviewLayer {
 
     private final LodSelector selector = new LodSelector(LEVELS, 4.0);
     private final Executor executor;
-    /** Selection existence of plain keys, render thread; cleared whenever tiles or masks change. */
+    /**
+     * Selection existence of plain keys. The preview's selection runs on its
+     * own thread (ADR-143), which alone touches this map: the render thread
+     * queues what to forget ({@link #existenceOps}), applied before each
+     * selection.
+     */
     private final Long2ByteOpenHashMap existence = new Long2ByteOpenHashMap();
+    /** What the selection forgets before it runs: null for everything, else {drained tiles, drained coarse}. */
+    private final ConcurrentLinkedQueue<long[][]> existenceOps = new ConcurrentLinkedQueue<>();
     /** Per tile, its chunks with real data: 32 rows (z) of bits (x). */
     /** Under {@link PreviewStore#spread} keys (ADR-141): tile keys collide along diagonals. */
     private final Map<Long, int[]> masks = new ConcurrentHashMap<>();
@@ -154,7 +161,7 @@ final class PreviewLayer {
             previous.preview().removeTileListener(coarseListener);
         }
         world = next;
-        existence.clear();
+        existenceOps.add(new long[][]{null});
         masks.clear();
         maskPending.clear();
         maskDirty.clear();
@@ -190,10 +197,12 @@ final class PreviewLayer {
 
     /**
      * Selects preview sections like the real ones; {@code draw} and
-     * {@code want} receive preview keys. Render thread.
+     * {@code want} receive preview keys. The preview's selection thread
+     * (ADR-143): one selection at a time, its settings set before it starts.
      */
     void select(double camX, double camY, double camZ, int levelMinY, int levelMaxY, double distance,
                 LongPredicate ready, LongConsumer draw, LongConsumer want) {
+        applyExistenceOps();
         if (world == null) {
             return;
         }
@@ -490,9 +499,25 @@ final class PreviewLayer {
             changed = true;
         }
         if (!drainedTiles.isEmpty() || !drainedCoarse.isEmpty()) {
-            forgetExistence();
+            long[] coarse = new long[drainedCoarse.size()];
+            for (int i = 0; i < coarse.length; i++) {
+                coarse[i] = drainedCoarse.get(i);
+            }
+            existenceOps.add(new long[][]{drainedTiles.toLongArray(), coarse});
         }
         return changed;
+    }
+
+    /** Applies what the render thread queued to forget. Selection thread, before a selection. */
+    private void applyExistenceOps() {
+        long[][] op;
+        while ((op = existenceOps.poll()) != null) {
+            if (op[0] == null) {
+                existence.clear();
+            } else {
+                forgetExistence(new LongOpenHashSet(op[0]), op[1]);
+            }
+        }
     }
 
     /**
@@ -503,26 +528,26 @@ final class PreviewLayer {
      * visited (a third of the render thread). A first mask needs nothing: a
      * section is not remembered while its tile's mask is unknown.
      */
-    private void forgetExistence() {
+    private void forgetExistence(LongOpenHashSet tiles, long[] coarse) {
         LongIterator it = existence.keySet().iterator();
         while (it.hasNext()) {
             long plain = it.nextLong();
-            if (LodKey.level(plain) <= TILE_LEVEL && drainedTiles.contains(tileOf(plain))
-                    || underCoarse(plain)) {
+            if (LodKey.level(plain) <= TILE_LEVEL && tiles.contains(tileOf(plain))
+                    || underCoarse(plain, coarse)) {
                 it.remove();
             }
         }
     }
 
-    /** Whether a section lies over a coarse tile drained by the last {@link #drainChanges}. */
-    private boolean underCoarse(long plain) {
-        if (drainedCoarse.isEmpty()) {
+    /** Whether a section lies over one of the {@code coarse} tiles (raw keys). */
+    private static boolean underCoarse(long plain, long[] coarse) {
+        if (coarse.length == 0) {
             return false;
         }
         long size = (long) LodSection.SIZE << drawLevel(plain);
         long bx = LodKey.x(plain) * size;
         long bz = LodKey.z(plain) * size;
-        for (long raw : drainedCoarse) {
+        for (long raw : coarse) {
             long blocks = PreviewStore.blocks(PreviewStore.level(raw));
             long tx = PreviewStore.tileX(raw) * blocks;
             long tz = PreviewStore.tileZ(raw) * blocks;
