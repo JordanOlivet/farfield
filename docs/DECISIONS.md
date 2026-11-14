@@ -4741,3 +4741,54 @@ section drawn, not the hole. Answered "go".
   5.5 ms while meshing), the disc slower again (1,536 against 7,384
   blocks at 10 s, 8,095 against 51,810 at 20 s). Not checked: the user's
   own view, the NeoForge pack through the server, a teleport.
+
+## ADR-155 — One order for the meshes: refinement follows coverage at a ratio
+
+Status: accepted, 2026-11-14. Study: `docs/analysis/join-as-a-wave.md`
+(steps W0 and W1). The user on ADR-154: the view came in phases, the near
+ground without trees, then near trees alone, then everything at once;
+what he wants is the world unrolling from the player as a wave. On the
+ratio: "Oui on peut priorisé le proche et retarder un peu le loin. On
+commence avec 4 et on ajustera." Supersedes ADR-152's fixed lag and
+ADR-153's lag during the disc.
+
+- **Decision**:
+  - A mesh job's place in the order is its distance (behind the camera
+    counted farther, ADR-056) times a ratio: 1 for coverage, 4 for a
+    refinement (`WantOrder.REFINE_RATIO`; `-Dfarfield.refineRatio` for a
+    bench). A refinement is a preview section drawn whole and meshed again
+    for finer tiles. Coverage is a section without a mesh, a real
+    section's new mesh (ADR-154), and a preview section whose last build
+    found a place with no tile (`PreviewLayer.builtPartial`). The front of
+    refinement follows the front of coverage at that ratio at every
+    distance, during the disc as outside it.
+  - A far preview section (level 5 and up) is meshed again for a coarse
+    tile's write only when it reads a quarter that write changed, itself
+    or the section beside it. It was meshed again under any coarse tile
+    written over it, though most read a finer tile: with the lags gone,
+    that was 78,000 new meshes in a minute, most of them the same mesh
+    again, and coverage came later than before.
+  - The mesh jobs are counted by what asked for each, in the performance
+    logs (`MeshJobs`): "LOD mesh jobs: ..." every stat line, and in the
+    fill line since the join or teleport, with the meshes replaced before
+    being drawn and those outdated on arrival.
+- **Checked**: unit tests (the ratio's order, the counts). Fabric pack in
+  production, a new world from 200 blocks up, the largest distance, 12
+  chunks of game view, one run each, over the first 60 s:
+
+  | | ADR-154 | The ratio alone | With the far sections' rule |
+  |---|---|---|---|
+  | Meshes uploaded | 93,283 | 117,573 | 71,464 |
+  | Preview sections meshed again | 35,515 (50 s) | 77,970 | 29,443 |
+  | Sections missing in view at 20, 30, 45 s | 2,445, 125, 126 | 3,537, 2,321, 2,476 | 3,494, 1,676, 0 |
+  | Disc at 20, 30, 45 s (blocks) | 34,755, 7.6 M, 23.7 M | 1,024, 29,536, 262,144 | 1,448, 236,293, 26.5 M |
+
+  By eye at 25 s: the near trees and the first of the middle distances
+  with the horizon whole, where ADR-154's jar showed the horizon and
+  almost no tree; at 15 s the horizon is not there yet (it was). The ratio
+  alone at 2, 4 and 8 gave the same figures (the repeated meshes hid it);
+  2 and 8 were not run again with the far sections' rule. The first 20 s
+  still go mostly to the spawn's real sections (W4), and the near detail
+  still waits for the tiles (within 1,024 blocks built at 54.5 s, W2).
+  Not checked: the user's own view, a dedicated server, a teleport, a
+  flight at the generation front (the ratio now applies there too).

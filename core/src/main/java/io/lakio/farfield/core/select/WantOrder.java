@@ -14,6 +14,15 @@ public final class WantOrder {
     /** How much farther a section straight behind the camera counts. */
     public static final double BEHIND = 4;
 
+    /**
+     * How many times farther a refinement counts than coverage (ADR-155):
+     * a section drawn whole and meshed again for finer data at distance d
+     * is asked like a hole at {@code REFINE_RATIO * d}. The front of
+     * refinement follows the front of coverage at that ratio, at every
+     * distance: 4 is two rings of the pyramid behind.
+     */
+    public static final double REFINE_RATIO = 4;
+
     private long[] keys = new long[256];
     /** Score bits in the high half (positive floats sort as their bits), the index of the key in the low half. */
     private long[] entries = new long[256];
@@ -27,6 +36,11 @@ public final class WantOrder {
     public static double score(double distance, double facing) {
         double f = Math.max(-1, Math.min(1, facing));
         return distance * (1 + (BEHIND - 1) * (1 - f) / 2);
+    }
+
+    /** {@link #score(double, double)} of a job counted {@code ratio} times farther (1 for coverage). */
+    public static double score(double distance, double facing, double ratio) {
+        return score(distance, facing) * ratio;
     }
 
     public void clear() {

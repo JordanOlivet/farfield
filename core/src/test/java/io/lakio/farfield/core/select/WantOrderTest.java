@@ -15,6 +15,21 @@ class WantOrderTest {
     }
 
     @Test
+    void aRefinementFollowsCoverageAtTheRatio() {
+        double ratio = WantOrder.REFINE_RATIO;
+        WantOrder order = new WantOrder();
+        order.add(1, WantOrder.score(1000, 1, ratio)); // a refinement 1,000 blocks away
+        order.add(2, WantOrder.score(1000 * ratio - 1, 1, 1)); // a hole just nearer than ratio times that
+        order.add(3, WantOrder.score(1000 * ratio + 1, 1, 1)); // a hole just farther
+        order.add(4, WantOrder.score(200, 1, ratio)); // a near refinement
+        order.sort();
+        long[] expected = {4, 2, 1, 3};
+        for (int i = 0; i < expected.length; i++) {
+            assertEquals(expected[i], order.key(i), "position " + i);
+        }
+    }
+
+    @Test
     void nearestFirstThenInsertionOrderOnTies() {
         WantOrder order = new WantOrder();
         order.add(10, WantOrder.score(300, 1));

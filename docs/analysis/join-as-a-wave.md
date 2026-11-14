@@ -224,15 +224,29 @@ view), before and after each step:
 W1 alone removes the burst and is small; W2 is what brings the near
 detail earlier; W3 and W4 are what shorten the whole.
 
+## Answers (2026-11-14)
+
+1. The ratio between coverage and refinement, and a later horizon for an
+   earlier near detail: "Oui on peut priorisé le proche et retarder un
+   peu le loin. On commence avec 4 et on ajustera." `k` = 4 to start
+   (ADR-155), to be adjusted on the user's own view.
+
 ## Open questions
 
-1. The ratio `k`: how far ahead may coverage run before the near terrain
-   refines? A low `k` gives near detail early and the horizon later; a
-   high `k` the reverse (today's behavior is the extreme: the horizon
-   first, everything else after). Proposed: 4, judged on captures of the
-   same run at 2, 4 and 8.
-2. Is a later horizon acceptable if the near terrain is fine earlier? It
-   follows from question 1, and only the user's eye settles it.
+None.
+
+## Built so far
+
+- W0 and W1 (ADR-155, 2026-11-14). W1 alone made things worse: with the
+  lags gone, far sections were meshed again under every coarse tile
+  written over them (77,970 new meshes of preview sections in a minute,
+  117,573 meshes in all), and coverage came later. The lag had hidden
+  that waste by letting the marks pile up. A far section is now meshed
+  again only when it reads the quarter written: 71,464 meshes in the
+  minute against 93,283 before the study, the near and middle trees there
+  at 25 s with the horizon whole. This was W3's lead for the far
+  sections; what is left of W3 is the near sections, meshed once per
+  quarter.
 
 ## Limits of this measure
 

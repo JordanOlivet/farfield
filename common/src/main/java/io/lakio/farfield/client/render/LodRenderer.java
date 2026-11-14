@@ -22,6 +22,7 @@ import io.lakio.farfield.core.mesh.SurfaceBiomes;
 import io.lakio.farfield.core.preview.PreviewStore;
 import io.lakio.farfield.core.preview.PreviewTile;
 import io.lakio.farfield.core.select.LodSelector;
+import io.lakio.farfield.core.select.MeshJobs;
 import io.lakio.farfield.core.select.WantOrder;
 import io.lakio.farfield.core.util.RangeAllocator;
 import io.lakio.farfield.core.world.LodWorld;
@@ -592,8 +593,27 @@ public final class LodRenderer {
      * applied lists are drawn meanwhile.
      */
     private static final long APPLY_BUDGET_NANOS = 1_000_000L;
-    /** Blocks a drawn preview section's new mesh counts farther than a section not drawn yet (ADR-152). */
-    private static final double STALE_LAG = 16384;
+    /**
+     * How many times farther a refinement counts than coverage ({@link WantOrder#REFINE_RATIO}, ADR-155);
+     * {@code -Dfarfield.refineRatio} sets another for a bench.
+     */
+    private final double refineRatio = Double.parseDouble(
+            System.getProperty("farfield.refineRatio", Double.toString(WantOrder.REFINE_RATIO)));
+    /** Why each section of {@link #stale} waits for a new mesh ({@link MeshJobs}), for the performance logs. */
+    private final it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap staleCauses =
+            new it.unimi.dsi.fastutil.longs.Long2ByteOpenHashMap();
+
+    {
+        staleCauses.defaultReturnValue((byte) MeshJobs.OTHER); // marked without a cause (a resource reload)
+    }
+    /** The mesh jobs asked since the last stat line, and since the fill started ({@link #startFill}). */
+    private final MeshJobs windowJobs = new MeshJobs();
+    private final MeshJobs fillJobs = new MeshJobs();
+    /**
+     * The preview sections whose last build missed a tile ({@link PreviewLayer#builtPartial}): their next mesh
+     * brings coverage. Written by the mesher threads, read by the render thread, under its own lock.
+     */
+    private final LongOpenHashSet previewPartial = new LongOpenHashSet();
     private boolean applying;
     private int applyCursor;
     private long applyTime;
@@ -910,6 +930,8 @@ public final class LodRenderer {
         int borderFaces;
         /** The octants its quads draw in: a parent showing a new child's octant covers it until it is meshed. */
         int octants;
+        /** Its current mesh was drawn by a selection at least once ({@link MeshJobs#replacedUndrawn}). */
+        boolean drawnOnce;
         /** The chunk columns its quads draw in ({@link Quad#markColumns}); null without quads. */
         long[] columns;
         /** Per direction, a hash of its layer a neighbor there reads; null before its first mesh. */
@@ -1580,7 +1602,7 @@ public final class LodRenderer {
             int n = 0;
             for (long key : resident.keySet()) {
                 if (PreviewLayer.isPreview(key)) {
-                    stale.add(key);
+                    markStale(key, MeshJobs.OTHER);
                     n++;
                 }
             }
@@ -2017,6 +2039,9 @@ public final class LodRenderer {
                 }
             }
             if (nearSq <= applyRadius * applyRadius) {
+                if (r != null) {
+                    r.drawnOnce = true;
+                }
                 nextDrawn.add(key);
                 splitForCulling(key, r, size);
             } else {
@@ -2026,7 +2051,7 @@ public final class LodRenderer {
             // after the whole background queue; the preview already hides itself for the newer data,
             // so the old copy can leave a hole where the new chunks are (ADR-074).
             if (stream != null && !PreviewLayer.isPreview(key) && stream.needsFetch(key)) {
-                stale.add(key);
+                markStale(key, MeshJobs.SERVER_NEWER);
                 applyOutdated++;
             }
             if ((i & 255) == 0 && System.nanoTime() > deadline) {
@@ -2104,14 +2129,16 @@ public final class LodRenderer {
             long key = it.nextLong();
             if (!resident.containsKey(key)) {
                 it.remove();
+                staleCauses.remove(key);
             } else {
-                // A drawn preview section meshed again waits behind the holes within STALE_LAG blocks
-                // (ADR-152): at a new world each finer tile meshed the near sections again, and the middle
-                // distances stayed empty behind them. During the disc (ADR-153) every hole first: its edge
-                // waited behind those new meshes. A real section's new mesh never waits (ADR-154): it draws
-                // chunks the preview leaves to it, and they stayed empty 10 s at a new world.
-                double lag = !PreviewLayer.isPreview(key) ? 0 : revealing ? MAX_DISTANCE * 8 : STALE_LAG;
-                wantOrder.add(key, WantOrder.score(nearestDistance(key, cam), inView(key, cam) ? 1 : -1) + lag);
+                // One order (ADR-155): a preview section drawn whole and meshed again for finer tiles is a
+                // refinement, counted refineRatio times farther than coverage, so the finer detail follows
+                // the coverage outward. ADR-152's fixed lag left the middle distances behind; ADR-153's
+                // (every hole to the border first) held all the trees 30 s, then showed them at once. A real
+                // section's new mesh (ADR-154: it draws chunks the preview leaves to it) and a preview section
+                // meshed with a tile missing bring coverage: no ratio.
+                double ratio = PreviewLayer.isPreview(key) && !partial(key) ? refineRatio : 1;
+                wantOrder.add(key, WantOrder.score(nearestDistance(key, cam), inView(key, cam) ? 1 : -1, ratio));
             }
         }
         wantOrder.sort();
@@ -2553,6 +2580,7 @@ public final class LodRenderer {
         java.util.Arrays.fill(fillTimeline, -1);
         fillMeshes = 0;
         fillSettledSince = 0;
+        fillJobs.reset();
     }
 
     /**
@@ -2575,9 +2603,9 @@ public final class LodRenderer {
         String settledAt = fillSettledSince == 0 ? "not settled"
                 : String.format(java.util.Locale.ROOT, "settled at %.1f s", (fillSettledSince - fillStart) / 1e9);
         if (RenderSettings.performanceLogs()) {
-            Farfield.LOG.info("LOD view fill after {}: sections missing in view at {}; view {}; {} meshes uploaded in {} s",
-                    fillCause, timeline, settledAt, fillMeshes,
-                    (Math.min(now, fillStart + FILL_WINDOW_NANOS) - fillStart) / 1_000_000_000L);
+            Farfield.LOG.info("LOD view fill after {}: sections missing in view at {}; view {}; {} meshes uploaded in {} s;"
+                            + " mesh jobs: {}", fillCause, timeline, settledAt, fillMeshes,
+                    (Math.min(now, fillStart + FILL_WINDOW_NANOS) - fillStart) / 1_000_000_000L, fillJobs.text());
         }
         fillStart = 0;
     }
@@ -3025,6 +3053,10 @@ public final class LodRenderer {
         long cpuNanos = meshCpuNanos.getAndSet(0);
         long waitNanos = meshWaitNanos.getAndSet(0);
         long[] cacheCounts = sectionCache.takeCounts();
+        if (windowJobs.total() > 0 && RenderSettings.performanceLogs()) {
+            Farfield.LOG.info("LOD mesh jobs: {}", windowJobs.text());
+        }
+        windowJobs.reset();
         if (jobs > 0) {
             if (RenderSettings.performanceLogs()) {
                 Farfield.LOG.info("LOD meshing: {} jobs on {} threads, {} us per job ({} us on the processor), {} us"
@@ -3138,6 +3170,10 @@ public final class LodRenderer {
         swaps.clear();
         swapOf.clear();
         stale.clear();
+        staleCauses.clear();
+        synchronized (previewPartial) {
+            previewPartial.clear();
+        }
         provisional.clear();
         clearExistence.set(true); // the selection's cache (ADR-147)
         existenceOps.clear();
@@ -3171,7 +3207,23 @@ public final class LodRenderer {
         if (world != null) {
             world.addListener(listener);
             Farfield.LOG.info("LOD renderer attached to a LOD store");
+            if (refineRatio != WantOrder.REFINE_RATIO) {
+                Farfield.LOG.info("LOD refinement ratio: {} (farfield.refineRatio)", refineRatio);
+            }
             startFill(System.nanoTime(), "joining");
+        }
+    }
+
+    /** Marks a resident section for a new mesh, with what asked for it ({@link MeshJobs}); the first cause is kept. */
+    private void markStale(long key, int cause) {
+        stale.add(key);
+        staleCauses.putIfAbsent(key, (byte) cause);
+    }
+
+    /** Whether a preview section's last build missed a tile: its new mesh brings coverage (ADR-155). */
+    private boolean partial(long key) {
+        synchronized (previewPartial) {
+            return previewPartial.contains(key);
         }
     }
 
@@ -3179,6 +3231,15 @@ public final class LodRenderer {
         if (requested.size() >= MAX_IN_FLIGHT || !requested.add(key)) {
             return;
         }
+        boolean previewKey = PreviewLayer.isPreview(key);
+        int cause = staleCauses.remove(key);
+        if (!resident.containsKey(key)) {
+            cause = MeshJobs.FIRST;
+        } else if (cause == MeshJobs.TILE_REFINED && partial(key)) {
+            cause = MeshJobs.TILE_COVERAGE;
+        }
+        windowJobs.asked(cause, previewKey, drawLevel(key));
+        fillJobs.asked(cause, previewKey, drawLevel(key));
         LodWorld w = world;
         int gen = generation.get();
         long queued = System.nanoTime();
@@ -3188,7 +3249,17 @@ public final class LodRenderer {
             meshWaitNanos.addAndGet(start - queued);
             long cpuStart = cpuTime();
             try {
-                LodSection section = PreviewLayer.isPreview(key) ? previewLayer.build(w, key) : readSection(w, key);
+                LodSection section = previewKey ? previewLayer.build(w, key) : readSection(w, key);
+                if (previewKey) {
+                    boolean missed = previewLayer.builtPartial(); // before the mesh reads its neighbors' layers
+                    synchronized (previewPartial) {
+                        if (missed) {
+                            previewPartial.add(key);
+                        } else {
+                            previewPartial.remove(key);
+                        }
+                    }
+                }
                 result = section == null ? emptyMesh(gen, key) : mesh(w, gen, key, section);
             } catch (IOException | RuntimeException e) {
                 Farfield.LOG.debug("LOD mesh of {} failed", LodKey.toString(key), e);
@@ -3434,7 +3505,7 @@ public final class LodRenderer {
             Resident r = resident.get(neighbor);
             // The neighbor sees this section in the opposite direction.
             if (r != null && (r.groups[PLANT_GROUP] > r.opaqueCount || (r.borderFaces >> (d ^ 1) & 1) != 0)) {
-                stale.add(neighbor);
+                markStale(neighbor, MeshJobs.BORDER_CHANGED);
                 selectionDirty = true;
             }
         }
@@ -3472,7 +3543,7 @@ public final class LodRenderer {
             existenceOps.add(key); // the selection's cache learns it (ADR-147)
             selectionDirty = true;
             if (resident.containsKey(key.longValue())) {
-                stale.add(key.longValue());
+                markStale(key.longValue(), MeshJobs.REAL_WRITTEN);
                 previewLayer.realWritten(key);
                 // Its neighbors are meshed again once its own new mesh shows its borders changed
                 // (restaleNeighbors): most rewrites at the generation front leave them as they were.
@@ -3499,7 +3570,7 @@ public final class LodRenderer {
                 Resident r = resident.get(neighbor);
                 // The neighbor sees this section in the opposite direction.
                 if (r != null && (r.groups[PLANT_GROUP] > r.opaqueCount || (r.borderFaces >> (d ^ 1) & 1) != 0)) {
-                    stale.add(neighbor);
+                    markStale(neighbor, MeshJobs.WRITE_NEIGHBOR);
                 }
             }
         }
@@ -3515,7 +3586,7 @@ public final class LodRenderer {
             while (keys.hasNext()) {
                 long k = keys.nextLong();
                 if (PreviewLayer.isPreview(k) && previewLayer.touched(k, changedTiles)) {
-                    stale.add(k);
+                    markStale(k, MeshJobs.TILE_REFINED);
                     if (drawn.contains(k)) {
                         joinSwap(swap, k, now); // their new meshes go in together (ADR-092)
                     }
@@ -3707,6 +3778,8 @@ public final class LodRenderer {
         }
         if (stale.contains(m.key)) {
             selectionDirty = true; // changed while in flight: ordered again with the others
+            windowJobs.outdatedOnArrival();
+            fillJobs.outdatedOnArrival();
         }
         fillMeshes++;
         // Room for the quads first: a section kept empty for want of room was taken
@@ -3716,7 +3789,7 @@ public final class LodRenderer {
             start = allocateQuads(m.quads.length);
             if (start < 0) {
                 if (resident.containsKey(m.key)) {
-                    stale.add(m.key); // keeps its old mesh, meshed again later
+                    markStale(m.key, MeshJobs.OTHER); // keeps its old mesh, meshed again later
                 }
                 return 0;
             }
@@ -3727,7 +3800,7 @@ public final class LodRenderer {
             FrameProbe.note(probeName(m.key) + (fresh ? "new" : "") + (drawn.contains(m.key) ? "d" : "") + "q" + m.quads.length);
         }
         if (rewrittenMeanwhile) {
-            stale.add(m.key);
+            markStale(m.key, MeshJobs.WRITTEN_WHILE_MESHING);
             selectionDirty = true;
         }
         if (r == null) {
@@ -3744,6 +3817,11 @@ public final class LodRenderer {
         } else if (r.quadCount > 0) {
             arena.release(r.start, r.quadCount);
         }
+        if (!fresh && !r.drawnOnce) {
+            windowJobs.replacedUndrawn();
+            fillJobs.replacedUndrawn();
+        }
+        r.drawnOnce = false;
         r.quadCount = m.quads.length;
         r.opaqueCount = m.groups[Quad.DIRECTIONS];
         r.groups = m.groups;
@@ -3849,6 +3927,12 @@ public final class LodRenderer {
             return;
         }
         evicted.add(key);
+        staleCauses.remove(key);
+        if (PreviewLayer.isPreview(key)) {
+            synchronized (previewPartial) {
+                previewPartial.remove(key);
+            }
+        }
         previewResident.remove(key);
         realResident.remove(key);
         realOctants.remove(key);
@@ -4301,7 +4385,7 @@ public final class LodRenderer {
                 Resident r = resident.get(k);
                 if (r == null || looksReady(r)) {
                     if (r != null) {
-                        stale.add(k);
+                        markStale(k, MeshJobs.LOOKS);
                     }
                     it.remove();
                     selectionDirty = true;

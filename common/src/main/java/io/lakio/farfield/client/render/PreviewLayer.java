@@ -117,6 +117,19 @@ final class PreviewLayer {
     };
     /** The coarse tiles drained by the last {@link #drainChanges}, for {@link #touched}. Render thread. */
     private final java.util.List<Long> drainedCoarse = new java.util.ArrayList<>();
+    /** Per tile of {@link #drainedCoarse}, the quarters its write changed (bits 0 to 3). Render thread. */
+    private final it.unimi.dsi.fastutil.ints.IntArrayList drainedQuarters = new it.unimi.dsi.fastutil.ints.IntArrayList();
+    /**
+     * Per coarse tile heard once, the quarters its summary showed (built and
+     * complete bits): the next write changed those that differ (ADR-155).
+     * Render thread.
+     */
+    private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap coarseQuarters =
+            new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+
+    {
+        coarseQuarters.defaultReturnValue(-1);
+    }
     /** The level-0 tiles drained by the last {@link #drainChanges}: their sections' existence is forgotten. */
     private final LongOpenHashSet drainedTiles = new LongOpenHashSet();
     /**
@@ -175,6 +188,8 @@ final class PreviewLayer {
         changedChunks.clear();
         changedCoarse.clear();
         drainedCoarse.clear();
+        drainedQuarters.clear();
+        coarseQuarters.clear();
         if (next != null) {
             next.preview().addListener(tileListener);
             next.preview().addTileListener(coarseListener);
@@ -540,10 +555,28 @@ final class PreviewLayer {
         boolean changed = masksChanged;
         masksChanged = false;
         drainedCoarse.clear();
+        drainedQuarters.clear();
         drainedTiles.clear();
+        LodWorld w = world;
         Long raw;
         while ((raw = changedCoarse.poll()) != null) {
-            drainedCoarse.add(raw);
+            // Which quarters this write changed: those whose built or complete bit differs from the last
+            // summary heard; none differing, its content was written again, all of it counted.
+            PreviewTile.Summary summary = w == null ? null : w.preview().summary(raw.longValue());
+            int now = summary == null ? 0 : summary.quarters();
+            int before = coarseQuarters.put(raw.longValue(), now);
+            int differ = before < 0 ? now : now ^ before;
+            int quarters = (differ | differ >> 4) & 0xF;
+            if (quarters == 0) {
+                quarters = 0xF;
+            }
+            int at = drainedCoarse.indexOf(raw);
+            if (at >= 0) {
+                drainedQuarters.set(at, drainedQuarters.getInt(at) | quarters);
+            } else {
+                drainedCoarse.add(raw);
+                drainedQuarters.add(quarters);
+            }
             changed = true;
         }
         Long tile;
@@ -653,7 +686,11 @@ final class PreviewLayer {
      * Whether a preview section must be meshed again for the changed tiles
      * ({@code tiles}: per tile, its changed chunks' rows): a near section
      * where its chunks meet them, a far one when it lies over any of them or
-     * over a coarse tile written ({@link #drainChanges}). Render thread.
+     * reads a quarter a coarse tile's write changed ({@link #drainChanges}),
+     * itself or the section beside it, whose columns its borders read. Any
+     * far section under a written tile was meshed again before (ADR-155):
+     * most read a finer tile and came out the same, three meshes out of four
+     * at a join. Render thread.
      */
     boolean touched(long key, Map<Long, int[]> tiles) {
         int shift = drawLevel(key);
@@ -664,15 +701,45 @@ final class PreviewLayer {
         long size = (long) LodSection.SIZE << shift;
         long bx = LodKey.x(key) * size;
         long bz = LodKey.z(key) * size;
-        for (long raw : drainedCoarse) {
-            long blocks = PreviewStore.blocks(PreviewStore.level(raw));
+        LodWorld w = world;
+        for (int i = 0, n = drainedCoarse.size(); w != null && i < n; i++) {
+            long raw = drainedCoarse.get(i);
+            int tileLevel = PreviewStore.level(raw);
+            if (tileLevel < shift - 2) {
+                continue; // finer than any tile a section of this level reads
+            }
+            long blocks = PreviewStore.blocks(tileLevel);
             long tx = PreviewStore.tileX(raw) * blocks;
             long tz = PreviewStore.tileZ(raw) * blocks;
-            if (tx < bx + size && bx < tx + blocks && tz < bz + size && bz < tz + blocks) {
-                return true;
+            if (tx < bx + 2 * size && bx - size < tx + blocks && tz < bz + 2 * size && bz - size < tz + blocks) {
+                // A section lies whole in one quarter of any tile it can read: its center tells its source.
+                long cx = bx + size / 2;
+                long cz = bz + size / 2;
+                int quarters = drainedQuarters.getInt(i);
+                PreviewStore store = w.preview();
+                if (readsChanged(store, shift, cx, cz, raw, tx, tz, blocks, quarters)
+                        || readsChanged(store, shift, cx - size, cz, raw, tx, tz, blocks, quarters)
+                        || readsChanged(store, shift, cx + size, cz, raw, tx, tz, blocks, quarters)
+                        || readsChanged(store, shift, cx, cz - size, raw, tx, tz, blocks, quarters)
+                        || readsChanged(store, shift, cx, cz + size, raw, tx, tz, blocks, quarters)) {
+                    return true;
+                }
             }
         }
         return farTouched.contains(LodKey.pack(shift, LodKey.x(key), 0, LodKey.z(key)));
+    }
+
+    /**
+     * Whether a far section of draw level {@code shift} centered at (x, z)
+     * reads tile {@code raw} there, in a quarter its write changed.
+     */
+    private static boolean readsChanged(PreviewStore store, int shift, long x, long z, long raw, long tx, long tz,
+                                        long blocks, int quarters) {
+        if (x < tx || x >= tx + blocks || z < tz || z >= tz + blocks) {
+            return false;
+        }
+        int q = (z - tz >= blocks / 2 ? 2 : 0) + (x - tx >= blocks / 2 ? 1 : 0);
+        return (quarters >> q & 1) != 0 && store.coarseSource(shift - 2, (int) x, (int) z) == raw;
     }
 
     /** Before a batch of {@link #touched} calls on {@code tiles}: the far sections over them. Render thread. */
@@ -1159,9 +1226,32 @@ final class PreviewLayer {
     private static final ThreadLocal<it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<PreviewTile>> SEEN =
             ThreadLocal.withInitial(it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap::new);
 
+    /** Per mesher thread: whether its last {@link #build(LodWorld, long)} read a place with no tile (ADR-155). */
+    private static final ThreadLocal<boolean[]> PARTIAL = ThreadLocal.withInitial(() -> new boolean[1]);
+
     /** The section of a preview key, real chunks left empty; null when empty. Mesher threads. */
     LodSection build(LodWorld w, long key) throws IOException {
+        PARTIAL.get()[0] = false;
         return build(w, key, -1, 0);
+    }
+
+    /**
+     * Whether this thread's last {@link #build(LodWorld, long)} read a place
+     * inside the world border where no tile is built yet, or not all of it:
+     * its mesh has a gap there, and its next mesh brings coverage, not only
+     * finer data (ADR-155). Read right after the build.
+     */
+    boolean builtPartial() {
+        return PARTIAL.get()[0];
+    }
+
+    /** A place a section's build found without all its data: noted unless past the border, where none comes. */
+    private void missing(int tileX, int tileZ) {
+        double x = tileX * (double) PreviewTile.BLOCKS;
+        double z = tileZ * (double) PreviewTile.BLOCKS;
+        if (x < borderMaxX && x + PreviewTile.BLOCKS > borderMinX && z < borderMaxZ && z + PreviewTile.BLOCKS > borderMinZ) {
+            PARTIAL.get()[0] = true;
+        }
     }
 
     private LodSection build(LodWorld w, long key, int layerAxis, int layerIndex) throws IOException {
@@ -1182,6 +1272,9 @@ final class PreviewLayer {
                 long source = store.coarseSource(level - 2, x * PreviewTile.BLOCKS, z * PreviewTile.BLOCKS);
                 try {
                     PreviewTile t = source < 0 ? null : store.read(source);
+                    if (t == null && layerAxis < 0) {
+                        missing(x, z);
+                    }
                     seen.put(place, t);
                     return t;
                 } catch (IOException e) {
@@ -1193,7 +1286,11 @@ final class PreviewLayer {
         }
         PreviewVoxels.Tiles tiles = (x, z) -> {
             try {
-                return store.read(x, z);
+                PreviewTile t = store.read(x, z);
+                if (layerAxis < 0 && (t == null || (t.quarters() & 0xF) != 0xF)) {
+                    missing(x, z);
+                }
+                return t;
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             }
