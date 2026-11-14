@@ -4844,3 +4844,27 @@ End.
   no failure there): the End drawn, islands and chorus plants
   (screenshots 2026-11-14_21.53.57 to 21.59.18). Not checked: the Fabric
   pack after the change; the cost of the End's uncached biome reads.
+
+## ADR-158 — Without a preliminary surface, the preview searches from the top of the world
+
+Status: accepted, 2026-11-14. After ADR-157 the End's tiles built on the
+user's Fabric pack, but nothing showed.
+
+- **Context**: every tile searches its surface from vanilla's preliminary
+  surface (the highest cell where the density without jaggedness exceeds
+  0.390625, ADR-133). Where nothing exceeds it, vanilla has no estimate;
+  the preview took the bottom of the world, and the search found nothing
+  above it. The End's density without jaggedness (its islands less
+  0.703125) never exceeds it: the tiles of the user's pack held heights
+  only where features stand (the obsidian pillars), from level 3 up none
+  at all.
+- **Decision**: no estimate means the top of the world: the search goes
+  down from there to the first solid cell. The Overworld is not touched
+  (the bottom of its world always exceeds the threshold); a modded
+  dimension whose router lacks that density gets a surface too.
+- **Checked**: Fabric dev server, End pregen of 77 tiles at 3000, 3000,
+  heights read from the stored tiles: islands at 48 to 86 at level 0,
+  surfaces at 48 to 68 up to level 6, where the pack's tiles held 0. Cost:
+  a quarter 1.3 s, heights 1.2 s of it (void columns are searched whole).
+  Not checked: the End drawn in a client; an Overworld spike after the
+  change.

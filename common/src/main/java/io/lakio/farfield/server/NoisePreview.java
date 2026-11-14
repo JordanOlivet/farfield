@@ -1035,7 +1035,11 @@ final class NoisePreview {
      * grid from the top of the world where the density without jaggedness
      * exceeds {@link #PRELIMINARY_THRESHOLD}. From {@code hint} (a near
      * column's result) up or down, since that density has no caves; from the
-     * top without one. The bottom of the world when nothing exceeds it.
+     * top without one. The top of the world when nothing exceeds it (vanilla
+     * has no estimate then): the search for the surface starts from the top.
+     * The End's density without jaggedness (its islands less 0.703125) never
+     * exceeds it; from the bottom of the world, every End column came out
+     * empty (ADR-158).
      */
     private static int preliminary(Dimension d, int x, int z, int hint) {
         DensityFunction f = d.columnInitial.get();
@@ -1055,14 +1059,14 @@ final class NoisePreview {
                     return y;
                 }
             }
-            return minY;
+            return top;
         }
         for (int y = top; y >= minY; y -= step) {
             if (above(f, x, y, z)) {
                 return y;
             }
         }
-        return minY;
+        return top;
     }
 
     private static boolean above(DensityFunction f, int x, int y, int z) {
