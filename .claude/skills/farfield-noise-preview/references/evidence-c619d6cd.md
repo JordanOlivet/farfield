@@ -1,0 +1,2 @@
+PROBE L3 0,0 min 0 max 68 sea -2147483648 quarters 11111111 chunkMax by 16: {0=92, 16=2, 32=3, 48=626, 64=301}
+Tu avais raison : ce que tu voyais dans l'End NeoForge était très probablement les LOD des îles déjà explorées sur le serveur. L'aperçu lui-même restait vide dans l'End, et c'est corrigé : commité et poussé (`4ad1fd4`, ADR-158), mais pas encore déployé.
