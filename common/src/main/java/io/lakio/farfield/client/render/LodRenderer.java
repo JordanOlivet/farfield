@@ -606,6 +606,21 @@ public final class LodRenderer {
     {
         staleCauses.defaultReturnValue((byte) MeshJobs.OTHER); // marked without a cause (a resource reload)
     }
+    /**
+     * A real section written again is meshed again once its writes rest this long (ADR-156): a server
+     * generating terrain writes a section once per chunk, and each write meshed it again, 4.2 meshes a
+     * section at a new world's spawn. At most {@link #REAL_REST_MAX_NANOS} after the first write: the
+     * preview holds a chunk 2 s for the real terrain (ADR-154).
+     */
+    private static final long REAL_REST_NANOS = 250_000_000L;
+    private static final long REAL_REST_MAX_NANOS = 1_000_000_000L;
+    /** Per real section resting: its first and its last write since its mesh was last asked. */
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap restFirst =
+            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+    private final it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap restLast =
+            new it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap();
+    /** When the next resting section may be asked: the selection orders the meshes again then; 0 for none. */
+    private long nextRest;
     /** The mesh jobs asked since the last stat line, and since the fill started ({@link #startFill}). */
     private final MeshJobs windowJobs = new MeshJobs();
     private final MeshJobs fillJobs = new MeshJobs();
@@ -1584,6 +1599,10 @@ public final class LodRenderer {
         org.joml.Vector3f look = camera.getLookVector();
         boolean turned = look.x * selectedLookX + look.y * selectedLookY + look.z * selectedLookZ < RESELECT_TURN_COS;
         updateDetail(mc, projection);
+        if (nextRest != 0 && System.nanoTime() >= nextRest) {
+            nextRest = 0;
+            selectionDirty = true; // a resting real section may be asked now (ADR-156)
+        }
         double distance = selectionDistance();
         if (distance != lastSelectionDistance) {
             lastSelectionDistance = distance;
@@ -2124,6 +2143,9 @@ public final class LodRenderer {
             inView += visible ? 1 : 0;
             wantOrder.add(key, WantOrder.score(nearestDistance(key, cam), visible ? 1 : -1));
         }
+        long orderNow = System.nanoTime();
+        nextRest = 0;
+        double showDistance = selector.detail(); // a section shows from this many times its size away
         LongIterator it = stale.iterator();
         while (it.hasNext()) {
             long key = it.nextLong();
@@ -2137,8 +2159,22 @@ public final class LodRenderer {
                 // (every hole to the border first) held all the trees 30 s, then showed them at once. A real
                 // section's new mesh (ADR-154: it draws chunks the preview leaves to it) and a preview section
                 // meshed with a tile missing bring coverage: no ratio.
-                double ratio = PreviewLayer.isPreview(key) && !partial(key) ? refineRatio : 1;
-                wantOrder.add(key, WantOrder.score(nearestDistance(key, cam), inView(key, cam) ? 1 : -1, ratio));
+                // A real section still being written rests (ADR-156). A section not drawn (kept for the
+                // selection to descend through, its children drawn) shows nothing new: its new mesh is a
+                // refinement, ordered where a section of its size shows, not where it lies. The large
+                // sections around the player lie at no distance, and their new meshes, one per finer tile
+                // built under them, came before everything: half of a join's first 10 s.
+                boolean preview = PreviewLayer.isPreview(key);
+                if (!preview && resting(key, orderNow)) {
+                    continue;
+                }
+                boolean shown = drawn.contains(key);
+                double distance = nearestDistance(key, cam);
+                if (!shown) {
+                    distance = Math.max(distance, showDistance * (LodSection.SIZE << drawLevel(key)));
+                }
+                double ratio = shown && (!preview || partial(key)) ? 1 : refineRatio;
+                wantOrder.add(key, WantOrder.score(distance, inView(key, cam) ? 1 : -1, ratio));
             }
         }
         wantOrder.sort();
@@ -3171,6 +3207,9 @@ public final class LodRenderer {
         swapOf.clear();
         stale.clear();
         staleCauses.clear();
+        restFirst.clear();
+        restLast.clear();
+        nextRest = 0;
         synchronized (previewPartial) {
             previewPartial.clear();
         }
@@ -3220,6 +3259,29 @@ public final class LodRenderer {
         staleCauses.putIfAbsent(key, (byte) cause);
     }
 
+    /** Notes a write of a resident real section: its new mesh waits for its writes to rest (ADR-156). */
+    private void rest(long key, long now) {
+        restFirst.putIfAbsent(key, now);
+        restLast.put(key, now);
+    }
+
+    /**
+     * Whether a real section's writes have not rested yet; then {@link #nextRest}
+     * holds the earliest time one of them will have.
+     */
+    private boolean resting(long key, long now) {
+        long last = restLast.get(key);
+        if (last == 0) {
+            return false;
+        }
+        long until = Math.min(last + REAL_REST_NANOS, restFirst.get(key) + REAL_REST_MAX_NANOS);
+        if (until <= now) {
+            return false;
+        }
+        nextRest = nextRest == 0 ? until : Math.min(nextRest, until);
+        return true;
+    }
+
     /** Whether a preview section's last build missed a tile: its new mesh brings coverage (ADR-155). */
     private boolean partial(long key) {
         synchronized (previewPartial) {
@@ -3232,6 +3294,8 @@ public final class LodRenderer {
             return;
         }
         boolean previewKey = PreviewLayer.isPreview(key);
+        restFirst.remove(key);
+        restLast.remove(key);
         int cause = staleCauses.remove(key);
         if (!resident.containsKey(key)) {
             cause = MeshJobs.FIRST;
@@ -3539,11 +3603,13 @@ public final class LodRenderer {
             }
         }
         Long key;
+        long restNow = System.nanoTime();
         while ((key = rewritten.poll()) != null) {
             existenceOps.add(key); // the selection's cache learns it (ADR-147)
             selectionDirty = true;
             if (resident.containsKey(key.longValue())) {
                 markStale(key.longValue(), MeshJobs.REAL_WRITTEN);
+                rest(key.longValue(), restNow);
                 previewLayer.realWritten(key);
                 // Its neighbors are meshed again once its own new mesh shows its borders changed
                 // (restaleNeighbors): most rewrites at the generation front leave them as they were.
@@ -3928,6 +3994,8 @@ public final class LodRenderer {
         }
         evicted.add(key);
         staleCauses.remove(key);
+        restFirst.remove(key);
+        restLast.remove(key);
         if (PreviewLayer.isPreview(key)) {
             synchronized (previewPartial) {
                 previewPartial.remove(key);

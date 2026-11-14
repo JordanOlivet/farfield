@@ -4792,3 +4792,32 @@ ADR-153's lag during the disc.
   still waits for the tiles (within 1,024 blocks built at 54.5 s, W2).
   Not checked: the user's own view, a dedicated server, a teleport, a
   flight at the generation front (the ratio now applies there too).
+
+## ADR-156 — Real sections rest before a new mesh; sections not drawn are ordered where they show
+
+Status: accepted, 2026-11-14. Step W4 of `docs/analysis/join-as-a-wave.md`
+("go w2 et w4"; W2, the same order for the tiles, is not built yet).
+
+- **Decision**:
+  - A resident real section written again is meshed again once its writes
+    rest 250 ms, at most 1 s after the first: a server generating terrain
+    writes a section once per chunk. The preview holds a chunk 2 s for the
+    real terrain (ADR-154), so the rest stays inside it.
+  - A section waiting for a new mesh that the selection does not draw
+    (kept to descend through, its children drawn) is a refinement, ordered
+    at the distance where a section of its size shows (the split detail
+    times its size), not where it lies: the large sections around the
+    player lie at no distance, and their new meshes, one per finer tile
+    built under them, came before everything.
+- **Checked**: Fabric pack in production, a new world, the largest
+  distance, 12 chunks of game view, one run each, against ADR-155: mesh
+  jobs of real sections at level 1 and up 5,198 down to 2,763; meshes
+  replaced before being drawn 17,284 down to 12,079 in the minute, 2,738
+  down to 1,500 in the first 10 s; first meshes of preview sections in the
+  first 10 s 734 up to 2,326; the columns within 32 chunks all drawn at
+  about 15 s (20 s with ADR-155, 10 s with ADR-154). Real sections at
+  level 0 did not change (their chunks come more than 250 ms apart). Runs
+  differ by more than these steps on some timings (the PC was in use):
+  the counts are the evidence, not the times. Built without the unit
+  tests run again (no core file changed). Not checked: the user's view, a
+  dedicated server, a teleport, a flight.
