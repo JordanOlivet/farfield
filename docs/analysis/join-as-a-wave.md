@@ -248,6 +248,28 @@ None.
   sections; what is left of W3 is the near sections, meshed once per
   quarter.
 
+- W4 (ADR-156, 2026-11-14): real sections rest 250 ms before a new
+  mesh, and sections not drawn are ordered where they show.
+- W2 tried and not kept (2026-11-14): the four steps replaced by one
+  order, coverage at its distance and the wanted level four times
+  farther (`PreviewPyramid.waveOrder`, used by `NoisePreview.schedule`
+  and `StreamClient.askTiles`). One run against W4's, same bench:
+
+  | | W4 | W2 tried |
+  |---|---|---|
+  | Within 1,024 blocks built | 55.1 s | 73.2 s |
+  | Coarsest level whole | 50.1 s | 86.7 s |
+  | Disc at 20, 30, 45 s (blocks) | 3,998, 185,363, 18.8 M | 4,096, 5,792, 8.4 M |
+  | Sections missing in view at 30, 45 s | 1,644, 144 | 340, 0 |
+
+  The near detail came later, not sooner, and the horizon much later: the
+  coarsest level's far quarters, ordered by their distance, came last, and
+  the disc stopped at them ("not known yet") until it was cut at 60 s.
+  Why the near detail came later is not known. The diff is kept outside
+  the repository. Before another try: measure per level when the quarters
+  within 1,024 blocks are built, and keep the coarsest level as coverage
+  everywhere at a fixed place in the order.
+
 ## Limits of this measure
 
 One run, one world, one position, 12 chunks of game view, single player.
