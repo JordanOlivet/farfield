@@ -4703,3 +4703,41 @@ drawn) and each fix moved the fault to another. Answered "go disque".
   the progress log: a crash (a static array read before it was set), the
   disc past unknown tiles, the disc held 10 s by the root to the border.
   Not checked: a dedicated server, a teleport, the user's own view.
+
+## ADR-154 — A real section's new mesh never waits; the disc stops at chunks left empty
+
+Status: accepted, 2026-11-14. The user on ADR-153 (Fabric pack, a new
+world, 12 chunks of game view): empty holes near the player while the rest
+had its ground, filled all at once "quand les arbres arrivent". The game
+log showed them 200 to 300 blocks away, up to 65 at once, open 10 to 13 s
+each: the ring of real chunks the integrated server generates past the
+game's own view. Once a real chunk is written the preview leaves it to the
+real terrain, but the real section's mesh dated from before the chunk
+(`real, drawn, none here, stale`), and its new mesh waited behind every
+hole to the horizon (ADR-153's lag during the disc). The disc saw the
+section drawn, not the hole. Answered "go".
+
+- **Decision**:
+  - Only a preview section's new mesh waits behind the holes (ADR-152's
+    lag, ADR-153's during the disc): a real section's new mesh is ordered
+    by its distance like a hole, since it draws chunks the preview leaves
+    to it (and, through a server, chunks newer than the drawn copy).
+  - During the disc a drawn real section waiting for its new mesh, of
+    level 3 or finer, is looked at chunk column by chunk column: a column
+    in view, past the game's chunks, that its mesh does not draw and that
+    no other drawn section covers is a hole of the disc (at the game's
+    chunks at least, as the selectors' holes). The disc's log names it
+    ("real <key> not meshed again at chunk x z").
+- **Checked**: Fabric pack in production, a new world (seed 4242) from 200
+  blocks up, ADR-153's jar against this one at the user's 12 chunks, then
+  at the largest game view (32 chunks). At 12 chunks: holes open 20 and
+  30 s after the teleport 73 and 114 down to 4 and 4; at 15 and 25 s the
+  black and empty patches of the near ring gone (the other jar showed
+  both); everything meshed at 59 s instead of 69. The disc grew slower
+  (1,086 against 2,985 blocks at 10 s, 14,768 against 139,022 at 20 s),
+  the same from 30 s on. At 32 chunks, against ADR-153's jar too: the
+  view continuous at 15 and 25 s in both (the generated ring lies under
+  the game's own view there), the render thread's frame the same (2.6 to
+  5.5 ms while meshing), the disc slower again (1,536 against 7,384
+  blocks at 10 s, 8,095 against 51,810 at 20 s). Not checked: the user's
+  own view, the NeoForge pack through the server, a teleport.

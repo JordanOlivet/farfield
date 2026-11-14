@@ -592,7 +592,7 @@ public final class LodRenderer {
      * applied lists are drawn meanwhile.
      */
     private static final long APPLY_BUDGET_NANOS = 1_000_000L;
-    /** Blocks a drawn section's new mesh counts farther than a section not drawn yet (ADR-152). */
+    /** Blocks a drawn preview section's new mesh counts farther than a section not drawn yet (ADR-152). */
     private static final double STALE_LAG = 16384;
     private boolean applying;
     private int applyCursor;
@@ -2105,12 +2105,13 @@ public final class LodRenderer {
             if (!resident.containsKey(key)) {
                 it.remove();
             } else {
-                // A drawn section meshed again waits behind the holes within STALE_LAG blocks (ADR-152): at a
-                // new world each finer tile meshed the near sections again, and the middle distances stayed
-                // empty behind them.
-                // During the disc (ADR-153) every hole first: its edge waited behind new meshes of drawn sections.
-                wantOrder.add(key, WantOrder.score(nearestDistance(key, cam), inView(key, cam) ? 1 : -1)
-                        + (revealing ? MAX_DISTANCE * 8 : STALE_LAG));
+                // A drawn preview section meshed again waits behind the holes within STALE_LAG blocks
+                // (ADR-152): at a new world each finer tile meshed the near sections again, and the middle
+                // distances stayed empty behind them. During the disc (ADR-153) every hole first: its edge
+                // waited behind those new meshes. A real section's new mesh never waits (ADR-154): it draws
+                // chunks the preview leaves to it, and they stayed empty 10 s at a new world.
+                double lag = !PreviewLayer.isPreview(key) ? 0 : revealing ? MAX_DISTANCE * 8 : STALE_LAG;
+                wantOrder.add(key, WantOrder.score(nearestDistance(key, cam), inView(key, cam) ? 1 : -1) + lag);
             }
         }
         wantOrder.sort();
@@ -2133,9 +2134,66 @@ public final class LodRenderer {
             }
         }
         appliedSelectionTime = applyTime;
+        if (revealing && !Double.isNaN(applyHole)) {
+            double handOff = handOffHole(cam);
+            if (handOff < applyHole) {
+                applyHole = handOff;
+                applyHoleWhy = handOffWhy;
+            }
+        }
         updateReveal(applyTime);
         applyNanos += System.nanoTime() - start;
         lastSelectNanos = applyNanos;
+    }
+
+    /** The coarsest level of a real section whose missing chunk columns the disc looks for (ADR-154). */
+    private static final int HAND_OFF_HOLE_LEVEL = 3;
+    private String handOffWhy = "";
+
+    /**
+     * The nearest chunk column in view, past the game's own chunks, that a
+     * drawn real section waiting for its new mesh does not draw and nothing
+     * else drawn covers: the preview left it to the real terrain, whose mesh
+     * is not in yet. The selectors see the section drawn, not the hole
+     * (ADR-154). Counted at the game's chunks at least, as the selectors'
+     * holes. Render thread, after the selection is applied.
+     */
+    private double handOffHole(Vec3 cam) {
+        int renderDistance = Minecraft.getInstance().options.getEffectiveRenderDistance();
+        int cx0 = (int) Math.floor(cam.x) >> 4;
+        int cz0 = (int) Math.floor(cam.z) >> 4;
+        double nearest = Double.POSITIVE_INFINITY;
+        LongIterator it = stale.iterator();
+        while (it.hasNext()) {
+            long key = it.nextLong();
+            int level = LodKey.level(key);
+            if (PreviewLayer.isPreview(key) || level > HAND_OFF_HOLE_LEVEL || !drawn.contains(key)
+                    || nearestDistance(key, cam) >= nearest || !inView(key, cam)) {
+                continue;
+            }
+            Resident r = resident.get(key);
+            int side = 2 << level;
+            int baseX = LodKey.x(key) * side;
+            int baseZ = LodKey.z(key) * side;
+            for (int dz = 0; dz < side; dz++) {
+                for (int dx = 0; dx < side; dx++) {
+                    int cx = baseX + dx;
+                    int cz = baseZ + dz;
+                    if (Math.max(Math.abs(cx - cx0), Math.abs(cz - cz0)) <= renderDistance
+                            || drawsColumn(r, level, cx, cz)) {
+                        continue; // the game draws it, or the section's own mesh does
+                    }
+                    double ex = Math.max(0, Math.max(cx * 16.0 - cam.x, cam.x - (cx * 16.0 + 16)));
+                    double ez = Math.max(0, Math.max(cz * 16.0 - cam.z, cam.z - (cz * 16.0 + 16)));
+                    double d = Math.sqrt(ex * ex + ez * ez);
+                    if (d < nearest && !columnDrawn(cx, cz)) {
+                        nearest = d;
+                        handOffWhy = "real " + LodKey.toString(key) + " not meshed again at chunk " + cx + " " + cz;
+                    }
+                }
+            }
+        }
+        return nearest == Double.POSITIVE_INFINITY ? nearest : Math.max(nearest, renderDistance * 16.0);
     }
 
     /** Grows the revealed disc to the nearest hole of the selection just applied (ADR-153). */
