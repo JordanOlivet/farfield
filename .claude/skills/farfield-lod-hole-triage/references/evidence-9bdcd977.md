@@ -1,0 +1,2 @@
+[01:02:23] [Render thread/INFO]: LOD view fill after joining: sections missing in view at 0 s 0, 1 s 651, 2 s 1471, 5 s 724, 10 s 375, 20 s 0, 30 s 0, 45 s 0; view settled at 45.0 s; 34734 meshes uploaded in 50 s
+[01:05:10] [Render thread/INFO]: LOD view fill after joining: sections missing in view at 0 s 0, 1 s 398, 2 s 584, 5 s 239, 10 s 106, 20 s 0, 30 s 0; view settled at 30.0 s; 25406 meshes uploaded in 34 s
