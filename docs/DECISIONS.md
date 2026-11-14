@@ -4904,3 +4904,25 @@ B").
 - **Cost**: the format change rebuilds every preview tile once, the
   Overworld's included (minutes of background work on a server); clients
   with protocol 11 are declined until they update.
+
+## ADR-160 — The disc ignores selections asked before it started
+
+Status: accepted, 2026-11-14. The user on the Fabric pack, teleports of
+20,000 blocks: the near ring drawn, then sky, then the far band, until the
+middle filled; "ça fait comme si les zones autour de moi proches étaient
+invalidées". Answered "go oui".
+
+- **Context**: the disc of ADR-153 grew to the whole distance in the first
+  second after both teleports ("radius at 1 s 33551915", a hole named
+  beside it), so it hid nothing, while after a join it grew from 192
+  blocks. The selection runs on its own thread (ADR-143): the first ones
+  applied after a teleport were asked with the camera before it, their
+  nearest holes measured from the old place, and the disc only grows.
+- **Decision**: each selection keeps when it was asked; while the disc
+  runs, one asked before the disc started does not move it.
+- **Left**: what the disc hides is ADR-150's split of a section too
+  coarse to stand in, the middle ring empty until its finer sections are
+  meshed; with the disc working it shows as the disc's edge, not as a
+  ring of sky.
+- **Checked**: built, unit tests run (no core change). Not checked: a
+  teleport in a pack.

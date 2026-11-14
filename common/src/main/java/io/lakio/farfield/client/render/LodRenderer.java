@@ -768,6 +768,8 @@ public final class LodRenderer {
         final java.util.List<String> reasons = new java.util.ArrayList<>();
         boolean preview;
         long nanos;
+        /** When it was asked, with the camera then (nanoTime); 0 for none ran. */
+        long askedAt;
 
         PreviewSelection(int generation) {
             this.generation = generation;
@@ -1982,8 +1984,10 @@ public final class LodRenderer {
             startPreviewSelection(level, cam);
         }
         PreviewSelection p = previewResult;
-        applyHole = Double.isNaN(p.realHole) || Double.isNaN(p.previewHole) ? Double.NaN
-                : Math.min(p.realHole, p.previewHole);
+        // A selection asked before the disc started saw the camera before the teleport: its holes lie
+        // around the old place, up to the whole distance away, and the disc only grows (ADR-160).
+        applyHole = Double.isNaN(p.realHole) || Double.isNaN(p.previewHole)
+                || revealing && p.askedAt < revealSince ? Double.NaN : Math.min(p.realHole, p.previewHole);
         applyHoleWhy = p.holeWhy;
         drawList.addAll(p.realDraw);
         wanted.addAll(p.realWant);
@@ -2337,6 +2341,7 @@ public final class LodRenderer {
         int maxY = level.getMaxBuildHeight();
         double distance = lastSelectionDistance;
         int generation = previewGeneration;
+        long askedAt = System.nanoTime();
         // The selectors' settings, set here while no selection runs (ADR-147).
         if (!Double.isNaN(wantedDetail)) {
             selector.setDetail(wantedDetail);
@@ -2364,6 +2369,7 @@ public final class LodRenderer {
         previewJob = previewSelector.submit(() -> {
             long start = System.nanoTime();
             PreviewSelection p = new PreviewSelection(generation);
+            p.askedAt = askedAt;
             p.preview = preview;
             if (clearExistence.getAndSet(false)) {
                 existence.clear();
