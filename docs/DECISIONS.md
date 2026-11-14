@@ -4821,3 +4821,26 @@ Status: accepted, 2026-11-14. Step W4 of `docs/analysis/join-as-a-wave.md`
   the counts are the evidence, not the times. Built without the unit
   tests run again (no core file changed). Not checked: the user's view, a
   dedicated server, a teleport, a flight.
+
+## ADR-157 — The preview's cached climate sampler only for multi-noise biome sources
+
+Status: accepted, 2026-11-14. The user's Fabric pack: no preview in the
+End.
+
+- **Context**: the preview reads biomes through a copy of the world's
+  climate sampler with vanilla's per-column caches (ADR-057). Fabric's
+  biome API, once a mod adds End biomes, picks them with a seed it sets on
+  the world's own sampler; the copy has none, and every End tile failed
+  (`MultiNoiseSampler doesn't have a seed set`, 477 failures in the pack's
+  log).
+- **Decision**: the cached copy only for a `MultiNoiseBiomeSource` (the
+  Overworld and most modded worlds, where the climate is what the source
+  reads, and where the caches pay: ADR-102). Any other biome source (the
+  End, a mod's own) is given the world's sampler itself.
+- **Checked**: Fabric dev server, an End pregen of 77 tiles at 3000, 3000
+  with a temporary End biome added through Fabric's API (the seed path
+  runs only then): 3,100 failures without the change, none with it, the
+  77 tiles built in 0.3 min. The user's NeoForge pack (no Fabric API, so
+  no failure there): the End drawn, islands and chorus plants
+  (screenshots 2026-11-14_21.53.57 to 21.59.18). Not checked: the Fabric
+  pack after the change; the cost of the End's uncached biome reads.

@@ -22,6 +22,7 @@ import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Biomes;
 import net.minecraft.world.level.biome.Climate;
+import net.minecraft.world.level.biome.MultiNoiseBiomeSource;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.DensityFunction;
@@ -131,7 +132,11 @@ final class NoisePreview {
         final NoiseBasedChunkGenerator generator;
         /** {@link #density} with vanilla's per-column caches, one per preview thread (ADR-057). */
         final ThreadLocal<DensityFunction> columnDensity;
-        /** {@link #sampler} with the same caches, shared by its six functions (ADR-057). */
+        /**
+         * {@link #sampler} with the same caches, shared by its six functions
+         * (ADR-057), for a multi-noise biome source; any other source gets
+         * {@link #sampler} itself (ADR-157).
+         */
         final ThreadLocal<Climate.Sampler> columnSampler;
         /**
          * The surface search's densities (ADR-133): {@link #density} without
@@ -214,7 +219,11 @@ final class NoisePreview {
             sampler = state.sampler();
             density = state.router().finalDensity();
             columnDensity = ThreadLocal.withInitial(() -> ColumnDensity.of(density));
-            columnSampler = ThreadLocal.withInitial(() -> ColumnDensity.of(sampler));
+            // The cached copy only where the climate is what the biome source reads (ADR-157): Fabric's End
+            // biome API asks the world's own sampler for the seed it set on it, and a copy has none.
+            columnSampler = biomes instanceof MultiNoiseBiomeSource
+                    ? ThreadLocal.withInitial(() -> ColumnDensity.of(sampler))
+                    : ThreadLocal.withInitial(() -> sampler);
             int[] cut = new int[1];
             DensityFunction uncut = UncutDensity.of(density, cut);
             cutBranches = cut[0];
