@@ -638,6 +638,13 @@ public final class StreamServer {
         }
     }
 
+    /** A player's split detail by its client's hint (ADR-152), the usual one before it. */
+    public static double previewDetail(ServerPlayer sp) {
+        StreamServer s = instance;
+        Player p = s == null ? null : s.players.get(sp.getUUID());
+        return p == null ? DEFAULT_DETAIL : p.detail;
+    }
+
     /**
      * The blocks the noise preview is built to around a player (E.3b): the
      * distance its client draws to, by its hint, at most the streaming

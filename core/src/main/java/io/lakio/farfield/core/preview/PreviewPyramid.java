@@ -47,42 +47,59 @@ public final class PreviewPyramid {
 
     /**
      * Blocks past the game's own view distance the near ring reaches
-     * (ADR-151): the LODs drawn first around the player.
+     * (ADR-152): the LODs drawn in detail first around the player.
      */
-    public static final int NEAR_RING_MARGIN = 1024;
-    /** Taken off a near-ring order: before every other (those are at least 0, at most a few times MAX_RANGE). */
-    private static final double NEAR_RING_FIRST = 8.0 * MAX_RANGE;
+    public static final int NEAR_RING_MARGIN = 512;
+    /** How many tile levels coarser than wanted a first image may be: the selection's own (ADR-150). */
+    public static final int ACCEPTABLE_LEVELS = io.lakio.farfield.core.select.LodSelector.MAX_FALLBACK_LEVELS;
 
     /**
-     * Whether a quarter belongs to the near ring (ADR-151): a level a
-     * near view is cut from ({@link PreviewStore#VIEW_MAX_LEVEL} at most)
-     * within {@code ring} blocks.
+     * The tile level whose samples match the voxels drawn {@code distance}
+     * blocks away at a split {@code detail} (ADR-152): the selection draws
+     * level {@code floor(log2(distance / (detail * 32)))} there, and a level-L
+     * section reads tiles of level L - 2 (4-block samples under 1-block voxels).
      */
-    public static boolean inNearRing(int level, double distance, double ring) {
-        return level <= PreviewStore.VIEW_MAX_LEVEL && distance <= ring;
+    public static int wantedTile(double distance, double detail) {
+        double sections = distance / (Math.max(1e-3, detail) * io.lakio.farfield.core.lod.LodSection.SIZE);
+        int level = sections < 2 ? 0 : 63 - Long.numberOfLeadingZeros((long) sections);
+        return Math.max(0, Math.min(LEVELS - 1, level) - 2);
     }
 
     /**
-     * The order with a near ring of {@code ring} blocks (ADR-151): its
-     * quarters before any other, a whole level of the ring before the next
-     * finer one, so its views come at level 5 in seconds and refine down to
-     * level 0 last; the rest as {@link #order(int, double)}. At a new world
-     * the ring waited behind every coarse quarter within 15,000 blocks, its
-     * detail whole at 38 to 59 s in the pack; with the usual lag inside the
-     * ring, the costly level-0 quarters under the game's own chunks held
-     * the cheap coarser ones of the ring's edge, and its holes closed later.
-     * The coarsest level still comes before the ring: the selection descends
-     * from it, nothing under a section of it shows before its tile is built
-     * (the ring first, its holes closed at 20 s instead of 8).
+     * The step of a quarter of {@code level} spanning {@code near} to {@code far}
+     * blocks from a player (ADR-152), lower first; -1 when no view there needs
+     * that level:
+     * <ol start="0">
+     * <li>the coarsest level, whatever its distance: the selection descends
+     *     from it, nothing shows under a section of it before its tile;</li>
+     * <li>within the near ring ({@code ring} blocks), the level a first image
+     *     may take ({@link #ACCEPTABLE_LEVELS} coarser than wanted);</li>
+     * <li>within the near ring, the wanted level;</li>
+     * <li>everywhere else, the acceptable level;</li>
+     * <li>everywhere else, the wanted level.</li>
+     * </ol>
+     * The levels in between are not built for players: each finer tile meshed
+     * the same sections again, about three meshes for each section a new
+     * world drew, and the middle distances waited behind the near ones.
      */
-    public static double order(int level, double distance, double ring) {
+    public static int step(int level, double near, double far, double ring, double detail) {
         if (level == LEVELS - 1) {
-            return distance - 2 * NEAR_RING_FIRST;
+            return 0;
         }
-        if (inNearRing(level, distance, ring)) {
-            return distance + (ring + 1) * (PreviewStore.VIEW_MAX_LEVEL - level) - NEAR_RING_FIRST;
+        int nearest = wantedTile(near, detail);
+        int farthest = wantedTile(far, detail);
+        boolean acceptable = level >= nearest + ACCEPTABLE_LEVELS && level <= farthest + ACCEPTABLE_LEVELS;
+        boolean wanted = level >= nearest && level <= farthest;
+        if (!acceptable && !wanted) {
+            return -1;
         }
-        return order(level, distance);
+        boolean inRing = near <= ring;
+        return (inRing ? 1 : 3) + (acceptable ? 0 : 1);
+    }
+
+    /** The order of a quarter in its step (ADR-152): the step first, then the distance. */
+    public static double stepOrder(int step, double distance) {
+        return step * 4.0 * MAX_RANGE + Math.min(distance, 4.0 * MAX_RANGE - 1);
     }
 
     /**

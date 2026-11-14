@@ -592,6 +592,8 @@ public final class LodRenderer {
      * applied lists are drawn meanwhile.
      */
     private static final long APPLY_BUDGET_NANOS = 1_000_000L;
+    /** Blocks a drawn section's new mesh counts farther than a section not drawn yet (ADR-152). */
+    private static final double STALE_LAG = 16384;
     private boolean applying;
     private int applyCursor;
     private long applyTime;
@@ -2060,7 +2062,10 @@ public final class LodRenderer {
             if (!resident.containsKey(key)) {
                 it.remove();
             } else {
-                wantOrder.add(key, WantOrder.score(nearestDistance(key, cam), inView(key, cam) ? 1 : -1));
+                // A drawn section meshed again waits behind the holes within STALE_LAG blocks (ADR-152): at a
+                // new world each finer tile meshed the near sections again, and the middle distances stayed
+                // empty behind them.
+                wantOrder.add(key, WantOrder.score(nearestDistance(key, cam), inView(key, cam) ? 1 : -1) + STALE_LAG);
             }
         }
         wantOrder.sort();
@@ -2121,6 +2126,7 @@ public final class LodRenderer {
         };
         selector.setOutsideView(viewed, outsideDetail);
         previewLayer.setDetail(selector.detail());
+        RenderSettings.setSplitDetail(selector.detail()); // the integrated server's preview order (ADR-152)
         previewLayer.setForcedLevel(wantedForcedLevel);
         previewLayer.setOutsideView(viewed, outsideDetail);
         previewJob = previewSelector.submit(() -> {

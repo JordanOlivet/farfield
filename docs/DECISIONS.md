@@ -4611,3 +4611,50 @@ rempli de manière homogène". Answered "go cercle proche".
   against 7.7 to 8.3), the second later (15.3 s against 10.3 to 11.6), one
   run each, not explained. Not checked: a dedicated server (the NeoForge
   pack), by eye.
+
+## ADR-152 — The preview in four steps; holes meshed before drawn sections
+
+Status: accepted, 2026-11-14. Replaces ADR-151's order, and the far front
+(ADR-139), the near disc (ADR-145) and the half threads of level 0
+(ADR-128) for the players' quarters. The user, on ADR-151 in the Fabric
+pack: the coarse preview showed to the border past an empty ring beyond
+the first 1,024 blocks; "il faut vraiment prioriser les 1024 blocs en
+niveau de détail suffisant puis seulement ensuite lancer la génération du
+grossier jusqu'à la distance de rendu puis finir l'affinage partout en
+priorisant les proches", and a smaller near ring. Answered "go 4 temps
+avec 512 pour commencer".
+
+- **Context**: the empty ring had two causes. ADR-151 built the near ring
+  before the levels that cover 1,000 to 15,000 blocks, and ADR-150 no
+  longer lets the coarsest level stand in there. And the meshers were busy
+  all the time (12,000 to 21,000 jobs each 10 s): every finer tile built
+  near the player meshed the same sections again, about three meshes for
+  each section drawn, while the sections never meshed farther waited.
+- **Decision**:
+  - `PreviewPyramid.step` orders the quarters around a player: (0) the
+    coarsest level, whatever its distance; (1) within the near ring, the
+    level two coarser than wanted (`ACCEPTABLE_LEVELS`, the selection's
+    own limit); (2) within the ring, the wanted level; (3) everywhere
+    else, the acceptable level; (4) everywhere else, the wanted level;
+    each step nearest first. The wanted tile level comes from the drawn
+    voxels: level `floor(log2(distance / (detail * 32)))` drawn, its tiles
+    two levels finer (`wantedTile`), by each player's own detail (the
+    client's hint on a server, the renderer's on the integrated one).
+  - The levels between are not built for players; the pregeneration keeps
+    its whole pyramid.
+  - The near ring reaches the game's view distance plus 512 blocks
+    (`NEAR_RING_MARGIN`), to be tuned after the user's test.
+  - The steps decide alone: every quarter takes any thread in their order.
+  - A client asks for tiles in the same steps.
+  - A drawn section's new mesh waits behind the sections not drawn yet
+    within 16,384 blocks (`STALE_LAG`).
+- **Checked**: unit tests (the wanted tile, the steps and skipped levels).
+  Fabric pack in production, a new world (seed 4242) seen from 200 blocks
+  up in spectator, ADR-151's jar against this one: sections missing in
+  view at 1, 2, 5 and 10 s 651, 1,471, 724, 375 down to 398, 584, 239,
+  106; the view whole at 30 s instead of 45; 25,400 meshes instead of
+  34,700; 260 quarters instead of 288; the detail within 1,024 blocks at
+  24 s instead of 27. By eye: at 5 s the land to the horizon where the
+  other showed sky; at 10 s the near trees not there yet where the other
+  had them; at 25 s the same image. Not checked: a dedicated server, the
+  user's own view.

@@ -16,18 +16,31 @@ class PreviewPyramidTest {
     }
 
     @Test
-    void theNearRingComesBeforeEveryOtherQuarter() {
+    void theWantedTileFollowsTheDrawnVoxels() {
+        // Detail 7.5: level 0 drawn within 480 blocks (2 * 240), its tiles of level 0.
+        assertEquals(0, PreviewPyramid.wantedTile(300, 7.5));
+        // 10,000 blocks: level 5 drawn (41 sections of 240), tiles of level 3.
+        assertEquals(3, PreviewPyramid.wantedTile(10_000, 7.5));
+        assertEquals(PreviewPyramid.LEVELS - 3, PreviewPyramid.wantedTile(Double.MAX_VALUE / 4, 7.5));
+    }
+
+    @Test
+    void theFourStepsComeInOrderAndSkipTheLevelsNoViewNeeds() {
         double ring = 12 * 16 + PreviewPyramid.NEAR_RING_MARGIN;
-        // Level 0 at 300 blocks: before level 10 at 0 and the coarsest level anywhere (ADR-151).
-        assertTrue(PreviewPyramid.order(0, 300, ring) < PreviewPyramid.order(10, 0, ring));
-        // The coarsest level before the ring: every selection descends from it.
-        assertTrue(PreviewPyramid.order(15, 30_000_000, ring) < PreviewPyramid.order(5, 0, ring));
-        // Within the ring, a whole level before the next finer one: level 1 at its edge before level 0 at 0.
-        assertTrue(PreviewPyramid.order(5, ring, ring) < PreviewPyramid.order(4, 0, ring));
-        assertTrue(PreviewPyramid.order(1, ring, ring) < PreviewPyramid.order(0, 0, ring));
-        // Out of the ring, or a level no near view is cut from: the usual order.
-        assertEquals(PreviewPyramid.order(0, ring + 1), PreviewPyramid.order(0, ring + 1, ring));
-        assertEquals(PreviewPyramid.order(6, 100), PreviewPyramid.order(6, 100, ring));
+        double detail = 7.5;
+        // The coarsest level first, at any distance (ADR-152).
+        assertEquals(0, PreviewPyramid.step(15, 30_000_000, 30_000_100, ring, detail));
+        // The near ring at 300 blocks: level 2 (two coarser than wanted) then level 0.
+        assertEquals(1, PreviewPyramid.step(2, 300, 400, ring, detail));
+        assertEquals(2, PreviewPyramid.step(0, 300, 400, ring, detail));
+        // At 10,000 blocks: level 5 then level 3; level 4 between and level 9 are not built.
+        assertEquals(3, PreviewPyramid.step(5, 10_000, 10_500, ring, detail));
+        assertEquals(4, PreviewPyramid.step(3, 10_000, 10_500, ring, detail));
+        assertEquals(-1, PreviewPyramid.step(4, 10_000, 10_500, ring, detail));
+        assertEquals(-1, PreviewPyramid.step(9, 10_000, 10_500, ring, detail));
+        // Any step before the next, whatever the distance.
+        assertTrue(PreviewPyramid.stepOrder(1, 2_000_000) < PreviewPyramid.stepOrder(2, 0));
+        assertTrue(PreviewPyramid.stepOrder(3, 0) < PreviewPyramid.stepOrder(3, 100));
     }
 
     @Test

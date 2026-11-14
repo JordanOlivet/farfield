@@ -32,6 +32,18 @@ public final class RenderSettings {
     private static final String FILE_NAME = "farfield-client.properties";
 
     private static volatile boolean enabled = RenderConfig.DEFAULTS.enabled();
+    /** The renderer's split detail, for the integrated server's preview order (ADR-152); 4 before the first. */
+    private static volatile double splitDetail = 4.0;
+
+    /** The renderer's split detail (ADR-152). */
+    public static double splitDetail() {
+        return splitDetail;
+    }
+
+    /** Set by the renderer when its detail changes. Render thread. */
+    public static void setSplitDetail(double detail) {
+        splitDetail = detail;
+    }
     private static volatile float voxelPixels = RenderConfig.DEFAULTS.voxelPixels();
     private static volatile boolean debugLevels = RenderConfig.DEFAULTS.levelColors();
     private static volatile int textureDistance = RenderConfig.DEFAULTS.textureDistance();

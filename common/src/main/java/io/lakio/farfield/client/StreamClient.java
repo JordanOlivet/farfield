@@ -556,8 +556,9 @@ public final class StreamClient {
         }
         double px = player.getX();
         double pz = player.getZ();
-        // The near ring first (ADR-151), as the server builds it.
+        // The server's four steps (ADR-152), by this client's detail.
         double ring = mc.options.getEffectiveRenderDistance() * 16.0 + PreviewPyramid.NEAR_RING_MARGIN;
+        double detail = io.lakio.farfield.lod.RenderSettings.splitDetail();
         java.util.List<long[]> candidates = new java.util.ArrayList<>();
         for (int level = PreviewPyramid.LEVELS - 1; level >= 0; level--) {
             int tile = PreviewStore.blocks(level);
@@ -577,27 +578,17 @@ public final class StreamClient {
                     double dz = Math.max(0, Math.max((double) tz * tile - pz, pz - ((double) tz + 1) * tile));
                     double d = dx * dx + dz * dz;
                     if (d <= range * range) {
-                        candidates.add(new long[]{key, (long) PreviewPyramid.order(level, Math.sqrt(d), ring),
-                                (long) PreviewPyramid.farOrder(level, Math.sqrt(d)), (long) Math.sqrt(d)});
+                        double fx = Math.max(Math.abs((double) tx * tile - px), Math.abs(((double) tx + 1) * tile - px));
+                        double fz = Math.max(Math.abs((double) tz * tile - pz), Math.abs(((double) tz + 1) * tile - pz));
+                        int step = PreviewPyramid.step(level, Math.sqrt(d), Math.sqrt(fx * fx + fz * fz), ring, detail);
+                        if (step >= 0) {
+                            candidates.add(new long[]{key, (long) PreviewPyramid.stepOrder(step, Math.sqrt(d))});
+                        }
                     }
                 }
             }
         }
         candidates.sort((a, b) -> Long.compare(a[1], b[1]));
-        // The server's two fronts (ADR-139): the coarsest levels' tiles in turn with the rings.
-        java.util.List<long[]> far = new java.util.ArrayList<>();
-        boolean nearPending = false;
-        for (long[] c : candidates) {
-            if (PreviewPyramid.inFarFront(PreviewStore.level(c[0]))) {
-                far.add(c);
-            }
-            nearPending |= PreviewPyramid.nearFirst(PreviewStore.level(c[0]), c[3]);
-        }
-        if (nearPending) {
-            far.clear(); // the near disc first (ADR-145), as the server builds it
-        }
-        far.sort((a, b) -> Long.compare(a[2], b[2]));
-        candidates = PreviewPyramid.twoFronts(candidates, far);
         int n = Math.min(candidates.size(), tileWindow.size() - tilesInFlight.size());
         if (n <= 0) {
             return;

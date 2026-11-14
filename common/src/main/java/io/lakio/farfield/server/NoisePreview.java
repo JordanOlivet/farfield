@@ -504,8 +504,11 @@ final class NoisePreview {
             double lookLength = Math.sqrt(look.x * look.x + look.z * look.z);
             int drawn = distance(p);
             farthest = Math.max(farthest, drawn);
-            // The near ring first (ADR-151): past the chunks the game itself sends, by its view distance.
+            // The four steps (ADR-152): the near ring past the chunks the game itself sends, the levels
+            // by the player's own detail.
             double ring = p.server.getPlayerList().getViewDistance() * 16.0 + PreviewPyramid.NEAR_RING_MARGIN;
+            double detail = !p.server.isDedicatedServer() && p.server.isSingleplayerOwner(p.getGameProfile())
+                    ? RenderSettings.splitDetail() : StreamServer.previewDetail(p);
             for (int level = PreviewPyramid.LEVELS - 1; level >= 0; level--) {
                 if (level == 0 && features <= 0) {
                     continue;
@@ -542,10 +545,18 @@ final class NoisePreview {
                         // Looking straight up or down, or standing in the quarter: no side is behind.
                         double facing = lookLength < 1e-3 || centerDistance < 1 ? 1
                                 : (look.x * cx + look.z * cz) / (lookLength * centerDistance);
-                        double score = PreviewPyramid.order(level, distance, ring) + (refine ? REFINE_LAG : 0);
+                        double fx = Math.max(Math.abs(x * (double) quarter - p.getX()),
+                                Math.abs((x + 1) * (double) quarter - p.getX()));
+                        double fz = Math.max(Math.abs(z * (double) quarter - p.getZ()),
+                                Math.abs((z + 1) * (double) quarter - p.getZ()));
+                        int step = PreviewPyramid.step(level, distance, Math.sqrt(fx * fx + fz * fz), ring, detail);
+                        if (step < 0) {
+                            seen.remove(tile | (long) q << 62); // another player's view may need it
+                            continue;
+                        }
+                        double score = PreviewPyramid.stepOrder(step, distance) + (refine ? REFINE_LAG : 0);
                         candidates.add(new long[]{tile, (long) score, distance <= NEAR ? 1 : 0,
-                                facing >= FRONT_COS ? 1 : 0, q, refine ? 1 : 0, (long) distance,
-                                PreviewPyramid.inNearRing(level, distance, ring) ? 1 : 0});
+                                facing >= FRONT_COS ? 1 : 0, q, refine ? 1 : 0, (long) distance});
                     }
                 }
             }
@@ -556,49 +567,13 @@ final class NoisePreview {
             trackFill(d, players.get(0), candidates);
         }
         candidates.sort((a, b) -> Long.compare(a[1], b[1]));
-        // Two fronts (ADR-139): the rings above, and in turn with them the coarsest level's quarters, so it
-        // reaches the border in seconds instead of after every finer quarter nearer.
-        List<long[]> far = new ArrayList<>();
-        boolean nearPending = false;
-        for (long[] c : candidates) {
-            if (c[5] == 0 && PreviewPyramid.inFarFront(PreviewStore.level(c[0]))) {
-                far.add(c);
-            }
-            nearPending |= PreviewPyramid.nearFirst(PreviewStore.level(c[0]), c[6]);
-        }
-        if (nearPending) {
-            far.clear(); // the near disc first (ADR-145): the far front waits for it
-        }
-        far.sort((a, b) -> Double.compare(PreviewPyramid.farOrder(PreviewStore.level(a[0]), a[6]),
-                PreviewPyramid.farOrder(PreviewStore.level(b[0]), b[6])));
-        candidates = PreviewPyramid.twoFronts(candidates, far);
         int threads = pool.getCorePoolSize();
         int limit = Math.max(MAX_IN_FLIGHT, 2 * threads);
-        // Shared threads (ADR-128): while both have quarters to build, level 0 holds at most half the
-        // threads in flight, queue included, and the coarse levels with the biomes' samples the rest, so
-        // the coarse disc keeps growing while the detail fills in. A level-0 quarter takes seconds in a
-        // pack: on one queue they held every thread in turn, and the disc stopped and went on.
-        // Once the disc is whole, what is left of the coarse share (samples, canopies waiting for them)
-        // keeps the threads level 0 leaves; level 0 is held back no more.
-        boolean disc = false;
-        boolean coarseRest = !d.sampleQueue.isEmpty();
-        boolean fineWaiting = false;
-        boolean nearFine = false;
-        for (long[] c : candidates) {
-            boolean coarse = PreviewStore.level(c[0]) > 0;
-            disc |= coarse && c[5] == 0;
-            coarseRest |= coarse && c[5] != 0;
-            fineWaiting |= !coarse;
-            nearFine |= !coarse && c[7] != 0;
-        }
-        int fineCap = disc ? Math.max(1, threads / 2) : coarseRest ? threads : limit;
-        int coarseCap = fineWaiting ? limit - fineCap : limit;
-        if (nearFine) {
-            // The near ring's detail is not held to half the threads (ADR-151): the order puts its
-            // quarters first, coarse and fine alike take every thread, the coarse disc what they leave.
-            fineCap = limit;
-            coarseCap = limit;
-        }
+        // The steps decide (ADR-152): every quarter takes any thread in their order. The coarsest level
+        // reaches the border first (what the far front of ADR-139 did), the near ring comes next (what
+        // the near disc of ADR-145 and the half threads of ADR-128 were for).
+        int fineCap = limit;
+        int coarseCap = limit;
         // The biomes' samples first, on part of the coarse share: the canopy of the coarse quarters waits for them.
         int sampleSlots = Math.max(1, threads / 2);
         int[] request;
