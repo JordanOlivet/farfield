@@ -185,6 +185,63 @@ final class PreviewLayer {
         selector.setDetail(detail);
     }
 
+    /** See {@link LodSelector#setHoleFloor} (ADR-153). */
+    void setHoleFloor(double blocks) {
+        selector.setHoleFloor(blocks);
+    }
+
+    /** See {@link LodSelector#setPendingHoles} (ADR-153). */
+    void setPendingHoles(boolean on) {
+        selector.setPendingHoles(on);
+    }
+
+    private volatile double borderMinX = -Double.MAX_VALUE;
+    private volatile double borderMaxX = Double.MAX_VALUE;
+    private volatile double borderMinZ = -Double.MAX_VALUE;
+    private volatile double borderMaxZ = Double.MAX_VALUE;
+
+    /** The world border, set before each selection: past it nothing is pending (ADR-153). */
+    void setBorder(double minX, double maxX, double minZ, double maxZ) {
+        borderMinX = minX;
+        borderMaxX = maxX;
+        borderMinZ = minZ;
+        borderMaxZ = maxZ;
+    }
+
+    /**
+     * Whether a section's existence is not known yet (ADR-153): no tile over
+     * it is built, or its tile's mask is not read yet. Selection thread.
+     */
+    private boolean sectionPending(long plain) {
+        LodWorld w = world;
+        if (w == null) {
+            return false;
+        }
+        int level = LodKey.level(plain);
+        int size = LodSection.SIZE << level;
+        int bx = LodKey.x(plain) * size;
+        int bz = LodKey.z(plain) * size;
+        if (bx >= borderMaxX || bx + size <= borderMinX || bz >= borderMaxZ || bz + size <= borderMinZ) {
+            return false; // past the world border: no tile is ever built there
+        }
+        if (level > TILE_LEVEL) {
+            return w.preview().coarseSource(level - 2, bx, bz) < 0;
+        }
+        int tileX = Math.floorDiv(bx, PreviewTile.BLOCKS);
+        int tileZ = Math.floorDiv(bz, PreviewTile.BLOCKS);
+        return w.preview().summary(tileX, tileZ) == null
+                || !masks.containsKey(PreviewStore.spread(PreviewStore.key(tileX, tileZ)));
+    }
+
+    /** See {@link LodSelector#nearestHole} (ADR-153). */
+    double nearestHole() {
+        return selector.nearestHole();
+    }
+
+    String nearestHoleWhy() {
+        return selector.nearestHoleWhy();
+    }
+
     /** See {@link LodSelector#setForcedLevel}: the level lock applies to the preview too. */
     void setForcedLevel(int level) {
         selector.setForcedLevel(level);
@@ -212,6 +269,11 @@ final class PreviewLayer {
             @Override
             public boolean exists(long plain) {
                 return sectionExists(plain);
+            }
+
+            @Override
+            public boolean pending(long plain) {
+                return sectionPending(plain);
             }
 
             @Override

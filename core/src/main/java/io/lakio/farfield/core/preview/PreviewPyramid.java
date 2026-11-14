@@ -70,8 +70,10 @@ public final class PreviewPyramid {
      * blocks from a player (ADR-152), lower first; -1 when no view there needs
      * that level:
      * <ol start="0">
-     * <li>the coarsest level, whatever its distance: the selection descends
-     *     from it, nothing shows under a section of it before its tile;</li>
+     * <li>the coarsest level over the near ring: the selection descends from
+     *     it, nothing shows under a section of it before its tile; the rest
+     *     of it comes with step 3 (at the largest distance, about 60 quarters
+     *     to the border held the ring for 9 s, ADR-153);</li>
      * <li>within the near ring ({@code ring} blocks), the level a first image
      *     may take ({@link #ACCEPTABLE_LEVELS} coarser than wanted);</li>
      * <li>within the near ring, the wanted level;</li>
@@ -84,7 +86,7 @@ public final class PreviewPyramid {
      */
     public static int step(int level, double near, double far, double ring, double detail) {
         if (level == LEVELS - 1) {
-            return 0;
+            return near <= ring ? 0 : 3;
         }
         int nearest = wantedTile(near, detail);
         int farthest = wantedTile(far, detail);

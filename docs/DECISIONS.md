@@ -4658,3 +4658,48 @@ avec 512 pour commencer".
   other showed sky; at 10 s the near trees not there yet where the other
   had them; at 25 s the same image. Not checked: a dedicated server, the
   user's own view.
+
+## ADR-153 — The view revealed as one disc after a join or a teleport
+
+Status: accepted, 2026-11-14. The user on ADR-152 (Fabric pack, the largest
+distance): the far ring still showed before the near one; "il ne doit pas
+être affiché avant qu'on ait au moins affiché le cercle proche. Entre les
+deux, on ne doit pas voir de vide". Asked whether a better way existed
+("j'ai l'impression qu'on fix en boucle le même genre de soucis"): the
+look depended on four orders (tiles built, tiles asked, meshes, what is
+drawn) and each fix moved the fault to another. Answered "go disque".
+
+- **Decision**:
+  - What shows is guaranteed in one place, the renderer: after a join or a
+    teleport the LODs are drawn only within a disc around the player. It
+    starts at the game's own view distance and grows to the nearest hole
+    in view (`LodSelector.nearestHole`): a section that exists and that
+    nothing draws (not meshed, no coarser section nor its children standing
+    in), or one not known yet (`Sections.pending`: no preview tile over it,
+    its tile's mask not read, a server's region index not received; past
+    the world border nothing is pending). A hole reaching past the game's
+    chunks counts at least at their edge. Without a hole the disc takes in
+    everything drawn, and ends once that lasts 3 s, or after 60 s.
+  - The orders only make the disc grow faster:
+    - the coarsest level over the near ring first, the rest of it with the
+      acceptable levels elsewhere: at the largest distance its 60 quarters
+      to the border held the ring for 9 s;
+    - during the disc every hole is meshed before any new mesh of a drawn
+      section (its edge waited behind them, ADR-152's lag was not enough).
+  - One measure: "LOD disc after joining|a teleport: radius at 1, 2, 5,
+    10, 20, 30, 45, 60 s", each with the hole that held it (its key, real
+    or preview, not known yet or not meshed).
+  - Unchanged in flight: the disc runs only after a join or a teleport.
+- **Checked**: unit tests (the nearest hole, the floor, out of view,
+  pending sections; the root's step). Fabric pack in production, a new
+  world (seed 4242) at the largest distance (33,554,432 blocks), from 200
+  blocks up in spectator, ADR-152's jar against this one: sections missing
+  in view at 10, 20, 30 s 5,407, 4,077, 4,010 down to 2,766, 878, 0; the
+  disc at 64 blocks until 5 s, 6,476 at 10 s, 4.3 million at 20 s, the
+  whole distance at 45 s, ended at 59 s with no hole left. By eye: at 10 s
+  one continuous image from the near terrain to the horizon where the
+  other showed a far band past a gap; at 15 s the near trees not there yet
+  (the holes first), there in the other. Three runs on the way, kept in
+  the progress log: a crash (a static array read before it was set), the
+  disc past unknown tiles, the disc held 10 s by the root to the border.
+  Not checked: a dedicated server, a teleport, the user's own view.

@@ -614,6 +614,16 @@ public final class StreamClient {
      * known (asked for here otherwise, within the server's radius), else
      * from the mirror.
      */
+    /** Whether the server's index of the key's region has not come yet (ADR-153). Any thread. */
+    public boolean indexPending(long key) {
+        indexLock.readLock().lock();
+        try {
+            return !knownRegions.contains(regionOf(key));
+        } finally {
+            indexLock.readLock().unlock();
+        }
+    }
+
     public boolean exists(long key) {
         long region = regionOf(key);
         indexLock.readLock().lock();

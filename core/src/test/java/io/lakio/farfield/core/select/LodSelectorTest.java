@@ -134,6 +134,56 @@ class LodSelectorTest {
     }
 
     @Test
+    void theNearestHoleInViewPastTheFloorIsKept() {
+        // A level-3 section 768 blocks east not meshed any more, a child not either, its parent split
+        // before: nothing draws there.
+        long far = LodKey.pack(3, 3, -1, 0);
+        long child = LodKey.pack(2, 6, -1, 0);
+        LodSelector selector = new LodSelector(5, 2.0);
+        selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of()), k -> { }, k -> { });
+        selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of(far, child)), k -> { }, k -> { });
+        double hole = selector.nearestHole();
+        assertTrue(hole >= 768 && hole < 800, "the hole 768 blocks away: " + hole);
+        // Everything ready: no hole.
+        selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of()), k -> { }, k -> { });
+        assertEquals(Double.POSITIVE_INFINITY, selector.nearestHole());
+        // Under the floor (the game's own chunks), or out of view: not counted.
+        selector.setHoleFloor(2000);
+        selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of()), k -> { }, k -> { });
+        selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of(far, child)), k -> { }, k -> { });
+        assertEquals(Double.POSITIVE_INFINITY, selector.nearestHole());
+        selector.setHoleFloor(0);
+        selector.setOutsideView(key -> LodKey.x(key) < 0, 2.0);
+        selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of()), k -> { }, k -> { });
+        selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of(far, child)), k -> { }, k -> { });
+        assertEquals(Double.POSITIVE_INFINITY, selector.nearestHole());
+        // Nothing known yet anywhere: a hole at the floor while pending sections count, none otherwise.
+        LodSelector.Sections unknown = new LodSelector.Sections() {
+            @Override
+            public boolean exists(long key) {
+                return false;
+            }
+
+            @Override
+            public boolean ready(long key) {
+                return false;
+            }
+
+            @Override
+            public boolean pending(long key) {
+                return true;
+            }
+        };
+        LodSelector fresh = new LodSelector(5, 2.0);
+        fresh.setHoleFloor(64);
+        fresh.select(0, 70, 0, -64, 320, 4000, unknown, k -> { }, k -> { });
+        assertEquals(Double.POSITIVE_INFINITY, fresh.nearestHole());
+        fresh.setPendingHoles(true);
+        fresh.select(0, 70, 0, -64, 320, 4000, unknown, k -> { }, k -> { });
+        assertEquals(64, fresh.nearestHole(), 1e-9);
+    }
+
+    @Test
     void anUnmeshedSectionWhoseChildrenAreReadyDoesNotHoldItsParentCoarse() {
         // A level-1 section never meshed (the view drew level 0 there), its level-0 children ready:
         // the level-2 parent splits through it instead of flashing coarse (ADR-093).

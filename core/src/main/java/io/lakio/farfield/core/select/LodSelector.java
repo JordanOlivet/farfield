@@ -60,6 +60,14 @@ public final class LodSelector {
     private int fallbacks;
     private int finerFallbacks;
     private int tooCoarse;
+    /** Holes nearer than this horizontally are not counted: the game's own chunks draw there (ADR-153). */
+    private double holeFloor;
+    private double nearestHole = Double.POSITIVE_INFINITY;
+    /** The nearest hole's key and whether it was a section not known yet, for the logs. */
+    private long nearestHoleKey;
+    private boolean nearestHolePending;
+    /** Whether sections not known yet count as holes ({@link Sections#pending}); off outside a reveal. */
+    private boolean pendingHoles;
     /**
      * A section stands in for children not meshed yet only when its voxels are
      * at most this many levels coarser than what its distance wants (ADR-150);
@@ -142,6 +150,31 @@ public final class LodSelector {
         return finerFallbacks;
     }
 
+    /** Holes nearer than {@code blocks} horizontally are not counted (the game's own chunks, ADR-153). */
+    public void setHoleFloor(double blocks) {
+        holeFloor = blocks;
+    }
+
+    /** Whether sections not known yet count as holes (ADR-153): asked only while a renderer reveals its disc. */
+    public void setPendingHoles(boolean on) {
+        pendingHoles = on;
+    }
+
+    /**
+     * The distance of the nearest section in view the last selection drew
+     * nothing for (ADR-153): it exists, is not meshed, and neither a coarser
+     * section nor its children stand in. Positive infinity for none.
+     */
+    public double nearestHole() {
+        return nearestHole;
+    }
+
+    /** What the nearest hole was, for the logs: its key and why ("not known yet", "not meshed"). */
+    public String nearestHoleWhy() {
+        return nearestHole == Double.POSITIVE_INFINITY ? "none"
+                : LodKey.toString(nearestHoleKey) + (nearestHolePending ? " not known yet" : " not meshed");
+    }
+
     /** Sections the last selection split although children were not meshed: too coarse to stand in (ADR-150). */
     public int tooCoarse() {
         return tooCoarse;
@@ -154,6 +187,15 @@ public final class LodSelector {
 
         /** True if the section's mesh is on the GPU. */
         boolean ready(long key);
+
+        /**
+         * True if whether the section exists is not known yet (its data has
+         * not come: a preview tile not built, a server's region index not
+         * received): something may show there soon (ADR-153).
+         */
+        default boolean pending(long key) {
+            return false;
+        }
 
         /**
          * The octants of a ready section its mesh draws something in, one bit
@@ -176,6 +218,7 @@ public final class LodSelector {
         fallbacks = 0;
         finerFallbacks = 0;
         tooCoarse = 0;
+        nearestHole = Double.POSITIVE_INFINITY;
         fallbackReasons.clear();
         descending.clear();
         int top = levels - 1;
@@ -201,6 +244,9 @@ public final class LodSelector {
     private void visit(long key, double camX, double camY, double camZ, double maxDistance, Sections sections,
                        LongConsumer draw, LongConsumer want) {
         if (!sections.exists(key)) {
+            if (pendingHoles && sections.pending(key)) {
+                pendingHole(key, camX, camY, camZ, maxDistance);
+            }
             return;
         }
         int level = LodKey.level(key);
@@ -273,16 +319,15 @@ public final class LodSelector {
             int y = LodKey.y(key) * 2;
             int z = LodKey.z(key) * 2;
             boolean any = false;
-            for (int i = 0; i < 8; i++) {
+            boolean all = true;
+            for (int i = 0; i < 8 && all; i++) {
                 long child = LodKey.pack(level - 1, x + (i & 1), y + (i >> 2), z + ((i >> 1) & 1));
                 if (sections.exists(child)) {
-                    if (!sections.ready(child)) {
-                        return;
-                    }
+                    all = sections.ready(child);
                     any = true;
                 }
             }
-            if (any) {
+            if (any && all) {
                 finerFallbacks++;
                 for (int i = 0; i < 8; i++) {
                     long child = LodKey.pack(level - 1, x + (i & 1), y + (i >> 2), z + ((i >> 1) & 1));
@@ -290,7 +335,40 @@ public final class LodSelector {
                         draw.accept(child);
                     }
                 }
+                return;
             }
         }
+        // Nothing drawn there: a hole, the edge of the disc the renderer reveals (ADR-153).
+        hole(key, size, horizontal, distance, false);
+    }
+
+    /**
+     * A hole at {@code distance}: kept when it is the nearest so far, in view,
+     * and reaches past the floor; one over the floor counts at the floor.
+     */
+    private void hole(long key, int size, double horizontal, double distance, boolean pending) {
+        if (horizontal + size * 1.5 < holeFloor || Math.max(distance, holeFloor) >= nearestHole
+                || inView != null && !inView.test(key)) {
+            return;
+        }
+        nearestHole = Math.max(distance, holeFloor);
+        nearestHoleKey = key;
+        nearestHolePending = pending;
+    }
+
+    /** A section not known yet, as a hole (ADR-153). */
+    private void pendingHole(long key, double camX, double camY, double camZ, double maxDistance) {
+        int size = LodSection.SIZE << LodKey.level(key);
+        double minX = (double) LodKey.x(key) * size;
+        double minY = (double) LodKey.y(key) * size;
+        double minZ = (double) LodKey.z(key) * size;
+        double dx = Math.max(0, Math.max(minX - camX, camX - (minX + size)));
+        double dz = Math.max(0, Math.max(minZ - camZ, camZ - (minZ + size)));
+        double horizontal = Math.sqrt(dx * dx + dz * dz);
+        if (horizontal > maxDistance) {
+            return;
+        }
+        double dy = Math.max(0, Math.max(minY - camY, camY - (minY + size)));
+        hole(key, size, horizontal, Math.sqrt(horizontal * horizontal + dy * dy), true);
     }
 }

@@ -608,6 +608,31 @@ public final class LodRenderer {
     private int applyMaxY;
     /** The time of the last selection applied whole: what it drew has a later last use. */
     private long appliedSelectionTime;
+
+    /**
+     * The disc revealed after a join or a teleport (ADR-153): sections farther
+     * than {@link #revealRadius} are not drawn, and the radius grows to the
+     * nearest hole in view, so what shows is always one disc around the
+     * player, never far terrain past a gap. Ends once no hole is left for
+     * {@link #REVEAL_CLEAR_NANOS}, or after {@link #REVEAL_MAX_NANOS}.
+     */
+    private static final long REVEAL_CLEAR_NANOS = 3_000_000_000L;
+    private static final long REVEAL_MAX_NANOS = 60_000_000_000L;
+    private static final int[] DISC_CHECKS = {1, 2, 5, 10, 20, 30, 45, 60};
+    private boolean revealing;
+    private double revealRadius = Double.POSITIVE_INFINITY;
+    private double revealFloor;
+    private long revealSince;
+    private long revealClearSince;
+    /** Made at each disc's start: a field sized from DISC_CHECKS here ran before that static array was set. */
+    private double[] discTimeline;
+    /** The hole of the selection being applied, the disc it is applied with, the farthest drawn section's distance. */
+    private double applyHole = Double.NaN;
+    private String applyHoleWhy = "";
+    private final String[] discWhy = new String[8];
+    private double applyRadius = Double.POSITIVE_INFINITY;
+    private double applyMaxDrawn;
+    private int applyHidden;
     private int selectedMinY;
     private int selectedMaxY;
     private double loggedDetail = 1e-9;
@@ -701,6 +726,10 @@ public final class LodRenderer {
         int fallbacks;
         int finerFallbacks;
         int tooCoarse;
+        /** The nearest hole in view of the real and the preview selection (ADR-153); NaN before a selection ran. */
+        double realHole = Double.NaN;
+        double previewHole = Double.NaN;
+        String holeWhy = "";
         final java.util.List<String> reasons = new java.util.ArrayList<>();
         boolean preview;
         long nanos;
@@ -1912,6 +1941,9 @@ public final class LodRenderer {
             startPreviewSelection(level, cam);
         }
         PreviewSelection p = previewResult;
+        applyHole = Double.isNaN(p.realHole) || Double.isNaN(p.previewHole) ? Double.NaN
+                : Math.min(p.realHole, p.previewHole);
+        applyHoleWhy = p.holeWhy;
         drawList.addAll(p.realDraw);
         wanted.addAll(p.realWant);
         maxFallbacks = Math.max(maxFallbacks, p.fallbacks);
@@ -1951,6 +1983,9 @@ public final class LodRenderer {
         applyExtentSq = 0;
         applyNearestSq = Double.MAX_VALUE;
         applyOutdated = 0;
+        applyRadius = revealing ? revealRadius : Double.POSITIVE_INFINITY;
+        applyMaxDrawn = 0;
+        applyHidden = 0;
     }
 
     /** Applies the selection's draw list until {@code deadline}, then whole: the lists swapped in. */
@@ -1972,13 +2007,21 @@ public final class LodRenderer {
             double nx = Math.max(0, Math.max(x0, -(x0 + size)));
             double ny = Math.max(0, Math.max(y0, -(y0 + size)));
             double nz = Math.max(0, Math.max(z0, -(z0 + size)));
-            applyNearestSq = Math.min(applyNearestSq, nx * nx + ny * ny + nz * nz);
+            double nearSq = nx * nx + ny * ny + nz * nz;
+            applyNearestSq = Math.min(applyNearestSq, nearSq);
             Resident r = resident.get(key);
             if (r != null) {
                 slotLastUsed[r.slot] = applyTime;
+                if (r.quadCount > 0) {
+                    applyMaxDrawn = Math.max(applyMaxDrawn, nearSq);
+                }
             }
-            nextDrawn.add(key);
-            splitForCulling(key, r, size);
+            if (nearSq <= applyRadius * applyRadius) {
+                nextDrawn.add(key);
+                splitForCulling(key, r, size);
+            } else {
+                applyHidden++; // past the disc revealed so far (ADR-153)
+            }
             // A drawn copy older than the server's: fetched with the meshes this selection wants, not
             // after the whole background queue; the preview already hides itself for the newer data,
             // so the old copy can leave a hole where the new chunks are (ADR-074).
@@ -2065,7 +2108,9 @@ public final class LodRenderer {
                 // A drawn section meshed again waits behind the holes within STALE_LAG blocks (ADR-152): at a
                 // new world each finer tile meshed the near sections again, and the middle distances stayed
                 // empty behind them.
-                wantOrder.add(key, WantOrder.score(nearestDistance(key, cam), inView(key, cam) ? 1 : -1) + STALE_LAG);
+                // During the disc (ADR-153) every hole first: its edge waited behind new meshes of drawn sections.
+                wantOrder.add(key, WantOrder.score(nearestDistance(key, cam), inView(key, cam) ? 1 : -1)
+                        + (revealing ? MAX_DISTANCE * 8 : STALE_LAG));
             }
         }
         wantOrder.sort();
@@ -2088,8 +2133,67 @@ public final class LodRenderer {
             }
         }
         appliedSelectionTime = applyTime;
+        updateReveal(applyTime);
         applyNanos += System.nanoTime() - start;
         lastSelectNanos = applyNanos;
+    }
+
+    /** Grows the revealed disc to the nearest hole of the selection just applied (ADR-153). */
+    private void updateReveal(long now) {
+        if (!revealing || Double.isNaN(applyHole)) {
+            return;
+        }
+        double drawnFar = Math.sqrt(applyMaxDrawn);
+        if (applyHole < Double.POSITIVE_INFINITY) {
+            revealRadius = Math.max(revealRadius, applyHole);
+            revealClearSince = 0;
+        } else {
+            // No hole: everything drawn shows, and the disc ends once that lasts.
+            revealRadius = Math.max(revealRadius, drawnFar);
+            if (drawnFar > revealFloor && revealClearSince == 0) {
+                revealClearSince = now;
+            }
+        }
+        for (int i = 0; i < DISC_CHECKS.length; i++) {
+            if (Double.isNaN(discTimeline[i]) && now - revealSince >= DISC_CHECKS[i] * 1_000_000_000L) {
+                discTimeline[i] = revealRadius;
+                discWhy[i] = applyHoleWhy;
+            }
+        }
+        boolean whole = revealClearSince != 0 && now - revealClearSince >= REVEAL_CLEAR_NANOS;
+        if (whole || now - revealSince >= REVEAL_MAX_NANOS) {
+            endReveal(now, whole);
+        }
+    }
+
+    private void endReveal(long now, boolean whole) {
+        revealing = false;
+        revealRadius = Double.POSITIVE_INFINITY;
+        if (!RenderSettings.performanceLogs()) {
+            return;
+        }
+        StringBuilder timeline = new StringBuilder();
+        for (int i = 0; i < DISC_CHECKS.length && !Double.isNaN(discTimeline[i]); i++) {
+            timeline.append(i == 0 ? "" : ", ").append(DISC_CHECKS[i]).append(" s ").append((long) discTimeline[i])
+                    .append(" (").append(discWhy[i]).append(')');
+        }
+        Farfield.LOG.info("LOD disc after {}: radius at {} blocks; {} at {} s, {} sections past it at the last selection",
+                fillCause, timeline.length() == 0 ? "-" : timeline, whole ? "no hole left in view" : "cut",
+                String.format(java.util.Locale.ROOT, "%.1f", (now - revealSince) / 1e9), applyHidden);
+    }
+
+    /** Starts the disc again from the game's own chunks (ADR-153). */
+    private void startReveal(long now) {
+        if (revealing) {
+            endReveal(now, false);
+        }
+        revealing = true;
+        revealFloor = Minecraft.getInstance().options.getEffectiveRenderDistance() * 16.0;
+        revealRadius = revealFloor;
+        revealSince = now;
+        revealClearSince = 0;
+        discTimeline = new double[DISC_CHECKS.length];
+        java.util.Arrays.fill(discTimeline, Double.NaN);
     }
 
     /**
@@ -2129,6 +2233,13 @@ public final class LodRenderer {
         RenderSettings.setSplitDetail(selector.detail()); // the integrated server's preview order (ADR-152)
         previewLayer.setForcedLevel(wantedForcedLevel);
         previewLayer.setOutsideView(viewed, outsideDetail);
+        double holeFloor = Minecraft.getInstance().options.getEffectiveRenderDistance() * 16.0;
+        selector.setHoleFloor(holeFloor);
+        previewLayer.setHoleFloor(holeFloor);
+        selector.setPendingHoles(revealing);
+        previewLayer.setPendingHoles(revealing);
+        var border = level.getWorldBorder();
+        previewLayer.setBorder(border.getMinX(), border.getMaxX(), border.getMinZ(), border.getMaxZ());
         previewJob = previewSelector.submit(() -> {
             long start = System.nanoTime();
             PreviewSelection p = new PreviewSelection(generation);
@@ -2144,6 +2255,11 @@ public final class LodRenderer {
                 @Override
                 public boolean exists(long key) {
                     return streamAt != null ? streamAt.exists(key) : sectionExists(worldAt, key);
+                }
+
+                @Override
+                public boolean pending(long key) {
+                    return streamAt != null && streamAt.indexPending(key);
                 }
 
                 @Override
@@ -2166,7 +2282,10 @@ public final class LodRenderer {
             p.finerFallbacks = selector.finerFallbacks();
             p.tooCoarse = selector.tooCoarse();
             p.reasons.addAll(selector.fallbackReasons());
+            p.realHole = selector.nearestHole();
+            p.holeWhy = "real " + selector.nearestHoleWhy();
             if (!preview) {
+                p.previewHole = Double.POSITIVE_INFINITY;
                 p.nanos = System.nanoTime() - start;
                 return p;
             }
@@ -2177,6 +2296,10 @@ public final class LodRenderer {
                 }
                 return false;
             }, p.draw::add, p.want::add);
+            p.previewHole = previewLayer.nearestHole();
+            if (p.previewHole < p.realHole) {
+                p.holeWhy = "preview " + previewLayer.nearestHoleWhy();
+            }
             p.nanos = System.nanoTime() - start;
             return p;
         });
@@ -2366,6 +2489,7 @@ public final class LodRenderer {
         if (fillStart != 0) {
             logFill(now, true);
         }
+        startReveal(now); // before the cause changes: an unfinished disc logs under its own
         fillStart = now;
         fillCause = cause;
         java.util.Arrays.fill(fillTimeline, -1);

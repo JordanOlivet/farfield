@@ -28,8 +28,9 @@ class PreviewPyramidTest {
     void theFourStepsComeInOrderAndSkipTheLevelsNoViewNeeds() {
         double ring = 12 * 16 + PreviewPyramid.NEAR_RING_MARGIN;
         double detail = 7.5;
-        // The coarsest level first, at any distance (ADR-152).
-        assertEquals(0, PreviewPyramid.step(15, 30_000_000, 30_000_100, ring, detail));
+        // The coarsest level first over the ring, with the acceptable levels elsewhere (ADR-153).
+        assertEquals(0, PreviewPyramid.step(15, 0, 8_000_000, ring, detail));
+        assertEquals(3, PreviewPyramid.step(15, 30_000_000, 30_000_100, ring, detail));
         // The near ring at 300 blocks: level 2 (two coarser than wanted) then level 0.
         assertEquals(1, PreviewPyramid.step(2, 300, 400, ring, detail));
         assertEquals(2, PreviewPyramid.step(0, 300, 400, ring, detail));
