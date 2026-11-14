@@ -1,0 +1,1 @@
+Nether and End preview report, 2026-11-14: "dans le nether il n'y a pas de preview ... ça doit être pareil dans l'End aussi. Il faudrait que la preview et les LOD fonctionnent dans les autres dimensions, peut importe que ça soit des dimensions vanilla ou moddés." Log: "Noise preview of minecraft:the_nether: not built (no noise generator, or a ceiling)".
