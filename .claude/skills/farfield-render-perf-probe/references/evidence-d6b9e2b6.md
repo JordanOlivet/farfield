@@ -1,0 +1,2 @@
+[12:30:05] [Server thread/INFO]: Changing view distance to 32, from 10
+Progress log edit: "The bench missed it: its run dir keeps 4 chunks of game view, where the server generates almost no ring past the game's chunks. Runs now set the game view per run (12 for the user's case, 32 for the worst case; memory updated)."

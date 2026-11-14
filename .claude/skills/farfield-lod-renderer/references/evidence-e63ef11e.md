@@ -1,0 +1,1 @@
+lastPrompt: "go w0 et w1. Oui on peut priorisé le proche et retarder un peu le loin. On commence avec 4 et on ajustera"; edit: "+    /** How many times farther a refinement counts than coverage (ADR-155):" ... "public static final double REFINE_RATIO = 4;"; bench: "for k in 4 2 8; do  EXTRA_JVM=-Dfarfield.refineRatio=$k bash $S/newworld-k.sh 12 wave-k$k"

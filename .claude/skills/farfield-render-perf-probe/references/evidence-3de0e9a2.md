@@ -1,0 +1,1 @@
+"sed -e 's/--jvm-arg=-XX:+ZGenerational/--jvm-arg=-XX:+ZGenerational ${EXTRA_JVM:+--jvm-arg=$EXTRA_JVM}/' $S/newworld-rd.sh > $S/newworld-k.sh && grep -c EXTRA_JVM $S/newworld-k.sh" ; "for k in 4 2 8; do\n  EXTRA_JVM=-Dfarfield.refineRatio=$k bash $S/newworld-k.sh 12 wave-k$k\ndone"
