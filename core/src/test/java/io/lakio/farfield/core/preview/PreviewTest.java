@@ -1554,4 +1554,93 @@ class PreviewTest {
             assertTrue(reads[0] < 400, "level " + level + ": " + reads[0] + " tile reads");
         }
     }
+
+    /**
+     * An island of the End (ADR-159): ground at 70 over samples 2 to 10 on
+     * both axes, its underside at {@code underside} (none stored when
+     * {@link PreviewTile#SOLID_DOWN}), the void elsewhere at the bottom of
+     * the world (-64).
+     */
+    private static PreviewTile island(int underside) {
+        PreviewTile t = slope();
+        for (int k = 0; k < PreviewTile.SAMPLES; k++) {
+            for (int i = 0; i < PreviewTile.SAMPLES; i++) {
+                boolean land = i >= 2 && i <= 10 && k >= 2 && k <= 10;
+                t.setHeight(i, k, land ? 70 : -64);
+                t.setUnderside(i, k, underside == PreviewTile.SOLID_DOWN ? underside : land ? underside : -64);
+            }
+        }
+        for (int cz = 0; cz < PreviewTile.CELLS; cz++) {
+            for (int cx = 0; cx < PreviewTile.CELLS; cx++) {
+                t.setCell(cx, cz, GRASS, DIRT);
+            }
+        }
+        t.setWater(-1, 0);
+        return t;
+    }
+
+    @Test
+    void floatingGroundStopsAtItsUndersideInsteadOfHangingToTheBottomOfTheWorld() {
+        PreviewVoxels.Tiles floating = (x, z) -> x == 0 && z == 0 ? island(50) : null;
+        PreviewVoxels.Tiles solid = (x, z) -> x == 0 && z == 0 ? island(PreviewTile.SOLID_DOWN) : null;
+        // Section (0, 1, 0): blocks 32 to 63 high. Its middle column is island from its underside up.
+        LodSection floats = PreviewVoxels.build(0, 0, 1, 0, floating, null, AIR, -64, -1, -1, -1, 0);
+        assertNotNull(floats);
+        assertEquals(STONE, floats.material(24, 50 - 32, 24));
+        assertEquals(AIR, floats.material(24, 49 - 32, 24));
+        int below = 0;
+        for (int z = 0; z < LodSection.SIZE; z++) {
+            for (int x = 0; x < LodSection.SIZE; x++) {
+                for (int y = 32; y < 50; y++) {
+                    if (floats.material(x, y - 32, z) != AIR) {
+                        below++;
+                    }
+                }
+            }
+        }
+        assertEquals(0, below, "nothing under the island's underside");
+        // Without undersides the island's edge columns hang down past it (the walls seen in the End).
+        LodSection hangs = PreviewVoxels.build(0, 0, 1, 0, solid, null, AIR, -64, -1, -1, -1, 0);
+        assertNotNull(hangs);
+        boolean wall = false;
+        for (int z = 0; z < LodSection.SIZE && !wall; z++) {
+            for (int x = 0; x < LodSection.SIZE && !wall; x++) {
+                wall = hangs.material(x, 0, z) != AIR;
+            }
+        }
+        assertTrue(wall, "an edge column reaches y 32 without undersides");
+    }
+
+    @Test
+    void undersidesRoundTripAndTilesWithoutThemStayWithout() {
+        PreviewTile t = island(50);
+        t.setUnderside(5, 5, 41);
+        t.setUnderside(6, 6, PreviewTile.SOLID_DOWN);
+        ByteWriter out = new ByteWriter(1024);
+        t.encode(out);
+        PreviewTile back = PreviewTile.decode(new ByteReader().reset(out.array(), 0, out.length()));
+        assertTrue(back.hasUndersides());
+        assertEquals(41, back.underside(5, 5));
+        assertEquals(50, back.underside(3, 3));
+        assertEquals(-64, back.underside(0, 0));
+        assertEquals(PreviewTile.SOLID_DOWN, back.underside(6, 6));
+        ByteWriter plain = new ByteWriter(1024);
+        slope().encode(plain);
+        PreviewTile none = PreviewTile.decode(new ByteReader().reset(plain.array(), 0, plain.length()));
+        assertFalse(none.hasUndersides());
+        assertEquals(PreviewTile.SOLID_DOWN, none.underside(3, 3));
+    }
+
+    @Test
+    void undersidesLowerTheSummaryAndFollowACoarseTileCut() {
+        PreviewTile t = island(50);
+        // Chunk (1, 1) holds samples 4 to 8: island only, its lowest block the underside.
+        assertEquals(50, t.summary().chunkMin()[PreviewTile.CHUNKS + 1]);
+        t.setLevel(1);
+        PreviewTile view = t.expand(0, 0);
+        // Sample 8 of the view lies on sample 4 of the level-1 tile: island.
+        assertEquals(70, view.sample(8, 8));
+        assertEquals(50, view.underside(8, 8));
+        assertEquals(-64, view.underside(100, 100));
+    }
 }

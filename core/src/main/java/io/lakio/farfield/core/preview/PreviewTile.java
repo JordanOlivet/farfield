@@ -62,9 +62,11 @@ public final class PreviewTile {
      * no far grid any more (ADR-126); 20 built by quarters (ADR-127); 21 the
      * heights searched from vanilla's estimate without caves (ADR-133); 22
      * the levels from 3 up with the ground only, from the surface rules
-     * (ADR-135).
+     * (ADR-135); 23 the undersides of floating ground (ADR-159).
      */
-    private static final int FORMAT = 22;
+    private static final int FORMAT = 23;
+    /** {@link #underside(int, int)} of a sample whose ground goes down solid (no underside stored). */
+    public static final int SOLID_DOWN = Integer.MIN_VALUE;
     /** Blocks a side of a feature voxel. */
     public static final int FEATURE_VOXEL = 2;
     /** Blocks around the tile its features may reach. */
@@ -77,6 +79,13 @@ public final class PreviewTile {
     public static final int MAX_KINDS = 255;
 
     private final short[] heights = new short[SAMPLES * SAMPLES];
+    /**
+     * Per sample, the lowest solid block under its surface where the ground
+     * floats (ADR-159: the End's islands), {@link Short#MIN_VALUE} where it
+     * goes down solid; null for a tile without floating ground. A sample
+     * with no ground at all has its underside at its height.
+     */
+    private short[] undersides;
     /** The pyramid's level: the tile covers {@code BLOCKS << level} blocks a side. */
     private int level;
     /** Bits 0 to 3: quarter q built; bits 4 to 7: quarter q complete ({@link #quarters()}). */
@@ -492,6 +501,7 @@ public final class PreviewTile {
         for (int k = s0z; k <= s0z + QUARTER_SAMPLES; k++) {
             for (int i = s0x; i <= s0x + QUARTER_SAMPLES; i++) {
                 setHeight(i, k, from.sample(i, k));
+                setUnderside(i, k, from.underside(i, k));
             }
         }
         for (int cz = s0z; cz < s0z + QUARTER_SAMPLES; cz++) {
@@ -901,9 +911,23 @@ public final class PreviewTile {
                 int px = bx0 + i * GRID;
                 int ci = (int) Math.min(px / span, SAMPLES - 2);
                 long fx = px - ci * span;
-                long a = sample(ci, ck) * (span - fx) + sample(ci + 1, ck) * fx;
-                long b = sample(ci, ck + 1) * (span - fx) + sample(ci + 1, ck + 1) * fx;
+                int[] c = undersides == null ? null : floatingCorners(ci, ck);
+                long h00 = c == null ? sample(ci, ck) : c[0];
+                long h10 = c == null ? sample(ci + 1, ck) : c[1];
+                long h01 = c == null ? sample(ci, ck + 1) : c[2];
+                long h11 = c == null ? sample(ci + 1, ck + 1) : c[3];
+                long a = h00 * (span - fx) + h10 * fx;
+                long b = h01 * (span - fx) + h11 * fx;
                 t.setHeight(i, k, (int) Math.floorDiv(a * (span - fz) + b * fz + area / 2, area));
+                if (undersides != null) {
+                    if (c == null) {
+                        t.setUnderside(i, k, SOLID_DOWN);
+                    } else {
+                        long ua = (long) c[4] * (span - fx) + (long) c[5] * fx;
+                        long ub = (long) c[6] * (span - fx) + (long) c[7] * fx;
+                        t.setUnderside(i, k, (int) Math.floorDiv(ua * (span - fz) + ub * fz + area / 2, area));
+                    }
+                }
             }
         }
     }
@@ -952,6 +976,103 @@ public final class PreviewTile {
         heights[k * SAMPLES + i] = (short) surfaceY;
     }
 
+    /**
+     * Sets the underside of sample (i, k): the lowest solid block of the
+     * ground under its surface, or {@link #SOLID_DOWN} (ADR-159).
+     */
+    public void setUnderside(int i, int k, int y) {
+        if (undersides == null) {
+            if (y == SOLID_DOWN) {
+                return;
+            }
+            undersides = new short[SAMPLES * SAMPLES];
+            java.util.Arrays.fill(undersides, Short.MIN_VALUE);
+        }
+        undersides[k * SAMPLES + i] = y == SOLID_DOWN ? Short.MIN_VALUE : (short) y;
+    }
+
+    /** The underside of sample (i, k) ({@link #setUnderside}), {@link #SOLID_DOWN} where none is stored. */
+    public int underside(int i, int k) {
+        if (undersides == null) {
+            return SOLID_DOWN;
+        }
+        short u = undersides[k * SAMPLES + i];
+        return u == Short.MIN_VALUE ? SOLID_DOWN : u;
+    }
+
+    /** Whether any sample of the tile has an underside: its ground floats somewhere (ADR-159). */
+    public boolean hasUndersides() {
+        return undersides != null;
+    }
+
+    /**
+     * The underside at the center of block (bx, bz) of the tile, bilinear
+     * between samples like {@link #height(int, int)}; {@link #SOLID_DOWN}
+     * when one of the four samples has none.
+     */
+    public int blockUnderside(int bx, int bz) {
+        if (undersides == null) {
+            return SOLID_DOWN;
+        }
+        int fx = bx * 2 + 1;
+        int fz = bz * 2 + 1;
+        int i = fx / (GRID * 2);
+        int k = fz / (GRID * 2);
+        int tx = fx - i * GRID * 2;
+        int tz = fz - k * GRID * 2;
+        int span = GRID * 2;
+        int[] c = floatingCorners(i, k);
+        if (c == null) {
+            return SOLID_DOWN;
+        }
+        int a = c[4] * (span - tx) + c[5] * tx;
+        int b = c[6] * (span - tx) + c[7] * tx;
+        int v = a * (span - tz) + b * tz;
+        return Math.floorDiv(v + span * span / 2, span * span);
+    }
+
+    /**
+     * The four samples around cell (i, k) of a tile with undersides, as
+     * heights then undersides (00, 10, 01, 11); null when one goes down
+     * solid. Where some have ground and some none (the void beside an
+     * island), those without take the middle level of those with, height
+     * and underside alike (ADR-159): between them the ground thins toward
+     * that level instead of sloping down to the bottom of the world.
+     */
+    private int[] floatingCorners(int i, int k) {
+        int[] c = {sample(i, k), sample(i + 1, k), sample(i, k + 1), sample(i + 1, k + 1),
+                underside(i, k), underside(i + 1, k), underside(i, k + 1), underside(i + 1, k + 1)};
+        return floatCorners(c) ? c : null;
+    }
+
+    /**
+     * {@link #floatingCorners} on four heights and four undersides in place;
+     * false when an underside is {@link #SOLID_DOWN}.
+     */
+    static boolean floatCorners(int[] c) {
+        long mids = 0;
+        int ground = 0;
+        for (int j = 0; j < 4; j++) {
+            if (c[4 + j] == SOLID_DOWN) {
+                return false;
+            }
+            if (c[4 + j] < c[j]) {
+                mids += c[j] + c[4 + j];
+                ground++;
+            }
+        }
+        if (ground > 0 && ground < 4) {
+            int mid = (int) Math.floorDiv(mids, 2L * ground);
+            for (int j = 0; j < 4; j++) {
+                if (c[4 + j] >= c[j]) {
+                    c[j] = mid;
+                    c[4 + j] = mid;
+                }
+            }
+        }
+        return true;
+    }
+
     /** Height at sample (i, k), 0..{@link #SAMPLES} - 1. */
     public int sample(int i, int k) {
         return heights[k * SAMPLES + i];
@@ -971,6 +1092,13 @@ public final class PreviewTile {
         int h10 = sample(i + 1, k);
         int h01 = sample(i, k + 1);
         int h11 = sample(i + 1, k + 1);
+        int[] c = undersides == null ? null : floatingCorners(i, k);
+        if (c != null) {
+            h00 = c[0];
+            h10 = c[1];
+            h01 = c[2];
+            h11 = c[3];
+        }
         int a = h00 * (span - tx) + h10 * tx;
         int b = h01 * (span - tx) + h11 * tx;
         int v = a * (span - tz) + b * tz;
@@ -1064,7 +1192,8 @@ public final class PreviewTile {
                 for (int k = cz * 4; k <= cz * 4 + 4; k++) {
                     for (int i = cx * 4; i <= cx * 4 + 4; i++) {
                         int h = sample(i, k);
-                        lo = Math.min(lo, h);
+                        int u = underside(i, k);
+                        lo = Math.min(lo, u == SOLID_DOWN ? h : u);
                         hi = Math.max(hi, h);
                     }
                 }
@@ -1256,6 +1385,16 @@ public final class PreviewTile {
                 previous = h;
             }
         }
+        // The undersides as depths under the surface, 0 for none (ADR-159).
+        out.writeVarInt(undersides == null ? 0 : 1);
+        if (undersides != null) {
+            for (int k = 0; k < SAMPLES; k++) {
+                for (int i = 0; i < SAMPLES; i++) {
+                    int u = underside(i, k);
+                    out.writeVarInt(u == SOLID_DOWN ? 0 : zigZag(sample(i, k) - u) + 1);
+                }
+            }
+        }
         for (int v : top) {
             out.writeVarInt(v);
         }
@@ -1370,6 +1509,14 @@ public final class PreviewTile {
                 int h = previous + unZigZag(in.readVarInt());
                 t.setHeight(i, k, h);
                 previous = h;
+            }
+        }
+        if (in.readVarInt() != 0) {
+            for (int k = 0; k < SAMPLES; k++) {
+                for (int i = 0; i < SAMPLES; i++) {
+                    int depth = in.readVarInt();
+                    t.setUnderside(i, k, depth == 0 ? SOLID_DOWN : t.sample(i, k) - unZigZag(depth - 1));
+                }
             }
         }
         for (int i = 0; i < t.top.length; i++) {

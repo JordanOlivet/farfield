@@ -1035,11 +1035,11 @@ final class NoisePreview {
      * grid from the top of the world where the density without jaggedness
      * exceeds {@link #PRELIMINARY_THRESHOLD}. From {@code hint} (a near
      * column's result) up or down, since that density has no caves; from the
-     * top without one. The top of the world when nothing exceeds it (vanilla
-     * has no estimate then): the search for the surface starts from the top.
-     * The End's density without jaggedness (its islands less 0.703125) never
-     * exceeds it; from the bottom of the world, every End column came out
-     * empty (ADR-158).
+     * top without one. {@link #NO_ESTIMATE} when nothing exceeds it (vanilla
+     * has none then): the search for the surface starts from the top, and
+     * the ground there floats (ADR-159). The End's density without
+     * jaggedness (its islands less 0.703125) never exceeds it; from the
+     * bottom of the world, every End column came out empty (ADR-158).
      */
     private static int preliminary(Dimension d, int x, int z, int hint) {
         DensityFunction f = d.columnInitial.get();
@@ -1059,14 +1059,46 @@ final class NoisePreview {
                     return y;
                 }
             }
-            return top;
+            return NO_ESTIMATE;
         }
         for (int y = top; y >= minY; y -= step) {
             if (above(f, x, y, z)) {
                 return y;
             }
         }
-        return top;
+        return NO_ESTIMATE;
+    }
+
+    /** {@link #preliminary} where nothing exceeds the threshold, as vanilla's own. */
+    private static final int NO_ESTIMATE = Integer.MAX_VALUE;
+
+    /**
+     * The lowest solid block of the ground under {@code surface} (its first
+     * free block) at (x, z), on the density without caves: the underside of
+     * floating ground (ADR-159). {@code surface} itself where there is no
+     * ground.
+     */
+    private static int underside(Dimension d, int x, int z, int surface) {
+        int minY = d.noise.minY();
+        if (surface <= minY) {
+            return surface;
+        }
+        DensityFunction density = d.columnUncut.get();
+        int step = d.noise.getCellHeight();
+        int solid = surface - 1;
+        while (solid - step >= minY && solid(density, x, solid - step, z)) {
+            solid -= step;
+        }
+        int free = solid - step; // below the world counts as free
+        while (solid - free > 1) {
+            int mid = (solid + free) >>> 1;
+            if (mid >= minY && solid(density, x, mid, z)) {
+                solid = mid;
+            } else {
+                free = mid;
+            }
+        }
+        return solid;
     }
 
     private static boolean above(DensityFunction f, int x, int y, int z) {
@@ -1088,6 +1120,9 @@ final class NoisePreview {
         int minY = d.noise.minY();
         int step = d.noise.getCellHeight();
         int top = minY + d.noise.height() - 1;
+        if (estimate == NO_ESTIMATE) {
+            estimate = top + 1; // the search from the top (ADR-158)
+        }
         int lo = Math.min(top, Math.max(minY, minY + Math.floorDiv(estimate - minY, step) * step
                 - ESTIMATE_MARGIN_CELLS * step));
         while (lo >= minY && !solid(density, x, lo, z)) {
@@ -1267,7 +1302,10 @@ final class NoisePreview {
                 if (i == i0 || rowEstimate == UNKNOWN) {
                     rowEstimate = estimate;
                 }
-                tile.setHeight(i, k, surfaceFromEstimate(d, d.columnUncut.get(), true, x, z, estimate));
+                int h = surfaceFromEstimate(d, d.columnUncut.get(), true, x, z, estimate);
+                tile.setHeight(i, k, h);
+                // Without vanilla's estimate the ground floats (the End): its underside too (ADR-159).
+                tile.setUnderside(i, k, estimate == NO_ESTIMATE ? underside(d, x, z, h) : PreviewTile.SOLID_DOWN);
             }
         }
         return true;

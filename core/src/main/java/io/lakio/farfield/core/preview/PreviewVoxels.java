@@ -239,6 +239,8 @@ public final class PreviewVoxels {
         private static final ThreadLocal<Scratch> MINE = ThreadLocal.withInitial(Scratch::new);
         final int[] h = new int[N];
         final int[] low = new int[N];
+        /** Per column, the underside of floating ground (ADR-159); NONE where it goes down solid. */
+        final int[] under = new int[N];
         final int[] cells = new int[N];
         final boolean[] real = new boolean[N];
         final int[] ground = new int[N];
@@ -280,6 +282,7 @@ public final class PreviewVoxels {
                                     int size, int ox, int oy, int oz, TileCache cache, Scratch scratch) {
         int[] h = scratch.h;
         int[] low = scratch.low;
+        int[] under = scratch.under;
         int[] cells = scratch.cells;
         boolean[] real = scratch.real;
         int[] ground = scratch.ground;
@@ -287,7 +290,7 @@ public final class PreviewVoxels {
         int[] lake = scratch.lake;
         int[] lakeTop = scratch.lakeTop;
         boolean[] dug = scratch.dug;
-        int[] cell = new int[2];
+        int[] cell = new int[3];
         int[] pit = new int[3];
         // The lakes are read per column, so the few tiles around the section are looked up once each.
         // Not for a far section: no lakes there, and its area spans up to 2,048 tiles a side (level 15).
@@ -307,6 +310,7 @@ public final class PreviewVoxels {
                 h[c] = columnHeight(cache, bx, bz, s, cell);
                 cells[c] = cell[0];
                 low[c] = cell[1];
+                under[c] = cell[2];
                 real[c] = mask != null && mask.real(bx >> 4, bz >> 4);
                 if (real[c]) {
                     ground[c] = mask.ground(bx >> 4, bz >> 4);
@@ -354,6 +358,11 @@ public final class PreviewVoxels {
                     }
                 }
                 floor = Math.max(floor - s, minY);
+                if (under[c] != NONE) {
+                    // Floating ground (ADR-159): whole from its underside up, seen from below too, and not
+                    // past it toward a lower neighbor (the void beside an island's edge).
+                    floor = under[c];
+                }
                 int bx = ox + i * s;
                 int bz = oz + k * s;
                 PreviewTile tile = cache.tile(Math.floorDiv(bx, PreviewTile.BLOCKS), Math.floorDiv(bz, PreviewTile.BLOCKS));
@@ -1424,11 +1433,20 @@ public final class PreviewVoxels {
      */
     static int columnHeight(TileCache cache, int bx, int bz, int s, int[] cell) {
         PreviewTile tile = cache.tile(Math.floorDiv(bx, PreviewTile.BLOCKS), Math.floorDiv(bz, PreviewTile.BLOCKS));
+        if (cell.length > 2) {
+            cell[2] = NONE;
+        }
         if (tile == null) {
             cell[1] = NONE;
             return NONE;
         }
         int lowest = Integer.MAX_VALUE;
+        // The lowest underside of the footprint's floating ground (ADR-159); samples without ground (the void
+        // around islands) count for nothing, and a column of them only holds nothing. Any sample going down
+        // solid makes the column go down solid.
+        boolean floats = tile.hasUndersides();
+        boolean solidDown = !floats;
+        int under = Integer.MAX_VALUE;
         // A tile as stored covers 512 << level blocks with the same samples (a far section's, E.3b; a view: level 0).
         int t = tile.level();
         int lx = Math.floorMod(bx, PreviewTile.BLOCKS << t) >> t;
@@ -1440,6 +1458,16 @@ public final class PreviewVoxels {
             for (int dz = 0; dz < s; dz++) {
                 for (int dx = 0; dx < s; dx++) {
                     int v = tile.height(lx + dx, lz + dz);
+                    if (floats) {
+                        int u = tile.blockUnderside(lx + dx, lz + dz);
+                        if (u == PreviewTile.SOLID_DOWN) {
+                            solidDown = true;
+                        } else if (u >= v) {
+                            continue;
+                        } else {
+                            under = Math.min(under, u);
+                        }
+                    }
                     lowest = Math.min(lowest, v);
                     if (v > best) {
                         best = v;
@@ -1451,6 +1479,16 @@ public final class PreviewVoxels {
             for (int k = lz / PreviewTile.GRID; k <= (lz + s) / PreviewTile.GRID; k++) {
                 for (int i = lx / PreviewTile.GRID; i <= (lx + s) / PreviewTile.GRID; i++) {
                     int v = tile.sample(i, k);
+                    if (floats) {
+                        int u = tile.underside(i, k);
+                        if (u == PreviewTile.SOLID_DOWN) {
+                            solidDown = true;
+                        } else if (u >= v) {
+                            continue;
+                        } else {
+                            under = Math.min(under, u);
+                        }
+                    }
                     lowest = Math.min(lowest, v);
                     if (v > best) {
                         best = v;
@@ -1461,6 +1499,9 @@ public final class PreviewVoxels {
             }
         }
         cell[1] = best == NONE ? NONE : lowest;
+        if (cell.length > 2 && !solidDown && under != Integer.MAX_VALUE) {
+            cell[2] = under;
+        }
         return best;
     }
 

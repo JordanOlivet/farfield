@@ -4868,3 +4868,39 @@ user's Fabric pack, but nothing showed.
   a quarter 1.3 s, heights 1.2 s of it (void columns are searched whole).
   Not checked: the End drawn in a client; an Overworld spike after the
   change.
+
+## ADR-159 — Tiles store the undersides of floating ground
+
+Status: accepted, 2026-11-14. The user, after ADR-158 on the Fabric
+pack: the End's islands show, "le dessous des iles est trop plein" ("go
+B").
+
+- **Context**: a tile holds one surface per sample, and a preview column
+  goes down to under the lowest of its neighbors (a skin). Beside an
+  island the neighbors are the void, at the bottom of the world: every
+  edge column hung down to it, walls under each island.
+- **Decision**:
+  - Tile format 23, stream protocol 12: per sample, the lowest solid
+    block of the ground under the surface where it floats, stored only in
+    tiles that have some (as depths under the surface, a flag per tile).
+    The server searches it, on the density without caves, only where
+    vanilla has no preliminary surface (ADR-158: the End); elsewhere
+    nothing changes and nothing is stored.
+  - A floating column is whole from its underside to its surface, so an
+    island is seen from below; samples without ground count for nothing
+    in a column.
+  - Between samples with ground and samples without, those without take
+    the middle level of those with, height and underside: an island's
+    edge thins toward that level instead of sloping down to the bottom of
+    the world (in blocks, in coarse tiles cut into views alike).
+- **Checked**: core unit tests (an island ends at its underside, nothing
+  under it in its section, while without undersides its edge reaches the
+  section's bottom; undersides round trip, tiles without them stay
+  without; the summary goes down to them; a coarse tile's cut keeps them).
+  Fabric dev server, End pregen of 77 tiles at 3000, 3000: tiles of levels
+  0, 3 and 6 hold undersides, about half the samples ground 32 to 56
+  blocks thick, the rest void; a quarter 1.3 s as before. Not checked:
+  the islands drawn in a client.
+- **Cost**: the format change rebuilds every preview tile once, the
+  Overworld's included (minutes of background work on a server); clients
+  with protocol 11 are declined until they update.
