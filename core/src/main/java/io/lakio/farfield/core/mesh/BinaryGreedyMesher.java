@@ -185,11 +185,13 @@ public final class BinaryGreedyMesher {
         out.clear();
         facesEmitted = 0;
         borderFaces = 0;
+        rowsBuilt = false;
         if (!classify(section, classifier)) {
             return;
         }
         classifyTints(section, tinted);
         buildRows(section);
+        rowsBuilt = true;
         emptyColumns();
         splitPartialFill(section);
 
@@ -213,6 +215,34 @@ public final class BinaryGreedyMesher {
         if (anyPlant) {
             meshPlants(section, out);
         }
+    }
+
+    /** Whether the last mesh built its rows: false when its section held no voxel other than air. */
+    private boolean rowsBuilt;
+
+    /**
+     * Whether the last meshed section holds a voxel other than air in the
+     * cube of {@code size} voxels (at most 8, within one byte of a row) at
+     * (x0, y0, z0), from the rows the mesh built: every class but air has
+     * its rows, a partial fill's lowered voxels included. False when the
+     * last mesh stopped at its classes: its section held only air.
+     */
+    public boolean hasMatter(int x0, int y0, int z0, int size) {
+        if (!rowsBuilt) {
+            return false;
+        }
+        int bits = ((1 << size) - 1) << x0;
+        for (int y = y0; y < y0 + size; y++) {
+            for (int z = z0; z < z0 + size; z++) {
+                int i = y * S + z;
+                int any = rowsOpaque[i] | rowsTranslucent[i] | rowsPartial[i] | rowsShaped[i]
+                        | (anyPlant ? rowsPlant[i] : 0);
+                if ((any & bits) != 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

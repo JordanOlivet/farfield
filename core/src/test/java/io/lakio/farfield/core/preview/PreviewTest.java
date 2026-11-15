@@ -100,6 +100,40 @@ class PreviewTest {
     }
 
     @Test
+    void aLayerAlongYAfterItsSectionsBuildIsTheLayerBuiltAlone() {
+        PreviewTile t = slope();
+        for (int k = 0; k < PreviewTile.SAMPLES; k++) {
+            for (int i = 0; i < PreviewTile.SAMPLES; i++) {
+                t.setHeight(i, k, 20 + (i * 7 + k * 3) % 80);
+            }
+        }
+        for (int cz = 0; cz < PreviewTile.CELLS; cz++) {
+            for (int cx = 0; cx < PreviewTile.CELLS; cx++) {
+                t.setCell(cx, cz, GRASS, DIRT);
+            }
+        }
+        PreviewVoxels.Tiles tiles = (x, z) -> x == 0 && z == 0 ? t : null;
+        // As a mesh job: the section, a layer along X, then the layers along Y above and below.
+        PreviewVoxels.build(0, 1, 1, 2, tiles, null, AIR, -64, -1, -1, -1, 0);
+        PreviewVoxels.build(0, 2, 1, 2, tiles, null, AIR, -64, -1, -1, 0, 0);
+        LodSection above = PreviewVoxels.build(0, 1, 2, 2, tiles, null, AIR, -64, -1, -1, 1, 0);
+        LodSection below = PreviewVoxels.build(0, 1, 0, 2, tiles, null, AIR, -64, -1, -1, 1, 31);
+        // Alone: after a build elsewhere, nothing to reuse.
+        PreviewVoxels.build(0, 4, 1, 4, tiles, null, AIR, -64, -1, -1, -1, 0);
+        LodSection aboveAlone = PreviewVoxels.build(0, 1, 2, 2, tiles, null, AIR, -64, -1, -1, 1, 0);
+        PreviewVoxels.build(0, 4, 1, 4, tiles, null, AIR, -64, -1, -1, -1, 0);
+        LodSection belowAlone = PreviewVoxels.build(0, 1, 0, 2, tiles, null, AIR, -64, -1, -1, 1, 31);
+        for (int z = 0; z < 32; z++) {
+            for (int x = 0; x < 32; x++) {
+                assertEquals(aboveAlone == null ? AIR : aboveAlone.material(x, 0, z),
+                        above == null ? AIR : above.material(x, 0, z), "above at " + x + ", " + z);
+                assertEquals(belowAlone == null ? AIR : belowAlone.material(x, 31, z),
+                        below == null ? AIR : below.material(x, 31, z), "below at " + x + ", " + z);
+            }
+        }
+    }
+
+    @Test
     void columnsShowTopFillerAndGroundOverASkin() {
         // A flat land at 70 with one pit at 40 in the middle of section (0, 1, 0) at level 0.
         PreviewTile t = slope();

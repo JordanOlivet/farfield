@@ -31,6 +31,22 @@ final class ColumnDensity {
         return root.mapAll(new Caches());
     }
 
+    /**
+     * The {@code roots} with one set of caches: the 2D functions they share
+     * (the terrain splines under the final density, its uncut copy and the
+     * initial density) are computed once per column for all of them, not
+     * once per root. The surface search reads the three at the same column
+     * in turn, so the single-entry caches hold.
+     */
+    static DensityFunction[] of(DensityFunction... roots) {
+        Caches caches = new Caches();
+        DensityFunction[] out = new DensityFunction[roots.length];
+        for (int i = 0; i < roots.length; i++) {
+            out[i] = roots[i].mapAll(caches);
+        }
+        return out;
+    }
+
     /** A climate sampler whose six functions share their caches. */
     static Climate.Sampler of(Climate.Sampler sampler) {
         Caches caches = new Caches();

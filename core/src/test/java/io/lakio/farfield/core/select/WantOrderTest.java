@@ -15,6 +15,20 @@ class WantOrderTest {
     }
 
     @Test
+    void aSectionTheGameDrawsComesAfterEveryOtherInItsOwnOrder() {
+        WantOrder order = new WantOrder();
+        order.add(1, WantOrder.later(WantOrder.score(300, -1))); // the game's, behind
+        order.add(2, WantOrder.score(33_554_432, -1, 8)); // the border, behind, at the largest ratio swept
+        order.add(3, WantOrder.later(WantOrder.score(20, 1))); // the game's, in front
+        order.add(4, WantOrder.score(5, 1));
+        order.sort();
+        assertEquals(4, order.key(0));
+        assertEquals(2, order.key(1));
+        assertEquals(3, order.key(2));
+        assertEquals(1, order.key(3));
+    }
+
+    @Test
     void aRefinementFollowsCoverageAtTheRatio() {
         double ratio = WantOrder.REFINE_RATIO;
         WantOrder order = new WantOrder();

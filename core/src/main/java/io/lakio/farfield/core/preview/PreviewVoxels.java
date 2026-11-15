@@ -251,6 +251,85 @@ public final class PreviewVoxels {
         final int[] seas = new int[S * S];
         private boolean taken;
         private boolean shared;
+        /**
+         * The columns of this thread's last whole build (all 34 x 34 of its
+         * grid: a section, or its layer along Y), and where: a layer along Y
+         * at the same place reads the same columns, whatever its height. The
+         * neighbors' layers of a mesh job follow its section's build on the
+         * same thread, so they read the tiles as that build did.
+         */
+        private Kept kept;
+
+        private static final class Kept {
+            final int[] h = new int[N];
+            final int[] low = new int[N];
+            final int[] under = new int[N];
+            final int[] cells = new int[N];
+            final boolean[] real = new boolean[N];
+            final int[] ground = new int[N];
+            final int[] fluid = new int[N];
+            final int[] lake = new int[N];
+            final int[] lakeTop = new int[N];
+            final boolean[] dug = new boolean[N];
+            int level;
+            int ox;
+            int oz;
+            boolean far;
+            boolean masked;
+            boolean valid;
+        }
+
+        /** Whether the columns kept are those of a build at this place; copied into the arrays if so. */
+        boolean reuse(int level, int ox, int oz, boolean far, Mask mask) {
+            Kept k = kept;
+            // The mask is made per build (the same world's): only whether there is one is compared.
+            if (!shared || k == null || !k.valid || k.level != level || k.ox != ox || k.oz != oz || k.far != far
+                    || k.masked != (mask != null)) {
+                return false;
+            }
+            System.arraycopy(k.h, 0, h, 0, N);
+            System.arraycopy(k.low, 0, low, 0, N);
+            System.arraycopy(k.under, 0, under, 0, N);
+            System.arraycopy(k.cells, 0, cells, 0, N);
+            System.arraycopy(k.real, 0, real, 0, N);
+            System.arraycopy(k.ground, 0, ground, 0, N);
+            System.arraycopy(k.fluid, 0, fluid, 0, N);
+            System.arraycopy(k.lake, 0, lake, 0, N);
+            System.arraycopy(k.lakeTop, 0, lakeTop, 0, N);
+            System.arraycopy(k.dug, 0, dug, 0, N);
+            return true;
+        }
+
+        /** Keeps the columns of a whole build at this place, or forgets the kept ones. */
+        void keep(boolean whole, int level, int ox, int oz, boolean far, Mask mask) {
+            if (!shared) {
+                return;
+            }
+            if (!whole) {
+                return; // a layer along X or Z fills only its own rows: the kept columns stay
+            }
+            Kept k = kept;
+            if (k == null) {
+                k = new Kept();
+                kept = k;
+            }
+            System.arraycopy(h, 0, k.h, 0, N);
+            System.arraycopy(low, 0, k.low, 0, N);
+            System.arraycopy(under, 0, k.under, 0, N);
+            System.arraycopy(cells, 0, k.cells, 0, N);
+            System.arraycopy(real, 0, k.real, 0, N);
+            System.arraycopy(ground, 0, k.ground, 0, N);
+            System.arraycopy(fluid, 0, k.fluid, 0, N);
+            System.arraycopy(lake, 0, k.lake, 0, N);
+            System.arraycopy(lakeTop, 0, k.lakeTop, 0, N);
+            System.arraycopy(dug, 0, k.dug, 0, N);
+            k.level = level;
+            k.ox = ox;
+            k.oz = oz;
+            k.far = far;
+            k.masked = mask != null;
+            k.valid = true;
+        }
 
         static Scratch take() {
             Scratch t = MINE.get();
@@ -302,6 +381,12 @@ public final class PreviewVoxels {
         int iMax = layerAxis == 0 ? layerIndex + 1 : S;
         int kMin = layerAxis == 2 ? layerIndex - 1 : -1;
         int kMax = layerAxis == 2 ? layerIndex + 1 : S;
+        // A layer along Y right after its section's build (a mesh job's neighbors): the same columns.
+        // They were computed three times per preview mesh job, 3,876 columns where 1,564 differ.
+        boolean reused = layerAxis == 1 && scratch.reuse(level, ox, oz, far, mask);
+        if (reused) {
+            kMax = kMin - 1; // the column loop below is skipped
+        }
         for (int k = kMin; k <= kMax; k++) {
             for (int i = iMin; i <= iMax; i++) {
                 int c = (k + 1) * (S + 2) + i + 1;
@@ -319,6 +404,9 @@ public final class PreviewVoxels {
                     dug[c] = dig(near, bx, bz, s, c, h, low, lake, lakeTop, pit);
                 }
             }
+        }
+        if (!reused) {
+            scratch.keep(layerAxis < 0 || layerAxis == 1, level, ox, oz, far, mask);
         }
         LodSection section = null;
         int[] seas = scratch.seas; // per column, the sea's first free block; NONE without a preview sea

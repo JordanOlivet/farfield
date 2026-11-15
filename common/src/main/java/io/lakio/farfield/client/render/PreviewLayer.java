@@ -605,13 +605,31 @@ final class PreviewLayer {
 
     /** Applies what the render thread queued to forget. Selection thread, before a selection. */
     private void applyExistenceOps() {
+        // All the queued operations in one walk of the existence map: one walk each, with many queued
+        // in flight, made the longest selections (254 ms). Forgetting is the same in any order.
         long[][] op;
+        LongOpenHashSet tiles = null;
+        LongOpenHashSet coarse = null;
         while ((op = existenceOps.poll()) != null) {
             if (op[0] == null) {
                 existence.clear();
-            } else {
-                forgetExistence(new LongOpenHashSet(op[0]), op[1]);
+                tiles = null;
+                coarse = null;
+                continue;
             }
+            if (tiles == null) {
+                tiles = new LongOpenHashSet();
+                coarse = new LongOpenHashSet();
+            }
+            for (long t : op[0]) {
+                tiles.add(t);
+            }
+            for (long c : op[1]) {
+                coarse.add(c);
+            }
+        }
+        if (tiles != null && !existence.isEmpty()) {
+            forgetExistence(tiles, coarse);
         }
     }
 
@@ -623,34 +641,58 @@ final class PreviewLayer {
      * visited (a third of the render thread). A first mask needs nothing: a
      * section is not remembered while its tile's mask is unknown.
      */
-    private void forgetExistence(LongOpenHashSet tiles, long[] coarse) {
+    private void forgetExistence(LongOpenHashSet tiles, LongOpenHashSet coarse) {
+        // The coarse tiles by key, and by the key of each larger section that holds one whole: a section
+        // and a tile are aligned squares of powers of two, so they overlap only by one holding the other.
+        int levels = 0;
+        LongOpenHashSet holders = new LongOpenHashSet();
+        LongIterator c = coarse.iterator();
+        while (c.hasNext()) {
+            long raw = c.nextLong();
+            int level = PreviewStore.level(raw);
+            levels |= 1 << level;
+            long blocks = PreviewStore.blocks(level);
+            for (int shift = 0; shift < HOLDER_SHIFTS; shift++) {
+                long size = (long) LodSection.SIZE << shift;
+                if (size > blocks) {
+                    holders.add(holderKey(shift, Math.floorDiv(PreviewStore.tileX(raw) * blocks, size),
+                            Math.floorDiv(PreviewStore.tileZ(raw) * blocks, size)));
+                }
+            }
+        }
         LongIterator it = existence.keySet().iterator();
         while (it.hasNext()) {
             long plain = it.nextLong();
             if (LodKey.level(plain) <= TILE_LEVEL && tiles.contains(tileOf(plain))
-                    || underCoarse(plain, coarse)) {
+                    || levels != 0 && underCoarse(plain, coarse, levels, holders)) {
                 it.remove();
             }
         }
     }
 
-    /** Whether a section lies over one of the {@code coarse} tiles (raw keys). */
-    private static boolean underCoarse(long plain, long[] coarse) {
-        if (coarse.length == 0) {
-            return false;
-        }
-        long size = (long) LodSection.SIZE << drawLevel(plain);
+    /** Whether a section lies over one of the {@code coarse} tiles (raw keys), of the {@code levels} given. */
+    private static boolean underCoarse(long plain, LongOpenHashSet coarse, int levels, LongOpenHashSet holders) {
+        int shift = drawLevel(plain);
+        long size = (long) LodSection.SIZE << shift;
         long bx = LodKey.x(plain) * size;
         long bz = LodKey.z(plain) * size;
-        for (long raw : coarse) {
-            long blocks = PreviewStore.blocks(PreviewStore.level(raw));
-            long tx = PreviewStore.tileX(raw) * blocks;
-            long tz = PreviewStore.tileZ(raw) * blocks;
-            if (tx < bx + size && bx < tx + blocks && tz < bz + size && bz < tz + blocks) {
-                return true;
+        for (int held = levels; held != 0; held &= held - 1) {
+            int level = Integer.numberOfTrailingZeros(held);
+            long blocks = PreviewStore.blocks(level);
+            if (size <= blocks && coarse.contains(PreviewStore.key(level, (int) Math.floorDiv(bx, blocks),
+                    (int) Math.floorDiv(bz, blocks)))) {
+                return true; // inside the tile
             }
         }
-        return false;
+        return holders.contains(holderKey(shift, LodKey.x(plain), LodKey.z(plain))); // holds a tile
+    }
+
+    /** Draw levels a holder key covers: a section of level 26 would span 2^31 blocks, past any world. */
+    private static final int HOLDER_SHIFTS = 26;
+
+    /** A section's draw level and place as one key, for {@link #forgetExistence}; x and z fit 28 bits. */
+    private static long holderKey(int shift, long x, long z) {
+        return (long) shift << 56 | (x & 0xFFFFFFFL) << 28 | (z & 0xFFFFFFFL);
     }
 
     /** Whether the preview hides a chunk for real terrain, for {@code debug here}. Render thread. */
@@ -1261,13 +1303,23 @@ final class PreviewLayer {
             // The coarse tile over each place as stored, of level - 2 or coarser (E.3b).
             // Each place looked up once per section (ADR-141): read per column and its neighbors, the boxed keys
             // of the store's maps made a fifth of the client's garbage in flight, and a young GC every second.
+            // Looked up once per quarter of a level-(level - 2) tile, not per level-0 place: every place in
+            // such a quarter has the same source, since a coarser tile's quarter holds it whole. Per place,
+            // a section of level 9 and up looked up a tile per column (1,156 lookups for a few tiles).
             it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<PreviewTile> seen = SEEN.get();
             seen.clear();
+            int quarterShift = level - 3;
             PreviewVoxels.Tiles coarse = (x, z) -> {
-                long place = (long) x << 32 | (z & 0xFFFFFFFFL);
-                PreviewTile known = seen.get(place);
-                if (known != null || seen.containsKey(place)) {
+                long quarter = (long) (x >> quarterShift) << 32 | ((z >> quarterShift) & 0xFFFFFFFFL);
+                PreviewTile known = seen.get(quarter);
+                if (known != null) {
                     return known;
+                }
+                if (seen.containsKey(quarter)) {
+                    if (layerAxis < 0) {
+                        missing(x, z);
+                    }
+                    return null;
                 }
                 long source = store.coarseSource(level - 2, x * PreviewTile.BLOCKS, z * PreviewTile.BLOCKS);
                 try {
@@ -1275,7 +1327,7 @@ final class PreviewLayer {
                     if (t == null && layerAxis < 0) {
                         missing(x, z);
                     }
-                    seen.put(place, t);
+                    seen.put(quarter, t);
                     return t;
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);

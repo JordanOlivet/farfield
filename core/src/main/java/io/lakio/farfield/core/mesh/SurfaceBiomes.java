@@ -40,6 +40,27 @@ public final class SurfaceBiomes {
         return columns;
     }
 
+    /**
+     * {@link #columns(LodSection, MaterialClassifier, int[])} of the section
+     * {@code mesher} just meshed, from the rows it built: the same columns
+     * without asking the classifier for up to 32,768 voxels again.
+     */
+    public static int[] columns(LodSection section, BinaryGreedyMesher mesher, int[] out) {
+        int[] columns = out != null ? out : new int[CELLS * CELLS];
+        for (int cz = 0; cz < CELLS; cz++) {
+            for (int cx = 0; cx < CELLS; cx++) {
+                columns[cz * CELLS + cx] = 0;
+                for (int cy = CELLS - 1; cy >= 0; cy--) {
+                    if (mesher.hasMatter(cx * CELL, cy * CELL, cz * CELL, CELL)) {
+                        columns[cz * CELLS + cx] = section.biome(cx, cy, cz) + 2;
+                        break;
+                    }
+                }
+            }
+        }
+        return columns;
+    }
+
     private static boolean hasMatter(LodSection section, MaterialClassifier classifier, int cx, int cy, int cz) {
         for (int y = cy * CELL; y < cy * CELL + CELL; y++) {
             for (int z = cz * CELL; z < cz * CELL + CELL; z++) {

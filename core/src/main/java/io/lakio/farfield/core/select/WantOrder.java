@@ -43,6 +43,21 @@ public final class WantOrder {
         return score(distance, facing) * ratio;
     }
 
+    /** Above any score of {@link #score(double, double, double)}: the world border, behind, at any ratio swept. */
+    private static final double LATER = 1e10;
+    /** Spreads the later scores so they keep their order in a float. */
+    private static final double LATER_SCALE = 1e6;
+
+    /**
+     * A score after every other: a section whose chunk sections the game
+     * draws itself, so none of its fragments shows (the user's choice: built
+     * at a low priority, not left out). Among themselves, still by
+     * {@code score}, which stays small there (the game's own distance).
+     */
+    public static double later(double score) {
+        return LATER + score * LATER_SCALE;
+    }
+
     public void clear() {
         size = 0;
     }

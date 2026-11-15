@@ -17,6 +17,9 @@ config = "farfield.mixins.json"
 [[mixins]]
 config = "farfield.iris.mixins.json"
 
+[[mixins]]
+config = "farfield.sodium.mixins.json"
+
 [[dependencies.${mod_id}]]
 modId = "neoforge"
 type = "required"

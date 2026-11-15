@@ -218,7 +218,6 @@ final class NoisePreview {
             this.generator = generator;
             sampler = state.sampler();
             density = state.router().finalDensity();
-            columnDensity = ThreadLocal.withInitial(() -> ColumnDensity.of(density));
             // The cached copy only where the climate is what the biome source reads (ADR-157): Fabric's End
             // biome API asks the world's own sampler for the seed it set on it, and a copy has none.
             columnSampler = biomes instanceof MultiNoiseBiomeSource
@@ -227,9 +226,15 @@ final class NoisePreview {
             int[] cut = new int[1];
             DensityFunction uncut = UncutDensity.of(density, cut);
             cutBranches = cut[0];
-            columnUncut = ThreadLocal.withInitial(() -> ColumnDensity.of(uncut));
             DensityFunction initial = state.router().initialDensityWithoutJaggedness();
-            columnInitial = ThreadLocal.withInitial(() -> ColumnDensity.of(initial));
+            // One set of caches per thread for the three: each computed the terrain's 2D functions on its
+            // own, three times per column of the surface search. The climate sampler keeps its own: it reads
+            // other columns (quart corners) in between, which would push the shared single entries out.
+            ThreadLocal<DensityFunction[]> columns =
+                    ThreadLocal.withInitial(() -> ColumnDensity.of(density, uncut, initial));
+            columnDensity = ThreadLocal.withInitial(() -> columns.get()[0]);
+            columnUncut = ThreadLocal.withInitial(() -> columns.get()[1]);
+            columnInitial = ThreadLocal.withInitial(() -> columns.get()[2]);
             NoiseGeneratorSettings settings = generator.generatorSettings().value();
             noise = settings.noiseSettings();
             seaLevel = generator.getSeaLevel();

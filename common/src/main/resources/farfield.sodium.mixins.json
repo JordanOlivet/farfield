@@ -1,0 +1,13 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "io.lakio.farfield.mixin.sodium",
+  "plugin": "io.lakio.farfield.mixin.sodium.SodiumMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "RenderSectionMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

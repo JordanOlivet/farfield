@@ -57,6 +57,17 @@ public abstract class LevelRendererMixin {
         LodRenderer.renderTranslucent(false);
     }
 
+    /** The terrain renderer drops every section: the compiled grid tests each column whole again. */
+    @Inject(method = "allChanged", at = @At("HEAD"), require = 0)
+    private void farfield$terrainReloaded(CallbackInfo ci) {
+        LodRenderer.terrainReloaded();
+    }
+
+    @Inject(method = "setLevel", at = @At("HEAD"), require = 0)
+    private void farfield$levelChanged(net.minecraft.client.multiplayer.ClientLevel level, CallbackInfo ci) {
+        LodRenderer.terrainReloaded();
+    }
+
     @Inject(method = "renderLevel", at = @At("RETURN"), require = 0)
     private void farfield$endOfLevel(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera,
                                      GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix,

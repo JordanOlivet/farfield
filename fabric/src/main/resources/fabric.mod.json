@@ -23,7 +23,8 @@
   },
   "mixins": [
     "farfield.mixins.json",
-    "farfield.iris.mixins.json"
+    "farfield.iris.mixins.json",
+    "farfield.sodium.mixins.json"
   ],
   "depends": {
     "fabricloader": ">=${fabric_loader_min}",

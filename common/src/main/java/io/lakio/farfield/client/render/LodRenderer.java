@@ -408,6 +408,11 @@ public final class LodRenderer {
     private it.unimi.dsi.fastutil.ints.IntArrayList nextGpuSlots = new it.unimi.dsi.fastutil.ints.IntArrayList();
     private LongArrayList nextCpuList = new LongArrayList();
     private LongArrayList nextGpuTranslucent = new LongArrayList();
+    /** The quads of the GPU's sections at the last selection, and of the one being applied (stat line). */
+    private long gpuQuads;
+    private long nextGpuQuads;
+    /** Per stat line, the GPU's sections' quads summed per frame, before the GPU's frustum test. */
+    private long gpuQuadsCandidate;
     /** Translucent sections of this frame, the translucent order's indexes point here. */
     private final LongArrayList frameTranslucent = new LongArrayList();
     /** Slots freed since the last selection: reused only after it, so no culled slot draws another section. */
@@ -830,10 +835,10 @@ public final class LodRenderer {
     }
 
     /** The steps of a frame, timed for {@link #worstFrame} (ADR-141). */
-    private static final String[] PHASES = {"blends", "rewrites", "uploads", "colors", "selection", "wanted",
+    private static final String[] PHASES = {"blends", "rewrites", "uploads", "colors", "compiled", "selection", "wanted",
             "commands", "eviction", "draw"};
     /** A constant, not {@code PHASES.length}: the instance is built before the array in the class's init. */
-    private static final int TIMED_PHASES = 8;
+    private static final int TIMED_PHASES = 9;
     private final long[] phase = new long[TIMED_PHASES];
     /** Each step's time summed over the frames since the last stat line, for its mean (ADR-146). */
     private final long[] stepNanos = new long[TIMED_PHASES + 1];
@@ -1236,6 +1241,26 @@ public final class LodRenderer {
         return Math.min(MAX_DISTANCE, distance);
     }
 
+    /**
+     * The least view depth of anything the game's own terrain does not
+     * cover: the LODs show from one chunk inside the game's render distance
+     * (its sections give way where the game draws), and a point that far
+     * away lies, at a corner of the screen, at that distance times the
+     * cosine of the view's half diagonal. The ratio's near plane (64 to 67
+     * blocks at the largest draw distance) cut the LODs nearer than itself:
+     * with a game view of 7 chunks or less they showed holes at the bottom
+     * and sides of the screen, the inside of the terrain behind them
+     * (2026-11-15, found at 4 chunks). At 12 chunks this is past the
+     * ratio's plane, which then stands as before.
+     */
+    private static float coveredDepth(Matrix4f projection) {
+        int renderDistance = Minecraft.getInstance().options.getEffectiveRenderDistance();
+        double tanX = 1 / Math.abs(projection.m00());
+        double tanY = 1 / Math.abs(projection.m11());
+        double cos = 1 / Math.sqrt(1 + tanX * tanX + tanY * tanY);
+        return (float) Math.max(8, (renderDistance - 1) * 16 * cos * 0.9);
+    }
+
     /** Called from the level renderer mixin, after the sky, before the terrain. */
     /**
      * At the start of the level's frame: the shader pack's LOD state for it
@@ -1251,7 +1276,8 @@ public final class LodRenderer {
         // The near plane at half the nearest drawn geometry (ADR-141): the LODs' depth is cleared before the
         // game's terrain draws, so nothing nearer needs it; seen from 2 million blocks up, a near plane of 64
         // left the preview's surfaces fighting over a few thousand blocks of depth (a grey cast over it).
-        r.depthNear = (float) Math.max(Math.max(8, r.drawnNearest * 0.5), r.depthFar / DEPTH_RATIO);
+        r.depthNear = (float) Math.max(Math.max(8, r.drawnNearest * 0.5),
+                Math.min(r.depthFar / DEPTH_RATIO, coveredDepth(projection)));
         if (r.packLink != null && !r.disabled) {
             try {
                 // The farthest LOD geometry, not the selection's radius: square sections cross it, and
@@ -1296,6 +1322,7 @@ public final class LodRenderer {
         sodiumRule = classExists("net.caffeinemc.mods.sodium.client.SodiumClientMod")
                 || classExists("org.embeddedt.embeddium.impl.Embeddium")
                 || classExists("me.jellysquid.mods.sodium.client.SodiumClientMod");
+        columnShortcut = classExists("net.caffeinemc.mods.sodium.client.SodiumClientMod");
         Farfield.LOG.info("LOD hand-off follows the {} section rule", sodiumRule ? "Sodium" : "vanilla");
         packLink = createPackLink();
         if (packLink != null && pendingPackReload) {
@@ -1323,16 +1350,21 @@ public final class LodRenderer {
         sectionInfo = new GlBuffer(Math.max(4096, slots) * SECTION_BYTES);
         colorBuffer = new GlBuffer(4096L * MaterialColors.STRIDE * 4);
         biomeBuffer = new GlBuffer(256L * BiomeTints.KINDS * 4);
-        occupancy = new GlBuffer(slots * OCCUPANCY_INTS * 4);
+        // Not cleared: a slot's voxels are read only when its section info or a neighbor table says it holds
+        // them, and its blends only behind the stamp its first upload writes. Clearing 384 MB made the
+        // first upload of a session wait 110 ms.
+        occupancy = new GlBuffer(slots * OCCUPANCY_INTS * 4, false);
         neighborSlots = new GlBuffer(slots * NEIGHBOR_INTS * 4);
         biomeColumns = new GlBuffer(slots * BIOME_COLUMN_INTS * 4);
-        blendedTints = new GlBuffer(slots * BLEND_SLOT_INTS * 4);
+        blendedTints = new GlBuffer(slots * BLEND_SLOT_INTS * 4, false);
         drawnSections = new GlBuffer(4096L * 4);
         previewHidden = new GlBuffer((long) HIDDEN_SIDE * HIDDEN_SIDE / 8);
         indirect = new GlBuffer(1024L * COMMAND_BYTES);
         cullGroups = new GlBuffer(Math.max(4096, slots) * CULL_INTS * 4);
-        cullCandidates = new GlBuffer(4096L * 4);
-        gpuCommands = new GlBuffer(3L * 4096 * COMMAND_BYTES);
+        // Not cleared: the culling pass reads its candidates below its count, uploaded first, and the draws
+        // read the commands it wrote below its counts. A cleared growth took 5.3 ms in one frame.
+        cullCandidates = new GlBuffer(4096L * 4, false);
+        gpuCommands = new GlBuffer(3L * 4096 * COMMAND_BYTES, false);
         gpuCounts = new GlBuffer(16);
         scatterPairs = new GlBuffer(16384L * 8);
         try {
@@ -1572,6 +1604,11 @@ public final class LodRenderer {
         long growBefore = GlBuffer.growNanos;
         uploadQuadsNanos = 0;
         uploadBlendNanos = 0;
+        finishNanos = 0;
+        finishOrderNanos = 0;
+        takeNanos = 0;
+        selectNanos = 0;
+        finishHandOffNanos = 0;
         updateBlends();
         phase[0] = System.nanoTime();
         applyRewrites();
@@ -1582,8 +1619,9 @@ public final class LodRenderer {
         }
         phase[2] = System.nanoTime();
         uploadColors(mc, level, looksBudget(frameStart));
-        updateDrawnSections(mc, level, camera);
         phase[3] = System.nanoTime();
+        updateDrawnSections(mc, level, camera);
+        phase[4] = System.nanoTime();
 
         Vec3 cam = camera.getPosition();
         double jx = cam.x - lastCamX;
@@ -1640,9 +1678,11 @@ public final class LodRenderer {
         if (stream != null) {
             stream.askRegions(); // the regions the selection's thread wanted an index of (ADR-147)
         }
+        long takeStart = System.nanoTime();
         if (takePreviewSelection()) {
             selectionDirty = true; // a new selection result: drawn with the next selection
         }
+        takeNanos = System.nanoTime() - takeStart;
         // At most one selection per MIN_RESELECT_NANOS (ADR-140): in flight each new mesh made the
         // next frame select again, a selection every frame.
         if (applying) {
@@ -1651,9 +1691,11 @@ public final class LodRenderer {
                 || frameStart - selectionTime > RESELECT_NANOS)
                 && (selectionTime == 0 || frameStart - selectionTime
                         >= Math.max(MIN_RESELECT_NANOS, SELECTION_SHARE * lastSelectNanos))) {
+            long selectStart = System.nanoTime();
             select(level, cam, look, frameStart);
+            selectNanos = System.nanoTime() - selectStart;
         }
-        phase[4] = System.nanoTime();
+        phase[5] = System.nanoTime();
         requestWanted();
         // The hole detector is a diagnostic: it runs only with the performance logs on.
         if (!RenderSettings.performanceLogs()) {
@@ -1665,7 +1707,7 @@ public final class LodRenderer {
         updateHandOver(cam, frameStart);
         watchColumns(mc.options.getEffectiveRenderDistance());
         logFill(frameStart, false);
-        phase[5] = System.nanoTime();
+        phase[6] = System.nanoTime();
         for (int l = 0; l < commands.length; l++) {
             commands[l].clear();
             draws[l] = 0;
@@ -1676,6 +1718,12 @@ public final class LodRenderer {
         frameTranslucent.clear();
         for (int i = 0, n = cpuList.size(); i < n; i++) {
             long key = cpuList.getLong(i);
+            // The view first, from the key alone: most sections of the list lie outside it, and their
+            // resident was looked up for nothing.
+            int faces = visibleFaces(key, cam);
+            if (faces == 0) {
+                continue;
+            }
             Resident r = resident.get(key);
             if (r == null || r.quadCount == 0) {
                 continue;
@@ -1685,10 +1733,6 @@ public final class LodRenderer {
                     FrameProbe.note("looks" + probeName(key));
                 }
                 continue; // a material without its look yet: drawn once all have one (ADR-062, ADR-078)
-            }
-            int faces = visibleFaces(key, cam);
-            if (faces == 0) {
-                continue;
             }
             if (gameDrawsAll(key, cam, renderDistance)) {
                 leftToGame++; // every fragment would give way to the game's terrain
@@ -1714,12 +1758,12 @@ public final class LodRenderer {
         // The GPU-culled sections' translucent faces, sorted with the others (ADR-146).
         for (int i = 0, n = gpuTranslucent.size(); i < n; i++) {
             long key = gpuTranslucent.getLong(i);
-            Resident r = resident.get(key);
-            if (r == null || r.quadCount == 0) {
-                continue;
-            }
             int faces = visibleFaces(key, cam);
             if (faces == 0) {
+                continue;
+            }
+            Resident r = resident.get(key);
+            if (r == null || r.quadCount == 0) {
                 continue;
             }
             translucentOrder.add((long) Float.floatToIntBits(centerDistanceSq(key, cam)) << 32
@@ -1727,6 +1771,7 @@ public final class LodRenderer {
             frameTranslucent.add(key);
         }
         count += gpuCandidates; // culled on the GPU: counted before its frustum test
+        gpuQuadsCandidate += gpuQuads;
         // Translucent sections far to near, as vanilla: a ray through one section's ice
         // can reach a neighbor's water surface, which must be blended first (ADR-055).
         // Positive floats sort as their bits.
@@ -1735,14 +1780,14 @@ public final class LodRenderer {
             long e = translucentOrder.getLong(i);
             addCommands(resident.get(frameTranslucent.getLong((int) (e & 0xFFFFFFFFL) >>> 6)), TRANSLUCENT, (int) e & 63);
         }
-        phase[6] = System.nanoTime();
+        phase[7] = System.nanoTime();
         if (frame % 60 == 0 || evictBacklog) {
             evictBacklog = evictUnused(frameStart);
             if (frame % 60 == 0) {
                 shrinkArena(frameStart);
             }
         }
-        phase[7] = System.nanoTime();
+        phase[8] = System.nanoTime();
         lastDrawn = count;
         flushNeighborWrites();
         if (count > 0) {
@@ -1769,6 +1814,10 @@ public final class LodRenderer {
             worstFrame = steps.append(" us; ").append(meshesUploaded - uploadedBefore).append(" meshes uploaded")
                     .append(", buffers grown ").append((GlBuffer.growNanos - growBefore) / 1000).append(" us, quads sent ")
                     .append(uploadQuadsNanos / 1000).append(" us, blends ").append(uploadBlendNanos / 1000).append(" us")
+                    .append(", preview selection taken ").append(takeNanos / 1000).append(" us, selected ")
+                    .append(selectNanos / 1000).append(" us")
+                    .append(", selection applied ").append(finishNanos / 1000).append(" us (ordered ")
+                    .append(finishOrderNanos / 1000).append(", hand-off ").append(finishHandOffNanos / 1000).append(")")
                     .toString();
         }
         maxFrameNanos = Math.max(maxFrameNanos, took);
@@ -1817,12 +1866,54 @@ public final class LodRenderer {
         }
         int ring = rd - RING_CHUNKS;
         net.minecraft.client.renderer.LevelRenderer renderer = mc.levelRenderer;
+        if (terrainReloaded) {
+            terrainReloaded = false;
+            java.util.Arrays.fill(wholeColumns, false);
+            java.util.Arrays.fill(emptyColumns, false);
+            java.util.Arrays.fill(settledColumns, false);
+        }
+        // Told by Sodium which columns changed (RenderSectionMixin): only those, and the columns whose
+        // drawn state still follows their compiled one, are tested, every frame. Without it, the outer
+        // ring every frame and the whole grid every 8 frames.
+        boolean told = columnShortcut && sodiumTold;
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet changed = SODIUM_CHANGED_DRAIN;
+        changed.clear();
+        if (told) {
+            synchronized (SODIUM_CHANGED) {
+                changed.addAll(SODIUM_CHANGED);
+                SODIUM_CHANGED.clear();
+            }
+        }
         for (int z = 0; z < gridWidth; z++) {
             for (int x = 0; x < gridWidth; x++) {
-                if (!full && Math.max(Math.abs(x - rd), Math.abs(z - rd)) < ring) {
+                int index = z * gridWidth + x;
+                if (told) {
+                    if (settledColumns[index] && !changed.contains(columnKey(gridMinX + x, gridMinZ + z))) {
+                        continue;
+                    }
+                } else if (!full && Math.max(Math.abs(x - rd), Math.abs(z - rd)) < ring) {
                     continue;
                 }
-                int column = (z * gridWidth + x) * gridHeight;
+                if (!told && wholeColumns[index]) {
+                    // Sodium drops a column's sections together (a chunk unloaded, or its renderer
+                    // reloaded, which clears this mark): one still built means all are. Testing every
+                    // section took about 30 ns each, 287 us per frame at 12 chunks.
+                    sectionPos.set((gridMinX + x) << 4, gridMinY << 4, (gridMinZ + z) << 4);
+                    if (renderer.isSectionCompiled(sectionPos)) {
+                        continue;
+                    }
+                    wholeColumns[index] = false;
+                }
+                if (!told && emptyColumns[index] && !level.getChunkSource().hasChunk(gridMinX + x, gridMinZ + z)) {
+                    // None of its sections built at its last test, and no chunk to build them from since:
+                    // still none (a chunk dropped with sections built is tested until they are gone). Most
+                    // of the outer ring, past the chunks the client holds, was tested section by section.
+                    continue;
+                }
+                boolean whole = columnShortcut;
+                boolean empty = columnShortcut;
+                boolean settled = true;
+                int column = index * gridHeight;
                 for (int y = 0; y < gridHeight; y++) {
                     sectionPos.set((gridMinX + x) << 4, (gridMinY + y) << 4, (gridMinZ + z) << 4);
                     int bit = column + y;
@@ -1836,16 +1927,74 @@ public final class LodRenderer {
                         drawnBits[bit >> 5] |= mask;
                     } else {
                         drawnBits[bit >> 5] &= ~mask;
+                        whole = false;
                     }
                     if (compiled) {
                         compiledBits[bit >> 5] |= mask;
+                        empty = false;
+                        settled &= before; // built since the last test: drawn on the next one
                     } else {
                         compiledBits[bit >> 5] &= ~mask;
                     }
                 }
+                wholeColumns[index] = whole;
+                emptyColumns[index] = empty;
+                settledColumns[index] = settled;
             }
         }
         uploadDrawnSections(ints);
+    }
+
+    /**
+     * Per column of the grid, whether a new test would change nothing
+     * unless Sodium changed one of its sections: no section built since the
+     * test before (its drawn bit waits for the next).
+     */
+    private boolean[] settledColumns = new boolean[0];
+    /** Columns (chunk x, z) where Sodium set or cleared a section's built state; render thread mostly. */
+    private static final it.unimi.dsi.fastutil.longs.LongOpenHashSet SODIUM_CHANGED =
+            new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+    private static final it.unimi.dsi.fastutil.longs.LongOpenHashSet SODIUM_CHANGED_DRAIN =
+            new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+    private static final int SODIUM_CHANGED_MAX = 1 << 16;
+    /** Sodium told of a change once: its hook is in, the grid follows it. */
+    private static volatile boolean sodiumTold;
+
+    /** From {@code RenderSectionMixin}: a Sodium section of this chunk column may have changed its built state. */
+    public static void sodiumSectionChanged(int chunkX, int chunkZ) {
+        synchronized (SODIUM_CHANGED) {
+            if (SODIUM_CHANGED.size() >= SODIUM_CHANGED_MAX) {
+                // Not drained for long (LODs off while the game ran): every column is tested again.
+                SODIUM_CHANGED.clear();
+                terrainReloaded = true;
+            }
+            SODIUM_CHANGED.add(columnKey(chunkX, chunkZ));
+        }
+        if (!sodiumTold) {
+            sodiumTold = true;
+            Farfield.LOG.info("LOD compiled-sections grid follows Sodium's section changes");
+        }
+    }
+
+    private static long columnKey(int chunkX, int chunkZ) {
+        return (long) chunkX << 32 | (chunkZ & 0xFFFFFFFFL);
+    }
+
+    /**
+     * Per column of the grid, whether all its sections were compiled and
+     * drawn at its last test, so one section stands for them (Sodium only).
+     */
+    private boolean[] wholeColumns = new boolean[0];
+    /** Per column of the grid, whether none of its sections was compiled at its last test. */
+    private boolean[] emptyColumns = new boolean[0];
+    /** Sodium itself, whose sections leave the built state only a column at a time (checked on 0.8.13). */
+    private boolean columnShortcut;
+    /** The game's terrain renderer was reloaded or got another level: every column is tested whole again. */
+    private static volatile boolean terrainReloaded;
+
+    /** Called when the game's terrain renderer reloads ({@code allChanged}) or changes level. */
+    public static void terrainReloaded() {
+        terrainReloaded = true;
     }
 
     /**
@@ -1911,6 +2060,9 @@ public final class LodRenderer {
         }
         compiledBits = compiled;
         drawnBits = new int[ints];
+        wholeColumns = new boolean[width * width];
+        emptyColumns = new boolean[width * width];
+        settledColumns = new boolean[width * width];
         gridMinX = minX;
         gridMinY = minY;
         gridMinZ = minZ;
@@ -2106,6 +2258,7 @@ public final class LodRenderer {
         it.unimi.dsi.fastutil.ints.IntArrayList slots = gpuSlots;
         gpuSlots = nextGpuSlots;
         nextGpuSlots = slots;
+        gpuQuads = nextGpuQuads;
         System.arraycopy(nextWhy, 0, cpuWhy, 0, cpuWhy.length);
         // Slots freed while the list was built: out of it, then free for new sections (no list names them now).
         if (!pendingFreeSlots.isEmpty()) {
@@ -2137,15 +2290,18 @@ public final class LodRenderer {
         }
         Vec3 cam = new Vec3(applyX, applyY, applyZ);
         long now = applyTime;
+        long orderStart = System.nanoTime();
         // The traversal walks the grid from one corner: ask for what is near and in view first,
         // or the meshes in flight go to far sections behind the camera (ADR-056).
         wantOrder.clear();
         int inView = 0;
+        int renderDistance = Minecraft.getInstance().options.getEffectiveRenderDistance();
         for (int i = 0, n = wanted.size(); i < n; i++) {
             long key = wanted.getLong(i);
             boolean visible = inView(key, cam);
             inView += visible ? 1 : 0;
-            wantOrder.add(key, WantOrder.score(nearestDistance(key, cam), visible ? 1 : -1));
+            double score = WantOrder.score(nearestDistance(key, cam), visible ? 1 : -1);
+            wantOrder.add(key, orderLater(key, cam, renderDistance) ? WantOrder.later(score) : score);
         }
         long orderNow = System.nanoTime();
         nextRest = 0;
@@ -2178,10 +2334,12 @@ public final class LodRenderer {
                     distance = Math.max(distance, showDistance * (LodSection.SIZE << drawLevel(key)));
                 }
                 double ratio = shown && (!preview || partial(key)) ? 1 : refineRatio;
-                wantOrder.add(key, WantOrder.score(distance, inView(key, cam) ? 1 : -1, ratio));
+                double score = WantOrder.score(distance, inView(key, cam) ? 1 : -1, ratio);
+                wantOrder.add(key, orderLater(key, cam, renderDistance) ? WantOrder.later(score) : score);
             }
         }
         wantOrder.sort();
+        finishOrderNanos = System.nanoTime() - orderStart;
         lastWantedInView = inView;
         if (stream != null) {
             stream.newSelection();
@@ -2201,6 +2359,8 @@ public final class LodRenderer {
             }
         }
         appliedSelectionTime = applyTime;
+        long handOffStart = System.nanoTime();
+        finishHandOffNanos = 0;
         if (revealing && !Double.isNaN(applyHole)) {
             double handOff = handOffHole(cam);
             if (handOff < applyHole) {
@@ -2208,10 +2368,20 @@ public final class LodRenderer {
                 applyHoleWhy = handOffWhy;
             }
         }
+        finishHandOffNanos = System.nanoTime() - handOffStart;
         updateReveal(applyTime);
+        finishNanos = System.nanoTime() - start;
         applyNanos += System.nanoTime() - start;
         lastSelectNanos = applyNanos;
     }
+
+    /** This frame's end of a selection's apply, and its ordering and hand-off parts (worst-frame line). */
+    private long finishNanos;
+    private long finishOrderNanos;
+    /** This frame's take of the preview's selection and its own selection (worst-frame line). */
+    private long takeNanos;
+    private long selectNanos;
+    private long finishHandOffNanos;
 
     /** The coarsest level of a real section whose missing chunk columns the disc looks for (ADR-154). */
     private static final int HAND_OFF_HOLE_LEVEL = 3;
@@ -2352,7 +2522,7 @@ public final class LodRenderer {
             float x = (float) (LodKey.x(key) * (double) size - cx);
             float y = (float) (LodKey.y(key) * (double) size - cy);
             float z = (float) (LodKey.z(key) * (double) size - cz);
-            return view.testAab(x, y, z, x + size, y + size, z + size);
+            return inFrustum(view, x, y, z, size);
         };
         selector.setOutsideView(viewed, outsideDetail);
         previewLayer.setDetail(selector.detail());
@@ -2485,6 +2655,7 @@ public final class LodRenderer {
         nextCpuList.clear();
         nextGpuSlots.clear();
         nextGpuTranslucent.clear();
+        nextGpuQuads = 0;
         splitGpu = cullProgram != null && selector.forcedLevel() < 0;
         int reach = (Minecraft.getInstance().options.getEffectiveRenderDistance() + 4) * 16;
         nearX0 = cam.x - reach;
@@ -2512,6 +2683,7 @@ public final class LodRenderer {
             return;
         }
         nextGpuSlots.add(r.slot);
+        nextGpuQuads += r.quadCount;
         if (r.groups[PLANT_GROUP] > r.opaqueCount) {
             nextGpuTranslucent.add(key);
         }
@@ -2546,6 +2718,9 @@ public final class LodRenderer {
         }
         for (int p = 0; p < 6; p++) {
             cullMatrix.frustumPlane(p, plane);
+            if (p == Matrix4f.PLANE_NZ) {
+                plane.set(0, 0, 0, 1); // no near plane: see inFrustum
+            }
             planes[p * 4] = plane.x;
             planes[p * 4 + 1] = plane.y;
             planes[p * 4 + 2] = plane.z;
@@ -3118,7 +3293,8 @@ public final class LodRenderer {
                             + " frames; detail {}; at most {} coarse fallbacks, {} finer fallbacks and {} outdated"
                             + " sections drawn per selection; the longest LOD frame {} us ({}), the longest frame {} ms, {}"
                             + " frames over 50 ms; the longest preview selection {} ms on its thread; steps per frame {};"
-                            + " {} sections culled on the GPU, {} on the CPU {}; {} MB of quads through the upload ring,"
+                            + " {} sections culled on the GPU, {} on the CPU {}; {} quads in the GPU's sections before"
+                            + " its tests; {} orders put a section the game draws last; {} MB of quads through the upload ring,"
                             + " {} meshes sent directly",
                     count, resident.size(),
                     arena.used() * 8 >> 20, arena.capacity() * 8 >> 20, requested.size(), meshesUploaded, meshesEvicted,
@@ -3134,7 +3310,7 @@ public final class LodRenderer {
                     String.format("%.1f", selector.detail()), maxFallbacks, maxFinerFallbacks, maxOutdatedDrawn,
                     maxFrameNanos / 1000, worstFrame, maxFrameGapNanos / 1_000_000, longFrames,
                     previewSelectNanos / 1_000_000, stepMeans(timedFrames), gpuCandidates, cpuList.size(), java.util.Arrays.toString(cpuWhy),
-                    ringCounts[0] >> 20, ringCounts[1]);
+                    gpuQuadsCandidate / Math.max(1, timedFrames), orderedLater, ringCounts[0] >> 20, ringCounts[1]);
         }
         if (RenderSettings.performanceLogs()) {
             Farfield.LOG.info("LOD holes: at most {} chunk columns without anything drawn within {} chunks;"
@@ -3169,6 +3345,8 @@ public final class LodRenderer {
         maxOutdatedDrawn = 0;
         quadsInView = 0;
         quadsSubmitted = 0;
+        gpuQuadsCandidate = 0;
+        orderedLater = 0;
         plantQuadsSubmitted = 0;
         discardSections = 0;
         leftToGame = 0;
@@ -3443,7 +3621,7 @@ public final class LodRenderer {
             mesher.get().copyOpaqueRows(occupied);
         }
         // Every section's columns, even without quads: its neighbors blend with them.
-        int[] columns = SurfaceBiomes.columns(section, classes, surfaceScratch.get());
+        int[] columns = SurfaceBiomes.columns(section, mesher.get(), surfaceScratch.get());
         int[] packed = new int[BIOME_COLUMN_INTS];
         for (int i = 0; i < packed.length; i++) {
             packed[i] = columns[2 * i] | columns[2 * i + 1] << 16;
@@ -3654,10 +3832,11 @@ public final class LodRenderer {
             long swap = swapSeq++;
             long now = System.nanoTime();
             previewLayer.prepareTouched(changedTiles);
-            LongIterator keys = resident.keySet().iterator();
+            // The preview's residents only: the real ones were walked too, then left by the test.
+            LongIterator keys = previewResident.iterator();
             while (keys.hasNext()) {
                 long k = keys.nextLong();
-                if (PreviewLayer.isPreview(k) && previewLayer.touched(k, changedTiles)) {
+                if (previewLayer.touched(k, changedTiles)) {
                     markStale(k, MeshJobs.TILE_REFINED);
                     if (drawn.contains(k)) {
                         joinSwap(swap, k, now); // their new meshes go in together (ADR-092)
@@ -4093,7 +4272,8 @@ public final class LodRenderer {
             return; // the packing moves the residents' quads only: tried again once the swaps are in
         }
         arenaLowSince = -1;
-        GlBuffer smaller = new GlBuffer(target * 8);
+        // Not cleared, as the first quad buffer: its later growths stay uncleared too.
+        GlBuffer smaller = new GlBuffer(target * 8, false);
         RangeAllocator packed = new RangeAllocator(target);
         int moved = 0;
         ObjectIterator<Long2ObjectOpenHashMap.Entry<Resident>> it = resident.long2ObjectEntrySet().fastIterator();
@@ -4167,14 +4347,26 @@ public final class LodRenderer {
     private void writeSection(long key, Resident r) {
         int level = drawLevel(key);
         int size = LodSection.SIZE << level;
-        sectionInfo.upload((long) r.slot * SECTION_BYTES, new int[]{
-                LodKey.x(key) * size, LodKey.y(key) * size, LodKey.z(key) * size, level,
-                (int) r.start, r.quadCount, r.occluders ? 1 : 0, PreviewLayer.isPreview(key) ? 1 : 0});
-        int[] record = new int[CULL_INTS];
+        // Reused arrays: the upload copies them at once (glNamedBufferSubData).
+        int[] info = sectionScratch;
+        info[0] = LodKey.x(key) * size;
+        info[1] = LodKey.y(key) * size;
+        info[2] = LodKey.z(key) * size;
+        info[3] = level;
+        info[4] = (int) r.start;
+        info[5] = r.quadCount;
+        info[6] = r.occluders ? 1 : 0;
+        info[7] = PreviewLayer.isPreview(key) ? 1 : 0;
+        sectionInfo.upload((long) r.slot * SECTION_BYTES, info);
+        int[] record = cullScratch;
+        java.util.Arrays.fill(record, 0);
         System.arraycopy(r.groups, 0, record, 0, Math.min(PLANT_GROUP + 2, r.groups.length));
         record[PLANT_GROUP + 2] = r.cutout ? 1 : 0;
         cullGroups.upload((long) r.slot * CULL_INTS * 4, record);
     }
+
+    private final int[] sectionScratch = new int[8];
+    private final int[] cullScratch = new int[CULL_INTS];
 
     /**
      * Writes a section's neighbor slots and its own slot into its resident
@@ -4300,7 +4492,8 @@ public final class LodRenderer {
 
     /** Its horizontal neighbors blend with a section's columns: they are blended again. */
     private void markBlendNeighbors(long key) {
-        if (blendRadius <= 0) {
+        // At a level no blend is read, a neighbor's blend is only its stamp of 0, written at its upload.
+        if (blendRadius <= 0 || !BiomeBlend.needed(blendRadius, drawLevel(key))) {
             return;
         }
         int keyLevel = LodKey.level(key);
@@ -4527,6 +4720,21 @@ public final class LodRenderer {
         return cache;
     }
 
+    /**
+     * The culling frustum's planes but its near one, which lies at
+     * far / 4e6 to keep the far plane's row in float: 33.5 blocks at the
+     * largest distance, so a section wholly nearer than that along the view
+     * was culled, at the screen's corners first. With a small game view the
+     * game's terrain does not cover such sections. The four side planes
+     * alone leave out what lies behind the camera.
+     */
+    private static final int NO_NEAR_PLANE = 0x3F & ~FrustumIntersection.PLANE_MASK_NZ;
+
+    private static boolean inFrustum(FrustumIntersection f, float x, float y, float z, float size) {
+        int r = f.intersectAab(x, y, z, x + size, y + size, z + size, NO_NEAR_PLANE);
+        return r == FrustumIntersection.INSIDE || r == FrustumIntersection.INTERSECT;
+    }
+
     private void updateFrustum(Matrix4f viewRotation, Matrix4f projection) {
         float m11 = Math.abs(projection.m11());
         float m00 = Math.abs(projection.m00());
@@ -4566,7 +4774,7 @@ public final class LodRenderer {
         float x = (float) (LodKey.x(key) * (double) size - cam.x);
         float y = (float) (LodKey.y(key) * (double) size - cam.y);
         float z = (float) (LodKey.z(key) * (double) size - cam.z);
-        return frustum.testAab(x, y, z, x + size, y + size, z + size);
+        return inFrustum(frustum, x, y, z, size);
     }
 
     /** The face directions of a section that can face the camera ({@link FaceDirections}), 0 outside the frustum. */
@@ -4575,7 +4783,7 @@ public final class LodRenderer {
         float x = (float) (LodKey.x(key) * (double) size - cam.x);
         float y = (float) (LodKey.y(key) * (double) size - cam.y);
         float z = (float) (LodKey.z(key) * (double) size - cam.z);
-        if (!frustum.testAab(x, y, z, x + size, y + size, z + size)) {
+        if (!inFrustum(frustum, x, y, z, size)) {
             return 0;
         }
         return FaceDirections.front(x, y, z, size);
@@ -4585,6 +4793,23 @@ public final class LodRenderer {
      * Whether a section overlaps the grid of sections the game may draw: only
      * there can its fragments give way to the game's terrain (lod.frag).
      */
+    /**
+     * Whether a wanted or stale section is asked after all others: the game
+     * draws all its chunk sections, so its mesh would show nothing now. At
+     * a join, the real sections under the player came first and were a
+     * third of the first 20 s' meshes.
+     */
+    private boolean orderLater(long key, Vec3 cam, int renderDistance) {
+        if (gameDrawsAll(key, cam, renderDistance)) {
+            orderedLater++;
+            return true;
+        }
+        return false;
+    }
+
+    /** Sections asked after all others since the last stat line ({@link #orderLater}). */
+    private long orderedLater;
+
     /**
      * Whether the game draws every chunk section a LOD section covers, by
      * the rule of {@code vanillaDraws} in {@code lod.frag}: every fragment of
@@ -4919,7 +5144,7 @@ public final class LodRenderer {
         }
         RenderSystem.colorMask(true, true, true, true);
         int slot = packTranslucentSlot;
-        boolean timed = !packTranslucentPending[slot];
+        boolean timed = RenderSettings.performanceLogs() && !packTranslucentPending[slot];
         if (timed) {
             glQueryCounter(packTranslucentQueries[slot * 2], GL_TIMESTAMP);
         }
@@ -4985,7 +5210,8 @@ public final class LodRenderer {
 
         // Timestamps rather than a time-elapsed query: the game may have one open.
         int slot = timerSlot;
-        boolean timed = !timerPending[slot];
+        // Only for the stat line: no queries with the performance logs off.
+        boolean timed = RenderSettings.performanceLogs() && !timerPending[slot];
         if (timed) {
             glQueryCounter(timerQueries[slot * TIMESTAMPS], GL_TIMESTAMP);
         }
