@@ -1,7 +1,7 @@
 # Performance review before the next release
 
 Date: 2026-11-15. Status: steps 1 to 8 built and benched, not committed
-("Built and measured"); step 10 (client/server run) open.
+("Built and measured"); step 10 (client/server run) done ("Step 10").
 Branch `main` at 1838fbd.
 
 The user (2026-11-15), after the generation to the world border: "j'aimerais
@@ -629,6 +629,98 @@ jar (`ref`, `ref2`, `ref3`) give the noise between runs.
   far solid list) are dropped.
 - F8 dropped: the check runs only for a palette short of its bits' range,
   and reading sections took at most 83 us a job, at the join only.
+
+## Step 10: the client/server run (2026-11-15)
+
+A Fabric dev server on a fresh world of the test seed (view 12 chunks, the
+pack server's Farfield settings: `streaming_radius=4096`, `player_kbps=1024`)
+and a Fabric dev client joining it (4K, `fog_distance=33554432`): 25 s of
+join, 60 s at the spawn, six 256-block jumps east over terrain never
+generated, 10 s each, then settle; 228 s in all. JFR (`profile` settings)
+attached to both game JVMs with `jcmd` (a `JAVA_TOOL_OPTIONS` recording breaks
+Gradle's search for the Java 21 toolchain). Committed code (5d10013).
+
+From the logs:
+- The stream runs at its cap during the flight: 10,240 to 11,130 KB sent per
+  10 s, the `player_kbps` budget, with up to 83 messages queued and sections
+  pushed 1.3 to 2.0 s after their write (0.15 s before the flight). The
+  stream threads take 6.7 s of processor in that minute: the budget, not the
+  processor, sets the pace.
+- The server's workers: 35.9 s of processor for 4,522 snapshots in the
+  flight's minute, 7.9 ms a chunk (the review's 9.2 ms).
+- The noise preview: 47 to 96 s of processor a minute, already split by its
+  own minute line (heights and features).
+- The client's mirror writer: 2.3 to 3.5 s a minute (mesher 59 to 91 s).
+
+From the server's JFR (execution samples of Farfield's threads):
+
+| Thread | Samples | Where |
+|---|---|---|
+| `farfield-server-worker` | 3,485 | `LodWorld.buildParent` 83 %: `MipBuilder.downsample` 63 %, reading the 8 children and the old parent 12 % (zstd and decode); the ingest itself (`ChunkSnapshot.fill` 9 %, `LodWorld.ingest` 8 %) 17 % |
+| `farfield-stream` | 388 | `SurfaceIndex.hidden` 97 %, two thirds of it from `underSurface` per fetched key: a region's surface computed again whenever the region changed, which is every batch at the generation front |
+| `farfield-server-maintenance` | 293 | `LodWorld.write`: zstd compression 66 %, `prunePalette` 18 % |
+| `Server thread` | 6 of 1,155 | Farfield's hooks under 1 % of the game's own thread |
+
+So the 9.2 ms a chunk of the review are mostly the coarse levels built
+again, not the ingest. `buildMips` runs every 250 ms and rebuilds every dirty
+parent from level 1 to 15, each from its 8 children read back from the store:
+at the generation front the same coarse parents (levels 4 and up, a handful
+a level) are rebuilt at every batch. 19,581 of the 67,211 sections built in
+the run came out unchanged.
+
+Leads, by size:
+
+| Lead | Gain (estimate) | Image |
+|---|---|---|
+| S1. Coarse levels built less often while chunks keep coming: level L at most every `250 ms << (L - 3)` from level 4, the dirty set kept | most of the levels-4-and-up share, about a third of the workers' time (to measure) | identical once built; a far coarse section of new terrain reaches clients up to a few seconds later (the preview stands there meanwhile) |
+| S2. The children just written kept decoded (a small cache per world) instead of read back and decoded | up to the 12 % read share | identical |
+| S3. The stream's surface per region kept between batches: computed again only for the columns written | most of the stream's 6.7 s a minute | identical |
+| S4. The review's own items (air sections in `fillBlocks`, `writeOctant` per voxel) | under 10 % of the workers each | identical |
+
+The user: "go S1 S2 S3". Built, then measured on the same run:
+
+- S3 built (`SurfaceIndex.hidden` with the floors kept per column and the
+  fingerprint of its sections' versions, `StreamServer.regionFloors`): the
+  stream threads' processor time in the flight's minute went from 6.7 s to
+  1.6, 1.9 and 2.0 s in three runs; their samples from 388 to 97.
+- S2 built (`LodWorld.written`: the sections written since their parents'
+  last build kept decoded, at most 1,024, dropped once the level above is
+  built): the children read back from the store went from 12.1 % to 7.6 %
+  of the workers' samples (the siblings not written in the same batch are
+  still read). A unit test builds the same parents, byte for byte, with the
+  children kept and read back.
+- S1 built, measured, and dropped. With temporary counters, the parents
+  built in the flight's minute: 13,493 paced against 15,825 unpaced (levels 4
+  and up 1,126 against 3,080), but the workers' time per chunk was 7.8 ms
+  paced and 7.0 ms unpaced, inside the spread between runs (7.0 to 7.9 ms):
+  the coarse parents are mostly air and uniform bricks, cheap to build. A
+  delay of the coarse levels for no measured gain: removed.
+- Seen in the counters, not built: level 1 is built 7,500 to 7,800 times a
+  minute for 4,700 to 4,900 chunks, about 1.6 times a chunk: a level-1
+  parent spans 4 x 4 chunks and is built again at every batch that brings
+  one of them. The lead for a later pass (it is the near terrain, so any
+  delay there shows).
+- The workers' time per chunk over the four runs: 7.9 ms before, then 7.0,
+  7.8 and 7.0 ms; the change is within the spread.
+- Then, asked by the user ("est ce qu'on peut y faire quelque chose sans
+  changer le rendu ?", then "go 1"): parents built from their changed
+  octants only. Measured first with a temporary histogram: in the flight's
+  minute 15,470 parents built, with 2.2 of their 8 children written since
+  their last build on average (1 child: 5,440; 2: 5,678; 4: 3,451). Built:
+  `LodWorld.changedOctants` marks the octant of each child written (before
+  the parent is marked dirty), the build takes the mask before reading any
+  child, and `MipBuilder.build(children, finest, stored, keep)` copies the
+  kept octants from the stored parent (`copyOctant`, written through the
+  same `writeOctant`) and downsamples the others; a rebuild of the coarse
+  levels, a mip-rules upgrade, or a parent without a stored copy builds
+  whole. A unit test builds the same parents byte for byte as whole builds
+  (5 rounds, chunks on both sides of the origin, over 50 parents built in
+  part). Measured: the workers' time per chunk in the flight's minute 5.1 ms
+  (24.2 s for 4,736 snapshots) against 7.0 to 7.9 ms in the four runs
+  before; profile samples 2,336 against 3,485 and 3,661 for the same chunk
+  count. `copyOctant` is now 13.7 % of the workers, `downsample` 40.1 %. The server's workers are
+  not its main cost: the noise preview takes 47 to 96 s a minute against
+  their 26 to 37 s.
 
 ## Answers (2026-11-15)
 

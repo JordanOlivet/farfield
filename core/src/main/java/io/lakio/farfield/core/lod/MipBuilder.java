@@ -137,12 +137,28 @@ public final class MipBuilder {
      *                       come from their materials, not their fill)
      */
     public LodSection build(LodSection[] children, boolean childrenFinest) {
+        return build(children, childrenFinest, null, 0);
+    }
+
+    /**
+     * Like {@link #build(LodSection[], boolean)}, with the octants of
+     * {@code keep} (bit {@code (oy * 2 + oz) * 2 + ox}) taken from
+     * {@code stored}, a parent built before from the same children there: an
+     * octant depends on its own child alone, so the result is the parent the
+     * eight children would build. Their entries in {@code children} are not read.
+     */
+    public LodSection build(LodSection[] children, boolean childrenFinest, LodSection stored, int keep) {
         this.childrenFinest = childrenFinest;
         LodSection parent = new LodSection(airMaterial);
         for (int oy = 0; oy < 2; oy++) {
             for (int oz = 0; oz < 2; oz++) {
                 for (int ox = 0; ox < 2; ox++) {
-                    LodSection child = children[(oy * 2 + oz) * 2 + ox];
+                    int i = (oy * 2 + oz) * 2 + ox;
+                    if ((keep >> i & 1) != 0) {
+                        copyOctant(stored, parent, ox * OCTANT, oy * OCTANT, oz * OCTANT);
+                        continue;
+                    }
+                    LodSection child = children[i];
                     if (child != null) {
                         downsample(child, parent, ox * OCTANT, oy * OCTANT, oz * OCTANT);
                     }
@@ -187,6 +203,39 @@ public final class MipBuilder {
         }
         writeOctant(parent, baseX, baseY, baseZ);
         downsampleBiomes(child, parent, baseX, baseY, baseZ);
+    }
+
+    /** One octant of a parent built before, written as {@link #downsample} writes its child's. */
+    private void copyOctant(LodSection stored, LodSection parent, int baseX, int baseY, int baseZ) {
+        NibbleBricks sky = stored.skyLight();
+        NibbleBricks block = stored.blockLight();
+        NibbleBricks fill = stored.fill();
+        for (int y = 0; y < OCTANT; y++) {
+            for (int z = 0; z < OCTANT; z++) {
+                for (int x = 0; x < OCTANT; x++) {
+                    int i = (y * OCTANT + z) * OCTANT + x;
+                    int px = baseX + x;
+                    int py = baseY + y;
+                    int pz = baseZ + z;
+                    octantMaterials[i] = stored.material(px, py, pz);
+                    octantSky[i] = (byte) sky.get(px, py, pz);
+                    octantBlock[i] = (byte) block.get(px, py, pz);
+                    octantFill[i] = (byte) fill.get(px, py, pz);
+                }
+            }
+        }
+        writeOctant(parent, baseX, baseY, baseZ);
+        int cells = LodSection.BIOME_CELLS_PER_AXIS / 2;
+        for (int cy = 0; cy < cells; cy++) {
+            for (int cz = 0; cz < cells; cz++) {
+                for (int cx = 0; cx < cells; cx++) {
+                    int bx = baseX / 4 + cx;
+                    int by = baseY / 4 + cy;
+                    int bz = baseZ / 4 + cz;
+                    parent.setBiome(bx, by, bz, stored.biome(bx, by, bz));
+                }
+            }
+        }
     }
 
     private static void fillOctant(int[] target, int bx, int by, int bz, int value) {

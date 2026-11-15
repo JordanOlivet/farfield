@@ -27,6 +27,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.LongConsumer;
 
@@ -83,6 +84,30 @@ public final class LodWorld implements AutoCloseable {
      */
     @SuppressWarnings("unchecked")
     private final Set<Long>[] rebuild = new Set[LEVELS];
+    /**
+     * Sections written since their parents were last built, per level, kept
+     * decoded: {@link #buildParent} takes a child from here instead of reading
+     * it back and decoding it. A level's are dropped once the level above has
+     * no dirty parent left; at most {@link #KEEP_WRITTEN} in all.
+     */
+    @SuppressWarnings("unchecked")
+    private final Map<Long, LodSection>[] written = new Map[LEVELS];
+    /**
+     * Per dirty parent, the octants whose child was written since the
+     * parent's last build (bit {@code (oy * 2 + oz) * 2 + ox}); set before the
+     * parent is marked dirty, taken before its children are read.
+     */
+    @SuppressWarnings("unchecked")
+    private final Map<Long, Integer>[] changedOctants = new Map[LEVELS];
+    private final AtomicInteger writtenKept = new AtomicInteger();
+    /** Sections kept decoded at most (a level-0 section is about 10 to 40 KB). */
+    private static final int KEEP_WRITTEN = 1024;
+    /** Off in a test that compares with sections read back. */
+    boolean keepWritten = true;
+    /** Off in a test that compares with parents built from all eight children. */
+    boolean partialBuilds = true;
+    /** Parents built with some octants taken from their stored copy (for tests). */
+    final LongAdder partialParents = new LongAdder();
     /**
      * Version of the mip rules the stored coarse levels were built with; a
      * world built with older rules rebuilds them all once, from level 0
@@ -150,6 +175,8 @@ public final class LodWorld implements AutoCloseable {
         }
         for (int level = 0; level < LEVELS; level++) {
             dirty[level] = ConcurrentHashMap.newKeySet();
+            written[level] = new ConcurrentHashMap<>();
+            changedOctants[level] = new ConcurrentHashMap<>();
             rebuild[level] = ConcurrentHashMap.newKeySet();
         }
         mips = ThreadLocal.withInitial(() -> new MipBuilder(air, materials));
@@ -410,6 +437,7 @@ public final class LodWorld implements AutoCloseable {
      */
     public void putRecord(long key, byte[] record, int offset, int length) throws IOException {
         store.writeRecord(key, record, offset, length);
+        forgetWritten(key);
         sectionsWritten.increment();
         for (LongConsumer l : listeners) {
             l.accept(key);
@@ -427,6 +455,7 @@ public final class LodWorld implements AutoCloseable {
      */
     public void putSection(long key, LodSection section) throws IOException {
         store.write(key, section);
+        forgetWritten(key);
         sectionsWritten.increment();
         for (LongConsumer l : listeners) {
             l.accept(key);
@@ -600,20 +629,70 @@ public final class LodWorld implements AutoCloseable {
         section.prunePalette();
         section.compactBiomes();
         ByteWriter raw = store.encode(section);
+        int level = LodKey.level(key);
         if (oldEncoding != null && Arrays.equals(oldEncoding, 0, oldEncoding.length, raw.array(), 0, raw.length())) {
             sectionsUnchanged.increment();
+            if (markParent) {
+                // A sibling's change can still build its parent.
+                keepWritten(level, key, section);
+            }
             return false;
         }
         store.writeEncoded(key, raw.array(), raw.length());
         sectionsWritten.increment();
-        int level = LodKey.level(key);
+        if (markParent) {
+            keepWritten(level, key, section);
+        } else {
+            forgetWritten(key);
+        }
         if (markParent && level + 1 < LEVELS) {
-            dirty[level + 1].add(LodKey.parent(key));
+            long parent = LodKey.parent(key);
+            int octant = ((LodKey.y(key) & 1) * 2 + (LodKey.z(key) & 1)) * 2 + (LodKey.x(key) & 1);
+            // The octant first: a builder that takes the parent finds it.
+            changedOctants[level + 1].merge(parent, 1 << octant, (a, b) -> a | b);
+            dirty[level + 1].add(parent);
         }
         for (LongConsumer l : listeners) {
             l.accept(key);
         }
         return true;
+    }
+
+    /**
+     * Keeps a section just written (or found unchanged) for its parent's
+     * build. Its writer drops it at once and nothing changes it afterwards:
+     * an ingest reads a new copy from the store.
+     */
+    private void keepWritten(int level, long key, LodSection section) {
+        if (!keepWritten || level + 1 >= LEVELS) {
+            return;
+        }
+        if (written[level].put(key, section) == null && writtenKept.incrementAndGet() > KEEP_WRITTEN) {
+            if (written[level].remove(key) != null) {
+                writtenKept.decrementAndGet();
+            }
+        }
+    }
+
+    private void forgetWritten(long key) {
+        if (written[LodKey.level(key)].remove(key) != null) {
+            writtenKept.decrementAndGet();
+        }
+    }
+
+    /** Drops the sections kept for a level's parents, all built. */
+    private void dropWritten(int level) {
+        for (Long key : written[level].keySet()) {
+            if (written[level].remove(key) != null) {
+                writtenKept.decrementAndGet();
+            }
+        }
+    }
+
+    /** A child for {@link #buildParent}: kept decoded if just written, else read. */
+    private LodSection child(long key) throws IOException {
+        LodSection kept = written[LodKey.level(key)].get(key);
+        return kept != null ? kept : store.read(key);
     }
 
     /** True when some parent waits for {@link #buildMips}. */
@@ -647,19 +726,31 @@ public final class LodWorld implements AutoCloseable {
     }
 
     private int buildMipLevels(ExecutorService executor, int perLevel) throws IOException {
-        int written = 0;
+        int built = 0;
         for (int level = 1; level < LEVELS; level++) {
-            List<Long> keys = new ArrayList<>(Math.min(perLevel, dirty[level].size()));
-            for (Long key : dirty[level]) {
-                if (keys.size() >= perLevel) {
-                    break;
-                }
-                keys.add(key);
-            }
-            dirty[level].removeAll(keys);
-            written += buildAll(executor, keys, true);
+            built += buildLevel(executor, level, perLevel);
         }
-        return written;
+        return built;
+    }
+
+    private int buildLevel(ExecutorService executor, int level, int perLevel) throws IOException {
+        if (dirty[level].isEmpty()) {
+            dropWritten(level - 1);
+            return 0;
+        }
+        List<Long> keys = new ArrayList<>(Math.min(perLevel, dirty[level].size()));
+        for (Long key : dirty[level]) {
+            if (keys.size() >= perLevel) {
+                break;
+            }
+            keys.add(key);
+        }
+        dirty[level].removeAll(keys);
+        int built = buildAll(executor, keys, true);
+        if (dirty[level].isEmpty()) {
+            dropWritten(level - 1);
+        }
+        return built;
     }
 
     /** Builds parents, in parallel on {@code executor} when given; returns those written. */
@@ -699,24 +790,51 @@ public final class LodWorld implements AutoCloseable {
         return written;
     }
 
+    /**
+     * Builds a parent from its children. A dirty parent whose stored copy is
+     * there takes the octants of children not written since its last build
+     * from that copy, and downsamples only the others: an octant depends on
+     * its own child alone ({@link MipBuilder}), and at the generation front a
+     * parent had 2.2 of its 8 children changed on average (the dedicated-server
+     * run of 2026-11-15). A rebuild of the coarse levels builds whole parents.
+     */
     private boolean buildParent(long key, boolean markParent) throws IOException {
         int level = LodKey.level(key);
+        // Taken before the children are read: a child written meanwhile marks it again.
+        Integer changed = markParent ? changedOctants[level].remove(key) : null;
+        int[] length = new int[1];
+        byte[] old = store.readEncoded(key, length);
+        byte[] oldCopy = old == null ? null : Arrays.copyOf(old, length[0]);
+        int keep = changed != null && oldCopy != null && partialBuilds && mipsToUpgrade == 0 && !rebuilding()
+                ? ~changed & 0xFF : 0;
         int x = LodKey.x(key);
         int y = LodKey.y(key);
         int z = LodKey.z(key);
         LodSection[] children = new LodSection[8];
         boolean any = false;
         for (int i = 0; i < 8; i++) {
-            children[i] = store.read(LodKey.pack(level - 1, x * 2 + (i & 1), y * 2 + (i >> 2), z * 2 + ((i >> 1) & 1)));
+            long childKey = LodKey.pack(level - 1, x * 2 + (i & 1), y * 2 + (i >> 2), z * 2 + ((i >> 1) & 1));
+            if ((keep >> i & 1) != 0) {
+                // Kept from the stored parent; an absent child leaves its octant empty, as in a whole build.
+                if (store.contains(childKey)) {
+                    any = true;
+                } else {
+                    keep &= ~(1 << i);
+                }
+                continue;
+            }
+            children[i] = child(childKey);
             any |= children[i] != null;
         }
         if (!any) {
             return false;
         }
-        LodSection parent = mips.get().build(children, level - 1 == 0);
-        int[] length = new int[1];
-        byte[] old = store.readEncoded(key, length);
-        byte[] oldCopy = old == null ? null : Arrays.copyOf(old, length[0]);
+        LodSection stored = null;
+        if (keep != 0) {
+            stored = store.decode(oldCopy, 0, oldCopy.length);
+            partialParents.increment();
+        }
+        LodSection parent = mips.get().build(children, level - 1 == 0, stored, keep);
         return write(key, parent, oldCopy, markParent);
     }
 

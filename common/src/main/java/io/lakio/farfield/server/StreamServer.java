@@ -103,6 +103,14 @@ public final class StreamServer {
     private record Hidden(long fingerprint, java.util.Set<Long> keys) {
     }
     /**
+     * Per world, the floor of each level-0 column a region's surface read, with
+     * the fingerprint of its sections' versions: a region written again reads
+     * only its changed columns ({@link SurfaceIndex#hidden(long[], long[],
+     * SurfaceIndex.Sections, io.lakio.farfield.core.mesh.MaterialClassifier,
+     * java.util.function.IntPredicate, Map)}).
+     */
+    private final Map<LodWorld, Map<Long, long[]>> regionFloors = new ConcurrentHashMap<>();
+    /**
      * The floor of each level-0 section column a push checked (ADR-013's
      * surface), per world; a write in the column drops it.
      */
@@ -530,9 +538,15 @@ public final class StreamServer {
             return cached.keys();
         }
         long[] array = keys.stream().mapToLong(Long::longValue).toArray();
+        long[] versionArray = versions.stream().mapToLong(Long::longValue).toArray();
+        Map<Long, long[]> kept = regionFloors.computeIfAbsent(world, w -> new ConcurrentHashMap<>());
+        if (kept.size() > 1 << 18) {
+            kept.clear(); // a long flight: read again on demand
+        }
         java.util.Set<Long> under;
         try {
-            under = java.util.Set.copyOf(SurfaceIndex.hidden(array, world::read, world.materials(), m -> leaves(world, m)));
+            under = java.util.Set.copyOf(SurfaceIndex.hidden(array, versionArray, world::read, world.materials(),
+                    m -> leaves(world, m), kept));
         } catch (IOException | RuntimeException e) {
             Farfield.LOG.warn("LOD streaming: surface of region {} {} {} failed, sending all", level, rx, rz, e);
             under = java.util.Set.of();

@@ -67,16 +67,50 @@ public final class SurfaceIndex {
      */
     public static List<Long> hidden(long[] keys, Sections sections, MaterialClassifier classes,
                                     IntPredicate seeThrough) throws IOException {
+        return hidden(keys, null, sections, classes, seeThrough, null);
+    }
+
+    /**
+     * {@link #hidden(long[], Sections, MaterialClassifier, IntPredicate)},
+     * with the floors of columns whose sections did not change kept between
+     * calls: {@code kept} maps a column ({@code LodKey.pack(0, x, 0, z)}) to
+     * the fingerprint of its sections' keys and {@code versions} and the floor
+     * found for them. At the generation front a region changes at every batch,
+     * a few of its columns at a time.
+     */
+    public static List<Long> hidden(long[] keys, long[] versions, Sections sections, MaterialClassifier classes,
+                                    IntPredicate seeThrough, Map<Long, long[]> kept) throws IOException {
         Map<Long, List<Long>> columns = new HashMap<>();
-        for (long key : keys) {
+        Map<Long, Long> fingerprints = new HashMap<>();
+        for (int i = 0; i < keys.length; i++) {
+            long key = keys[i];
             if (LodKey.level(key) == 0) {
-                columns.computeIfAbsent(LodKey.pack(0, LodKey.x(key), 0, LodKey.z(key)), c -> new ArrayList<>()).add(key);
+                long column = LodKey.pack(0, LodKey.x(key), 0, LodKey.z(key));
+                columns.computeIfAbsent(column, c -> new ArrayList<>()).add(key);
+                if (versions != null) {
+                    // Order-independent: the index lists keys in no fixed order.
+                    fingerprints.merge(column, key * 0x9E3779B97F4A7C15L ^ versions[i] * 0xC2B2AE3D27D4EB4FL,
+                            Long::sum);
+                }
             }
         }
         Map<Long, Integer> floors = new HashMap<>();
         for (Map.Entry<Long, List<Long>> column : columns.entrySet()) {
+            long fingerprint = 0;
+            if (kept != null && versions != null) {
+                fingerprint = fingerprints.get(column.getKey()) ^ column.getValue().size();
+                long[] known = kept.get(column.getKey());
+                if (known != null && known[0] == fingerprint) {
+                    floors.put(column.getKey(), (int) known[1]);
+                    continue;
+                }
+            }
             column.getValue().sort((a, b) -> Integer.compare(LodKey.y(b), LodKey.y(a)));
-            floors.put(column.getKey(), floor(column.getValue(), sections, classes, seeThrough));
+            int floor = floor(column.getValue(), sections, classes, seeThrough);
+            floors.put(column.getKey(), floor);
+            if (kept != null && versions != null) {
+                kept.put(column.getKey(), new long[]{fingerprint, floor});
+            }
         }
         List<Long> hidden = new ArrayList<>();
         // A column without any section is not known here: everything around stays.

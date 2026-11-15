@@ -76,6 +76,41 @@ class SurfaceIndexTest {
     }
 
     @Test
+    void keptFloorsGiveTheSameSectionsAndOnlyChangedColumnsAreReadAgain() throws IOException {
+        Map<Long, LodSection> store = land();
+        Map<Long, Long> versions = new HashMap<>();
+        store.keySet().forEach(k -> versions.put(k, 1L));
+        Map<Long, long[]> kept = new HashMap<>();
+        int[] reads = new int[1];
+        SurfaceIndex.Sections counted = key -> {
+            reads[0]++;
+            return store.get(key);
+        };
+        long[] keys = store.keySet().stream().mapToLong(Long::longValue).toArray();
+        long[] v = new long[keys.length];
+        for (int i = 0; i < keys.length; i++) {
+            v[i] = versions.get(keys[i]);
+        }
+        Set<Long> first = Set.copyOf(SurfaceIndex.hidden(keys, v, counted, CLASSES, m -> m == LEAVES, kept));
+        assertEquals(hidden(store), first);
+        int firstReads = reads[0];
+
+        // Column (6, 7) turns to sea, a new version of its two upper sections.
+        store.put(LodKey.pack(0, 6, 1, 7), layered(0, WATER, 31));
+        store.put(LodKey.pack(0, 6, 0, 7), layered(10, WATER, 32));
+        for (int i = 0; i < keys.length; i++) {
+            if (LodKey.x(keys[i]) == 6 && LodKey.z(keys[i]) == 7 && LodKey.y(keys[i]) >= 0) {
+                v[i] = 2;
+            }
+        }
+        reads[0] = 0;
+        Set<Long> second = Set.copyOf(SurfaceIndex.hidden(keys, v, counted, CLASSES, m -> m == LEAVES, kept));
+        assertEquals(hidden(store), second);
+        assertTrue(!second.equals(first));
+        assertTrue(reads[0] > 0 && reads[0] <= 3, "the changed column only: " + reads[0] + " of " + firstReads);
+    }
+
+    @Test
     void aSectionBesideALowerColumnStays() throws IOException {
         // Column (6, 7) is sea down to a floor at y 9: the section of (6, 6) from 0 to 31
         // faces it from the side (an overhang seen from the sea), so it stays.

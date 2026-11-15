@@ -352,4 +352,141 @@ class LodWorldTest {
             assertNull(world.read(LodKey.pack(0, 100, 0, 100)));
         }
     }
+
+    /** A chunk of mixed materials, sky light and biomes in sections -1 to 1, from {@code random}. */
+    private static ChunkData randomChunk(LodWorld world, int cx, int cz, java.util.Random random) {
+        int[] blocks = {world.air(), world.blockStates().id("minecraft:stone"),
+                world.blockStates().id("minecraft:dirt"), world.blockStates().id("minecraft:water"),
+                world.blockStates().id("minecraft:oak_leaves")};
+        int[] biomes = {world.biomes().id("minecraft:plains"), world.biomes().id("minecraft:forest")};
+        ChunkData chunk = new ChunkData();
+        chunk.beginLive(cx, cz);
+        int ground = 8 + random.nextInt(24);
+        for (int sy = -1; sy <= 1; sy++) {
+            SectionData s = chunk.addLiveSection(sy);
+            s.setBlockPalette(blocks, blocks.length);
+            short[] indices = s.blockIndicesForWrite();
+            for (int i = 0; i < SectionData.BLOCK_COUNT; i++) {
+                int y = sy * 16 + (i >> 8);
+                int under = y < ground ? 1 + random.nextInt(2) : y < ground + 2 ? random.nextInt(5) : 0;
+                indices[i] = (short) under;
+            }
+            s.setBiomePalette(biomes, 2);
+            byte[] cells = s.biomeIndicesForWrite();
+            for (int i = 0; i < SectionData.BIOME_COUNT; i++) {
+                cells[i] = (byte) random.nextInt(2);
+            }
+            byte[] sky = new byte[SectionData.LIGHT_BYTES];
+            random.nextBytes(sky);
+            s.setSkyLight(sky);
+        }
+        return chunk;
+    }
+
+    /** Every stored key of the region (0, 0) on every level, encoded. */
+    private static java.util.Map<Long, byte[]> encoded(LodWorld world) throws IOException {
+        java.util.Map<Long, byte[]> out = new java.util.HashMap<>();
+        io.lakio.farfield.core.storage.SectionCodec codec = new io.lakio.farfield.core.storage.SectionCodec();
+        for (int level = 0; level < LodWorld.LEVELS; level++) {
+            List<Long> keys = new ArrayList<>();
+            world.forEachVersion(level, 0, 0, (k, v) -> keys.add(k));
+            for (long key : keys) {
+                io.lakio.farfield.core.util.ByteWriter w = new io.lakio.farfield.core.util.ByteWriter(1024);
+                codec.encode(world.read(key), w);
+                out.put(key, w.toByteArray());
+            }
+        }
+        return out;
+    }
+
+    @Test
+    void childrenKeptDecodedBuildTheSameParentsAsChildrenReadBack() throws IOException {
+        var pool = Executors.newFixedThreadPool(3);
+        try (LodWorld kept = LodWorld.open(dir.resolve("kept"), MaterialTable.SIMPLE);
+             LodWorld read = LodWorld.open(dir.resolve("read"), MaterialTable.SIMPLE)) {
+            read.keepWritten = false;
+            java.util.Random seeds = new java.util.Random(7);
+            for (int round = 0; round < 4; round++) {
+                long seed = seeds.nextLong();
+                for (LodWorld world : List.of(kept, read)) {
+                    java.util.Random random = new java.util.Random(seed);
+                    for (int cx = 0; cx < 6; cx++) {
+                        for (int cz = 0; cz < 6; cz++) {
+                            if (round == 0 || random.nextInt(3) == 0) {
+                                world.ingest(randomChunk(world, cx, cz, random));
+                            }
+                        }
+                    }
+                    world.flush(0);
+                    world.buildMips(pool);
+                }
+            }
+            java.util.Map<Long, byte[]> a = encoded(kept);
+            java.util.Map<Long, byte[]> b = encoded(read);
+            assertEquals(b.keySet(), a.keySet());
+            assertTrue(a.size() > 40, "sections on every level: " + a.size());
+            for (long key : a.keySet()) {
+                assertTrue(java.util.Arrays.equals(b.get(key), a.get(key)), LodKey.toString(key));
+            }
+        } finally {
+            pool.shutdown();
+        }
+    }
+
+    /** Every stored key of the regions around the origin on every level, encoded. */
+    private static java.util.Map<Long, byte[]> encodedAround(LodWorld world) throws IOException {
+        java.util.Map<Long, byte[]> out = new java.util.HashMap<>();
+        io.lakio.farfield.core.storage.SectionCodec codec = new io.lakio.farfield.core.storage.SectionCodec();
+        for (int level = 0; level < LodWorld.LEVELS; level++) {
+            for (int rz = -1; rz <= 0; rz++) {
+                for (int rx = -1; rx <= 0; rx++) {
+                    List<Long> keys = new ArrayList<>();
+                    world.forEachVersion(level, rx, rz, (k, v) -> keys.add(k));
+                    for (long key : keys) {
+                        io.lakio.farfield.core.util.ByteWriter w = new io.lakio.farfield.core.util.ByteWriter(1024);
+                        codec.encode(world.read(key), w);
+                        out.put(key, w.toByteArray());
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    @Test
+    void parentsBuiltFromTheirChangedOctantsEqualParentsBuiltWhole() throws IOException {
+        var pool = Executors.newFixedThreadPool(3);
+        try (LodWorld partial = LodWorld.open(dir.resolve("partial"), MaterialTable.SIMPLE);
+             LodWorld whole = LodWorld.open(dir.resolve("whole"), MaterialTable.SIMPLE)) {
+            whole.partialBuilds = false;
+            java.util.Random seeds = new java.util.Random(11);
+            for (int round = 0; round < 5; round++) {
+                long seed = seeds.nextLong();
+                for (LodWorld world : List.of(partial, whole)) {
+                    java.util.Random random = new java.util.Random(seed);
+                    // Chunks on both sides of the origin: octants of negative coordinates too.
+                    for (int cx = -6; cx < 6; cx++) {
+                        for (int cz = -6; cz < 6; cz++) {
+                            if (round == 0 || random.nextInt(4) == 0) {
+                                world.ingest(randomChunk(world, cx, cz, random));
+                            }
+                        }
+                    }
+                    world.flush(0);
+                    world.buildMips(pool);
+                }
+            }
+            assertTrue(partial.partialParents.sum() > 50, "parents built in part: " + partial.partialParents.sum());
+            assertEquals(0, whole.partialParents.sum());
+            java.util.Map<Long, byte[]> a = encodedAround(partial);
+            java.util.Map<Long, byte[]> b = encodedAround(whole);
+            assertEquals(b.keySet(), a.keySet());
+            assertTrue(a.size() > 100, "sections on every level: " + a.size());
+            for (long key : a.keySet()) {
+                assertTrue(java.util.Arrays.equals(b.get(key), a.get(key)), LodKey.toString(key));
+            }
+        } finally {
+            pool.shutdown();
+        }
+    }
 }
