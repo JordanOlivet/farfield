@@ -1,0 +1,1 @@
+Progress-log edit: "Reproduced the same with the shipped jar (1838fbd) on the Fabric pack at 4\nchunks, looking down from (0, 140, 0): not caused by this work; the 12-chunk\nbenches kept that band off screen."

@@ -1,0 +1,1 @@
+// The preview's residents only: the real ones were walked too, then left by the test. LongIterator keys = previewResident.iterator(); while (keys.hasNext()) { long k = keys.nextLong(); if (previewLayer.touched(k, changedTiles)) {

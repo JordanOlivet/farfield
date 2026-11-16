@@ -1,0 +1,1 @@
+Output of the probe: "725 PreviewLayer$2.maskAt:1416 <- PreviewLayer$2.real:1395 <- PreviewVoxels.build:399" and "100 PreviewLayer$2.maskAt:1416 <- PreviewLayer$2.real:1395 <- PreviewVoxels.features:933". Command: jfr print --json --stack-depth 8 --events jdk.ExecutionSample probe-client.jfr, filtering on "farfield-mesher".

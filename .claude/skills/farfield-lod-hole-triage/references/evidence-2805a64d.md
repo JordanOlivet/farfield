@@ -1,0 +1,1 @@
+21:frames on 22:replay east every 100 24:frames off 30: ... --jvm-arg=-Dfarfield.frames.dumps=400 | Per session: far bands (LOD-layer flashes 4 rows high or more, more than 70 blocks away on the sea plane) ... The lighter split needs Pillow; without it only the counts print.

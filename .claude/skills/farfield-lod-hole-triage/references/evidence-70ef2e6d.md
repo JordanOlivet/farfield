@@ -1,0 +1,1 @@
+Progress-log edit: "A pre-existing bug at small game views,\nnot looked into yet." User: "Ah bah oui cherche, c'est pas acceptable de les laisser"

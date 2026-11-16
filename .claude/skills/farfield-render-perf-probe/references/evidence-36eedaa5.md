@@ -1,0 +1,1 @@
+Reading the pack server's config at a guessed path under its compose folder returned "No such file or directory" for `data/server.properties`; the compose file's `volumes:` line named the real host data folder, elsewhere.

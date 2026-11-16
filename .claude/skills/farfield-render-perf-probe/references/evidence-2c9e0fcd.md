@@ -1,0 +1,1 @@
+Vol A/B lancé : 3 manches × 2 jars, environ 40 min, PC à laisser libre. | bash $S/flight-ab.sh 12 fr1 fn1 fr2 fn2 fr3 fn3 > $S/bench-flight.out 2>&1; echo exit $? | 30: ... --jvm-arg=-XX:+ZGenerational --jvm-arg=-Dfarfield.frames.dumps=400 --window minimized

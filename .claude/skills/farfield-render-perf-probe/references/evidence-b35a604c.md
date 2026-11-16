@@ -1,0 +1,1 @@
+cp $F $S/LodRenderer.java.fix; python - <<'EOF' ... ; ./gradlew.bat build --no-daemon -q -x test > /tmp/b.log 2>&1; ... cp $S/LodRenderer.java.fix $F; grep -c TEMP $F; bash $S/probe-rd.sh 4 probe7 > $S/bench-probe7.out 2>&1
