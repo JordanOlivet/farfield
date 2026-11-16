@@ -31,4 +31,6 @@ A client joined to a server with Farfield draws the server's LODs, mirrored loca
 
 20. **The stream index is written on the client message thread only.** `StreamClient.receive` runs on the client thread and updates `remote`, `knownRegions` and `askedRegions` (`index`, `section`, `answer`, `changed`). A reader on another thread, such as the preview selection thread (ADR-143), must go through a lock or a queue of requests: a plain read races those writes. Check every new reader of these fields for its thread before using it.
 
+21. **The stream's KB budget is a server setting, and the log shows it.** The default player cap is 1,024 KB/s, so the 10 s `KB sent` line tops out near 10,240 KB. On the pack server (2026-11-15) the user raised `player_kbps` to 4096 and `total_kbps` to 40960 and felt the largest difference of the session in client/server mode. The server's log showed the stream sending up to 25,557 KB in 10 s with never more than 27 messages queued, so the old cap would have throttled the bursts. When a streamed view fills slowly, read the cap and the `KB sent` line before changing code.
+
 Renderer details: `farfield-lod-renderer`. Launch and log reading: `farfield-dev-client-check`.
