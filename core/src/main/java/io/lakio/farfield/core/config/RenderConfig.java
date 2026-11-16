@@ -20,14 +20,15 @@ import java.util.Properties;
  * the performance log lines (off by default: no log flood in play), the
  * light of the preview's light sources (ADR-117), and the kinds of features
  * the preview shows (plan item D.3, {@link #FEATURE_TREES} and the others,
- * a bit each).
+ * a bit each), and in single player the distance within which the preview
+ * grows the world's own features (a dedicated server's own setting there).
  * Missing or invalid keys take their default, out-of-range values are
  * clamped, so a hand-edited file never stops the game.
  */
 public record RenderConfig(boolean enabled, float voxelPixels, int textureDistance, boolean levelColors,
                            int fogDistance, int thickFogDistance, boolean noisePreview, int meshThreads,
                            int previewThreads, boolean performanceLogs, boolean previewLight,
-                           int previewFeatures, boolean fog) {
+                           int previewFeatures, boolean fog, int previewFeaturesDistance) {
 
     /** Bits of {@link #previewFeatures}: the preview's trees, plants, and its other features and villages. */
     public static final int FEATURE_TREES = 1;
@@ -66,9 +67,14 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
     public static final int DEFAULT_FOG_DISTANCE = DEFAULT_DRAW_DISTANCE;
     public static final int DEFAULT_THICK_FOG_DISTANCE = FOG_VANILLA;
 
-    /** Thread count meaning one per four logical processors ({@link #threads}). */
+    /** Thread count meaning one per three logical processors, at least one ({@link #threads}). */
     public static final int AUTO = 0;
-    public static final int MAX_THREADS = 8;
+    /**
+     * The most threads a file may name; the settings screen goes to this
+     * machine's logical processors ({@link #maxThreads}), and a count past
+     * them stands for them.
+     */
+    public static final int MAX_THREADS = 64;
 
     public static final RenderConfig DEFAULTS = new RenderConfig(true, DEFAULT_VOXEL_PIXELS, DEFAULT_TEXTURE_DISTANCE,
             false, DEFAULT_FOG_DISTANCE, DEFAULT_THICK_FOG_DISTANCE, true, AUTO, AUTO, false, true, ALL_FEATURES,
@@ -89,6 +95,7 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
     static final String PREVIEW_PLANTS = "preview_plants";
     static final String PREVIEW_OTHERS = "preview_others";
     static final String FOG = "fog";
+    static final String PREVIEW_FEATURES_DISTANCE = "preview_features_distance";
     /** Before ADR-034: true meant thick fog pushed back to the LOD horizon. Read only. */
     static final String EXTEND_DIMENSION_FOG = "extend_dimension_fog";
     private static final String ALL = "all";
@@ -109,6 +116,17 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
         meshThreads = clampThreads(meshThreads);
         previewThreads = clampThreads(previewThreads);
         previewFeatures &= ALL_FEATURES;
+        previewFeaturesDistance = Math.max(0, Math.min(ServerConfig.MAX_FEATURES_DISTANCE, previewFeaturesDistance));
+    }
+
+    /** The settings with the features' default distance. */
+    public RenderConfig(boolean enabled, float voxelPixels, int textureDistance, boolean levelColors,
+                        int fogDistance, int thickFogDistance, boolean noisePreview, int meshThreads,
+                        int previewThreads, boolean performanceLogs, boolean previewLight, int previewFeatures,
+                        boolean fog) {
+        this(enabled, voxelPixels, textureDistance, levelColors, fogDistance, thickFogDistance, noisePreview,
+                meshThreads, previewThreads, performanceLogs, previewLight, previewFeatures, fog,
+                ServerConfig.DEFAULT_FEATURES_DISTANCE);
     }
 
     /** The settings with the fog on (or off when {@code fogDistance} is {@link #FOG_OFF}). */
@@ -168,13 +186,20 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
 
     /**
      * The threads a setting stands for: itself, or for {@link #AUTO} one per
-     * three logical processors, 1 to 6 (8 logical processors: 2; 16: 5). A
-     * streamed client meshes every section the server pushes (ADR-077): 4 of
-     * 16 ran at their limit at the generation front. The game's own threads
-     * keep the rest.
+     * three logical processors, at least one (8 logical processors: 2; 16: 5;
+     * 32: 10). A streamed client meshes every section the server pushes
+     * (ADR-077): 4 of 16 ran at their limit at the generation front. The
+     * game's own threads keep the rest. No cap below the file's ceiling: the
+     * 6 of ADR-077 held a large machine to a small one's count (2026-11-16).
      */
     public static int threads(int setting, int processors) {
-        return setting == AUTO ? Math.max(1, Math.min(6, processors / 3)) : setting;
+        return setting == AUTO ? Math.max(1, Math.min(MAX_THREADS, processors / 3))
+                : Math.min(setting, maxThreads(processors));
+    }
+
+    /** The most threads a setting stands for on a machine of {@code processors} logical processors. */
+    public static int maxThreads(int processors) {
+        return Math.max(1, Math.min(MAX_THREADS, processors));
     }
 
     /**
@@ -238,7 +263,8 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
                 (bool(p, PREVIEW_TREES, true) ? FEATURE_TREES : 0)
                         | (bool(p, PREVIEW_PLANTS, true) ? FEATURE_PLANTS : 0)
                         | (bool(p, PREVIEW_OTHERS, true) ? FEATURE_OTHERS : 0),
-                bool(p, FOG, DEFAULTS.fog));
+                bool(p, FOG, DEFAULTS.fog),
+                intValue(p, PREVIEW_FEATURES_DISTANCE, DEFAULTS.previewFeaturesDistance));
     }
 
     /** Writes the file through a temporary file, so a crash mid-write keeps the previous one. */
@@ -280,8 +306,13 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
             out.write(PREVIEW_TREES + "=" + previewShows(FEATURE_TREES) + "\n");
             out.write(PREVIEW_PLANTS + "=" + previewShows(FEATURE_PLANTS) + "\n");
             out.write(PREVIEW_OTHERS + "=" + previewShows(FEATURE_OTHERS) + "\n");
-            out.write("# Threads that build LOD meshes, 1 to " + MAX_THREADS + ", or auto (one per four logical\n");
-            out.write("# processors, 1 to 4). Default auto.\n");
+            out.write("# Single player: distance in blocks within which the preview grows the world's own\n");
+            out.write("# features (0 to " + ServerConfig.MAX_FEATURES_DISTANCE + "); farther it draws a canopy from what\n");
+            out.write("# they grow in each biome, and their cost goes with the square of it. A dedicated server\n");
+            out.write("# has its own. Default " + ServerConfig.DEFAULT_FEATURES_DISTANCE + ".\n");
+            out.write(PREVIEW_FEATURES_DISTANCE + "=" + previewFeaturesDistance + "\n");
+            out.write("# Threads that build LOD meshes, 1 to the logical processors, or auto (one per three\n");
+            out.write("# logical processors, at least one). Default auto.\n");
             out.write(MESH_THREADS + "=" + threadsText(meshThreads) + "\n");
             out.write("# Threads that build the noise preview, the same way. Default auto.\n");
             out.write(PREVIEW_THREADS + "=" + threadsText(previewThreads) + "\n");
@@ -327,6 +358,18 @@ public record RenderConfig(boolean enabled, float voxelPixels, int textureDistan
             case "false", "off", "no" -> false;
             default -> fallback;
         };
+    }
+
+    private static int intValue(Properties p, String key, int fallback) {
+        String v = p.getProperty(key);
+        if (v == null) {
+            return fallback;
+        }
+        try {
+            return Integer.parseInt(v.trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
     }
 
     private static float floatValue(Properties p, String key, float fallback) {

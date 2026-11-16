@@ -222,7 +222,22 @@ public final class FarfieldSettingsScreen extends OptionsSubScreen {
         list.addBig(previewFeature("farfield.options.preview_trees", RenderConfig.FEATURE_TREES));
         list.addBig(previewFeature("farfield.options.preview_plants", RenderConfig.FEATURE_PLANTS));
         list.addBig(previewFeature("farfield.options.preview_others", RenderConfig.FEATURE_OTHERS));
+        // Single player: the integrated server's distance for the world's own features (a dedicated
+        // server has its own preview_features_distance). Steps of 50 blocks.
+        list.addBig(new OptionInstance<>("farfield.options.preview_features_distance",
+                OptionInstance.cachedConstantTooltip(Component.translatable(
+                        "farfield.options.preview_features_distance.tooltip")),
+                (caption, step) -> Options.genericValueLabel(caption, step == 0
+                        ? Component.translatable("farfield.options.preview_features_distance.off")
+                        : Component.translatable("farfield.options.fog.blocks", step * FEATURES_STEP)),
+                new OptionInstance.IntRange(0, io.lakio.farfield.core.config.ServerConfig.MAX_FEATURES_DISTANCE
+                        / FEATURES_STEP),
+                Math.round(RenderSettings.previewFeaturesDistance() / (float) FEATURES_STEP),
+                step -> RenderSettings.setPreviewFeaturesDistance(step * FEATURES_STEP)));
     }
+
+    /** Blocks a step of the features' distance slider: 1,250 (the default) is 25 of them. */
+    private static final int FEATURES_STEP = 50;
 
     /** Shown or hidden: one kind of the preview's features (plan item D.3). */
     private static OptionInstance<Boolean> previewFeature(String key, int feature) {
@@ -255,16 +270,22 @@ public final class FarfieldSettingsScreen extends OptionsSubScreen {
         RenderSettings.save();
     }
 
-    /** A thread count slider: Auto first (the count it stands for on this machine shown), then 1 to 8. */
+    /**
+     * A thread count slider: Auto first (the count it stands for on this
+     * machine shown), then 1 to this machine's logical processors.
+     */
     private static OptionInstance<Integer> threadSlider(String key, int value,
                                                         java.util.function.IntConsumer setter) {
+        int processors = Runtime.getRuntime().availableProcessors();
+        int max = RenderConfig.maxThreads(processors);
         return new OptionInstance<>(key,
-                OptionInstance.cachedConstantTooltip(Component.translatable(key + ".tooltip")),
+                OptionInstance.cachedConstantTooltip(Component.translatable(key + ".tooltip",
+                        RenderSettings.effectiveThreads(RenderConfig.AUTO), max)),
                 (caption, threads) -> Options.genericValueLabel(caption, threads == RenderConfig.AUTO
                         ? Component.translatable("farfield.options.threads.auto", RenderSettings.effectiveThreads(threads))
                         : Component.literal(Integer.toString(threads))),
-                new OptionInstance.IntRange(RenderConfig.AUTO, RenderConfig.MAX_THREADS),
-                value,
+                new OptionInstance.IntRange(RenderConfig.AUTO, max),
+                Math.min(value, max),
                 setter::accept);
     }
 

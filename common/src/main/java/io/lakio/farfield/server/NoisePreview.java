@@ -117,6 +117,8 @@ final class NoisePreview {
     private PreviewPregen pregen;
     /** The server's preview threads setting last logged; -1 before the first update. */
     private int loggedServerThreads = -1;
+    /** The features' distance last logged; -1 before the first schedule. */
+    private volatile int loggedFeaturesDistance = -1;
     /** When the pipeline last took in new chunks; the preview keeps half its threads until {@link #YIELD_NANOS} after. */
     private long lastIngest;
     private static final long YIELD_NANOS = 5_000_000_000L;
@@ -512,7 +514,16 @@ final class NoisePreview {
         int farthest = 0;
         List<long[]> candidates = new ArrayList<>();
         Set<Long> seen = new HashSet<>();
-        int features = StreamServer.settings().previewFeaturesDistance();
+        // A dedicated server's setting; in single player the player's own (the settings screen).
+        boolean dedicated = d.level.getServer().isDedicatedServer();
+        int features = dedicated ? StreamServer.settings().previewFeaturesDistance()
+                : RenderSettings.previewFeaturesDistance();
+        if (features != loggedFeaturesDistance) {
+            loggedFeaturesDistance = features;
+            Farfield.LOG.info("Noise preview: the world's own features grown within {} blocks of players ({})",
+                    features, dedicated ? "preview_features_distance in farfield-server.properties"
+                            : "the single player setting");
+        }
         for (ServerPlayer p : players) {
             Vec3 look = p.getLookAngle();
             double lookLength = Math.sqrt(look.x * look.x + look.z * look.z);

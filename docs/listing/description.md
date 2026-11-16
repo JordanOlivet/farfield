@@ -126,8 +126,10 @@ with Biomes O' Plenty and Terralith in the preview. Other LOD mods
 Mod Menu on Fabric, the mods list on NeoForge, or a key you bind in
 Controls > Key Binds > Farfield, in four tabs: Rendering (distant terrain
 on or off, detail, textures, fog distances), Preview (on or off, its
-light, its trees, plants and other features), Performance (building
-threads) and Debug (level colors, performance logs).
+light, its trees, plants and other features, and in single player the
+distance its features grow within), Performance (building threads, up to
+your computer's logical processors) and Debug (level colors, performance
+logs).
 
 Commands: `/farfield render`, `detail`, `textures`, `fog`, `preview`,
 `import`, `pregen`, `debug levels` in single player; on a server,

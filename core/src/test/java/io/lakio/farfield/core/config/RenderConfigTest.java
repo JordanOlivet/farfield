@@ -69,6 +69,25 @@ class RenderConfigTest {
     }
 
     @Test
+    void theFeaturesDistanceInSinglePlayer() throws IOException {
+        Path file = dir.resolve("farfield-client.properties");
+        assertEquals(ServerConfig.DEFAULT_FEATURES_DISTANCE, RenderConfig.DEFAULTS.previewFeaturesDistance());
+        Files.writeString(file, "lod_rendering=true\n", StandardCharsets.UTF_8);
+        assertEquals(ServerConfig.DEFAULT_FEATURES_DISTANCE, RenderConfig.read(file).previewFeaturesDistance());
+        Files.writeString(file, "preview_features_distance=600\n", StandardCharsets.UTF_8);
+        RenderConfig six = RenderConfig.read(file);
+        assertEquals(600, six.previewFeaturesDistance());
+        six.write(file);
+        assertEquals(six, RenderConfig.read(file));
+        Files.writeString(file, "preview_features_distance=99999\n", StandardCharsets.UTF_8);
+        assertEquals(ServerConfig.MAX_FEATURES_DISTANCE, RenderConfig.read(file).previewFeaturesDistance());
+        Files.writeString(file, "preview_features_distance=-5\n", StandardCharsets.UTF_8);
+        assertEquals(0, RenderConfig.read(file).previewFeaturesDistance());
+        Files.writeString(file, "preview_features_distance=far\n", StandardCharsets.UTF_8);
+        assertEquals(ServerConfig.DEFAULT_FEATURES_DISTANCE, RenderConfig.read(file).previewFeaturesDistance());
+    }
+
+    @Test
     void threadCounts() throws IOException {
         Path file = dir.resolve("farfield-client.properties");
         Files.writeString(file, "mesh_threads=AUTO\npreview_threads=99\n", StandardCharsets.UTF_8);
@@ -79,12 +98,19 @@ class RenderConfigTest {
         config = RenderConfig.read(file);
         assertEquals(RenderConfig.AUTO, config.meshThreads());
         assertEquals(RenderConfig.AUTO, config.previewThreads());
-        // Auto: one thread per four logical processors, 1 to 4.
+        // Auto: one thread per three logical processors, at least one, no cap below the file's ceiling.
         assertEquals(1, RenderConfig.threads(RenderConfig.AUTO, 2));
         assertEquals(2, RenderConfig.threads(RenderConfig.AUTO, 8));
         assertEquals(5, RenderConfig.threads(RenderConfig.AUTO, 16));
-        assertEquals(6, RenderConfig.threads(RenderConfig.AUTO, 64));
-        assertEquals(6, RenderConfig.threads(6, 4));
+        assertEquals(10, RenderConfig.threads(RenderConfig.AUTO, 32));
+        assertEquals(21, RenderConfig.threads(RenderConfig.AUTO, 64));
+        assertEquals(RenderConfig.MAX_THREADS, RenderConfig.threads(RenderConfig.AUTO, 1024));
+        // A count stands for itself up to the machine's logical processors.
+        assertEquals(12, RenderConfig.threads(12, 16));
+        assertEquals(4, RenderConfig.threads(6, 4));
+        assertEquals(16, RenderConfig.maxThreads(16));
+        assertEquals(1, RenderConfig.maxThreads(0));
+        assertEquals(RenderConfig.MAX_THREADS, RenderConfig.maxThreads(256));
         // While new chunks come in: half, rounded up, at least one.
         assertEquals(1, RenderConfig.yieldingThreads(1));
         assertEquals(1, RenderConfig.yieldingThreads(2));
