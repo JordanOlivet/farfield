@@ -798,6 +798,17 @@ Studied, not built:
   race with a mask being replaced, a build would then use one mask for all
   its columns instead of possibly two: a timing difference, not an image
   rule. Ready to build.
+- L7 built on "go L7": the mask object keeps the last four tiles asked and
+  their masks (one was not enough: a neighbor layer along a section's edge
+  goes from one tile to the other at every row). Mask lookups in the
+  mesher's samples: 1,049 of 14,322 (7.3 %) before, 643 of 12,730 with one
+  tile kept, 470 of 13,961 (3.4 %) with four. All that is left comes from
+  `buildFar` (514 of 527 callers): a far section's columns each lie in
+  another tile, so no per-build cache helps there; skipping them would need
+  to know a far area holds no real data without asking its tiles, which
+  coarse levels built later could contradict for a moment. The mesher's
+  processor time a job read 996, 985 and 1,062 us over the three runs (141k
+  to 154k jobs): the change is inside the spread between runs.
 
 Measured, no identical gain found:
 - Parents built again unchanged: 946 of about 15,000 in the flight's minute

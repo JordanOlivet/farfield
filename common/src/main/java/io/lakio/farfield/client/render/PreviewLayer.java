@@ -1470,11 +1470,30 @@ final class PreviewLayer {
                 return mask == null ? Integer.MIN_VALUE : mask[FLUID + chunk(chunkX, chunkZ)];
             }
 
+            /**
+             * The last tiles asked and their masks: a build asks once per column, and
+             * its columns lie in a few tiles, a layer along a section's edge going
+             * from one to the other at every row (a lookup per column was 4.8 % of
+             * the mesher, 2026-11-16). One mask object per build, on its thread.
+             */
+            private final long[] keptTiles = new long[4];
+            private final int[][] keptMasks = new int[4][];
+            private int nextKept;
+
             private int[] maskAt(int chunkX, int chunkZ) {
                 long tile = PreviewStore.key(Math.floorDiv(chunkX, PreviewTile.CHUNKS),
                         Math.floorDiv(chunkZ, PreviewTile.CHUNKS));
+                for (int i = 0; i < keptMasks.length; i++) {
+                    if (keptMasks[i] != null && keptTiles[i] == tile) {
+                        return keptMasks[i];
+                    }
+                }
                 try {
-                    return mask(w, tile);
+                    int[] mask = mask(w, tile);
+                    keptTiles[nextKept] = tile;
+                    keptMasks[nextKept] = mask;
+                    nextKept = (nextKept + 1) & (keptMasks.length - 1);
+                    return mask;
                 } catch (IOException e) {
                     return null;
                 }
