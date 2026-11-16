@@ -4999,3 +4999,28 @@ affiché d'un coup en entier"; answered "go 1 et 2".
   (3,697 in 0.84 to 1.05 s); sections in the first 10 s 6,832 against
   4,033 and 4,291, the view settled at 14.1 s against 15.2 and 16.2. Not
   checked: the user's pack (45,064 looks).
+
+## ADR-164 — The disc does not wait for sections the game draws
+
+Status: accepted, 2026-11-16. Amends ADR-153 (the disc) given F6 of the
+performance review (the game's own sections meshed last). The user after
+ADR-163: "j'ai l'imprtession que ça a été encore plus long", answered "go
+disque".
+
+- **Context**: on the pack, the looks were ready 2.5 s after the player
+  was in game (10 to 12 s before ADR-163), yet the view settled 14.4 s
+  after: "LOD disc after joining: radius at 1 s 64, ... 10 s 64, 20 s 64
+  (real L0[-1, 3, -2] not meshed), 30 s" the whole distance, with 14,399
+  sections resident and 9 drawn. The disc stops at the nearest hole; a
+  section the game draws whole is meshed after every other (F6, it shows
+  nothing), and the hole rule counted it past the floor of the game's
+  distance (its corner within the game's chunks, its section past it).
+- **Decision**: the selector skips, as holes, the sections the game draws
+  whole (`LodSelector.setDrawnByGame`); the renderer hands the selection
+  thread a copy of the compiled-sections grid taken on the render thread
+  (`gameDrawsAllSnapshot`), none under a level lock or a DH pack.
+- **Result**: unit test (`theNearestHoleInViewPastTheFloorIsKept`). Dev,
+  a join of `farfield-test` at 4 chunks from an empty mirror: the disc at
+  64 blocks at 5 and 10 s before (`real L0[2, 6, -1] not meshed`), at 251
+  and 2,221 blocks after; the whole distance at 20 s both. Not checked:
+  the user's pack.

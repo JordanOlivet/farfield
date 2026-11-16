@@ -153,6 +153,16 @@ class LodSelectorTest {
         selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of(far, child)), k -> { }, k -> { });
         assertEquals(Double.POSITIVE_INFINITY, selector.nearestHole());
         selector.setHoleFloor(0);
+        // Sections the game draws whole itself are no hole (ADR-164): meshed last, they show nothing.
+        selector.setDrawnByGame(key -> key == far || key == child);
+        selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of()), k -> { }, k -> { });
+        selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of(far, child)), k -> { }, k -> { });
+        assertEquals(Double.POSITIVE_INFINITY, selector.nearestHole());
+        selector.setDrawnByGame(key -> false);
+        selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of()), k -> { }, k -> { });
+        selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of(far, child)), k -> { }, k -> { });
+        assertTrue(selector.nearestHole() >= 768, "drawn by the LODs again: the hole is back");
+        selector.setDrawnByGame(null);
         selector.setOutsideView(key -> LodKey.x(key) < 0, 2.0);
         selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of()), k -> { }, k -> { });
         selector.select(0, 70, 0, -64, 320, 4000, terrain(Set.of(far, child)), k -> { }, k -> { });

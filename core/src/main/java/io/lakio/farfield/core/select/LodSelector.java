@@ -56,6 +56,12 @@ public final class LodSelector {
     private double detail;
     /** Sections outside the view split at {@link #outsideDetail} at most; null: every section at {@link #detail}. */
     private LongPredicate inView;
+    /**
+     * Sections the game draws whole itself: never a hole (ADR-164). The
+     * renderer meshes them last (they show nothing), and the reveal's disc
+     * waited for them (20 s after a join on the user's pack, 2026-11-16).
+     */
+    private LongPredicate drawnByGame;
     private double outsideDetail = Double.MAX_VALUE;
     private int fallbacks;
     private int finerFallbacks;
@@ -148,6 +154,11 @@ public final class LodSelector {
     /** Sections the last selection drew as their children, waiting for their own mesh. */
     public int finerFallbacks() {
         return finerFallbacks;
+    }
+
+    /** Sections the game draws whole itself, never counted as holes (ADR-164); null for none. */
+    public void setDrawnByGame(LongPredicate drawn) {
+        drawnByGame = drawn;
     }
 
     /** Holes nearer than {@code blocks} horizontally are not counted (the game's own chunks, ADR-153). */
@@ -348,7 +359,7 @@ public final class LodSelector {
      */
     private void hole(long key, int size, double horizontal, double distance, boolean pending) {
         if (horizontal + size * 1.5 < holeFloor || Math.max(distance, holeFloor) >= nearestHole
-                || inView != null && !inView.test(key)) {
+                || inView != null && !inView.test(key) || drawnByGame != null && drawnByGame.test(key)) {
             return;
         }
         nearestHole = Math.max(distance, holeFloor);

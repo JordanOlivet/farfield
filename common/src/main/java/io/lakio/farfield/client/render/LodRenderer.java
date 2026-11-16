@@ -2536,8 +2536,11 @@ public final class LodRenderer {
         RenderSettings.setSplitDetail(selector.detail()); // the integrated server's preview order (ADR-152)
         previewLayer.setForcedLevel(wantedForcedLevel);
         previewLayer.setOutsideView(viewed, outsideDetail);
-        double holeFloor = Minecraft.getInstance().options.getEffectiveRenderDistance() * 16.0;
+        int gameDistance = Minecraft.getInstance().options.getEffectiveRenderDistance();
+        double holeFloor = gameDistance * 16.0;
         selector.setHoleFloor(holeFloor);
+        // Meshed last, as the game draws them (F6): the disc does not wait for them (ADR-164).
+        selector.setDrawnByGame(gameDrawsAllSnapshot(cam, gameDistance));
         previewLayer.setHoleFloor(holeFloor);
         selector.setPendingHoles(revealing);
         previewLayer.setPendingHoles(revealing);
@@ -4829,12 +4832,41 @@ public final class LodRenderer {
      * skipped where the shader would keep a fragment.
      */
     private boolean gameDrawsAll(long key, Vec3 cam, int renderDistance) {
-        int level = drawLevel(key);
-        if (level > 1 || gridWidth <= 0 || selector.forcedLevel() >= 0) {
+        if (selector.forcedLevel() >= 0) {
             return false; // under a level lock the LODs draw over the game's terrain
         }
         if (packLink != null && packLink.mode() == ShaderPackLink.DH) {
             return false; // under a pack's DH contract the LODs lie under the game's terrain too (ADR-119)
+        }
+        return gameDrawsAll(key, cam, renderDistance, drawnBits, gridMinX, gridMinY, gridMinZ, gridWidth, gridHeight,
+                sodiumRule);
+    }
+
+    /**
+     * {@link #gameDrawsAll(long, Vec3, int)} for the selection thread (ADR-164):
+     * a copy of the compiled-sections grid as it is now, taken on the render
+     * thread; null when the LODs draw over the game's terrain anyway.
+     */
+    private java.util.function.LongPredicate gameDrawsAllSnapshot(Vec3 cam, int renderDistance) {
+        if (selector.forcedLevel() >= 0 || packLink != null && packLink.mode() == ShaderPackLink.DH || gridWidth <= 0) {
+            return null;
+        }
+        int[] bits = drawnBits.clone();
+        int minX = gridMinX;
+        int minY = gridMinY;
+        int minZ = gridMinZ;
+        int width = gridWidth;
+        int height = gridHeight;
+        boolean sodium = sodiumRule;
+        return key -> gameDrawsAll(key, cam, renderDistance, bits, minX, minY, minZ, width, height, sodium);
+    }
+
+    private static boolean gameDrawsAll(long key, Vec3 cam, int renderDistance, int[] drawnBits, int gridMinX,
+                                        int gridMinY, int gridMinZ, int gridWidth, int gridHeight,
+                                        boolean sodiumRule) {
+        int level = drawLevel(key);
+        if (level > 1 || gridWidth <= 0) {
+            return false;
         }
         int chunks = 2 << level;
         int sx0 = LodKey.x(key) * chunks;
