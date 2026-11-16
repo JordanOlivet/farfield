@@ -100,6 +100,14 @@ final class ChunkSnapshot {
 
     private static void fillBlocks(LodLevel level, PalettedContainer<BlockState> states, SectionData section,
                                    Scratch scratch) {
+        // A section of one state (59 % of a flight's sections): its palette alone, without
+        // walking its 4096 blocks. maybeHas reads the container's palette, not its blocks.
+        BlockState only = states.get(0, 0, 0);
+        if (!states.maybeHas(state -> state != only)) {
+            scratch.palette[0] = level.blockId(only);
+            section.setBlockPalette(scratch.palette, 1);
+            return;
+        }
         int count = 0;
         short[] indices = section.blockIndicesForWrite();
         BlockState last = null;

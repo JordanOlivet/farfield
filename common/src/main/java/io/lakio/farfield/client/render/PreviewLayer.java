@@ -82,6 +82,17 @@ final class PreviewLayer {
     /** Per tile, its chunks with real data: 32 rows (z) of bits (x). */
     /** Under {@link PreviewStore#spread} keys (ADR-141): tile keys collide along diagonals. */
     private final Map<Long, int[]> masks = new ConcurrentHashMap<>();
+    /**
+     * Per chunk, {@link RealGround#lowest} with the count of real writes over
+     * the chunk it was read at, and the epoch of these maps: a tile's mask is
+     * read again whenever real data changes in it, and each chunk on its
+     * border with the preview was scanned again (about 23 times in 10 s at a
+     * generation front, 2026-11-16).
+     */
+    private final Map<Long, long[]> realGrounds = new ConcurrentHashMap<>();
+    /** Per chunk, the real sections of levels under {@link #TILE_LEVEL} written over it. */
+    private final Map<Long, Integer> realGroundWrites = new ConcurrentHashMap<>();
+    private final java.util.concurrent.atomic.AtomicLong realGroundEpoch = new java.util.concurrent.atomic.AtomicLong();
     private final Set<Long> maskPending = ConcurrentHashMap.newKeySet();
     /** Tiles whose real data changed since their mask was last read. */
     private final Set<Long> maskDirty = ConcurrentHashMap.newKeySet();
@@ -176,6 +187,7 @@ final class PreviewLayer {
         world = next;
         existenceOps.add(new long[][]{null});
         masks.clear();
+        forgetRealGrounds();
         maskPending.clear();
         maskDirty.clear();
         heldMasks.clear();
@@ -278,8 +290,13 @@ final class PreviewLayer {
         if (world == null) {
             return;
         }
+        boolean heights = minY != levelMinY || maxY != levelMaxY;
         minY = levelMinY;
         maxY = levelMaxY;
+        if (heights) {
+            // Read within the old heights; after them, so a ground read in the new epoch uses the new ones.
+            forgetRealGrounds();
+        }
         selector.select(camX, camY, camZ, levelMinY, levelMaxY, distance, new LodSelector.Sections() {
             @Override
             public boolean exists(long plain) {
@@ -307,6 +324,17 @@ final class PreviewLayer {
         LodWorld w = world;
         if (w == null) {
             return;
+        }
+        if (LodKey.level(key) < TILE_LEVEL) {
+            // The levels RealGround reads: its chunks are read again.
+            int span = 2 << LodKey.level(key);
+            int cx0 = LodKey.x(key) * span;
+            int cz0 = LodKey.z(key) * span;
+            for (int dz = 0; dz < span; dz++) {
+                for (int dx = 0; dx < span; dx++) {
+                    realGroundWrites.merge(chunkKey(cx0 + dx, cz0 + dz), 1, Integer::sum);
+                }
+            }
         }
         if (LodKey.level(key) == TILE_LEVEL) {
             long tile = PreviewStore.key(LodKey.x(key), LodKey.z(key));
@@ -1143,6 +1171,40 @@ final class PreviewLayer {
         return out;
     }
 
+    private static long chunkKey(int chunkX, int chunkZ) {
+        return (long) chunkX << 32 | (chunkZ & 0xFFFFFFFFL);
+    }
+
+    /**
+     * {@link RealGround#lowest} of a chunk, kept until a real section over it
+     * is written ({@link #realWritten}). The write count is read before the
+     * store: a write meanwhile counts after its data is stored, so the value
+     * kept is read again at the next call. Any thread.
+     */
+    private int realGround(LodWorld w, int chunkX, int chunkZ) throws IOException {
+        long chunk = chunkKey(chunkX, chunkZ);
+        long epoch = realGroundEpoch.get();
+        int writes = realGroundWrites.getOrDefault(chunk, 0);
+        long[] known = realGrounds.get(chunk);
+        if (known != null && known[0] == writes && known[2] == epoch) {
+            return (int) known[1];
+        }
+        int low = RealGround.lowest(w, chunkX, chunkZ, minY, maxY, TILE_LEVEL);
+        if (realGrounds.size() > 1 << 18 || realGroundWrites.size() > 1 << 20) {
+            forgetRealGrounds();
+        } else {
+            realGrounds.put(chunk, new long[]{writes, low, epoch});
+        }
+        return low;
+    }
+
+    /** Drops the kept grounds; the epoch moves first, so a value read before is never kept. */
+    private void forgetRealGrounds() {
+        realGroundEpoch.incrementAndGet();
+        realGrounds.clear();
+        realGroundWrites.clear();
+    }
+
     /** The tile's mask, read from the real level-4 sections when not known. Any thread. */
     private int[] mask(LodWorld w, long tile) throws IOException {
         int[] mask = masks.get(PreviewStore.spread(tile));
@@ -1219,8 +1281,7 @@ final class PreviewLayer {
                     continue;
                 }
                 int c = cz * PreviewTile.CHUNKS + cx;
-                int low = RealGround.lowest(w, x * PreviewTile.CHUNKS + cx, z * PreviewTile.CHUNKS + cz, minY, maxY,
-                        TILE_LEVEL);
+                int low = realGround(w, x * PreviewTile.CHUNKS + cx, z * PreviewTile.CHUNKS + cz);
                 if (low != Integer.MIN_VALUE && (mask[GROUND + c] == Integer.MIN_VALUE || low < mask[GROUND + c])) {
                     mask[GROUND + c] = low;
                 }

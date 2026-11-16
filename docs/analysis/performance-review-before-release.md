@@ -718,9 +718,101 @@ The user: "go S1 S2 S3". Built, then measured on the same run:
   part). Measured: the workers' time per chunk in the flight's minute 5.1 ms
   (24.2 s for 4,736 snapshots) against 7.0 to 7.9 ms in the four runs
   before; profile samples 2,336 against 3,485 and 3,661 for the same chunk
-  count. `copyOctant` is now 13.7 % of the workers, `downsample` 40.1 %. The server's workers are
+  count. `copyOctant` is now 13.7 % of the workers, `downsample` 40.1 %.
+- Then "explorer la copie en brique": `copyOctant` copies a kept octant
+  brick by brick (`LodSection.copyBrick`: the stored brick's indices mapped
+  to the parent's palette in voxel order, so the palette grows in the same
+  order as voxel by voxel, then packed once; the light and fill bricks as
+  they are). Parents still identical byte for byte (the unit test, now with
+  palettes of 35 materials so they grow while copied; a deliberate error in
+  the copy makes it fail). Measured: the workers' time per chunk in the
+  flight's minute 4.6 ms (17.9 s for 3,881 snapshots) against 5.1 ms;
+  `copyOctant` 5.7 % of the workers' samples against 13.7 %. The server's workers are
   not its main cost: the noise preview takes 47 to 96 s a minute against
   their 26 to 37 s.
+
+## Measured leads (2026-11-16)
+
+The user: "Mesure tout ce qui pourrait permettre de gagner des perfs". Two
+runs of the step 10 bench with temporary counters (removed since), the
+hot lines and callers of the profiles of both sides, and the pack server's
+log of the last 30 hours. Nothing built; every lead keeps the image
+identical unless said.
+
+| Lead | Measured | Share now | Fix, image |
+|---|---|---|---|
+| L1. `RealGround.lowest` (client, a real chunk's lowest ground beside the preview, ADR-109) | up to 659,682,670 voxels read in 10 s, 95.5 % of them in bricks of air only; 11,875 scans of 507 chunks in 10 s, each chunk scanned again about 23 times | 11.9 % of the mesher's samples (`LodSection.material` from it: 1,073 of 1,867) | skip air bricks (8 x 8 x 8 at once) and keep each chunk's result until one of its sections is written; identical |
+| L2. `LodSection.pack` divides by a variable per voxel (`v / perLong`, `v % perLong`), though `perLong` is a power of two | line 326 of `pack`: 124 samples on the server (from `writeChunkSection`, `copyBrick`, `repack`, `set`), 561 on the client (`set`, `repack`) | about 10 % of the server workers, 3.4 % of the mesher | shifts and masks; identical |
+| L3. `MipBuilder.above` reads the brick above through `paletteIndex` | 75,904,987 calls in the brick and 24,115,730 into the brick above in the flight's minute; line 400 (into the brick above) 183 of 186 samples | about 14 % of the server workers | walk each child's bricks from the top and keep the bottom layer of the brick above, already unpacked; identical |
+| L4. `ChunkSnapshot.fillBlocks` walks all 4,096 voxels of a uniform chunk section | 62,802 of 106,296 sections uniform (59 %) in the flight's minute; 23,986,036 state changes, 80,154,945 palette search steps (3.3 a change) | 12 % of the server workers (line 116: the palette search) | a section of one state filled at once (the container's own count); identical |
+| L5. Level-0 sections ingested again unchanged | 11,582 of 30,456 level-0 writes in the flight's minute came out the same as stored (38 %) | the ingest and encoding of those chunks | find why those chunks are snapshotted again (block changes, light); to study |
+| L6. `PreviewVoxels.build` writes the preview's columns voxel by voxel (`section.set`, line 503) and the sea's sky light voxel by voxel (`seaLight`) | 1,121 samples at line 503, 657 in `NibbleBricks.set` from `seaLight` | 6.7 % and 3.9 % of the mesher | indices per brick packed once, as `writeChunkSection` does; identical if the palette order is kept |
+| L7. `PreviewLayer.mask` looked up in a `ConcurrentHashMap` | 798 samples at `mask:1148` | 4.8 % of the mesher | to read: likely a lookup per column where one per section would do |
+
+The user: "go L1 L2 L3 L4 L6 et étudie L5 et L7". Built:
+- L1: `RealGround.lowest` skips a brick of air or fluid in one step (a unit
+  test compares it with the voxel-by-voxel rule on random sections, and
+  fails on a wrong skip), and `PreviewLayer` keeps each chunk's result with
+  the count of real writes over the chunk (levels under 4, counted in
+  `realWritten`; read before the store, so a write meanwhile reads it
+  again), dropped with the world, a change of build heights, or past
+  262,144 chunks.
+- L2: `LodSection.pack` with shifts and masks.
+- L3: `MipBuilder.downsample` walks a child's bricks from the top and keeps
+  the bottom layer of each brick (`aboveLayers`) for the brick under it.
+  A golden test hashes the parents of fixed random children with plants on
+  every brick border (`parentsOfPlantedChildrenKeepTheirEncoding`, hash of
+  the code before L2 and L3); a wrong read of the brick above changes it.
+- L4: `ChunkSnapshot.fillBlocks` takes a section whose container's palette
+  holds one state (`PalettedContainer.maybeHas`, which reads the palette
+  only, checked in vanilla's source) without walking its blocks.
+- L6, reduced: `LodSection.set` remembers the last material and its palette
+  index (forgotten by `remapIds` and `prunePalette`). The full rewrite into
+  bricks packed once was left: the preview section is read and changed by
+  later steps (plants, masks, light), and the palette's order, which sets
+  the order of a section's quads, would have to be kept.
+- Measured on the same flight: server workers 3.9 ms a chunk (18.7 s for
+  4,796 snapshots) against 4.6 ms; the mesher 996 us of processor a job
+  against 1,119 and 1,131 us in two runs before (job-weighted over the
+  run), 131.7 s of processor in the two minutes against 157.6 and 151.8 s.
+  Captures not compared (the runs differ more than the change; core paths
+  checked by the tests above).
+
+Studied, not built:
+- L5: a probe of the flight's minute: 10,560 of 27,728 level-0 writes came
+  out unchanged, 7,662 of them (73 %) sections of air only. A level-0
+  section spans 2 x 2 chunks: the first chunk of an air section above the
+  ground writes it, the three others write the same air again (decode,
+  octant, encode, compare). The other 2,898 are chunks snapshotted again
+  after block changes that left the section as it was. Skipping them needs
+  to know, without reading, that the incoming octant (blocks, light,
+  biomes) equals the stored one: a fingerprint per section octant. The cost
+  is about 38 % of the ingest and encoding of level 0, some 5 % of the
+  workers: not worth the state for now.
+- L7: `maskOf(w)` makes one mask object per preview build, and each column
+  asks it `real`, `ground`, `fluidTop`: each call computes the tile's key and
+  looks it up in `masks` (725 of the 798 samples from `PreviewVoxels.build`
+  line 399, the rest from features and trees). The tile changes only
+  between tiles, so a one-entry cache in the mask object (last tile key and
+  its array) removes nearly all of it, about 4 to 5 % of the mesher. In a
+  race with a mask being replaced, a build would then use one mask for all
+  its columns instead of possibly two: a timing difference, not an image
+  rule. Ready to build.
+
+Measured, no identical gain found:
+- Parents built again unchanged: 946 of about 15,000 in the flight's minute
+  (6 %, levels 1 and up): no waste left there.
+- The preview's surface search: 13.6 density evaluations per sample
+  (descent 1.0, climb 12.4, check 0.2; 1,301,728 searches in a minute). The
+  climb is the bisection (3) and the five probes for ledges and noodle caves
+  (`SURFACE_PROBES`, 5 when none is solid): fewer probes would change the
+  heights. Sea biomes: 993,641 climate samples a minute (one per underwater
+  sample, for frozen oceans and icebergs), 10 % of the preview threads here;
+  in the pack a climate sample costs about 0.5 ms (ADR-102), so this share
+  is to measure there (`farfield spike tile` on the pack server).
+- The pack server since the deploy: 1 to 10 chunks a minute, no preview
+  tile built, Farfield under 0.2 s of processor a minute; nothing to
+  measure until someone explores.
 
 ## Answers (2026-11-15)
 

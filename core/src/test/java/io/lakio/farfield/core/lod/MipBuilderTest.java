@@ -249,6 +249,69 @@ class MipBuilderTest {
         assertEquals(COVERING.covered(GRASS_BLOCK, SHORT_GRASS, 2), up.material(3, 2, 3));
     }
 
+    /** Grass and plants around every brick border, slabs and torches, light and fill, from {@code random}. */
+    private static LodSection plantedChild(SplittableRandom random, boolean coarse) {
+        LodSection s = new LodSection(AIR);
+        for (int z = 0; z < 32; z++) {
+            for (int x = 0; x < 32; x++) {
+                int top = 4 + random.nextInt(24);
+                for (int y = 0; y <= top; y++) {
+                    int m = y == top ? (random.nextInt(5) == 0 ? SLAB : GRASS_BLOCK) : STONE;
+                    if (coarse && y == top && random.nextInt(3) == 0) {
+                        m = COVERING.covered(GRASS_BLOCK, SHORT_GRASS, 1 + random.nextInt(4));
+                    }
+                    s.set(x, y, z, m);
+                    if (coarse) {
+                        s.fill().set(x, y, z, random.nextInt(16));
+                    }
+                }
+                if (top + 1 < 32 && random.nextInt(3) != 0) {
+                    s.set(x, top + 1, z, random.nextInt(4) == 0 ? TORCH : SHORT_GRASS);
+                }
+                for (int y = top + 1; y < 32; y++) {
+                    s.skyLight().set(x, y, z, 15 - random.nextInt(3));
+                }
+            }
+        }
+        if (random.nextBoolean()) {
+            s.setBiome(random.nextInt(8), random.nextInt(8), random.nextInt(8), random.nextInt(3));
+        }
+        s.compact();
+        return s;
+    }
+
+    /**
+     * The parents of fixed random children, plants on brick borders included,
+     * encoded and hashed: a change to how the downsampling reads or packs that
+     * keeps its rule keeps this hash (computed on the code of 2026-11-16).
+     */
+    @Test
+    void parentsOfPlantedChildrenKeepTheirEncoding() {
+        MipBuilder builder = new MipBuilder(AIR, COVERING);
+        io.lakio.farfield.core.storage.SectionCodec codec = new io.lakio.farfield.core.storage.SectionCodec();
+        java.util.zip.CRC32 crc = new java.util.zip.CRC32();
+        SplittableRandom random = new SplittableRandom(2026);
+        for (int round = 0; round < 8; round++) {
+            boolean coarse = round % 2 == 1;
+            LodSection[] children = new LodSection[8];
+            for (int i = 0; i < 8; i++) {
+                if (random.nextInt(6) != 0) {
+                    children[i] = plantedChild(random, coarse);
+                }
+            }
+            LodSection parent = builder.build(children, !coarse);
+            parent.compact();
+            parent.prunePalette();
+            parent.compactBiomes();
+            io.lakio.farfield.core.util.ByteWriter w = new io.lakio.farfield.core.util.ByteWriter(1024);
+            codec.encode(parent, w);
+            crc.update(w.array(), 0, w.length());
+        }
+        assertEquals(GOLDEN, crc.getValue(), "hash 0x" + Long.toHexString(crc.getValue()));
+    }
+
+    private static final long GOLDEN = 0x84d9d394L;
+
     @Test
     void matchesTheReferenceRuleOnRandomSections() {
         SplittableRandom random = new SplittableRandom(42);

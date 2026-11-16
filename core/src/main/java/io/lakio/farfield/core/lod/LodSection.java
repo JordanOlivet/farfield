@@ -41,6 +41,13 @@ public final class LodSection {
     public static final int MAX_PALETTE = 1 << 16;
 
     private int[] palette = new int[8];
+    /**
+     * The material {@link #set} wrote last and its palette index: a column
+     * of voxels mostly repeats one material. Forgotten when the palette's
+     * indices change ({@link #remapIds}, {@link #prunePalette}).
+     */
+    private int lastSetMaterial = Integer.MIN_VALUE;
+    private int lastSetIndex;
     private int paletteSize;
     private final IntIntMap paletteLookup = new IntIntMap(8);
     private int bits = 1;
@@ -61,6 +68,8 @@ public final class LodSection {
     private int[] scratch;
     private byte[] nibbleScratch;
     private int[] remap = new int[16];
+    /** {@link #copyBrick}'s indices: {@link #scratch} is taken by a repack meanwhile. */
+    private int[] copyScratch;
 
     private int[] scratch() {
         if (scratch == null) {
@@ -183,6 +192,7 @@ public final class LodSection {
         }
         if (changed) {
             paletteLookup.clear();
+            lastSetMaterial = Integer.MIN_VALUE;
             for (int i = 0; i < paletteSize; i++) {
                 paletteLookup.put(palette[i], i);
             }
@@ -319,16 +329,25 @@ public final class LodSection {
     }
 
     private static long[] pack(int[] entries, int bits) {
-        int perLong = 64 / bits;
-        long[] data = new long[BRICK_VOLUME / perLong];
+        // bits is a power of two (bitsFor), so is the count per long: shifts, not divisions.
+        int shift = 6 - Integer.numberOfTrailingZeros(bits);
+        int last = (1 << shift) - 1;
+        long[] data = new long[BRICK_VOLUME >> shift];
         for (int v = 0; v < BRICK_VOLUME; v++) {
-            data[v / perLong] |= (long) entries[v] << ((v % perLong) * bits);
+            data[v >>> shift] |= (long) entries[v] << ((v & last) * bits);
         }
         return data;
     }
 
     public void set(int x, int y, int z, int material) {
-        int index = paletteIndexOf(material);
+        int index;
+        if (material == lastSetMaterial) {
+            index = lastSetIndex;
+        } else {
+            index = paletteIndexOf(material);
+            lastSetMaterial = material;
+            lastSetIndex = index;
+        }
         int b = brickIndex(x >> 3, y >> 3, z >> 3);
         long[] data = bricks[b];
         if (data == null) {
@@ -345,6 +364,51 @@ public final class LodSection {
         int offset = (v & ((1 << shift) - 1)) * bits;
         long mask = ((1L << bits) - 1) << offset;
         data[word] = (data[word] & ~mask) | ((long) index << offset);
+    }
+
+    /**
+     * Copies brick {@code brick} of {@code from} into the same brick of this
+     * section, still all {@code air}: the same section as {@link #fillBrick}
+     * for a uniform brick of another material, or {@link #set} of each voxel
+     * other than {@code air} in voxel order (so the palette grows in the same
+     * order), with the brick packed once instead of voxel by voxel.
+     */
+    public void copyBrick(LodSection from, int brick, int air) {
+        long[] source = from.bricks[brick];
+        if (source == null) {
+            int material = from.palette[from.uniform[brick]];
+            if (material != air) {
+                fillBrick(brick, material);
+            }
+            return;
+        }
+        if (copyScratch == null) {
+            copyScratch = new int[BRICK_VOLUME];
+        }
+        int[] entries = copyScratch;
+        int fromBits = from.bits;
+        int airIndex = uniform[brick];
+        int first = -1;
+        boolean same = true;
+        for (int v = 0; v < BRICK_VOLUME; v++) {
+            int material = from.palette[unpack(source, fromBits, v)];
+            // paletteIndexOf may repack this section's other bricks, never this one (still uniform).
+            int index = material == air ? airIndex : paletteIndexOf(material);
+            entries[v] = index;
+            if (v == 0) {
+                first = index;
+            } else if (index != first) {
+                same = false;
+            }
+        }
+        if (same) {
+            if (first != airIndex) {
+                bricks[brick] = null;
+                uniform[brick] = first;
+            }
+            return;
+        }
+        bricks[brick] = pack(entries, bits);
     }
 
     /** Sets a whole brick to one material. */
@@ -505,6 +569,7 @@ public final class LodSection {
         int[] newIndex = new int[paletteSize];
         int[] newPalette = new int[Math.max(8, Integer.highestOneBit(Math.max(1, count - 1)) << 1)];
         paletteLookup.clear();
+        lastSetMaterial = Integer.MIN_VALUE;
         int n = 0;
         for (int i = 0; i < paletteSize; i++) {
             if (used[i]) {

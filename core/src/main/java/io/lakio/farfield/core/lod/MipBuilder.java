@@ -108,6 +108,12 @@ public final class MipBuilder {
     private final byte[] octantFill = new byte[OCTANT * OCTANT * OCTANT];
     private final int[] heights = new int[LodSection.BRICK_VOLUME];
     private final int[] indices = new int[LodSection.BRICK_VOLUME];
+    /**
+     * Per brick column of the child being downsampled, the palette indices of
+     * the bottom layer of the brick last done there: the bricks go from the
+     * top, so it is the brick above the current one ({@link #above}).
+     */
+    private final int[] aboveLayers = new int[LodSection.BRICKS_PER_AXIS * LodSection.BRICKS_PER_AXIS * 64];
     private final int[] octantMaterials = new int[OCTANT * OCTANT * OCTANT];
     private final byte[] octantSky = new byte[OCTANT * OCTANT * OCTANT];
     private final byte[] octantBlock = new byte[OCTANT * OCTANT * OCTANT];
@@ -183,17 +189,22 @@ public final class MipBuilder {
             heightOfIndex[i] = shapes.heightOf(material);
             plantOfIndex[i] = shapeOfIndex[i] == Shapes.SPARSE && shapes.isPlant(material);
         }
-        for (int by = 0; by < LodSection.BRICKS_PER_AXIS; by++) {
+        // From the top: a brick reads the bottom layer of the one above (aboveLayers).
+        for (int by = LodSection.BRICKS_PER_AXIS - 1; by >= 0; by--) {
             for (int bz = 0; bz < LodSection.BRICKS_PER_AXIS; bz++) {
                 for (int bx = 0; bx < LodSection.BRICKS_PER_AXIS; bx++) {
                     int brick = LodSection.brickIndex(bx, by, bz);
+                    int layer = (bz * LodSection.BRICKS_PER_AXIS + bx) * 64;
                     // Child brick (8^3) -> 4^3 voxels of the octant, from (bx, by, bz) * 4.
                     if (child.isUniform(brick)) {
                         int index = child.uniformIndex(brick);
                         int material = shapeOfIndex[index] == Shapes.EMPTY ? airMaterial : child.paletteEntry(index);
                         fillOctant(octantMaterials, bx, by, bz, material);
+                        Arrays.fill(aboveLayers, layer, layer + 64, index);
                     } else {
                         downsampleBrick(child, brick, bx, by, bz);
+                        // Its bottom layer, voxels (x, 0, z): the first 64 of indices.
+                        System.arraycopy(indices, 0, aboveLayers, layer, 64);
                     }
                     downsampleLight(child.skyLight(), brick, bx, by, bz, octantSky);
                     downsampleLight(child.blockLight(), brick, bx, by, bz, octantBlock);
@@ -205,26 +216,25 @@ public final class MipBuilder {
         downsampleBiomes(child, parent, baseX, baseY, baseZ);
     }
 
-    /** One octant of a parent built before, written as {@link #downsample} writes its child's. */
+    /**
+     * One octant of a parent built before, brick by brick, the same section
+     * {@link #writeOctant} makes from the same voxels: the bricks in its
+     * order, each through {@link LodSection#copyBrick}, the light and fill
+     * bricks as they are ({@link NibbleBricks#setBrick} collapses a uniform one,
+     * as from {@link #writeLightBrick}).
+     */
     private void copyOctant(LodSection stored, LodSection parent, int baseX, int baseY, int baseZ) {
-        NibbleBricks sky = stored.skyLight();
-        NibbleBricks block = stored.blockLight();
-        NibbleBricks fill = stored.fill();
-        for (int y = 0; y < OCTANT; y++) {
-            for (int z = 0; z < OCTANT; z++) {
-                for (int x = 0; x < OCTANT; x++) {
-                    int i = (y * OCTANT + z) * OCTANT + x;
-                    int px = baseX + x;
-                    int py = baseY + y;
-                    int pz = baseZ + z;
-                    octantMaterials[i] = stored.material(px, py, pz);
-                    octantSky[i] = (byte) sky.get(px, py, pz);
-                    octantBlock[i] = (byte) block.get(px, py, pz);
-                    octantFill[i] = (byte) fill.get(px, py, pz);
+        for (int qy = 0; qy < 2; qy++) {
+            for (int qz = 0; qz < 2; qz++) {
+                for (int qx = 0; qx < 2; qx++) {
+                    int brick = LodSection.brickIndex((baseX >> 3) + qx, (baseY >> 3) + qy, (baseZ >> 3) + qz);
+                    parent.copyBrick(stored, brick, airMaterial);
+                    copyNibbles(stored.skyLight(), parent.skyLight(), brick);
+                    copyNibbles(stored.blockLight(), parent.blockLight(), brick);
+                    copyNibbles(stored.fill(), parent.fill(), brick);
                 }
             }
         }
-        writeOctant(parent, baseX, baseY, baseZ);
         int cells = LodSection.BIOME_CELLS_PER_AXIS / 2;
         for (int cy = 0; cy < cells; cy++) {
             for (int cz = 0; cz < cells; cz++) {
@@ -235,6 +245,14 @@ public final class MipBuilder {
                     parent.setBiome(bx, by, bz, stored.biome(bx, by, bz));
                 }
             }
+        }
+    }
+
+    private static void copyNibbles(NibbleBricks from, NibbleBricks to, int brick) {
+        if (from.isUniform(brick)) {
+            to.setUniform(brick, from.uniformValue(brick));
+        } else {
+            to.setBrick(brick, from.brickData(brick));
         }
     }
 
@@ -388,6 +406,13 @@ public final class MipBuilder {
     private int above(LodSection child, int bx, int by, int bz, int x, int y, int z) {
         if (y < 8) {
             return indices[voxel(x, y, z)];
+        }
+        if (by + 1 >= LodSection.BRICKS_PER_AXIS) {
+            return -1;
+        }
+        if (y == 8) {
+            // The bottom layer of the brick above, kept when it was done.
+            return aboveLayers[(bz * LodSection.BRICKS_PER_AXIS + bx) * 64 + ((z << 3) | x)];
         }
         int ay = by * 8 + y;
         return ay < LodSection.SIZE ? child.paletteIndex(bx * 8 + x, ay, bz * 8 + z) : -1;

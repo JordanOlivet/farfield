@@ -55,13 +55,25 @@ public final class RealGround {
                         if (top[c] != Integer.MIN_VALUE) {
                             continue;
                         }
+                        int vx = vx0 + x;
+                        int vz = vz0 + z;
                         for (int vy = LodSection.SIZE - 1; vy >= 0; vy--) {
-                            int m = s.material(vx0 + x, vy, vz0 + z);
+                            int brick = LodSection.brickIndex(vx >> 3, vy >> 3, vz >> 3);
+                            if (s.brickData(brick) == null) {
+                                // A brick of one material: air or fluid all through, its eight voxels
+                                // of this column skipped at once (most of a column above the ground).
+                                int um = s.paletteEntry(s.uniformIndex(brick));
+                                if (um == air || classes.classOf(um) == MaterialClassifier.TRANSLUCENT) {
+                                    vy &= ~7;
+                                    continue;
+                                }
+                            }
+                            int m = s.material(vx, vy, vz);
                             if (m == air || classes.classOf(m) == MaterialClassifier.TRANSLUCENT) {
                                 continue;
                             }
                             // The fill says how high the content stands in the voxel, in sixteenths.
-                            int fill = (s.fill().get(vx0 + x, vy, vz0 + z) + 1) * voxel;
+                            int fill = (s.fill().get(vx, vy, vz) + 1) * voxel;
                             top[c] = (y * LodSection.SIZE + vy) * voxel + (fill + 15) / 16;
                             left--;
                             break;

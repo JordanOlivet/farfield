@@ -355,9 +355,16 @@ class LodWorldTest {
 
     /** A chunk of mixed materials, sky light and biomes in sections -1 to 1, from {@code random}. */
     private static ChunkData randomChunk(LodWorld world, int cx, int cz, java.util.Random random) {
-        int[] blocks = {world.air(), world.blockStates().id("minecraft:stone"),
-                world.blockStates().id("minecraft:dirt"), world.blockStates().id("minecraft:water"),
-                world.blockStates().id("minecraft:oak_leaves")};
+        // Five common blocks, then 30 rare ones: palettes past 16 and 32 entries, so they grow while copied.
+        int[] blocks = new int[35];
+        blocks[0] = world.air();
+        blocks[1] = world.blockStates().id("minecraft:stone");
+        blocks[2] = world.blockStates().id("minecraft:dirt");
+        blocks[3] = world.blockStates().id("minecraft:water");
+        blocks[4] = world.blockStates().id("minecraft:oak_leaves");
+        for (int i = 5; i < blocks.length; i++) {
+            blocks[i] = world.blockStates().id("minecraft:test_block_" + i);
+        }
         int[] biomes = {world.biomes().id("minecraft:plains"), world.biomes().id("minecraft:forest")};
         ChunkData chunk = new ChunkData();
         chunk.beginLive(cx, cz);
@@ -368,7 +375,8 @@ class LodWorldTest {
             short[] indices = s.blockIndicesForWrite();
             for (int i = 0; i < SectionData.BLOCK_COUNT; i++) {
                 int y = sy * 16 + (i >> 8);
-                int under = y < ground ? 1 + random.nextInt(2) : y < ground + 2 ? random.nextInt(5) : 0;
+                int under = y < ground ? (random.nextInt(40) == 0 ? 5 + random.nextInt(30) : 1 + random.nextInt(2))
+                        : y < ground + 2 ? random.nextInt(5) : 0;
                 indices[i] = (short) under;
             }
             s.setBiomePalette(biomes, 2);
