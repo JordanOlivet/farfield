@@ -1,0 +1,1 @@
+Dev join stat lines after the change: "LOD streaming: 17690 KB received in 10 s (6832 sections 173 in flight of 173"; before it, from the same join at window 64: "LOD streaming: 11619 KB received in 10 s (4033 sections 64 in flight of 64". Pack log read earlier: the window full at 64 with 1 MB/s of 4 used and the server's queue empty.

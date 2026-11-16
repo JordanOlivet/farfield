@@ -1,0 +1,1 @@
+farfield-mirror-probe [project]: Use when a render bug needs stored LOD mirror data. | farfield-render-perf-probe [project]: Use when timing Farfield LOD renderer frames, uploads, or an A/B bench of two pack jars (HEAD vs working tree).

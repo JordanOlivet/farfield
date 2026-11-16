@@ -1,0 +1,3 @@
+[13:42:33] [Server thread/INFO] [Farfield/]: Noise preview pregen spawn: 4584 tiles within 32768 blocks of -64, 48 in minecraft:overworld, running
+[13:44:31] [Server thread/INFO] [Farfield/]: Noise preview pregen spawn: 536 of 4584 tiles built, 0.3 s a tile, about 18 min left
+user: Je vais pas le monté jusqu'à la bordure mais à 32768 par exemple pour juste confirmer que ça marche bien mais me garder des portion pas généré pour pouvoir encore me tp et faire des tests

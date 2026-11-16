@@ -1,0 +1,1 @@
+tool result: "0 samples of the thread, 0 under LodRenderer.uploadColors" then "1732 samples of the thread, 0 under LodRenderer.uploadColors" after switching the regex to "^main$"; census: "3215 sampledThread = \"farfield-mesher\"  1369 sampledThread = \"main\"  246 sampledThread = \"farfield-preview-selection\"".
