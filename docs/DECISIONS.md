@@ -4968,3 +4968,34 @@ n'arriveront jamais dans la vue ? On le fait aussi".
 - **Left**: a feature that reaches the surface rarely, after 32 placements
   unseen, shows 64 times less often until a re-check catches one.
 - **Checked**: built; a dev server run. Not checked: the pack server.
+
+## ADR-163 — A join waits less: cached looks cheap, a wider fetch window
+
+Status: accepted, 2026-11-16. Amends ADR-062 (the looks' budget), ADR-078
+(cached looks) and the client's fetch window. The user on the pack server:
+"ça a mis un peu de temps à afficher les LOD/preview", then "ça s'est
+affiché d'un coup en entier"; answered "go 1 et 2".
+
+- **Context**: at the join, the mirror held its 110,415 sections and 4,861
+  tiles, yet the view settled at 25.1 s: `LOD looks: 45064 built in 21995
+  ms`, 45,058 of them from `looks.bin`, and a section is drawn only once
+  its looks are built (ADR-062), so it came all at once. A cached tile was
+  turned into floats before the atlas checked it already had it, and a new
+  one built its mips on the render thread, in a frame budget of 3 ms when
+  the frame was full. After a teleport, the client kept at most 64 section
+  requests in flight, one fetch message: 1.2 MB/s of a 4 MB/s budget with
+  the window always full and the server's queue empty.
+- **Decision**:
+  - `FaceTextures.addEncoded` looks the tile up first; the mips of the
+    cache's tiles are made ahead on a thread of their own when the cache
+    opens (`prepare`), the same function of the tile's bytes as before,
+    dropped once every look is built.
+  - While more than 64 looks wait, they take at least 6 ms a frame.
+  - The fetch window goes to four fetch messages (256 requests), starts at
+    128, still grown and cut by its answers' times; a message keeps at most
+    64 keys.
+- **Result**: dev, a join of `farfield-test` from an empty mirror at the
+  pack server's budgets: a cached look 0.23 to 0.28 ms against 1.6 before
+  (3,697 in 0.84 to 1.05 s); sections in the first 10 s 6,832 against
+  4,033 and 4,291, the view settled at 14.1 s against 15.2 and 16.2. Not
+  checked: the user's pack (45,064 looks).

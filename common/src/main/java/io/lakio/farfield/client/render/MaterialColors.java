@@ -288,10 +288,29 @@ final class MaterialColors {
         return version;
     }
 
-    /** The cache looks are taken from and put into; null for none. Render thread. */
+    /**
+     * The cache looks are taken from and put into; null for none. Its
+     * tiles' mips are made ahead on a thread of their own. Render thread.
+     */
     void setCache(LooksCache cache) {
         this.cache = cache;
+        if (cache != null && cache.size() > 0) {
+            preparing = true;
+            textures.prepare(() -> cache.looks().stream()
+                    .flatMap(look -> java.util.Arrays.stream(look.tiles())).iterator());
+        }
     }
+
+    /** Every look is built: the mips made ahead and not used go. Render thread. */
+    void looksDone() {
+        if (preparing) {
+            preparing = false;
+            textures.dropPrepared();
+        }
+    }
+
+    /** Mips of the cache's tiles are being made ahead ({@link #setCache}). */
+    private boolean preparing;
 
     LooksCache cache() {
         return cache;

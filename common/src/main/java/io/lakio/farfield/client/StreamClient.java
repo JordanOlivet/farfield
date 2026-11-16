@@ -74,6 +74,14 @@ public final class StreamClient {
     /** Answers this much later than the quickest one halve the requests in flight. */
     private static final long WINDOW_SLACK_NANOS = 1_000_000_000L;
     private static final int WINDOW_MIN = 4;
+    /**
+     * The most section requests in flight: four fetches of {@link
+     * StreamProtocol.Fetch#MAX_KEYS}, so the server's readers answer several
+     * at once. At 64, one fetch, a join read 1.2 MB/s of a 4 MB/s budget with
+     * the window always full and the server's queue empty (2026-11-16). The
+     * window still grows only while answers stay quick.
+     */
+    private static final int WINDOW_MAX = 4 * StreamProtocol.Fetch.MAX_KEYS;
 
     private static StreamClient instance;
 
@@ -139,8 +147,8 @@ public final class StreamClient {
      */
     private final LongLinkedOpenHashSet background = new LongLinkedOpenHashSet();
     private final Long2LongOpenHashMap inFlight = new Long2LongOpenHashMap();
-    private final FetchWindow window = new FetchWindow(WINDOW_MIN, StreamProtocol.Fetch.MAX_KEYS,
-            StreamProtocol.Fetch.MAX_KEYS, WINDOW_SLACK_NANOS);
+    private final FetchWindow window = new FetchWindow(WINDOW_MIN, WINDOW_MAX, WINDOW_MAX / 2,
+            WINDOW_SLACK_NANOS);
     /** The same for preview tiles, apart: a tile weighs about six sections (14 KB against 2.5). */
     private final FetchWindow tileWindow = new FetchWindow(1, StreamProtocol.TileFetch.MAX_TILES,
             StreamProtocol.TileFetch.MAX_TILES, WINDOW_SLACK_NANOS);
@@ -479,7 +487,8 @@ public final class StreamClient {
         }
         askedRegions.long2LongEntrySet().removeIf(e -> now - e.getLongValue() > REQUEST_TIMEOUT_NANOS);
         while (inFlight.size() < window.size() && (!wishes.isEmpty() || !background.isEmpty())) {
-            int n = Math.min(wishes.size() + background.size(), window.size() - inFlight.size());
+            int n = Math.min(StreamProtocol.Fetch.MAX_KEYS,
+                    Math.min(wishes.size() + background.size(), window.size() - inFlight.size()));
             long[] keys = new long[n];
             long[] haves = new long[n];
             int count = 0;
@@ -800,7 +809,7 @@ public final class StreamClient {
         }
         askedRegions.clear();
         inFlight.clear();
-        window.reset(StreamProtocol.Fetch.MAX_KEYS);
+        window.reset(WINDOW_MAX / 2);
         wishes.clear();
         background.clear();
         outdatedSince.clear();

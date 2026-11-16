@@ -205,6 +205,11 @@ public final class LooksCache {
         return looks.size();
     }
 
+    /** Every look held, read from the file or put since. Any thread (a weakly consistent view). */
+    public java.util.Collection<Look> looks() {
+        return looks.values();
+    }
+
     /** Whether looks wait to be appended. */
     public boolean hasPending() {
         return !pending.isEmpty();

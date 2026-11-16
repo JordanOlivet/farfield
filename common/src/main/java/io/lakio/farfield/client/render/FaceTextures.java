@@ -42,6 +42,9 @@ final class FaceTextures {
     }
 
     private final Map<Key, Integer> tiles = new HashMap<>();
+    /** Mips made ahead for the tiles of a cache of looks ({@link #prepare}), by the tile's bytes. */
+    private final Map<Key, byte[][]> prepared = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.atomic.AtomicInteger preparing = new java.util.concurrent.atomic.AtomicInteger();
     private int count;
     private int rows;
     /** Per mip level, RGBA8 of the whole atlas (width >> level by rows * TILE >> level). */
@@ -85,23 +88,59 @@ final class FaceTextures {
      * @return the tile index, or -1 when the atlas is full
      */
     int add(float[] rgb, float[] alpha) {
-        return add(encode(rgb, alpha, TILE), rgb, alpha);
+        byte[] base = encode(rgb, alpha, TILE);
+        Key key = new Key(base);
+        Integer known = tiles.get(key);
+        if (known != null) {
+            return known;
+        }
+        return insert(key, base, mips(rgb, alpha));
     }
 
     /**
      * Adds a tile from its RGBA8 bytes ({@link #tile}), as a cache of looks
      * holds it (ADR-078), or finds the same one; -1 when the atlas is full.
+     * A known tile costs a lookup; a new one takes its mips from {@link
+     * #prepare} when they are ready, else builds them.
      */
     int addEncoded(byte[] base) {
-        float[] rgb = new float[TILE * TILE * 3];
-        float[] alpha = new float[TILE * TILE];
-        for (int i = 0; i < TILE * TILE; i++) {
-            rgb[i * 3] = linear(base[i * 4]);
-            rgb[i * 3 + 1] = linear(base[i * 4 + 1]);
-            rgb[i * 3 + 2] = linear(base[i * 4 + 2]);
-            alpha[i] = (base[i * 4 + 3] & 0xFF) / 255f;
+        Key key = new Key(base);
+        Integer known = tiles.get(key);
+        if (known != null) {
+            return known;
         }
-        return add(base, rgb, alpha);
+        byte[][] mips = prepared.remove(key);
+        return insert(key, base, mips != null ? mips : mipsOf(base));
+    }
+
+    /**
+     * Builds the mips of the tiles of a cache of looks on a thread of its
+     * own, ahead of {@link #addEncoded}: on the render thread under a frame
+     * budget, 45,064 cached looks took 22 s to go into the atlas at a join
+     * of the user's pack (2026-11-16). The mips are a function of the tile's
+     * bytes alone, the same as {@link #addEncoded} builds. Render thread.
+     */
+    void prepare(Iterable<byte[]> bases) {
+        int generation = preparing.incrementAndGet();
+        Thread t = new Thread(() -> {
+            for (byte[] base : bases) {
+                if (preparing.get() != generation) {
+                    return; // another world's cache
+                }
+                if (base != null) {
+                    prepared.computeIfAbsent(new Key(base), k -> mipsOf(base));
+                }
+            }
+        }, "farfield-looks-mips");
+        t.setDaemon(true);
+        t.setPriority(Thread.MIN_PRIORITY);
+        t.start();
+    }
+
+    /** Drops the mips made ahead and not used (every look built). Render thread. */
+    void dropPrepared() {
+        preparing.incrementAndGet();
+        prepared.clear();
     }
 
     /** The RGBA8 bytes of a tile ({@code TILE * TILE * 4}), as {@link #addEncoded} takes them. */
@@ -116,23 +155,25 @@ final class FaceTextures {
         return out;
     }
 
-    private int add(byte[] base, float[] rgb, float[] alpha) {
-        Key key = new Key(base);
-        Integer known = tiles.get(key);
-        if (known != null) {
-            return known;
+    /** The mips of a tile given as RGBA8 bytes, as {@link #addEncoded} has always built them. Any thread. */
+    private static byte[][] mipsOf(byte[] base) {
+        float[] rgb = new float[TILE * TILE * 3];
+        float[] alpha = new float[TILE * TILE];
+        for (int i = 0; i < TILE * TILE; i++) {
+            rgb[i * 3] = linear(base[i * 4]);
+            rgb[i * 3 + 1] = linear(base[i * 4 + 1]);
+            rgb[i * 3 + 2] = linear(base[i * 4 + 2]);
+            alpha[i] = (base[i * 4 + 3] & 0xFF) / 255f;
         }
-        if (count >= MAX_TILES) {
-            return -1;
-        }
-        int index = count;
-        int row = index / TILES_PER_ROW;
-        if (row >= rows) {
-            grow(Math.max(row + 1, rows == 0 ? INITIAL_ROWS : rows * 2));
-        }
-        int column = index % TILES_PER_ROW;
-        write(0, column, row, base, TILE);
-        // Mips: alpha-weighted box filter in linear space, per tile.
+        return mips(rgb, alpha);
+    }
+
+    /**
+     * Levels 1 to {@link #LEVELS} - 1 of a tile (index 0 unused):
+     * alpha-weighted box filter in linear space. Any thread.
+     */
+    private static byte[][] mips(float[] rgb, float[] alpha) {
+        byte[][] out = new byte[LEVELS][];
         float[] r = rgb;
         float[] a = alpha;
         for (int level = 1, size = TILE / 2; level < LEVELS; level++, size /= 2) {
@@ -164,9 +205,26 @@ final class FaceTextures {
                     }
                 }
             }
-            write(level, column, row, encode(nr, na, size), size);
+            out[level] = encode(nr, na, size);
             r = nr;
             a = na;
+        }
+        return out;
+    }
+
+    private int insert(Key key, byte[] base, byte[][] mips) {
+        if (count >= MAX_TILES) {
+            return -1;
+        }
+        int index = count;
+        int row = index / TILES_PER_ROW;
+        if (row >= rows) {
+            grow(Math.max(row + 1, rows == 0 ? INITIAL_ROWS : rows * 2));
+        }
+        int column = index % TILES_PER_ROW;
+        write(0, column, row, base, TILE);
+        for (int level = 1, size = TILE / 2; level < LEVELS; level++, size /= 2) {
+            write(level, column, row, mips[level], size);
         }
         tiles.put(key, index);
         count++;

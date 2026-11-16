@@ -217,8 +217,15 @@ public final class LodRenderer {
     private static final long STATS_INTERVAL_NANOS = 10_000_000_000L;
     /** Time per frame for building material looks ({@link MaterialColors})... */
     private static final long LOOKS_BUDGET_NANOS = 3_000_000L;
-    /** ...up to what keeps the frame at 60 fps when more than this many wait (ADR-062). */
+    /** ...up to what keeps the frame at 60 fps when more than this many wait (ADR-062)... */
     private static final int LOOKS_BACKLOG = 64;
+    /**
+     * ...and never less than this while they wait: the sections that need
+     * them are not drawn meanwhile. At a join the frame is already full and
+     * the 3 ms floor set the time: 45,064 looks in 22 s on the user's pack
+     * (2026-11-16), most of them from the cache and cheap since.
+     */
+    private static final long LOOKS_BACKLOG_BUDGET_NANOS = 6_000_000L;
     private static final long LOOKS_FRAME_NANOS = 1_000_000_000L / 60;
     private static final byte EXISTS = 1;
     private static final byte ABSENT = 2;
@@ -4586,7 +4593,7 @@ public final class LodRenderer {
             return LOOKS_BUDGET_NANOS;
         }
         long rest = interval - lastLooksNanos;
-        return Math.max(LOOKS_BUDGET_NANOS, Math.min(LOOKS_FRAME_NANOS, LOOKS_FRAME_NANOS - rest));
+        return Math.max(LOOKS_BACKLOG_BUDGET_NANOS, Math.min(LOOKS_FRAME_NANOS, LOOKS_FRAME_NANOS - rest));
     }
 
     /**
@@ -4635,6 +4642,9 @@ public final class LodRenderer {
             }
             looksBacklogStart = 0;
             looksFromCache = 0;
+        }
+        if (allBuilt) {
+            colors.looksDone();
         }
         // New looks go to the cache file once every look is built, at most every LOOKS_APPEND_NANOS:
         // exploring brings a few new block states at a time (ADR-081).
