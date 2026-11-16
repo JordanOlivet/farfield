@@ -41,8 +41,11 @@ public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, 
     public static final int AUTO = 0;
     public static final int MAX_RADIUS = 30_000_000;
 
-    /** Pregeneration radii, in blocks: up to four times the preview's drawn range (ADR-123). */
-    public static final int MAX_PREGEN_RADIUS = 16_384;
+    /**
+     * Pregeneration radii, in blocks: to the world border (ADR-161); every
+     * level within 16,384 blocks, past it what a player at the spawn sees.
+     */
+    public static final int MAX_PREGEN_RADIUS = io.lakio.farfield.core.preview.PregenTasks.MAX_RADIUS;
 
     /** The farthest the preview grows the world's own features: its drawn range. */
     public static final int MAX_FEATURES_DISTANCE = 4096;
@@ -212,8 +215,9 @@ public record ServerConfig(boolean streaming, int radiusBlocks, int playerKBps, 
             out.write("# anything. Examples: biomesoplenty:*  *:patch_*  minecraft:trees_jungle\n");
             out.write(PREVIEW_FEATURE_EXCLUDE + "=" + previewFeatureExclude + "\n");
             out.write("# Build the preview this many blocks around the world's spawn ahead of the players,\n");
-            out.write("# from the server's start (0 to " + MAX_PREGEN_RADIUS + "; 0: off). Players see it up to 4096\n");
-            out.write("# blocks; farther tiles wait for them. /farfield pregen starts other areas. Default "
+            out.write("# from the server's start (0 to " + MAX_PREGEN_RADIUS + ", past the world border; 0: off).\n");
+            out.write("# Within 16384 blocks every level, for players anywhere there; past it, what a player\n");
+            out.write("# at the spawn sees to the radius. /farfield pregen starts other areas. Default "
                     + DEFAULTS.previewSpawnRadius + ".\n");
             out.write(PREVIEW_SPAWN_RADIUS + "=" + previewSpawnRadius + "\n");
             out.write("# While players are online, preview pregeneration pauses (pause), or goes on at low\n");

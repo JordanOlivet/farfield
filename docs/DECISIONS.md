@@ -4926,3 +4926,45 @@ invalidées". Answered "go oui".
   ring of sky.
 - **Checked**: built, unit tests run (no core change). Not checked: a
   teleport in a pack.
+
+## ADR-161 — Spawn pregeneration to the world border
+
+Status: accepted, 2026-11-16. The user: "autoriser preview_spawn_radius a
+aller à plus que 16384. Il devrait pouvoir aller jusqu'au max, soit la
+bordure", answered "go 1 2 4 3".
+
+- **Context**: a pregeneration task built every level of the pyramid over
+  its whole radius (ADR-123, ADR-126), capped at 16,384 blocks. Every level
+  to the border would be some 10^10 level-0 tiles; already at 16,384 it is
+  about 3,200.
+- **Decision**: the radius goes to `PreviewPyramid.MAX_RANGE`, past the
+  border. Within `PregenTasks.FULL_RADIUS` (16,384) a task builds every
+  level, as before, for players anywhere there. Past it, a level's tiles
+  within the range a player at the center wants that level at
+  (`PreviewPyramid.range`) and where its steps need it (`step` at a detail
+  of 4, a client's usual one): what a player standing at the center sees to
+  the radius, a few tiles a level.
+- **Left**: past the full radius, the level-0 tiles around a player far from
+  the center are still built when the player comes; a client with another
+  detail wants other levels.
+- **Checked**: unit test (the tiles past the full radius, under 400 to the
+  border, each one a step needs; the full disc unchanged).
+
+## ADR-162 — Features placed and never seen are left out of the preview
+
+Status: accepted, 2026-11-16. The user: "pourquoi traiter des choses qui
+n'arriveront jamais dans la vue ? On le fait aussi".
+
+- **Context**: the cost guard (ADR-131) left out a feature only when it
+  cost at least half a millisecond a chunk for few kept blocks. A cheaper
+  feature that keeps nothing still ran in every chunk: geodes (73 to 173 ms
+  a tile on the pack server), glow lichen.
+- **Decision**: a feature that set blocks in `MIN_PLACEMENTS` (32) chunks
+  of a biome, with none of them kept by the preview, is left out in that
+  biome whatever its cost; the re-checks (one chunk in 64) bring it back at
+  its first kept block, which counts for good. Placements, not runs: a rare
+  feature (a desert well) sets nothing in most chunks. The costs file keeps
+  each feature's placements (version 2; an older file is measured again).
+- **Left**: a feature that reaches the surface rarely, after 32 placements
+  unseen, shows 64 times less often until a re-check catches one.
+- **Checked**: built; a dev server run. Not checked: the pack server.

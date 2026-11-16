@@ -23,8 +23,23 @@ import java.util.Locale;
  */
 public final class PregenTasks {
 
-    /** The largest radius, in blocks: four times the preview's drawn range, for the distances to come. */
-    public static final int MAX_RADIUS = 16_384;
+    /**
+     * The largest radius, in blocks: past the world border (ADR-161). Within
+     * {@link #FULL_RADIUS} a task builds every level; past it, only what a
+     * player at its center would see there.
+     */
+    public static final int MAX_RADIUS = PreviewPyramid.MAX_RANGE;
+    /**
+     * Within this many blocks of its center a task builds every level of the
+     * pyramid (ADR-123), for players anywhere in it: about 3,200 level-0 tiles.
+     * Every level to the border would be some 10^10 tiles.
+     */
+    public static final int FULL_RADIUS = 16_384;
+    /**
+     * The split detail of the view past {@link #FULL_RADIUS} ({@link
+     * PreviewPyramid#step}): a client's usual detail before its first hint.
+     */
+    public static final double VIEW_DETAIL = 4.0;
     /** The task the server makes around the world's spawn. */
     public static final String SPAWN = "spawn";
 
@@ -100,12 +115,34 @@ public final class PregenTasks {
      * A task's tiles in the order it builds them (ADR-126): the pyramid's
      * coarsest level over the whole radius first, then each finer one,
      * nearest first within a level; as {@link PreviewStore#key(int, int, int)}.
+     * Every level within {@link #FULL_RADIUS}; past it (ADR-161), a level's
+     * tiles within the range a player at the center wants it at ({@link
+     * PreviewPyramid#range}) where its steps need that level ({@link
+     * PreviewPyramid#step} at {@link #VIEW_DETAIL}): what such a player
+     * sees to the radius, a few tiles a level.
      */
     public static long[] pyramid(int centerX, int centerZ, int radius, int levels) {
         List<Long> keys = new ArrayList<>();
+        int full = Math.min(radius, FULL_RADIUS);
         for (int level = levels - 1; level >= 0; level--) {
-            for (int[] t : tiles(level, centerX, centerZ, radius)) {
+            for (int[] t : tiles(level, centerX, centerZ, full)) {
                 keys.add(PreviewStore.key(level, t[0], t[1]));
+            }
+            // Level 0 never past the features' distance, far inside FULL_RADIUS.
+            int view = level == 0 ? 0 : PreviewPyramid.range(level, 0, radius);
+            if (view <= full) {
+                continue;
+            }
+            int size = PreviewStore.blocks(level);
+            for (int[] t : tiles(level, centerX, centerZ, view)) {
+                double near = distance(centerX, centerZ, t[0], t[1], size, false);
+                if (near <= full) {
+                    continue; // listed with the full disc
+                }
+                double far = distance(centerX, centerZ, t[0], t[1], size, true);
+                if (PreviewPyramid.step(level, near, far, 0, VIEW_DETAIL) >= 0) {
+                    keys.add(PreviewStore.key(level, t[0], t[1]));
+                }
             }
         }
         long[] out = new long[keys.size()];
@@ -113,6 +150,17 @@ public final class PregenTasks {
             out[i] = keys.get(i);
         }
         return out;
+    }
+
+    /** From (x, z) to a tile of {@code size} blocks: its nearest point, or its farthest corner. */
+    private static double distance(int x, int z, int tx, int tz, int size, boolean farthest) {
+        double x0 = (double) tx * size - x;
+        double x1 = ((double) tx + 1) * size - x;
+        double z0 = (double) tz * size - z;
+        double z1 = ((double) tz + 1) * size - z;
+        double dx = farthest ? Math.max(Math.abs(x0), Math.abs(x1)) : Math.max(0, Math.max(x0, -x1));
+        double dz = farthest ? Math.max(Math.abs(z0), Math.abs(z1)) : Math.max(0, Math.max(z0, -z1));
+        return Math.sqrt(dx * dx + dz * dz);
     }
 
     /** Like {@link #tiles(int, int, int)} for the tiles of a level of the pyramid. */

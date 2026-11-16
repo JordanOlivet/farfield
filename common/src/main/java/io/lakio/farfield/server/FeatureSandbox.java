@@ -125,6 +125,8 @@ final class FeatureSandbox implements WorldGenLevel {
     private java.util.function.IntBinaryOperator chunkBiome;
     /** Blocks the running feature set that the preview keeps. */
     private int keptNow;
+    /** Blocks the running feature set, kept or not: a run that set none placed nothing (rarity, filters). */
+    private int setNow;
 
     void budget(FeatureBudget budget, Kept kept, java.util.function.IntBinaryOperator chunkBiome) {
         this.budget = budget;
@@ -214,6 +216,7 @@ final class FeatureSandbox implements WorldGenLevel {
                 long start = stepNanos != null || costs != null || budget != null ? System.nanoTime() : 0;
                 long chunksBefore = chunkNanos;
                 keptNow = 0;
+                setNow = 0;
                 current = costs != null ? name(feature) : null;
                 try {
                     feature.placeWithBiomeCheck(this, generator, worldRandom, origin);
@@ -225,11 +228,12 @@ final class FeatureSandbox implements WorldGenLevel {
                     costs.ran(current, own);
                     current = null;
                 }
-                int judged = budget == null ? 0 : budget.ran(feature, chunkBiomeId, own, keptNow);
+                int judged = budget == null ? 0 : budget.ran(feature, chunkBiomeId, own, keptNow, setNow > 0);
                 if (judged != 0) {
                     io.lakio.farfield.Farfield.LOG.info("Noise preview: feature {} {} in biome {}{}: {} (ADR-131)",
                             name(feature), judged > 0 ? "left out of the preview" : "back in the preview",
-                            biomeName(chunkBiomeId), judged > 0 ? " for its cost" : ", its cost no longer too high",
+                            biomeName(chunkBiomeId), judged > 0 ? " for its cost or for keeping nothing seen"
+                                    : ", its cost no longer too high",
                             budget.describe(feature, chunkBiomeId));
                 }
                 if (stepNanos != null && step < stepNanos.length) {
@@ -304,6 +308,7 @@ final class FeatureSandbox implements WorldGenLevel {
         ChunkAccess chunk = getChunk(pos);
         chunk.setBlockState(pos, state, false);
         written.put(pos.asLong(), state);
+        setNow++;
         if (current != null) {
             costs.set(current, pos.getX(), pos.getY(), pos.getZ(), state);
         }

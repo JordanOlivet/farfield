@@ -825,6 +825,79 @@ Measured, no identical gain found:
   tile built, Farfield under 0.2 s of processor a minute; nothing to
   measure until someone explores.
 
+## The preview on the pack server (2026-11-16)
+
+The user: "check le cout de l'aperçu". The pack server's log of the user's
+client/server session (12:02 to 12:06) and three tile spikes there (no
+player online, one at a time: `farfield spike tile at 2048 2048`,
+`6000 1500`, `1500 7000`).
+
+- The minute lines: 130 to 280 quarters a minute on 5 threads, 566 to
+  770 ms a quarter (heights 183 to 242, ground 61 to 73, features 300 to
+  442); 133 to 155 features a minute left out for their cost. The fill
+  after a jump: 267 quarters, the area within 1,024 blocks done at 49.5 s,
+  all at 97.5 s. In dev the heights led; in the pack the features do.
+- The spikes, a whole tile (four quarters): 3,946, 4,666 and 6,983 ms.
+  Heights 672 to 829 ms (12 to 17 %), ground 1,392 to 1,578 ms (22 to
+  35 %), features 1,826 to 4,589 ms (46 to 66 %).
+- In the features: the stand-in chunks take 452 to 645 ms a quarter, about
+  half of it the surface rules run again on 289 chunks (186 to 334 ms a
+  quarter); the placed features 1,138 to 3,701 ms a tile, trees 41 to 49 %
+  of them (`biomesoplenty:trees_coniferous_forest` 607 ms,
+  `terralith:snowy/trees_center` 1,465 ms in one tile), then Terralith's
+  snow layers, Supplementaries' barnacles, `minecraft:freeze_top_layer`,
+  `minecraft:amethyst_geode` (73 to 173 ms a tile, under the ground).
+
+What could cut it, none built:
+- The pack's own feature code is most of the cost: only placing fewer
+  features (the cost budget, `FeatureBudget`) cuts it, and that changes the
+  image (fewer far trees).
+- The surface rules run twice, per 4-block cell for the tile's ground and per
+  block in the stand-in chunks for the features (0.8 to 1.1 s a tile,
+  14 to 23 %). One at block resolution feeding the other would be the same
+  rules once; whether the cell values come out the same is to check before
+  anything.
+- Geodes and other features under the ground only: `PreviewFeatures` keeps
+  only what reaches the surface (dug lakes, ADR-118); a feature whose kind
+  never reaches it could be skipped, if its kind is known before it runs
+  (the spike's kinds are measured after). To study.
+- Not code: the pack server builds the spawn's tiles while no player is on
+  (`preview_spawn_radius`, ADR-123); a larger radius moves this cost out of
+  play time, at the price of disk and a longer first build.
+
+The user answered (2026-11-16), quoted as given: "autoriser
+preview_spawn_radius a aller à plus que 16384. Il devrait pouvoir aller
+jusqu'au max, soit la bordure"; "si on exécute deux fois la même règles
+autant ne l'exécutrer qu'une fois"; "pourquoi traiter des choses qui
+n'arriveront jamais dans la vue ? On le fait aussi"; for the trees, "si le
+gain est vraiment intéressant, pourquoi ne pas le mettre derrière une
+option et la désactiver par défaut ?". Then "go 1 2 4 3". Done:
+
+- 1, built (ADR-161): the radius goes past the border; every level within
+  16,384 blocks as before, past it what a player at the center sees. A dev
+  server with `preview_spawn_radius=29999984` on a fresh world: "4719 tiles
+  within 29999984 blocks", 0.2 to 0.3 s a tile, about 20 minutes there.
+- 2, nothing to build: the surface rules run once in a normal build (column
+  by column, ADR-134). The second run seen above is the spike's own check
+  (`compareGround`), which builds the old stand-in chunks too to count the
+  cells that differ; the spike's ground figures are inflated by it, the
+  minute lines' (61 to 73 ms a quarter) are not.
+- 4, not built: the setting exists. `preview_features_distance` (default
+  1,250, 0 to 4,096) is the distance within which the world's own features
+  grow; past it the preview draws each biome's canopy from its profiles, and
+  the features' cost goes with the square of that distance (625 blocks:
+  about a quarter of the level-0 feature tiles). A new switch leaving costly
+  trees out would also leave them out of the tiles the profiles are measured
+  on, so those forests would lose their canopy at every distance. To expose
+  the setting in single player's settings screen is a choice left to the
+  user.
+- 3, built (ADR-162): a feature placed in 32 chunks of a biome with none of
+  its blocks kept is left out there whatever its cost. In the dev bench, 19
+  features left out against 17 and 18 in two runs before; 4 of them geodes
+  under the old half-millisecond threshold (0.17 to 0.34 ms a chunk), which
+  only the new rule takes. The costlier unseen ones were already left out
+  by ADR-131: a small gain.
+
 ## Answers (2026-11-15)
 
 The user's words, quoted as given.

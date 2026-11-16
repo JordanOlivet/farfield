@@ -39,7 +39,7 @@ class PregenTasksTest {
         // About pi * (4096 + a tile)^2 / 512^2.
         assertTrue(tiles.length > 200 && tiles.length < 300, "tiles: " + tiles.length);
         assertEquals(1, PregenTasks.tiles(256, 256, 0).length, "radius 0: the tile under the point");
-        int big = PregenTasks.tiles(0, 0, PregenTasks.MAX_RADIUS).length;
+        int big = PregenTasks.tiles(0, 0, PregenTasks.FULL_RADIUS).length;
         assertTrue(big > 3000 && big < 3600, "16,384 blocks: " + big);
     }
 
@@ -62,13 +62,51 @@ class PregenTasksTest {
     }
 
     @Test
+    void pastTheFullRadiusATaskBuildsWhatThePlayerAtItsCenterSees() {
+        int border = 29_999_984;
+        long[] keys = PregenTasks.pyramid(0, 0, border, PreviewPyramid.LEVELS);
+        long[] full = PregenTasks.pyramid(0, 0, PregenTasks.FULL_RADIUS, PreviewPyramid.LEVELS);
+        int[] past = new int[PreviewPyramid.LEVELS];
+        java.util.Set<Long> seen = new java.util.HashSet<>();
+        for (long k : keys) {
+            assertTrue(seen.add(k), "each tile once");
+        }
+        for (long k : full) {
+            assertTrue(seen.contains(k), "the full disc is all there");
+        }
+        for (long k : keys) {
+            if (!java.util.Arrays.stream(full).anyMatch(f -> f == k)) {
+                past[PreviewStore.level(k)]++;
+            }
+        }
+        assertEquals(0, past[0] + past[1] + past[2] + past[3], "fine levels stay in the full disc");
+        int extra = java.util.Arrays.stream(past).sum();
+        assertTrue(extra > 0 && extra < 400, "the view to the border, a few tiles a level: " + extra);
+        assertTrue(past[PreviewPyramid.LEVELS - 1] > 0, "the coarsest level reaches the border");
+        // Each tile past the full disc is one a player at the center wants.
+        for (long k : keys) {
+            int level = PreviewStore.level(k);
+            int size = PreviewStore.blocks(level);
+            double nx = Math.max(0, Math.max(PreviewStore.tileX(k) * (double) size, -(PreviewStore.tileX(k) + 1.0) * size));
+            double nz = Math.max(0, Math.max(PreviewStore.tileZ(k) * (double) size, -(PreviewStore.tileZ(k) + 1.0) * size));
+            double near = Math.sqrt(nx * nx + nz * nz);
+            if (near > PregenTasks.FULL_RADIUS) {
+                double fx = Math.max(Math.abs(PreviewStore.tileX(k) * (double) size), Math.abs((PreviewStore.tileX(k) + 1.0) * size));
+                double fz = Math.max(Math.abs(PreviewStore.tileZ(k) * (double) size), Math.abs((PreviewStore.tileZ(k) + 1.0) * size));
+                assertTrue(PreviewPyramid.step(level, near, Math.sqrt(fx * fx + fz * fz), 0, PregenTasks.VIEW_DETAIL) >= 0,
+                        PreviewStore.level(k) + " " + PreviewStore.tileX(k) + " " + PreviewStore.tileZ(k));
+            }
+        }
+    }
+
+    @Test
     void tasksRoundTripAndABadLineIsLeftOut() throws IOException {
         Path file = dir.resolve("farfield").resolve("pregen.txt");
         PregenTasks tasks = new PregenTasks();
         assertEquals("1", tasks.nextId());
         tasks.put(new PregenTasks.Task(PregenTasks.SPAWN, "minecraft:overworld", -8, 24, 4096,
                 PregenTasks.State.RUNNING));
-        tasks.put(new PregenTasks.Task("1", "minecraft:the_nether", 1000, 0, 99_999, PregenTasks.State.PAUSED));
+        tasks.put(new PregenTasks.Task("1", "minecraft:the_nether", 1000, 0, Integer.MAX_VALUE, PregenTasks.State.PAUSED));
         assertEquals("2", tasks.nextId());
         assertEquals(PregenTasks.MAX_RADIUS, tasks.get("1").radius(), "radius clamped");
         tasks.write(file);

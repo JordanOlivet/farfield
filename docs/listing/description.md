@@ -94,9 +94,10 @@ same Farfield version (0.3.x) to stream. Settings in
   1250, up to 4096): the real features grow this near a player; farther,
   the preview draws each biome's canopy from what they grow there, at a
   fraction of the cost.
-- `preview_spawn_radius` (default 4096, up to 16384, 0 off): the preview
-  around the world's spawn is built from the server's start, before anyone
-  joins. `/farfield pregen start <x> <z> <radius>` prepares any other area
+- `preview_spawn_radius` (default 4096, up to the world border, 0 off):
+  the preview around the world's spawn is built from the server's start,
+  before anyone joins: every level within 16384 blocks, and past that what
+  a player at the spawn sees, to the radius. `/farfield pregen start <x> <z> <radius>` prepares any other area
   (`pause`, `resume`, `cancel`, `list`); tasks resume after a restart.
   `pregen_when_players=pause` (default) holds them while players are
   online, `run` keeps them going behind the players' own preview.

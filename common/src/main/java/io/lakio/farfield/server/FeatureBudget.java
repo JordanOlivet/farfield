@@ -52,15 +52,20 @@ final class FeatureBudget {
      * out at every re-check.
      */
     static final double BACK_MARGIN = 1.25;
+    /** Chunks a feature set blocks in, none of them kept, before it counts as never seen (ADR-162). */
+    static final int MIN_PLACEMENTS = 32;
     /** A feature left out runs anyway in one chunk in this many, to stay measured. */
     static final int RECHECK_EVERY = 64;
-    private static final int FILE_VERSION = 1;
+    /** 2: with each feature's placements (ADR-162). */
+    private static final int FILE_VERSION = 2;
 
     private static final class Stat {
         final AtomicLong nanos = new AtomicLong();
         final AtomicLong chunks = new AtomicLong();
         final AtomicLong kept = new AtomicLong();
         final AtomicLong skipped = new AtomicLong();
+        /** Chunks where it set blocks, kept or not. */
+        final AtomicLong placements = new AtomicLong();
     }
 
     private record Key(PlacedFeature feature, int biome) {
@@ -97,17 +102,25 @@ final class FeatureBudget {
      * {@code kept} blocks the preview keeps: 1 when this leaves it out in
      * that biome from now on, -1 when it brings it back, 0 otherwise.
      */
-    int ran(PlacedFeature feature, int biome, long nanos, int kept) {
+    int ran(PlacedFeature feature, int biome, long nanos, int kept, boolean placed) {
         Key key = new Key(feature, biome);
         Stat s = stats.computeIfAbsent(key, f -> new Stat());
         long total = s.nanos.addAndGet(nanos);
         long chunks = s.chunks.incrementAndGet();
         long blocks = s.kept.addAndGet(kept);
-        boolean costly = chunks >= MIN_CHUNKS && total / chunks >= COSTLY_NANOS && blocks < KEPT_PER_MS * total / 1e6;
+        long placements = placed ? s.placements.incrementAndGet() : s.placements.get();
+        // A feature placed MIN_PLACEMENTS times in a biome and never leaving a block the preview keeps
+        // is not worth any time there (ADR-162: geodes, glow lichen, what stays under the ground). Placed,
+        // not only run: a rare feature (a desert well, a chunk in a thousand) sets nothing in most
+        // chunks. The re-checks bring it back at its first kept block, which counts for good.
+        boolean unseen = chunks >= MIN_CHUNKS && placements >= MIN_PLACEMENTS && blocks == 0;
+        boolean costly = unseen
+                || chunks >= MIN_CHUNKS && total / chunks >= COSTLY_NANOS && blocks < KEPT_PER_MS * total / 1e6;
         if (excluded.contains(key)) {
             dirty.set(true);
             // Back only well inside the rule.
-            costly = total / chunks * BACK_MARGIN >= COSTLY_NANOS && blocks < KEPT_PER_MS * BACK_MARGIN * total / 1e6;
+            costly = unseen || total / chunks * BACK_MARGIN >= COSTLY_NANOS
+                    && blocks < KEPT_PER_MS * BACK_MARGIN * total / 1e6;
         }
         if (costly) {
             if (excluded.add(key)) {
@@ -156,6 +169,7 @@ final class FeatureBudget {
                 out.writeLong(s == null ? 0 : s.nanos.get());
                 out.writeLong(s == null ? 0 : s.chunks.get());
                 out.writeLong(s == null ? 0 : s.kept.get());
+                out.writeLong(s == null ? 0 : s.placements.get());
             }
         }
         Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
@@ -183,6 +197,7 @@ final class FeatureBudget {
                 long nanos = in.readLong();
                 long chunks = in.readLong();
                 long kept = in.readLong();
+                long placements = in.readLong();
                 PlacedFeature feature = features.apply(name);
                 if (feature == null) {
                     continue;
@@ -192,6 +207,7 @@ final class FeatureBudget {
                 s.nanos.set(nanos);
                 s.chunks.set(chunks);
                 s.kept.set(kept);
+                s.placements.set(placements);
                 excluded.add(key);
                 read++;
             }
