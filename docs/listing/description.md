@@ -1,9 +1,10 @@
 ![Farfield](https://cdn.modrinth.com/data/3ToF1nXi/images/51830b7991218d6e6fca326bdf0fa9cfaac1a44e.png)
 
-**Farfield** shows your world up to 4,096 blocks away. Mountains, coasts,
-forests and seas beyond your render distance are drawn as levels of detail
-(LOD), for a fraction of what real chunks would cost, and the terrain your
-world has not generated yet is drawn too, so the horizon is never empty.
+**Farfield** shows your world far past your render distance: 4,096 blocks
+by default, out to the world border if you ask. Mountains, coasts, forests
+and seas are drawn as levels of detail (LOD), for a fraction of what real
+chunks would cost, and the terrain your world has not generated yet is
+drawn too, so the horizon is never empty.
 
 Minecraft 1.21.1 · NeoForge and Fabric · single player and servers
 
@@ -18,6 +19,10 @@ Minecraft 1.21.1 · NeoForge and Fabric · single player and servers
   height, grass and flowers, kelp, and the shapes of fences, walls, panes
   and stairs. Farther away, coarser levels take over where a block would
   be smaller than a few pixels on screen (the Detail setting).
+- The distance is yours to set, from 256 blocks to the world border
+  (Fog Distance): the far levels are coarse, so the cost grows slowly with
+  it. Under a shader pack it stops at 262,144 blocks.
+- After a join or a teleport the view fills from you outward.
 - Works with Sodium, and with Iris shader packs (below).
 
 ![Vanilla at 8 chunks against Farfield, the same view](https://cdn.modrinth.com/data/3ToF1nXi/images/b7cb5ac50ffadb76540871cea8efb5a3ce013630.png)
@@ -77,11 +82,12 @@ server does it by itself at start for the chunks its LODs never saw.
 ## For server owners
 
 Install Farfield on the server and on the players' clients; both need the
-same Farfield version (0.3.x) to stream. Settings in
+same Farfield version (1.0.x) to stream. Settings in
 `config/farfield-server.properties`:
 
-- `streaming_radius`: how far around a player LODs are sent (default
-  4,096 blocks).
+- `streaming_radius`: how far around a player LODs and the preview are
+  sent (default 4,096 blocks, up to the world border), each to the
+  player's own distance within it.
 - `player_kbps` and `total_kbps`: bandwidth caps per player and for all
   players (defaults 1,024 and 10,240 KB/s); the game's own packets always
   pass first.
@@ -148,7 +154,8 @@ players use `/farfieldclient` for the drawing ones.
   distance set to your render distance hides the gap.
 - **Ambient occlusion** through a pack's Distant Horizons contract (the
   Voxy contract has it).
-- **Beyond 4,096 blocks**: planned.
+- **Other Minecraft versions**: 1.21.1 only; the other 1.21.x come in a
+  later release, 26.x after them.
 
 ## Feedback
 

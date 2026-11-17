@@ -3,10 +3,10 @@
 # Farfield
 
 Far-distance terrain rendering for Minecraft, using levels of detail (LOD):
-the terrain beyond your render distance, up to 4,096 blocks away, at a
-fraction of the cost of real chunks.
+the terrain beyond your render distance, 4,096 blocks by default and out to
+the world border, at a fraction of the cost of real chunks.
 
-Status: 0.3.0, early. Minecraft 1.21.1, NeoForge and Fabric. What it does
+Status: 1.0.0. Minecraft 1.21.1, NeoForge and Fabric; the other 1.21.x come in a later release. What it does
 today, its requirements and what is planned: [`docs/listing/description.md`](docs/listing/description.md)
 (the text of the Modrinth and CurseForge pages).
 
