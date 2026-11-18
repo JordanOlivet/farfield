@@ -5,24 +5,29 @@ plugins {
 configurations {
     commonJava {
         canBeResolved = true
+        canBeConsumed = false
     }
     commonResources {
         canBeResolved = true
+        canBeConsumed = false
     }
 }
 
+// The common node of this node's Minecraft version (ADR-165).
+def commonNode = ":common:${project.name}"
+
 dependencies {
-    compileOnly(project(':common')) {
+    compileOnly(project(commonNode)) {
         capabilities {
-            requireCapability "$group:$mod_id"
+            requireCapability "${rootProject.group}:$mod_id"
         }
     }
     // The mod jar is built from the sources of api, core and common plus the
     // loader's own: one jar per loader, no nested jars for our own code.
     commonJava project(path: ':api', configuration: 'commonJava')
     commonJava project(path: ':core', configuration: 'commonJava')
-    commonJava project(path: ':common', configuration: 'commonJava')
-    commonResources project(path: ':common', configuration: 'commonResources')
+    commonJava project(path: commonNode, configuration: 'commonJava')
+    commonResources project(path: commonNode, configuration: 'commonResources')
 }
 
 tasks.named('compileJava', JavaCompile) {
@@ -120,7 +125,7 @@ afterEvaluate {
             File out = rootProject.file('output')
             out.mkdirs()
             File jar = shipped.get().archiveFile.get().asFile
-            out.listFiles().findAll { it.name ==~ /farfield-${project.name}-.*\.jar/ && it.name != jar.name }*.delete()
+            out.listFiles().findAll { it.name ==~ /farfield-${platform}-${minecraft_version}-.*\.jar/ && it.name != jar.name }*.delete()
             java.nio.file.Files.copy(jar.toPath(), new File(out, jar.name).toPath(),
                     java.nio.file.StandardCopyOption.REPLACE_EXISTING)
             logger.lifecycle("Copied ${jar.name} to output/")

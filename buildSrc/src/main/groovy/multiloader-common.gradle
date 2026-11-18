@@ -2,8 +2,27 @@ plugins {
     id 'java-library'
 }
 
+// Applied to the Stonecutter nodes (ADR-165): this project is :<platform>:<minecraft
+// version>, built from the sources of its branch, :<platform>.
+ext.platform = project.parent.name
+ext.branchDir = project.parent.projectDir
+// The nodes of one version share their name (1.21.1): a group per platform keeps
+// :common:1.21.1 and :fabric:1.21.1 apart as Gradle modules.
+group = "${rootProject.group}.${platform}"
+def modGroup = rootProject.group
+
+// A dev run dir of this node: the branch's own for 1.21.1 (fabric/runs/client, neoforge/run),
+// runs/<version>/ of the branch for another version, so each version upgrades its own worlds.
+ext.versionedRunDir = { String path ->
+    minecraft_version == '1.21.1' ? new File(branchDir, path)
+            : new File(branchDir, "runs/${minecraft_version}/${path - ~/^runs\//}")
+}
+
 base {
-    archivesName = "${mod_id}-${project.name}-${minecraft_version}"
+    archivesName = "${mod_id}-${platform}-${minecraft_version}"
+    // Every version's jars in the branch's build/libs (fabric/build/libs/farfield-fabric-
+    // <minecraft>-<version>.jar), where CI and the release look for them.
+    libsDirectory = new File(branchDir, 'build/libs')
 }
 
 java {
@@ -51,9 +70,9 @@ repositories {
 // with their own outgoing variants.
 ['apiElements', 'runtimeElements', 'sourcesElements'].each { variant ->
     configurations."$variant".outgoing {
-        capability("$group:${base.archivesName.get()}:$version")
-        capability("$group:$mod_id-${project.name}-${minecraft_version}:$version")
-        capability("$group:$mod_id:$version")
+        capability("$modGroup:${base.archivesName.get()}:$version")
+        capability("$modGroup:$mod_id-${platform}-${minecraft_version}:$version")
+        capability("$modGroup:$mod_id:$version")
     }
 }
 
@@ -66,7 +85,7 @@ jar {
                 'Specification-Title'   : mod_name,
                 'Specification-Vendor'  : mod_author,
                 'Specification-Version' : project.jar.archiveVersion,
-                'Implementation-Title'  : project.name,
+                'Implementation-Title'  : platform,
                 'Implementation-Version': project.jar.archiveVersion,
                 'Implementation-Vendor' : mod_author,
                 'Built-On-Minecraft'    : minecraft_version
@@ -77,7 +96,7 @@ jar {
 processResources {
     var expandProps = [
             'version'                      : version,
-            'group'                        : project.group, // else the task's group
+            'group'                        : modGroup, // else the task's group
             'minecraft_version'            : minecraft_version,
             'minecraft_version_range'      : minecraft_version_range,
             'fabric_version'               : fabric_version,
@@ -89,6 +108,7 @@ processResources {
             'license'                      : license,
             'description'                  : project.description,
             'neoforge_version'             : neoforge_version,
+            'neoforge_version_range'       : neoforge_version_range,
             'neoforge_loader_version_range': neoforge_loader_version_range,
             'credits'                      : credits,
             'java_version'                 : java_version

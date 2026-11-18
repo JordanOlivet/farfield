@@ -21,7 +21,7 @@ point), `docs/DECISIONS.md` (ADRs, binding), the active plan in `docs/plans/`,
 ## Commands
 
 ```powershell
-.\gradlew.bat build --no-daemon          # all projects, core unit tests, one jar per loader
+.\gradlew.bat build --no-daemon          # all projects, core unit tests, one jar per loader and Minecraft version
 .\gradlew.bat :core:test                 # engine unit tests only
 .\gradlew.bat :neoforge:runServer        # dev server (run dir: neoforge\run)
 .\gradlew.bat :neoforge:runClient        # dev client (run dir: neoforge\run)
@@ -29,6 +29,16 @@ point), `docs/DECISIONS.md` (ADRs, binding), the active plan in `docs/plans/`,
 .\gradlew.bat :fabric:runClient          # dev client (run dir: fabric\runs\client)
 .\gradlew.bat runVanillaServer           # vanilla server for client mode checks (runs\vanilla-server)
 ```
+
+Several Minecraft versions (ADR-165, Stonecutter): `common`, `fabric` and
+`neoforge` each have one node per version (`:fabric:1.21.1`, in
+`fabric/versions/1.21.1`), built from the branch's shared `src/` and
+`build.gradle`; each version's properties are in `versions/<mc>.properties`.
+`build` builds every version. The dev tasks above run the active version
+(`stonecutter.active` in `stonecutter.gradle`, the root build file); `-Pmc=<mc>`
+picks another. Run dirs: the paths above are 1.21.1's, another version uses
+`<loader>/runs/<mc>/...`. Version-specific code goes in Stonecutter comments
+(`//? if >=1.21.5 {`); a part that differs as a whole is a module of its own.
 
 Double-click launchers at the root (they open the test world `farfield-test`
 directly and remove a stale `session.lock` first): `client-fabric.bat`,
@@ -55,8 +65,9 @@ e.g. `git tag v0.1.0-alpha.2 && git push origin v0.1.0-alpha.2`;
 `.github/workflows/release.yml` publishes both jars to Modrinth, CurseForge
 and a GitHub Release.
 
-Shippable jars: `neoforge/build/libs/farfield-neoforge-1.21.1-<version>.jar`
-and `fabric/build/libs/farfield-fabric-1.21.1-<version>.jar`. Every build also copies
+Shippable jars: `neoforge/build/libs/farfield-neoforge-<mc>-<version>.jar`
+and `fabric/build/libs/farfield-fabric-<mc>-<version>.jar`, one per Minecraft
+version. Every build also copies
 both to `output/` at the root (gitignored, ADR-110).
 
 ## Architecture (ADR-006)

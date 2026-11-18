@@ -38,7 +38,7 @@ dependencies {
 }
 
 loom {
-    def aw = project(':common').file("src/main/resources/${mod_id}.accesswidener")
+    def aw = rootProject.file("common/src/main/resources/${mod_id}.accesswidener")
     if (aw.exists()) {
         accessWidenerPath.set(aw)
     }
@@ -77,7 +77,7 @@ loom {
             client()
             setConfigName('Fabric Client')
             ideConfigGenerated(true)
-            runDir('runs/client')
+            runDir(relativePath(versionedRunDir('runs/client')))
             clientRunSettings(it)
         }
         // The dev mod among the mods and configs of the user's Fabric pack
@@ -88,7 +88,7 @@ loom {
             client()
             setConfigName('Fabric Pack Client')
             ideConfigGenerated(false)
-            runDir('runs/pack')
+            runDir(relativePath(versionedRunDir('runs/pack')))
             vmArg('-Xmx8G')
             clientRunSettings(it)
         }
@@ -96,20 +96,20 @@ loom {
             server()
             setConfigName('Fabric Server')
             ideConfigGenerated(true)
-            runDir('runs/server')
+            runDir(relativePath(versionedRunDir('runs/server')))
         }
     }
 }
 
-registerPrepareRuns(file('runs/client'), file('runs/server'))
-registerFreshWorld('runClient', file('runs/client'))
+registerPrepareRuns(versionedRunDir('runs/client'), versionedRunDir('runs/server'))
+registerFreshWorld('runClient', versionedRunDir('runs/client'))
 
 // The Fabric pack run dir: the pack's mods mirrored (Farfield's own jar left out, the
 // dev build replaces it; the pack's Fabric API too, the dev classpath has one), its
 // configs, resource and shader packs and options copied once when missing (delete one
 // to take the pack's again), then the dev/client templates.
 def fabricPackDir = project.findProperty('farfield.fabricPack.dir')
-def packRunDir = file('runs/pack')
+def packRunDir = versionedRunDir('runs/pack')
 def syncPackMods = tasks.register('syncPackMods', Sync) {
     if (fabricPackDir != null) {
         from("${fabricPackDir}/mods") {

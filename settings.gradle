@@ -25,11 +25,24 @@ pluginManagement {
                 includeGroupAndSubgroups('org.spongepowered')
             }
         }
+        exclusiveContent {
+            forRepository {
+                maven {
+                    name = 'KikuGie'
+                    url = uri('https://maven.kikugie.dev/releases')
+                }
+            }
+            filter {
+                includeGroupAndSubgroups('dev.kikugie')
+            }
+        }
     }
 }
 
 plugins {
     id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+    // Several Minecraft versions from one source tree (ADR-165).
+    id 'dev.kikugie.stonecutter' version '0.9.8'
 }
 
 rootProject.name = 'farfield'
@@ -50,10 +63,46 @@ gradle.beforeProject { p ->
     }
 }
 
-// Pure Java, no Minecraft: the engine (core) and the public API surface (api).
+// Pure Java, no Minecraft: the engine (core) and the public API surface (api),
+// built once for every Minecraft version.
 include('api')
 include('core')
-// Minecraft-facing code compiled against vanilla, then one thin project per loader.
-include('common')
-include('fabric')
-include('neoforge')
+
+// The Minecraft versions built (ADR-165). Each has its properties in
+// versions/<version>.properties.
+def minecraftVersions = ['1.21.1']
+def versionedProjects = ['common', 'fabric', 'neoforge']
+
+// Minecraft-facing code compiled against vanilla, then one thin project per
+// loader, each versioned by Stonecutter: a branch per project, a node per
+// Minecraft version (:common:1.21.1 in common/versions/1.21.1), all built by the
+// branch's build.gradle from the branch's src/. The root build file is the
+// Stonecutter controller, stonecutter.gradle.
+stonecutter {
+    kotlinController = false
+    centralScript = 'build.gradle'
+    create(rootProject) { tree ->
+        versionedProjects.each { String branch ->
+            tree.branch(branch) { it.versions(minecraftVersions as String[]) }
+        }
+        tree.vcsVersion = '1.21.1'
+    }
+}
+
+// A node's version properties, set before its build script runs; -P on the
+// command line and local.properties still win.
+gradle.beforeProject { p ->
+    if (p.parent != null && p.parent.parent == p.rootProject && p.parent.name in versionedProjects) {
+        def file = new File(settingsDir, "versions/${p.name}.properties")
+        if (!file.exists()) {
+            throw new GradleException("No properties for Minecraft ${p.name}: ${file} is missing")
+        }
+        def props = new Properties()
+        file.withReader('UTF-8') { props.load(it) }
+        props.each { key, value ->
+            if (!p.hasProperty(key as String)) {
+                p.ext.set(key as String, value)
+            }
+        }
+    }
+}

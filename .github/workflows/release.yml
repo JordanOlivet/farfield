@@ -5,6 +5,10 @@ name: Release
 # CurseForge and a GitHub Release (ADR-031). Needs the repository variables
 # MODRINTH_ID and CURSEFORGE_ID and the secrets MODRINTH_TOKEN and
 # CURSEFORGE_TOKEN.
+#
+# Only the 1.21.1 jars for now: the shared workflow takes one list of game
+# versions and one version number per loader, so a second Minecraft version
+# needs per-target game versions there first (ADR-165).
 
 on:
   push:
@@ -23,8 +27,8 @@ jobs:
       modrinth-id: ${{ vars.MODRINTH_ID }}
       curseforge-id: ${{ vars.CURSEFORGE_ID }}
       targets: >-
-        [{"loader":"neoforge","label":"NeoForge","files":"neoforge/build/libs/farfield-neoforge-*.jar"},
-         {"loader":"fabric","label":"Fabric","files":"fabric/build/libs/farfield-fabric-*.jar"}]
+        [{"loader":"neoforge","label":"NeoForge","files":"neoforge/build/libs/farfield-neoforge-1.21.1-*.jar"},
+         {"loader":"fabric","label":"Fabric","files":"fabric/build/libs/farfield-fabric-1.21.1-*.jar"}]
     secrets:
       modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
       curseforge-token: ${{ secrets.CURSEFORGE_TOKEN }}

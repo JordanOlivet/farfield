@@ -2,7 +2,11 @@ import groovy.json.JsonSlurper
 
 import java.security.MessageDigest
 
+// The root build file is Stonecutter's controller (ADR-165): the line
+// `stonecutter.active` names the Minecraft version the shared sources are
+// written for now; its tasks switch them to another version.
 plugins {
+    id 'dev.kikugie.stonecutter'
     // see https://fabricmc.net/develop/ for new versions
     id 'fabric-loom' version '1.16.3' apply false
     // see https://projects.neoforged.net/neoforged/moddevgradle for new versions
@@ -11,9 +15,21 @@ plugins {
     id 'jvm-toolchains'
 }
 
+stonecutter.active '1.21.1'
+
+// The active version's properties (versions/<version>.properties), for the
+// vanilla server below and the dev task aliases of the loader projects.
+def activeVersion = stonecutter.current.project
+def activeProperties = new Properties()
+file("versions/${activeVersion}.properties").withReader('UTF-8') { activeProperties.load(it) }
+ext.activeMinecraftVersion = activeVersion
+def minecraft_version = activeProperties.getProperty('minecraft_version')
+
 // Vanilla server for client mode checks (E.6, ADR-042): Mojang's server jar,
-// run dir runs/vanilla-server (gitignored), set up from dev/server.
-def vanillaServerDir = file('runs/vanilla-server')
+// run dir runs/vanilla-server (gitignored, runs/vanilla-server-<version> for a
+// version other than 1.21.1, so each upgrades its own copy of the test world),
+// set up from dev/server.
+def vanillaServerDir = file(minecraft_version == '1.21.1' ? 'runs/vanilla-server' : "runs/vanilla-server-${minecraft_version}")
 
 tasks.register('setupVanillaServer') {
     group = 'farfield'

@@ -37,7 +37,7 @@ neoForge {
     version = neoforge_version
     additionalMinecraftArtifacts.put('vanillaDeobfuscated', vanillaJar)
     // Automatically enable neoforge AccessTransformers if the file exists
-    def at = project(':common').file('src/main/resources/META-INF/accesstransformer.cfg')
+    def at = rootProject.file('common/src/main/resources/META-INF/accesstransformer.cfg')
     if (at.exists()) {
         accessTransformers.from(at.absolutePath)
     }
@@ -53,6 +53,7 @@ neoForge {
         }
         client {
             client()
+            gameDirectory = versionedRunDir('run')
             clientRunSettings(it)
         }
         // The dev mod among the mods and configs of the user's pack instance
@@ -60,7 +61,7 @@ neoForge {
         // user (ADR-097). Its own run dir, filled by syncPackInstance.
         packClient {
             client()
-            gameDirectory = project.file('runs/pack')
+            gameDirectory = versionedRunDir('runs/pack')
             // 8 GB loads the test world; 10 GB brought a 32 GB machine under
             // 1 GB free beside other apps (2026-11-03).
             jvmArgument('-Xmx8G')
@@ -69,6 +70,7 @@ neoForge {
         }
         server {
             server()
+            gameDirectory = versionedRunDir('run')
         }
     }
     mods {
@@ -97,12 +99,12 @@ dependencies {
 }
 
 // Client and server share the default run dir.
-registerPrepareRuns(file('run'), file('run'))
+registerPrepareRuns(versionedRunDir('run'), versionedRunDir('run'))
 
 // An agent's run (-PagentWindow) goes without FML's loading window, which takes the
 // focus before any mod code runs (ADR-096); fml.toml is put back once the game exits.
 if (project.hasProperty('agentWindow')) {
-    [runClient: file('run'), runPackClient: file('runs/pack')].each { String runTask, File runDir ->
+    [runClient: versionedRunDir('run'), runPackClient: versionedRunDir('runs/pack')].each { String runTask, File runDir ->
         def fmlConfig = new File(runDir, 'config/fml.toml')
         def saved = new File(runDir, 'config/fml.toml.agent-saved')
         def restore = tasks.register("restoreFmlConfigAfter${runTask.capitalize()}") {
@@ -133,7 +135,7 @@ if (project.hasProperty('agentWindow')) {
 // dev build replaces it; Crash Assistant left out too), its configs, resource and shader packs and options copied once
 // when missing (delete one to take the pack's again), then the dev/client templates.
 def packDir = project.findProperty('farfield.pack.dir')
-def packRunDir = file('runs/pack')
+def packRunDir = versionedRunDir('runs/pack')
 def syncPackMods = tasks.register('syncPackMods', Sync) {
     if (packDir != null) {
         from("${packDir}/mods") {
@@ -180,7 +182,7 @@ def syncPackInstance = tasks.register('syncPackInstance') {
 tasks.matching { it.name == 'runPackClient' }.configureEach {
     dependsOn syncPackInstance
 }
-registerFreshWorld('runClient', file('run'))
+registerFreshWorld('runClient', versionedRunDir('run'))
 registerFreshWorld('runPackClient', packRunDir)
 
 // Dev servers read console commands (scripted checks pipe them in).

@@ -6,7 +6,7 @@ plugins {
 neoForge {
     neoFormVersion = neo_form_version
     // Automatically enable AccessTransformers if the file exists
-    def at = file('src/main/resources/META-INF/accesstransformer.cfg')
+    def at = new File(branchDir, 'src/main/resources/META-INF/accesstransformer.cfg')
     if (at.exists()) {
         accessTransformers.from(at.absolutePath)
     }
@@ -39,7 +39,19 @@ configurations {
     }
 }
 
+// The sources of this Minecraft version, as Stonecutter gives them (ADR-165): the
+// branch's src/ for the active version, its generated copy for another. Synced to
+// one folder each, which the loader nodes compile and package.
+def syncCommonJava = tasks.register('syncCommonJava', Sync) {
+    from(sourceSets.main.java)
+    into(layout.buildDirectory.dir('common/java'))
+}
+def syncCommonResources = tasks.register('syncCommonResources', Sync) {
+    from(sourceSets.main.resources)
+    into(layout.buildDirectory.dir('common/resources'))
+}
+
 artifacts {
-    commonJava sourceSets.main.java.sourceDirectories.singleFile
-    commonResources sourceSets.main.resources.sourceDirectories.singleFile
+    commonJava(syncCommonJava.map { it.destinationDir }) { builtBy syncCommonJava }
+    commonResources(syncCommonResources.map { it.destinationDir }) { builtBy syncCommonResources }
 }
