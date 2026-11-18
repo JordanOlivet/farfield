@@ -15,7 +15,7 @@ import net.minecraft.client.color.block.BlockColors;
 import net.minecraft.client.renderer.block.model.BakedQuad;
 import net.minecraft.client.renderer.texture.SpriteContents;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
-import net.minecraft.client.resources.model.BakedModel;
+import io.lakio.farfield.compat.Models;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.util.RandomSource;
@@ -420,7 +420,6 @@ final class MaterialColors {
     private boolean build(BlockState state, int off, int meshClass, BiomeTints tints, Biome probeBiome,
                           BlockState plant, int quarters) {
         Minecraft mc = Minecraft.getInstance();
-        BakedModel model = mc.getBlockRenderer().getBlockModel(state);
         BlockColors blockColors = mc.getBlockColors();
         for (int d = 0; d < 6; d++) {
             Arrays.fill(untinted[d], 0);
@@ -430,27 +429,27 @@ final class MaterialColors {
             hasQuads[d] = false;
         }
         if (meshClass == MaterialClassifier.PLANT) {
-            return buildPlant(state, model, blockColors, off, tints, probeBiome);
+            return buildPlant(state, blockColors, off, tints, probeBiome);
         }
         int lastTintIndex = Integer.MIN_VALUE;
         for (int d = 0; d < 6; d++) {
             random.setSeed(42);
-            List<BakedQuad> quads = model.getQuads(state, DIRECTIONS[d], random);
+            List<BakedQuad> quads = Models.quads(state, DIRECTIONS[d], random);
             for (BakedQuad quad : quads) {
-                if (quad.isTinted() && quad.getTintIndex() != lastTintIndex) {
-                    lastTintIndex = quad.getTintIndex();
+                if (quad.isTinted() && Models.tintIndex(quad) != lastTintIndex) {
+                    lastTintIndex = Models.tintIndex(quad);
                     probeTint(blockColors, state, lastTintIndex, tints, probeBiome);
                 }
                 rasterize(d, quad, quad.isTinted());
             }
         }
         random.setSeed(42);
-        for (BakedQuad quad : model.getQuads(state, null, random)) {
-            if (quad.isTinted() && quad.getTintIndex() != lastTintIndex) {
-                lastTintIndex = quad.getTintIndex();
+        for (BakedQuad quad : Models.quads(state, null, random)) {
+            if (quad.isTinted() && Models.tintIndex(quad) != lastTintIndex) {
+                lastTintIndex = Models.tintIndex(quad);
                 probeTint(blockColors, state, lastTintIndex, tints, probeBiome);
             }
-            rasterize(faceOf(quad.getDirection()), quad, quad.isTinted());
+            rasterize(faceOf(Models.direction(quad)), quad, quad.isTinted());
         }
 
         int withQuads = 0;
@@ -463,7 +462,7 @@ final class MaterialColors {
             // Fluids, special renderers: the particle sprite over each face, tinted as index 0.
             probeTint(blockColors, state, 0, tints, probeBiome);
             for (int d = 0; d < 6; d++) {
-                fullFace(d, model.getParticleIcon());
+                fullFace(d, Models.particle(state));
             }
         }
 
@@ -523,14 +522,14 @@ final class MaterialColors {
      * along the rows (V, along the diagonal). Its holes stay (cutout); the
      * other faces copy it. Models without quads use their particle sprite.
      */
-    private boolean buildPlant(BlockState state, BakedModel model, BlockColors blockColors, int off,
+    private boolean buildPlant(BlockState state, BlockColors blockColors, int off,
                                BiomeTints tints, Biome probeBiome) {
         random.setSeed(42);
-        List<BakedQuad> quads = model.getQuads(state, null, random);
-        TextureAtlasSprite sprite = quads.isEmpty() ? model.getParticleIcon() : quads.get(0).getSprite();
+        List<BakedQuad> quads = Models.quads(state, null, random);
+        TextureAtlasSprite sprite = quads.isEmpty() ? Models.particle(state) : Models.sprite(quads.get(0));
         boolean isTinted = !quads.isEmpty() && quads.get(0).isTinted();
         if (isTinted) {
-            probeTint(blockColors, state, quads.get(0).getTintIndex(), tints, probeBiome);
+            probeTint(blockColors, state, Models.tintIndex(quads.get(0)), tints, probeBiome);
         } else {
             tintKind = -1;
         }
@@ -555,14 +554,14 @@ final class MaterialColors {
      */
     private void speckle(int face, BlockState plant, int quarters, BlockColors blockColors, BiomeTints tints,
                          Biome probeBiome) {
-        BakedModel model = Minecraft.getInstance().getBlockRenderer().getBlockModel(BlockKeys.lookOf(plant));
+        BlockState look = BlockKeys.lookOf(plant);
         random.setSeed(42);
-        List<BakedQuad> quads = model.getQuads(plant, null, random);
-        TextureAtlasSprite sprite = quads.isEmpty() ? model.getParticleIcon() : quads.get(0).getSprite();
+        List<BakedQuad> quads = Models.quads(look, plant, null, random);
+        TextureAtlasSprite sprite = quads.isEmpty() ? Models.particle(look) : Models.sprite(quads.get(0));
         boolean isTinted = !quads.isEmpty() && quads.get(0).isTinted();
         int faceKind = kinds[face];
         if (isTinted) {
-            probeTint(blockColors, plant, quads.get(0).getTintIndex(), tints, probeBiome);
+            probeTint(blockColors, plant, Models.tintIndex(quads.get(0)), tints, probeBiome);
         }
         boolean biome = isTinted && tintKind >= 0 && faceKind >= 0;
         Sprite s = sprites.computeIfAbsent(sprite, MaterialColors::load);
@@ -708,8 +707,6 @@ final class MaterialColors {
      * when the biome tints it, else the untinted part (a constant tint baked in).
      */
     private void rasterize(int face, BakedQuad quad, boolean isTinted) {
-        int[] v = quad.getVertices();
-        int stride = v.length / 4;
         int axis = face >> 1;
         int ua = (axis + 1) % 3;
         int va = (axis + 2) % 3;
@@ -722,11 +719,10 @@ final class MaterialColors {
         float minB = Float.MAX_VALUE;
         float maxB = -Float.MAX_VALUE;
         for (int k = 0; k < 4; k++) {
-            int base = k * stride;
-            pa[k] = Float.intBitsToFloat(v[base + ua]);
-            pb[k] = Float.intBitsToFloat(v[base + va]);
-            pu[k] = Float.intBitsToFloat(v[base + 4]);
-            pv[k] = Float.intBitsToFloat(v[base + 5]);
+            pa[k] = Models.position(quad, k, ua);
+            pb[k] = Models.position(quad, k, va);
+            pu[k] = Models.u(quad, k);
+            pv[k] = Models.v(quad, k);
             minA = Math.min(minA, pa[k]);
             maxA = Math.max(maxA, pa[k]);
             minB = Math.min(minB, pb[k]);
@@ -739,7 +735,7 @@ final class MaterialColors {
         int i00 = nearest(pa, pb, minA, minB);
         int i10 = nearest(pa, pb, maxA, minB);
         int i01 = nearest(pa, pb, minA, maxB);
-        layer(face, quad.getSprite(), isTinted, minA, maxA, minB, maxB,
+        layer(face, Models.sprite(quad), isTinted, minA, maxA, minB, maxB,
                 pu[i00], pv[i00], pu[i10] - pu[i00], pv[i10] - pv[i00], pu[i01] - pu[i00], pv[i01] - pv[i00]);
     }
 
@@ -865,7 +861,11 @@ final class MaterialColors {
         float[] alpha = new float[w * h];
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
+                //? if >=1.21.11 {
+                /*int p = net.minecraft.util.ARGB.toABGR(image.getPixel(x, y)); // ABGR
+                *///?} else {
                 int p = image.getPixelRGBA(x, y); // ABGR
+                //?}
                 int i = y * w + x;
                 rgb[i * 3] = FaceTextures.linear(p);
                 rgb[i * 3 + 1] = FaceTextures.linear(p >> 8);

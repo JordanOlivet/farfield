@@ -284,7 +284,11 @@ public final class IrisLink implements ShaderPackLink {
         // enables the stencil: its stencil half stayed attached beside our
         // depth, and every LOD draw failed (GL_INVALID_FRAMEBUFFER_OPERATION).
         glNamedFramebufferTexture(fb.getId(), GL_DEPTH_STENCIL_ATTACHMENT, 0, 0);
+        //? if >=1.21.11 {
+        /*fb.addDepthAttachmentBypass(depth.getTextureId());
+        *///?} else {
         fb.addDepthAttachment(depth.getTextureId());
+        //?}
         if (valid.length != drawBuffers.length) {
             // Each location keeps its place: an attachment in order, or none.
             // A target past Iris's goes to our own texture of that index, after Iris's attachments.
@@ -482,11 +486,10 @@ public final class IrisLink implements ShaderPackLink {
         // back off with the default factors, then the cache set through calls
         // that differ from what it holds, so they reach GL.
         glDisable(GL_BLEND);
-        RenderSystem.enableBlend();
-        RenderSystem.disableBlend();
-        RenderSystem.blendFuncSeparate(GlStateManager.SourceFactor.ZERO, GlStateManager.DestFactor.ZERO,
-                GlStateManager.SourceFactor.ZERO, GlStateManager.DestFactor.ZERO);
-        RenderSystem.defaultBlendFunc();
+        GlStateManager._enableBlend();
+        GlStateManager._disableBlend();
+        GlStateManager._blendFuncSeparate(0, 0, 0, 0);
+        GlStateManager._blendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     }
 
     @Override
@@ -505,7 +508,12 @@ public final class IrisLink implements ShaderPackLink {
 
     @Override
     public int gameDepthTexture() {
+        //? if >=1.21.11 {
+        /*return io.lakio.farfield.compat.GlCompat.glTexture(((IrisRenderingPipelineAccessor) pipeline)
+                .farfield$renderTargets().getDepthTexture()).glId();
+        *///?} else {
         return ((IrisRenderingPipelineAccessor) pipeline).farfield$renderTargets().getDepthTexture();
+        //?}
     }
 
     @Override
@@ -660,9 +668,8 @@ public final class IrisLink implements ShaderPackLink {
         if (at[8] >= 0) {
             glUniform1f(at[8], 0f); // the LODs give way to the game's terrain themselves (dh_bridge.frag)
         }
-        Minecraft.getInstance().gameRenderer.lightTexture().turnOnLightLayer();
         net.irisshaders.iris.gl.IrisRenderSystem.bindTextureToUnit(GL_TEXTURE_2D, IrisSamplers.LIGHTMAP_TEXTURE_UNIT,
-                RenderSystem.getShaderTexture(2));
+                io.lakio.farfield.compat.GlCompat.lightmapTexture(Minecraft.getInstance()));
     }
 
     private void matrix(int location, Matrix4f m) {

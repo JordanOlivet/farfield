@@ -450,6 +450,13 @@ final class FeatureSandbox implements WorldGenLevel {
         return level.getLevelData();
     }
 
+    //? if >=1.21.11 {
+    /*@Override
+    public net.minecraft.world.attribute.EnvironmentAttributeReader environmentAttributes() {
+        return level.environmentAttributes();
+    }
+    *///?}
+
     @Override
     public DifficultyInstance getCurrentDifficultyAt(BlockPos pos) {
         //? if >=1.21.11 {

@@ -1,9 +1,10 @@
 package io.lakio.farfield.client.render;
 
+import io.lakio.farfield.compat.GlCompat;
+
+import io.lakio.farfield.compat.GameFog;
+
 import com.mojang.blaze3d.platform.GlStateManager;
-import com.mojang.blaze3d.shaders.FogShape;
-import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.vertex.BufferUploader;
 import io.lakio.farfield.Farfield;
 import io.lakio.farfield.client.LodWorldProvider;
 import io.lakio.farfield.client.StreamClient;
@@ -38,7 +39,6 @@ import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
-import net.minecraft.client.resources.model.BakedModel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.Registries;
@@ -445,7 +445,7 @@ public final class LodRenderer {
     private final BiomeTints tints = new BiomeTints();
     private final IntPredicate tintedMaterials = colors::tinted;
     /** Changes on every resource reload: the colors are built again. */
-    private BakedModel missingModel;
+    private Object missingModel;
     private ClientLevel colorLevel;
     /** Sodium or a fork draws the terrain: its section rule decides where LODs give way. */
     private boolean sodiumRule;
@@ -1008,7 +1008,7 @@ public final class LodRenderer {
         }
         Camera camera = mc.gameRenderer.getMainCamera();
         Vec3 from = camera.getPosition();
-        org.joml.Vector3f look = camera.getLookVector();
+        org.joml.Vector3fc look = camera.getLookVector();
         MaterialClassifier classes = w.materials();
         int minY = mc.level.getMinBuildHeight();
         int maxY = mc.level.getMaxBuildHeight();
@@ -1209,8 +1209,8 @@ public final class LodRenderer {
      */
     public static void pushFog(int distance, float farPlane, boolean normal) {
         if (distance == RenderConfig.FOG_OFF) {
-            RenderSystem.setShaderFogStart(NO_FOG);
-            RenderSystem.setShaderFogEnd(NO_FOG * 2);
+            pushedFogStart = NO_FOG;
+            pushedFogEnd = NO_FOG * 2;
             return;
         }
         float end = Math.max(distance, farPlane);
@@ -1218,8 +1218,20 @@ public final class LodRenderer {
         if (normal) {
             start = Math.max(start, farPlane - Mth.clamp(farPlane / 10f, 4f, 64f));
         }
-        RenderSystem.setShaderFogStart(Math.min(start, end));
-        RenderSystem.setShaderFogEnd(end);
+        pushedFogStart = Math.min(start, end);
+        pushedFogEnd = end;
+    }
+
+    /** The fog {@link #pushFog} made, which the fog mixin gives the game; no allocation per frame. */
+    private static float pushedFogStart;
+    private static float pushedFogEnd;
+
+    public static float pushedFogStart() {
+        return pushedFogStart;
+    }
+
+    public static float pushedFogEnd() {
+        return pushedFogEnd;
     }
 
     /**
@@ -1301,6 +1313,27 @@ public final class LodRenderer {
         FrameProbe.beforeLods(); // glitch watch (ADR-099), off by default
         INSTANCE.renderFrame(camera, viewRotation, projection);
         FrameProbe.afterLods();
+    }
+
+    /** The camera's look direction this frame, copied (the game's is read-only since 1.21.5). */
+    private final org.joml.Vector3f frameLook = new org.joml.Vector3f();
+
+    /** The frame's camera and matrices, when the LODs draw later than the level's start (1.21.5 on). */
+    private static Camera frameCamera;
+    private static final Matrix4f FRAME_VIEW = new Matrix4f();
+    private static final Matrix4f FRAME_PROJECTION = new Matrix4f();
+
+    public static void setFrame(Camera camera, Matrix4f viewRotation, Matrix4f projection) {
+        frameCamera = camera;
+        FRAME_VIEW.set(viewRotation);
+        FRAME_PROJECTION.set(projection);
+    }
+
+    /** {@link #render} with the frame {@link #setFrame} gave. */
+    public static void renderFrame() {
+        if (frameCamera != null) {
+            render(frameCamera, FRAME_VIEW, FRAME_PROJECTION);
+        }
     }
 
     private boolean init() {
@@ -1643,7 +1676,7 @@ public final class LodRenderer {
         double dx = cam.x - selectedX;
         double dy = cam.y - selectedY;
         double dz = cam.z - selectedZ;
-        org.joml.Vector3f look = camera.getLookVector();
+        org.joml.Vector3f look = frameLook.set(camera.getLookVector());
         boolean turned = look.x * selectedLookX + look.y * selectedLookY + look.z * selectedLookZ < RESELECT_TURN_COS;
         updateDetail(mc, projection);
         if (nextRest != 0 && System.nanoTime() >= nextRest) {
@@ -2015,10 +2048,17 @@ public final class LodRenderer {
         int[] bits = drawnBits;
         java.util.Arrays.fill(bits, 0);
         for (SectionRenderDispatcher.RenderSection s : ((LevelRendererAccessor) mc.levelRenderer).farfield$visibleSections()) {
+            //? if >=1.21.11 {
+            /*if (s.sectionMesh.get() == net.minecraft.client.renderer.chunk.CompiledSectionMesh.UNCOMPILED) {
+                continue;
+            }
+            BlockPos origin = s.getRenderOrigin();
+            *///?} else {
             if (s.compiled.get() == SectionRenderDispatcher.CompiledSection.UNCOMPILED) {
                 continue;
             }
             BlockPos origin = s.getOrigin();
+            //?}
             int gx = (origin.getX() >> 4) - gridMinX;
             int gy = (origin.getY() >> 4) - gridMinY;
             int gz = (origin.getZ() >> 4) - gridMinZ;
@@ -4605,7 +4645,7 @@ public final class LodRenderer {
      * again what is resident (which materials depend on the biome may change).
      */
     private void uploadColors(Minecraft mc, ClientLevel level, long budget) {
-        BakedModel missing = mc.getModelManager().getMissingModel();
+        Object missing = io.lakio.farfield.compat.Models.missingModel();
         if (missing != missingModel || level != colorLevel) {
             if (missingModel != null) {
                 stale.addAll(resident.keySet());
@@ -4621,7 +4661,7 @@ public final class LodRenderer {
             colors.setCache(openLooksCache(mc));
         }
         Registry<Biome> biomes = level.registryAccess().registryOrThrow(Registries.BIOME);
-        Biome plains = biomes.get(Biomes.PLAINS);
+        Biome plains = io.lakio.farfield.compat.Mc.value(biomes, Biomes.PLAINS);
         if (plains == null) {
             plains = biomes.stream().findFirst().orElse(null);
             if (plains == null) {
@@ -4979,8 +5019,7 @@ public final class LodRenderer {
      * texture slot 2, as the terrain shaders expect.
      */
     private static int lightmap(Minecraft mc) {
-        mc.gameRenderer.lightTexture().turnOnLightLayer();
-        return RenderSystem.getShaderTexture(2);
+        return GlCompat.lightmapTexture(mc);
     }
 
     /** Reads the GPU timestamps of earlier frames that are ready, without waiting. */
@@ -5019,7 +5058,7 @@ public final class LodRenderer {
         int blockX = (int) Math.floor(cam.x);
         int blockY = (int) Math.floor(cam.y);
         int blockZ = (int) Math.floor(cam.z);
-        float[] fogColor = RenderSystem.getShaderFogColor();
+        float[] fogColor = GameFog.color();
         GlStateManager._glUseProgram(s.program.id());
         if (s.pack) {
             packLink.bind(s.program.id());
@@ -5040,8 +5079,8 @@ public final class LodRenderer {
         if (pushedFog || followVanillaFog) {
             // The game's terrain fog, set up just before the LODs draw (moved out by
             // the fog mixin, or kept); its shape only when kept, as the LOD fog was a sphere.
-            glUniform2f(s.fog, RenderSystem.getShaderFogStart(), RenderSystem.getShaderFogEnd());
-            glUniform1i(s.fogCylinder, followVanillaFog && RenderSystem.getShaderFogShape() == FogShape.CYLINDER ? 1 : 0);
+            glUniform2f(s.fog, GameFog.start(), GameFog.end());
+            glUniform1i(s.fogCylinder, followVanillaFog && GameFog.cylinder() ? 1 : 0);
         } else {
             // The fog mixin did not run or left a mod's fog alone: the LODs' own far fog.
             // None when the player hid it (ADR-140): far past anything drawn.
@@ -5153,7 +5192,7 @@ public final class LodRenderer {
         if (!packLink.beginTranslucent()) {
             return;
         }
-        int previousUnit = GlStateManager._getActiveTexture();
+        int previousUnit = GlCompat.activeTexture();
         GlStateManager._activeTexture(GL_TEXTURE0 + ATLAS_UNIT);
         GlStateManager._bindTexture(atlas);
         GlStateManager._activeTexture(GL_TEXTURE0 + LIGHTMAP_UNIT);
@@ -5175,16 +5214,16 @@ public final class LodRenderer {
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 10, blendedTints.id());
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, packIds.id());
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirect.id());
-        RenderSystem.enableDepthTest();
-        RenderSystem.depthFunc(GL_LEQUAL);
+        GlStateManager._enableDepthTest();
+        GlStateManager._depthFunc(GL_LEQUAL);
         // The pack reads the nearest LOD surface, translucent ones included.
-        RenderSystem.depthMask(true);
+        GlStateManager._depthMask(true);
         if (dh) {
-            RenderSystem.disableCull(); // as Iris draws DH's water
+            GlStateManager._disableCull(); // as Iris draws DH's water
         } else {
-            RenderSystem.enableCull();
+            GlStateManager._enableCull();
         }
-        RenderSystem.colorMask(true, true, true, true);
+        GlStateManager._colorMask(true, true, true, true);
         int slot = packTranslucentSlot;
         boolean timed = RenderSettings.performanceLogs() && !packTranslucentPending[slot];
         if (timed) {
@@ -5193,7 +5232,7 @@ public final class LodRenderer {
         use(translucentShader, translucentCam, mc, true);
         glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, translucentOffset, translucentCount, 0);
         if (dh) {
-            RenderSystem.enableCull();
+            GlStateManager._enableCull();
         }
         if (timed) {
             glQueryCounter(packTranslucentQueries[slot * 2 + 1], GL_TIMESTAMP);
@@ -5203,7 +5242,7 @@ public final class LodRenderer {
 
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
         GlStateManager._glBindVertexArray(0);
-        BufferUploader.invalidate();
+        GlCompat.endRawDraw();
         GlStateManager._glUseProgram(0);
         org.lwjgl.opengl.GL45C.glBindTextureUnit(GAME_DEPTH_UNIT, 0);
         packLink.endTranslucent();
@@ -5258,7 +5297,7 @@ public final class LodRenderer {
             glQueryCounter(timerQueries[slot * TIMESTAMPS], GL_TIMESTAMP);
         }
 
-        int previousUnit = GlStateManager._getActiveTexture();
+        int previousUnit = GlCompat.activeTexture();
         GlStateManager._activeTexture(GL_TEXTURE0 + ATLAS_UNIT);
         GlStateManager._bindTexture(atlas);
         GlStateManager._activeTexture(GL_TEXTURE0 + LIGHTMAP_UNIT);
@@ -5280,11 +5319,11 @@ public final class LodRenderer {
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, packIds.id());
         }
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirect.id());
-        RenderSystem.enableDepthTest();
-        RenderSystem.depthFunc(GL_LEQUAL);
-        RenderSystem.depthMask(true);
-        RenderSystem.disableBlend();
-        RenderSystem.enableCull(); // lod.vert winds every face counter-clockwise from outside
+        GlStateManager._enableDepthTest();
+        GlStateManager._depthFunc(GL_LEQUAL);
+        GlStateManager._depthMask(true);
+        GlStateManager._disableBlend();
+        GlStateManager._enableCull(); // lod.vert winds every face counter-clockwise from outside
 
         // Depth pre-pass: the shaded passes then run the full fragment shader
         // (ambient occlusion, biome blending, textures) once per pixel instead
@@ -5299,7 +5338,7 @@ public final class LodRenderer {
         int opaqueDraws = solidDraws + discardDraws;
         boolean culled = gpuCandidates > 0 && cullProgram != null;
         if (prepass && (opaqueDraws > 0 || culled)) {
-            RenderSystem.colorMask(false, false, false, false);
+            GlStateManager._colorMask(false, false, false, false);
             if (solidDraws > 0 || culled) {
                 use(packed && packDepthSolid != null ? packDepthSolid : depthSolid, cam, mc, false);
                 if (solidDraws > 0) {
@@ -5315,7 +5354,7 @@ public final class LodRenderer {
                 }
                 drawCulled(1);
             }
-            RenderSystem.colorMask(true, true, true, true);
+            GlStateManager._colorMask(true, true, true, true);
         }
         if (timed) {
             glQueryCounter(timerQueries[slot * TIMESTAMPS + 1], GL_TIMESTAMP);
@@ -5323,16 +5362,16 @@ public final class LodRenderer {
         if (opaqueDraws > 0 || culled) {
             use(shaded, cam, mc, false);
             if (prepass) {
-                RenderSystem.depthFunc(GL_EQUAL);
-                RenderSystem.depthMask(false);
+                GlStateManager._depthFunc(GL_EQUAL);
+                GlStateManager._depthMask(false);
             }
             if (opaqueDraws > 0) {
                 glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, 0, opaqueDraws, 0);
             }
             drawCulled(0);
             drawCulled(1);
-            RenderSystem.depthFunc(GL_LEQUAL);
-            RenderSystem.depthMask(true);
+            GlStateManager._depthFunc(GL_LEQUAL);
+            GlStateManager._depthMask(true);
         }
         if (timed) {
             glQueryCounter(timerQueries[slot * TIMESTAMPS + 2], GL_TIMESTAMP);
@@ -5353,13 +5392,13 @@ public final class LodRenderer {
         // Under a shader pack, translucent LODs wait for voxy_translucent (C.1b).
         if (translucentDraws > 0 && RenderSettings.drawTranslucent() && !packed && !dh) {
             use(shaded, cam, mc, true);
-            RenderSystem.enableBlend();
-            RenderSystem.blendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-            RenderSystem.depthMask(false);
+            GlStateManager._enableBlend();
+            GlStateManager._blendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+            GlStateManager._depthMask(false);
             glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, opaqueBytes, translucentDraws, 0);
-            RenderSystem.depthMask(true);
-            RenderSystem.defaultBlendFunc();
-            RenderSystem.disableBlend();
+            GlStateManager._depthMask(true);
+            GlStateManager._blendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+            GlStateManager._disableBlend();
         }
 
         if (timed) {
@@ -5369,7 +5408,7 @@ public final class LodRenderer {
         }
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
         GlStateManager._glBindVertexArray(0);
-        BufferUploader.invalidate();
+        GlCompat.endRawDraw();
         GlStateManager._glUseProgram(0);
         if (packed || dh) {
             // The LODs drew into their own depth texture: the game's depth is untouched.
@@ -5384,6 +5423,6 @@ public final class LodRenderer {
             return;
         }
         // Vanilla terrain draws next with its own depth range: start it clean.
-        RenderSystem.clear(GL_DEPTH_BUFFER_BIT, Minecraft.ON_OSX);
+        GlCompat.clearMainDepth();
     }
 }

@@ -55,10 +55,10 @@ ext.rehearsalJar = { String loader ->
         return null
     }
     def jars = (new File(dir as String, 'output').listFiles() ?: []).findAll {
-        it.name ==~ /rehearsal-${loader}-.*\.jar/
+        it.name ==~ /rehearsal-${loader}-${minecraft_version}-.*\.jar/
     }
     if (jars.isEmpty()) {
-        logger.warn("rehearsal.dir names ${dir}, but its output/ has no ${loader} jar: build it there first")
+        logger.warn("rehearsal.dir names ${dir}, but its output/ has no ${loader} jar for Minecraft ${minecraft_version}")
         return null
     }
     return jars.max { it.lastModified() }

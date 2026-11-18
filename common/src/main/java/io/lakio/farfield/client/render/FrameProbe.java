@@ -319,7 +319,7 @@ public final class FrameProbe {
         int previousPack = glGetInteger(GL_PIXEL_PACK_BUFFER_BINDING);
         boolean scissor = glIsEnabled(GL_SCISSOR_TEST);
         glDisable(GL_SCISSOR_TEST);
-        int fromFbo = main.frameBufferId;
+        int fromFbo = io.lakio.farfield.compat.GlCompat.mainFramebuffer();
         for (int i = 0; i < chainFbo.length; i++) {
             glBindFramebuffer(GL_READ_FRAMEBUFFER, fromFbo);
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, chainFbo[i]);

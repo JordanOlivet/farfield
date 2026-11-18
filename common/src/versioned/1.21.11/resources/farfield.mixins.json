@@ -1,0 +1,25 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "io.lakio.farfield.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "refmap": "farfield.refmap.json",
+  "mixins": [
+    "BiomeManagerAccessor",
+    "ChunkGeneratorAccessor",
+    "LevelChunkMixin"
+  ],
+  "client": [
+    "client.ChunkSectionsToRenderMixin",
+    "client.ClientLevelAccessor",
+    "client.FogRendererMixin",
+    "client.GlCommandEncoderAccessor",
+    "client.LevelRendererAccessor",
+    "client.LevelRendererMixin",
+    "client.SpriteContentsAccessor",
+    "client.WindowMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

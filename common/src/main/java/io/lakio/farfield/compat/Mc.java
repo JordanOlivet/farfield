@@ -119,6 +119,15 @@ public final class Mc {
         //?}
     }
 
+    /** The registry's entry of that key, or null. */
+    public static <T> T value(Registry<T> registry, net.minecraft.resources.ResourceKey<T> key) {
+        //? if >=1.21.2 {
+        /*return registry.getValue(key);
+        *///?} else {
+        return registry.get(key);
+        //?}
+    }
+
     /** The block registry as a holder lookup, for the block state parser. */
     public static HolderLookup<Block> blockLookup() {
         //? if >=1.21.2 {

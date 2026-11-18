@@ -30,6 +30,12 @@ final class FarfieldNeoForgeClient {
         container.registerExtensionPoint(IConfigScreenFactory.class,
                 (IConfigScreenFactory) (mod, parent) -> new FarfieldSettingsScreen(parent));
         modBus.addListener((RegisterKeyMappingsEvent e) -> e.register(SettingsKey.KEY));
+        // Since NeoForge 21.9 (or so) the payloads the server sends need a handler registered on the client.
+        //? if >=1.21.11 {
+        /*modBus.addListener((net.neoforged.neoforge.client.network.event.RegisterClientPayloadHandlersEvent e) ->
+                e.register(io.lakio.farfield.net.StreamPayload.TYPE,
+                        (payload, context) -> io.lakio.farfield.client.StreamClient.receive(payload.data())));
+        *///?}
         NeoForge.EVENT_BUS.addListener((ClientTickEvent.Post e) -> SettingsKey.tick(Minecraft.getInstance()));
         // Client mode (ADR-022): LODs built from the chunks a remote server sends.
         NeoForge.EVENT_BUS.addListener((ChunkEvent.Load e) -> {

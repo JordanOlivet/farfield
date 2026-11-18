@@ -42,6 +42,8 @@ public abstract class FogRendererMixin {
                 && LodRenderer.drawsBeyondVanilla();
         if (pushOut) {
             LodRenderer.pushFog(distance, farPlaneDistance, normal);
+            RenderSystem.setShaderFogStart(LodRenderer.pushedFogStart());
+            RenderSystem.setShaderFogEnd(LodRenderer.pushedFogEnd());
         }
         LodRenderer.setFogState(pushOut, fluid || (thick && !pushOut), shouldCreateFog);
     }

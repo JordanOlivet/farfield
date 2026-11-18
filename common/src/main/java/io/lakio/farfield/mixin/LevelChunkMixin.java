@@ -26,8 +26,14 @@ public abstract class LevelChunkMixin {
     Level level;
 
     @Inject(method = "setBlockState", at = @At("RETURN"), require = 0)
+    // Since 1.21.5 the last parameter is the update flags, not whether a piston moves the block.
+    //? if >=1.21.11 {
+    /*private void farfield$onSetBlockState(BlockPos pos, BlockState state, int flags,
+                                          CallbackInfoReturnable<BlockState> cir) {
+    *///?} else {
     private void farfield$onSetBlockState(BlockPos pos, BlockState state, boolean isMoving,
                                           CallbackInfoReturnable<BlockState> cir) {
+    //?}
         if (cir.getReturnValue() != null) {
             LodPipeline.blockChanged(level, (LevelChunk) (Object) this);
         }

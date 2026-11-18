@@ -31,10 +31,25 @@ stonecutter.parameters { sc ->
         r.replace('getMinSection()', 'getMinSectionY()')
         r.replace('registryOrThrow(', 'lookupOrThrow(')
     }
+    // 1.21.5: the OpenGL state manager moves with the GPU device's OpenGL backend.
+    sc.replacements.string(atLeast('1.21.5')) { r ->
+        r.replace('com.mojang.blaze3d.platform.GlStateManager', 'com.mojang.blaze3d.opengl.GlStateManager')
+    }
     // 1.21.11: ResourceLocation becomes Identifier, ResourceKey.location() identifier().
     sc.replacements.string(atLeast('1.21.11')) { r ->
         r.replace('ResourceLocation', 'Identifier')
         r.replace('.location()', '.identifier()')
+        // The camera's accessors, and the compiled check that waits for a section's fade-in.
+        r.replace('camera.getPosition()', 'camera.position()')
+        r.replace('camera.getBlockPosition()', 'camera.blockPosition()')
+        r.replace('.getLookVector()', '.forwardVector()')
+        r.replace('.isSectionCompiled(', '.isSectionCompiledAndVisible(')
+    }
+    // NeoForge 21.11 (FML 10): the environment's getters, the client's own packet distributor.
+    sc.replacements.string(atLeast('1.21.11')) { r ->
+        r.replace('FMLEnvironment.dist', 'FMLEnvironment.getDist()')
+        r.replace('FMLEnvironment.production', 'FMLEnvironment.isProduction()')
+        r.replace('PacketDistributor.sendToServer(', 'net.neoforged.neoforge.client.network.ClientPacketDistributor.sendToServer(')
     }
 }
 

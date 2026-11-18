@@ -21,6 +21,13 @@ ext.versionedRunDir = { String path ->
             : new File(branchDir, "runs/${minecraft_version}/${path - ~/^runs\//}")
 }
 
+// Code and resources of this Minecraft version alone (ADR-165): a file that differs as a
+// whole between versions (a mixin on a class the game rewrote, a mixin config) lives in
+// src/versioned/<minecraft version>/ of the branch, one copy per version, never in
+// Stonecutter comments.
+sourceSets.main.java.srcDir(new File(branchDir, "src/versioned/${minecraft_version}/java"))
+sourceSets.main.resources.srcDir(new File(branchDir, "src/versioned/${minecraft_version}/resources"))
+
 base {
     archivesName = "${mod_id}-${platform}-${minecraft_version}"
     // Every version's jars in the branch's build/libs (fabric/build/libs/farfield-fabric-

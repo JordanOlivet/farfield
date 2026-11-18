@@ -123,14 +123,27 @@ public final class FarfieldSettingsScreen extends OptionsSubScreen {
         tabManager.setTabArea(new ScreenRectangle(0, top, width, height - layout.getFooterHeight() - top));
     }
 
+    // Since 1.21.9 key presses come as one event.
+    //? if >=1.21.11 {
+    /*@Override
+    public boolean keyPressed(net.minecraft.client.input.KeyEvent event) {
+        return tabNavigationBar.keyPressed(event) || super.keyPressed(event);
+    }
+    *///?} else {
     @Override
     public boolean keyPressed(int key, int scanCode, int modifiers) {
         return tabNavigationBar.keyPressed(key) || super.keyPressed(key, scanCode, modifiers);
     }
+    //?}
 
     @Override
     protected void renderMenuBackground(GuiGraphics graphics) {
+        //? if >=1.21.11 {
+        /*graphics.blit(net.minecraft.client.renderer.RenderPipelines.GUI_TEXTURED, CreateWorldScreen.TAB_HEADER_BACKGROUND,
+                0, 0, 0.0F, 0.0F, width, layout.getHeaderHeight(), 16, 16);
+        *///?} else {
         graphics.blit(CreateWorldScreen.TAB_HEADER_BACKGROUND, 0, 0, 0.0F, 0.0F, width, layout.getHeaderHeight(), 16, 16);
+        //?}
         renderMenuBackground(graphics, 0, layout.getHeaderHeight(), width, height);
     }
 
@@ -162,6 +175,13 @@ public final class FarfieldSettingsScreen extends OptionsSubScreen {
         public Component getTabTitle() {
             return title;
         }
+
+        //? if >=1.21.11 {
+        /*@Override
+        public Component getTabExtraNarration() {
+            return Component.empty();
+        }
+        *///?}
 
         @Override
         public void visitChildren(Consumer<AbstractWidget> consumer) {
