@@ -5024,3 +5024,59 @@ disque".
   64 blocks at 5 and 10 s before (`real L0[2, 6, -1] not meshed`), at 251
   and 2,221 blocks after; the whole distance at 20 s both. Not checked:
   the user's pack.
+
+## ADR-165 — Several Minecraft versions: Stonecutter for the game code, modules for whole backends
+
+Status: accepted, 2026-11-18. Settles the open point of ADR-004 (how
+several Minecraft versions are built). The user, after 1.0.0: start the
+1.21.x ports with 1.21.11, then "Ok pour l'option D".
+
+- **Context**: `core` and `api` import no Minecraft type and do not change
+  between versions. `common` is not a thin adapter: 76 files, 24,600 lines,
+  46 of them importing `net.minecraft`, 9 touching `RenderSystem` or
+  Blaze3D, 20 mixins (12 for Iris and Sodium). The loader projects hold 9
+  files. Between 1.21.1 and 1.21.11 the game reworks its shaders (1.21.2),
+  Blaze3D (`GpuDevice`, `RenderPipeline`) and NBT (1.21.5), then its GUI;
+  26.1 is 1.21.11 without obfuscation, on Java 25.
+- **Options weighed**:
+  - One git branch per version: no tooling, but every fix ported N times,
+    `core` included, and two histories for the progress logs and ADRs.
+  - Stonecutter everywhere: one source tree, but a whole backend (Vulkan,
+    ADR-007) written in conditional comments would be unreadable.
+  - One `common` module per version over a neutral `common-base`: plain
+    Java, but a refactor of 24,600 lines before the first gain, an
+    interface per Minecraft type touched, and mixins copied per version.
+  - One jar for every 1.21.x through reflection: ruled out by the 1.21.5
+    rendering rework.
+- **Decision**:
+  - `core` and `api` stay as they are, built once, Java 21 bytecode while a
+    supported version runs Java 21.
+  - `common` and the loader projects go under **Stonecutter**: one source
+    tree, one build node per Minecraft version, the differences in
+    conditional comments and token replacements (renamed classes, mixin
+    targets, NBT accessors, shader and Blaze3D calls).
+  - A part that differs as a whole between versions becomes a **module of
+    its own** behind an interface, never a Stonecutter block: the rule is a
+    file whose conditional blocks would cover most of it. The first known
+    case is the Vulkan backend for 26.x (ADR-007).
+  - Supported versions: **1.21.1 and 1.21.11**, each on NeoForge and
+    Fabric. A version in between (1.21.4, 1.21.8) only when asked for.
+  - Version-specific dependencies (Iris, Sodium, Mod Menu, Parchment,
+    NeoForm, Loom, ModDevGradle) are properties of each version node.
+  - Jars keep the Minecraft version in their name
+    (`farfield-<loader>-<mc>-<version>.jar`); `release.yml` publishes every
+    node's jars with their own game versions.
+  - LOD stores stay readable across a world upgrade: their block states and
+    biomes are kept as text keys (`block_states.txt`, `biomes.txt`), so a
+    1.21.11 game gives new blocks new ids and reads the old ones as they
+    are. A key the newer game no longer knows falls to the resolver's
+    unknown path; the spike checks that path does not drop the section.
+  - The stream protocol stays in `core`, one version for every node: the
+    client and the server already run the same Minecraft version.
+  - CI boots a dev server per node to `Done` with no `Mixin apply failed`,
+    since a broken mixin target only shows at boot.
+- **First step, a spike**: Stonecutter on 1.21.1 alone with no change of
+  behavior (both jars still build and the dev clients and servers still
+  boot), then a 1.21.11 node; its compile errors size the port. The spike
+  also checks Stonecutter works with the Groovy `buildSrc`, or converts the
+  settings and the controller to the Kotlin DSL.
