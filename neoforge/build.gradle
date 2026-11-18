@@ -88,7 +88,10 @@ dependencies {
             prefer aircompressor_version
         }
     }
-    additionalRuntimeClasspath "io.airlift:aircompressor:${aircompressor_version}"
+    // Before 1.21.9 the dev runs need the library on a classpath of their own.
+    if (!mcAtLeast('1.21.9')) {
+        additionalRuntimeClasspath "io.airlift:aircompressor:${aircompressor_version}"
+    }
     // Shader packs (ADR-113): compiled against, never bundled.
     compileOnly("maven.modrinth:iris:${iris_neoforge_version}") { transitive = false }
     // Rehearsal, the test harness mod (ADR-122), in the dev runs only, when a checkout is named.

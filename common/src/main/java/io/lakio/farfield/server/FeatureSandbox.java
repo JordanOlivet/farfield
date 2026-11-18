@@ -306,7 +306,11 @@ final class FeatureSandbox implements WorldGenLevel {
             return false;
         }
         ChunkAccess chunk = getChunk(pos);
+        //? if >=1.21.11 {
+        /*chunk.setBlockState(pos, state, 0);
+        *///?} else {
         chunk.setBlockState(pos, state, false);
+        //?}
         written.put(pos.asLong(), state);
         setNow++;
         if (current != null) {
@@ -448,7 +452,11 @@ final class FeatureSandbox implements WorldGenLevel {
 
     @Override
     public DifficultyInstance getCurrentDifficultyAt(BlockPos pos) {
+        //? if >=1.21.11 {
+        /*return new DifficultyInstance(level.getDifficulty(), level.getDayTime(), 0, level.getMoonBrightness(pos));
+        *///?} else {
         return new DifficultyInstance(level.getDifficulty(), level.getDayTime(), 0, level.getMoonBrightness());
+        //?}
     }
 
     @Nullable
@@ -482,9 +490,15 @@ final class FeatureSandbox implements WorldGenLevel {
         return BlackholeTickAccess.emptyLevelList();
     }
 
+    // Since 1.21.5 (or so) the sound and event sources are any entity, not only a player.
     @Override
+    //? if >=1.21.11 {
+    /*public void playSound(@Nullable net.minecraft.world.entity.Entity player, BlockPos pos, SoundEvent sound,
+                          SoundSource source, float volume, float pitch) {
+    *///?} else {
     public void playSound(@Nullable Player player, BlockPos pos, SoundEvent sound, SoundSource source, float volume,
                           float pitch) {
+    //?}
     }
 
     @Override
@@ -492,7 +506,11 @@ final class FeatureSandbox implements WorldGenLevel {
     }
 
     @Override
+    //? if >=1.21.11 {
+    /*public void levelEvent(@Nullable net.minecraft.world.entity.Entity player, int type, BlockPos pos, int data) {
+    *///?} else {
     public void levelEvent(@Nullable Player player, int type, BlockPos pos, int data) {
+    //?}
     }
 
     @Override

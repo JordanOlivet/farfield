@@ -68,9 +68,10 @@ gradle.beforeProject { p ->
 include('api')
 include('core')
 
-// The Minecraft versions built (ADR-165). Each has its properties in
-// versions/<version>.properties.
-def minecraftVersions = ['1.21.1']
+// The Minecraft versions built (ADR-165), `minecraft_versions` in gradle.properties
+// (a version being ported is added with -Pminecraft_versions=1.21.1,<version>).
+// Each has its properties in versions/<version>.properties.
+def minecraftVersions = providers.gradleProperty('minecraft_versions').get().split(',')*.trim()
 def versionedProjects = ['common', 'fabric', 'neoforge']
 
 // Minecraft-facing code compiled against vanilla, then one thin project per

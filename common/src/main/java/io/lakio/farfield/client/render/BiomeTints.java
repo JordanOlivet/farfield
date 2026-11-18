@@ -1,5 +1,7 @@
 package io.lakio.farfield.client.render;
 
+import io.lakio.farfield.compat.Mc;
+
 import io.lakio.farfield.core.anvil.KeyRegistry;
 import net.minecraft.client.renderer.BiomeColors;
 import net.minecraft.core.Registry;
@@ -87,7 +89,7 @@ final class BiomeTints {
 
     private static Biome lookup(Registry<Biome> registry, String key) {
         ResourceLocation id = ResourceLocation.tryParse(key);
-        return id == null ? null : registry.get(id);
+        return id == null ? null : Mc.value(registry, id);
     }
 
     private static int tint(ColorResolver resolver, Biome biome) {

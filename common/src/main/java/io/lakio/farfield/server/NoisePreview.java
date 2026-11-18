@@ -1,5 +1,7 @@
 package io.lakio.farfield.server;
 
+import io.lakio.farfield.compat.Mc;
+
 import io.lakio.farfield.Farfield;
 import io.lakio.farfield.core.preview.PreviewPyramid;
 import io.lakio.farfield.core.preview.PreviewStore;
@@ -228,7 +230,13 @@ final class NoisePreview {
             int[] cut = new int[1];
             DensityFunction uncut = UncutDensity.of(density, cut);
             cutBranches = cut[0];
+            // Up to 1.21.10 the density without jaggedness, searched for the preliminary surface;
+            // since, the router gives that surface's height itself (a 2D function).
+            //? if >=1.21.11 {
+            /*DensityFunction initial = state.router().preliminarySurfaceLevel();
+            *///?} else {
             DensityFunction initial = state.router().initialDensityWithoutJaggedness();
+            //?}
             // One set of caches per thread for the three: each computed the terrain's 2D functions on its
             // own, three times per column of the surface search. The climate sampler keeps its own: it reads
             // other columns (quart corners) in between, which would push the shared single entries out.
@@ -264,7 +272,7 @@ final class NoisePreview {
             }
             double roof = Math.abs(icebergPillarRoof.getValue(x * 1.17, 0.0, z * 1.17) * 1.5);
             double rise = Math.min(d1 * d1 * 1.2, Math.ceil(roof * 40.0) + 14.0);
-            if (biome.shouldMeltFrozenOceanIcebergSlightly(new BlockPos(x, 63, z))) {
+            if (Mc.meltsIcebergsSlightly(biome, new BlockPos(x, 63, z), seaLevel)) {
                 rise -= 2.0;
             }
             return rise > 2.0 ? (int) (seaLevel + rise) : UNKNOWN;
@@ -347,7 +355,7 @@ final class NoisePreview {
                             var registry = level.registryAccess().registryOrThrow(
                                     net.minecraft.core.registries.Registries.PLACED_FEATURE);
                             var id = net.minecraft.resources.ResourceLocation.tryParse(name);
-                            return id == null ? null : registry.get(id);
+                            return id == null ? null : Mc.value(registry, id);
                         });
                         if (left != 0) {
                             Farfield.LOG.info("Noise preview of {}: {}", key.location(), left > 0
@@ -450,7 +458,7 @@ final class NoisePreview {
      * what its client's hint asks, at most the streaming radius.
      */
     private static int distance(ServerPlayer p) {
-        if (!p.server.isDedicatedServer() && p.server.isSingleplayerOwner(p.getGameProfile())) {
+        if (!Mc.server(p).isDedicatedServer() && Mc.isSingleplayerOwner(Mc.server(p), p)) {
             return Math.min(PreviewPyramid.MAX_RANGE, RenderSettings.drawDistance());
         }
         return Math.min(PreviewPyramid.MAX_RANGE, StreamServer.previewDistance(p));
@@ -531,8 +539,8 @@ final class NoisePreview {
             farthest = Math.max(farthest, drawn);
             // The four steps (ADR-152): the near ring past the chunks the game itself sends, the levels
             // by the player's own detail.
-            double ring = p.server.getPlayerList().getViewDistance() * 16.0 + PreviewPyramid.NEAR_RING_MARGIN;
-            double detail = !p.server.isDedicatedServer() && p.server.isSingleplayerOwner(p.getGameProfile())
+            double ring = Mc.server(p).getPlayerList().getViewDistance() * 16.0 + PreviewPyramid.NEAR_RING_MARGIN;
+            double detail = !Mc.server(p).isDedicatedServer() && Mc.isSingleplayerOwner(Mc.server(p), p)
                     ? RenderSettings.splitDetail() : StreamServer.previewDetail(p);
             for (int level = PreviewPyramid.LEVELS - 1; level >= 0; level--) {
                 if (level == 0 && features <= 0) {
@@ -1059,6 +1067,18 @@ final class NoisePreview {
      */
     private static int preliminary(Dimension d, int x, int z, int hint) {
         DensityFunction f = d.columnInitial.get();
+        //? if >=1.21.11 {
+        /*// The router's own preliminary surface: its search stops at the world's floor (-64 in the
+        // Overworld) and the End's is zero, so a height at or under the floor is none, as before.
+        int found = net.minecraft.util.Mth.floor(f.compute(new DensityFunction.SinglePointContext(x, 0, z)));
+        return found <= d.noise.minY() ? NO_ESTIMATE : found;
+        *///?} else {
+        return preliminaryFromDensity(d, f, x, z, hint);
+        //?}
+    }
+
+    /** {@link #preliminary} from the density without jaggedness, as vanilla up to 1.21.10. */
+    private static int preliminaryFromDensity(Dimension d, DensityFunction f, int x, int z, int hint) {
         int minY = d.noise.minY();
         int step = d.noise.getCellHeight();
         int top = minY + d.noise.height();
@@ -1369,7 +1389,7 @@ final class NoisePreview {
                     int filler = (int) measured;
                     // Snow over the rules' top on cold land, as a level-0 tile's cells have it.
                     if (ruled != null ? rules.snow() : h > d.seaLevel && d.fluid != null
-                            && biome.value().coldEnoughToSnow(new BlockPos(x + spacing / 2, h, z + spacing / 2))) {
+                            && Mc.coldEnoughToSnow(biome.value(), new BlockPos(x + spacing / 2, h, z + spacing / 2), d.seaLevel)) {
                         filler = top;
                         top = m.snow;
                     }
@@ -1389,8 +1409,8 @@ final class NoisePreview {
                 // chunk-wide biome left whole chunks of open water in a frozen sea.
                 if (m.ice >= 0 && low < d.seaLevel) {
                     Holder<Biome> surface = seaBiome(d, seaBiomes, x0, z0, cx, cz, spacing);
-                    tile.setFrozen(cx, cz, !surface.value().warmEnoughToRain(
-                            new BlockPos(x + spacing / 2, d.seaLevel - 1, z + spacing / 2)));
+                    tile.setFrozen(cx, cz, !Mc.warmEnoughToRain(surface.value(),
+                            new BlockPos(x + spacing / 2, d.seaLevel - 1, z + spacing / 2), d.seaLevel));
                 }
             }
         }
@@ -2009,7 +2029,7 @@ final class NoisePreview {
         if (steep || biome.is(Biomes.STONY_PEAKS) || biome.is(Biomes.STONY_SHORE)) {
             return new BlockState[]{Blocks.STONE.defaultBlockState(), Blocks.STONE.defaultBlockState()};
         }
-        if (biome.value().coldEnoughToSnow(new BlockPos(x, surfaceY, z))) {
+        if (Mc.coldEnoughToSnow(biome.value(), new BlockPos(x, surfaceY, z), seaLevel)) {
             return new BlockState[]{Blocks.SNOW_BLOCK.defaultBlockState(), biome.is(BiomeTags.IS_MOUNTAIN)
                     ? Blocks.SNOW_BLOCK.defaultBlockState() : Blocks.DIRT.defaultBlockState()};
         }

@@ -11,6 +11,9 @@ ext.branchDir = project.parent.projectDir
 group = "${rootProject.group}.${platform}"
 def modGroup = rootProject.group
 
+// True when this node's Minecraft version is at least `version` (Stonecutter's comparison).
+ext.mcAtLeast = { String version -> stonecutter.compare(minecraft_version as String, version) >= 0 }
+
 // A dev run dir of this node: the branch's own for 1.21.1 (fabric/runs/client, neoforge/run),
 // runs/<version>/ of the branch for another version, so each version upgrades its own worlds.
 ext.versionedRunDir = { String path ->
@@ -118,4 +121,9 @@ processResources {
         expand expandProps
     }
     inputs.properties(expandProps)
+}
+
+// Every compile error of a port at once, not javac's first 100 (ADR-165).
+tasks.withType(JavaCompile).configureEach {
+    options.compilerArgs += ['-Xmaxerrs', '5000']
 }

@@ -1,5 +1,7 @@
 package io.lakio.farfield.server;
 
+import io.lakio.farfield.compat.Mc;
+
 import net.minecraft.world.level.Level;
 import net.minecraft.resources.ResourceKey;
 import java.util.List;
@@ -147,7 +149,7 @@ public final class FarfieldCommands {
         }
         int r = radius >= 0 ? radius : StreamServer.settings().previewSpawnRadius() > 0
                 ? StreamServer.settings().previewSpawnRadius() : 4096;
-        net.minecraft.core.BlockPos spawn = source.getServer().overworld().getSharedSpawnPos();
+        net.minecraft.core.BlockPos spawn = Mc.spawnPos(source.getServer().overworld());
         String line = p.start(io.lakio.farfield.core.preview.PregenTasks.SPAWN, "minecraft:overworld", spawn.getX(),
                 spawn.getZ(), r);
         source.sendSuccess(() -> Component.literal(line), true);
@@ -205,7 +207,7 @@ public final class FarfieldCommands {
      */
     private static int clientSetting(CommandSourceStack source, Supplier<String> change) {
         if (!(source.getEntity() instanceof ServerPlayer player)
-                || !source.getServer().isSingleplayerOwner(player.getGameProfile())) {
+                || !Mc.isSingleplayerOwner(source.getServer(), player)) {
             source.sendFailure(Component.literal("LOD drawing settings belong to each player's game: use "
                     + "/farfieldclient instead of /farfield (same arguments)."));
             return 0;
@@ -425,11 +427,11 @@ public final class FarfieldCommands {
     }
 
     private static boolean allowed(CommandSourceStack source) {
-        if (source.hasPermission(2)) {
+        if (Mc.isGameMaster(source)) {
             return true;
         }
         MinecraftServer server = source.getServer();
-        return source.getEntity() instanceof ServerPlayer player && server.isSingleplayerOwner(player.getGameProfile());
+        return source.getEntity() instanceof ServerPlayer player && Mc.isSingleplayerOwner(server, player);
     }
 
     private static int start(CommandContext<CommandSourceStack> c, int threads) {

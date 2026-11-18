@@ -10,6 +10,7 @@
     "LevelChunkMixin"
   ],
   "client": [
+    "client.ClientLevelAccessor",
     "client.FogRendererMixin",
     "client.LevelRendererAccessor",
     "client.LevelRendererMixin",

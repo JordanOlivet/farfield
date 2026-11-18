@@ -1,5 +1,7 @@
 package io.lakio.farfield.server;
 
+import io.lakio.farfield.compat.Mc;
+
 import io.lakio.farfield.Farfield;
 import io.lakio.farfield.core.config.ServerConfig;
 import io.lakio.farfield.core.preview.PregenTasks;
@@ -82,7 +84,7 @@ final class PreviewPregen {
         PreviewPregen p = new PreviewPregen(file, config.pregenPausesForPlayers(), tasks);
         int radius = config.previewSpawnRadius();
         if (server.isDedicatedServer() && radius > 0) {
-            BlockPos spawn = server.overworld().getSharedSpawnPos();
+            BlockPos spawn = Mc.spawnPos(server.overworld());
             PregenTasks.Task old = tasks.get(PregenTasks.SPAWN);
             boolean same = old != null && old.centerX() == spawn.getX() && old.centerZ() == spawn.getZ()
                     && old.radius() >= radius;

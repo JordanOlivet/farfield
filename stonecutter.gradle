@@ -17,6 +17,27 @@ plugins {
 
 stonecutter.active '1.21.1'
 
+// Renames between versions, applied to the whole source of a node (ADR-165): the
+// sources are written for 1.21.1 (the active version), and these turn its names into
+// a later version's. A rename here must be one to one, and its new name absent from
+// the 1.21.1 sources, since switching the active version applies it backwards too.
+// Anything else goes in Stonecutter comments or a compat class.
+stonecutter.parameters { sc ->
+    def atLeast = { String version -> sc.compare(sc.current.version, version) >= 0 }
+    // 1.21.2: the level's height accessors and registry lookups.
+    sc.replacements.string(atLeast('1.21.2')) { r ->
+        r.replace('getMinBuildHeight()', 'getMinY()')
+        r.replace('getMaxBuildHeight()', 'getMaxY() + 1')
+        r.replace('getMinSection()', 'getMinSectionY()')
+        r.replace('registryOrThrow(', 'lookupOrThrow(')
+    }
+    // 1.21.11: ResourceLocation becomes Identifier, ResourceKey.location() identifier().
+    sc.replacements.string(atLeast('1.21.11')) { r ->
+        r.replace('ResourceLocation', 'Identifier')
+        r.replace('.location()', '.identifier()')
+    }
+}
+
 // The active version's properties (versions/<version>.properties), for the
 // vanilla server below and the dev task aliases of the loader projects.
 def activeVersion = stonecutter.current.project

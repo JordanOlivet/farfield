@@ -1,5 +1,7 @@
 package io.lakio.farfield.server;
 
+import io.lakio.farfield.compat.Mc;
+
 import io.lakio.farfield.Farfield;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
@@ -66,7 +68,7 @@ final class FeatureSpike {
     private static void run(ServerLevel level, ResourceLocation biomeId, int side, Consumer<String> report) {
         ResourceKey<Biome> key = ResourceKey.create(Registries.BIOME, biomeId);
         // Far from spawn: its chunks are generated in full at start.
-        BlockPos from = level.getSharedSpawnPos().offset(4000, 0, 4000);
+        BlockPos from = Mc.spawnPos(level).offset(4000, 0, 4000);
         var found = level.findClosestBiome3d(h -> h.is(key), from, 6400, 32, 64);
         if (found == null) {
             report.accept("no " + biomeId + " within 6400 blocks of " + from.toShortString());
@@ -243,7 +245,7 @@ final class FeatureSpike {
                 BlockPos at = position;
                 if (at == null) {
                     ResourceKey<Biome> key = ResourceKey.create(Registries.BIOME, biomeId);
-                    BlockPos from = level.getSharedSpawnPos().offset(4000, 0, 4000);
+                    BlockPos from = Mc.spawnPos(level).offset(4000, 0, 4000);
                     var found = level.findClosestBiome3d(h -> h.is(key), from, 6400, 32, 64);
                     if (found == null) {
                         report.accept("no " + biomeId + " within 6400 blocks");
@@ -297,13 +299,11 @@ final class FeatureSpike {
     static ProtoChunk copy(ServerLevel level, ChunkAccess real) {
         LevelChunkSection[] from = real.getSections();
         LevelChunkSection[] sections = new LevelChunkSection[from.length];
+        io.lakio.farfield.compat.Palettes palettes = new io.lakio.farfield.compat.Palettes(level);
         for (int i = 0; i < from.length; i++) {
             // Block by block: PalettedContainer.copy keeps the original's resize handler, so a copy
             // that grows its palette writes into the original's storage. The biomes are only read.
-            var states = new net.minecraft.world.level.chunk.PalettedContainer<>(
-                    net.minecraft.world.level.block.Block.BLOCK_STATE_REGISTRY,
-                    net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(),
-                    net.minecraft.world.level.chunk.PalettedContainer.Strategy.SECTION_STATES);
+            var states = palettes.blockStates(net.minecraft.world.level.block.Blocks.AIR.defaultBlockState());
             if (!from[i].hasOnlyAir()) {
                 for (int y = 0; y < 16; y++) {
                     for (int z = 0; z < 16; z++) {
@@ -319,8 +319,7 @@ final class FeatureSpike {
             LevelChunkSection section = new LevelChunkSection(states, from[i].getBiomes());
             sections[i] = section;
         }
-        ProtoChunk copy = new ProtoChunk(real.getPos(), UpgradeData.EMPTY, sections, new ProtoChunkTicks<>(),
-                new ProtoChunkTicks<>(), level, level.registryAccess().registryOrThrow(Registries.BIOME), null);
+        ProtoChunk copy = palettes.protoChunk(real.getPos(), sections, level);
         copy.setPersistedStatus(ChunkStatus.CARVERS);
         Heightmap.primeHeightmaps(copy, EnumSet.of(Heightmap.Types.WORLD_SURFACE_WG, Heightmap.Types.OCEAN_FLOOR_WG,
                 Heightmap.Types.MOTION_BLOCKING, Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, Heightmap.Types.OCEAN_FLOOR,

@@ -48,5 +48,6 @@
   "farfield.options.performance_logs": "Performance Logs",
   "farfield.options.performance_logs.tooltip": "Write draw, build and fill times to the game log every few seconds, for bug reports and tests. Off in normal play.",
   "key.categories.farfield": "Farfield",
+  "key.category.farfield.farfield": "Farfield",
   "key.farfield.settings": "Open Settings"
 }

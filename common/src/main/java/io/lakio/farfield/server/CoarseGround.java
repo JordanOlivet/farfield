@@ -1,5 +1,7 @@
 package io.lakio.farfield.server;
 
+import io.lakio.farfield.compat.Mc;
+
 import io.lakio.farfield.Farfield;
 import io.lakio.farfield.core.preview.PreviewTile;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -137,7 +139,7 @@ final class CoarseGround {
             columns.column(bx, bz, high, bottom, out);
             int center = (int) Math.round((h00 + h10 + h01 + h11) / 4.0);
             var at = new net.minecraft.core.BlockPos(bx, center, bz);
-            snow = sea && center > seaLevel && biomes.apply(at).value().coldEnoughToSnow(at);
+            snow = sea && center > seaLevel && Mc.coldEnoughToSnow(biomes.apply(at).value(), at, seaLevel);
             return out;
         } catch (ReflectiveOperationException | RuntimeException e) {
             failed = true;

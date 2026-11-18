@@ -1,5 +1,7 @@
 package io.lakio.farfield.server;
 
+import io.lakio.farfield.compat.Mc;
+
 import java.util.List;
 import java.util.ArrayList;
 import io.lakio.farfield.Farfield;
@@ -197,7 +199,7 @@ public final class LodServer {
             Farfield.LOG.info("LOD import at start: off (import_on_start=false)");
             return;
         }
-        net.minecraft.core.BlockPos spawn = server.overworld().getSharedSpawnPos();
+        net.minecraft.core.BlockPos spawn = Mc.spawnPos(server.overworld());
         for (ServerLevel level : server.getAllLevels()) {
             Path regionDir = dimensionFolder(level).resolve("region");
             LodLevel lod = pipeline.level(level);

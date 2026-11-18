@@ -1,5 +1,9 @@
 package io.lakio.farfield.server;
 
+import io.lakio.farfield.compat.Mc;
+
+import io.lakio.farfield.compat.Palettes;
+
 import io.lakio.farfield.Farfield;
 import io.lakio.farfield.core.config.ServerConfig;
 import io.lakio.farfield.core.preview.PreviewTile;
@@ -618,12 +622,12 @@ final class PreviewFeatures {
      * biomes: the rules ask {@link #surfaceBiomes}.
      */
     private ProtoChunk rulesChunk(int chunkX, int chunkZ, int[] heights, int lowest, BlockState below) {
-        var biomeRegistry = level.registryAccess().registryOrThrow(Registries.BIOME);
+        Palettes palettes = palettes();
         int bottom = Math.max(level.getMinBuildHeight(), Math.floorDiv(lowest - RULES_DEPTH, 16) * 16);
         var span = net.minecraft.world.level.LevelHeightAccessor.create(bottom, level.getMaxBuildHeight() - bottom);
         LevelChunkSection[] sections = new LevelChunkSection[span.getSectionsCount()];
         for (int i = 0; i < sections.length; i++) {
-            sections[i] = new LevelChunkSection(biomeRegistry);
+            sections[i] = palettes.emptySection();
         }
         int bits = net.minecraft.util.Mth.ceillog2(span.getHeight() + 1);
         var surfaceTops = new net.minecraft.util.SimpleBitStorage(bits, 256);
@@ -647,8 +651,7 @@ final class PreviewFeatures {
                 surfaceTops.set(z * 16 + x, Math.max(surfaceTop, bottom) - bottom);
             }
         }
-        ProtoChunk chunk = new ProtoChunk(new ChunkPos(chunkX, chunkZ), UpgradeData.EMPTY, sections,
-                new ProtoChunkTicks<>(), new ProtoChunkTicks<>(), span, biomeRegistry, null);
+        ProtoChunk chunk = palettes.protoChunk(new ChunkPos(chunkX, chunkZ), sections, span);
         chunk.setPersistedStatus(ChunkStatus.NOISE);
         if (knownTops(below)) {
             // What priming would find, without its scan of every column: the columns were just laid.
@@ -680,7 +683,7 @@ final class PreviewFeatures {
                              BlockState below) {
         int bx0 = chunkX << 4;
         int bz0 = chunkZ << 4;
-        var biomeRegistry = level.registryAccess().registryOrThrow(Registries.BIOME);
+        Palettes palettes = palettes();
         int minSection = level.getMinSection();
         LevelChunkSection[] sections = new LevelChunkSection[level.getSectionsCount()];
         int top = Math.max(highest, fluid != null ? seaLevel : highest);
@@ -691,31 +694,27 @@ final class PreviewFeatures {
             PalettedContainer<BlockState> blocks;
             if (y0 + 16 <= lowest - depth) {
                 // Wholly under the ground: one material, no palette work.
-                blocks = new PalettedContainer<>(Block.BLOCK_STATE_REGISTRY, below,
-                        PalettedContainer.Strategy.SECTION_STATES);
+                blocks = palettes.blockStates(below);
             } else {
-                blocks = new PalettedContainer<>(Block.BLOCK_STATE_REGISTRY, Blocks.AIR.defaultBlockState(),
-                        PalettedContainer.Strategy.SECTION_STATES);
+                blocks = palettes.blockStates(Blocks.AIR.defaultBlockState());
                 if (y0 <= top) {
                     fill(blocks, bx0, y0, bz0, heights, below);
                 }
             }
             PalettedContainer<net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome>> sectionBiomes;
             if (y0 + 16 > lowest - BIOME_BELOW && y0 < highest + BIOME_ABOVE) {
-                sectionBiomes = new PalettedContainer<>(biomeRegistry.asHolderIdMap(), groundBiomes[0],
-                        PalettedContainer.Strategy.SECTION_BIOMES);
+                sectionBiomes = palettes.biomes(groundBiomes[0]);
                 for (int q = 0; q < 16; q++) {
                     for (int qy = 0; qy < 4; qy++) {
                         sectionBiomes.getAndSetUnchecked(q & 3, qy, q >> 2, groundBiomes[q]);
                     }
                 }
             } else {
-                sectionBiomes = plains(biomeRegistry);
+                sectionBiomes = plains(palettes);
             }
             sections[i] = new LevelChunkSection(blocks, sectionBiomes);
         }
-        ProtoChunk chunk = new ProtoChunk(new ChunkPos(chunkX, chunkZ), UpgradeData.EMPTY, sections,
-                new ProtoChunkTicks<>(), new ProtoChunkTicks<>(), level, biomeRegistry, null);
+        ProtoChunk chunk = palettes.protoChunk(new ChunkPos(chunkX, chunkZ), sections, level);
         chunk.setPersistedStatus(ChunkStatus.CARVERS);
         layHeightmaps(chunk, bx0, bz0, heights, below);
         return chunk;
@@ -829,9 +828,7 @@ final class PreviewFeatures {
             var clamped = noiseSettings.noiseSettings().clampToHeightAccessor(level);
             Aquifer.FluidStatus sea = new Aquifer.FluidStatus(seaLevel,
                     fluid != null ? fluid : Blocks.AIR.defaultBlockState());
-            Beardifier none = new Beardifier((it.unimi.dsi.fastutil.objects.ObjectListIterator) it.unimi.dsi.fastutil
-                    .objects.ObjectLists.emptyList().iterator(), (it.unimi.dsi.fastutil.objects.ObjectListIterator) it
-                    .unimi.dsi.fastutil.objects.ObjectLists.emptyList().iterator());
+            Beardifier none = Mc.emptyBeardifier();
             return new SurfaceNoise(16 / clamped.getCellWidth(), random, chunkX << 4, chunkZ << 4, clamped,
                     none, noiseSettings, (x, y, z) -> sea, level.getMinBuildHeight());
         }
@@ -929,8 +926,8 @@ final class PreviewFeatures {
         int bx = (chunkX << 4) + gx * PreviewTile.GRID + PreviewTile.GRID / 2;
         int bz = (chunkZ << 4) + gz * PreviewTile.GRID + PreviewTile.GRID / 2;
         if (highest > seaLevel && fluid != null
-                && quartBiome(QuartPos.fromBlock(bx), QuartPos.fromBlock(highest), QuartPos.fromBlock(bz))
-                .value().coldEnoughToSnow(new BlockPos(bx, highest, bz))) {
+                && Mc.coldEnoughToSnow(quartBiome(QuartPos.fromBlock(bx), QuartPos.fromBlock(highest), QuartPos.fromBlock(bz))
+                .value(), new BlockPos(bx, highest, bz), seaLevel)) {
             return new int[]{id(Blocks.SNOW_BLOCK.defaultBlockState()), top};
         }
         return new int[]{top, filler};
@@ -990,13 +987,21 @@ final class PreviewFeatures {
     private PalettedContainer<net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome>> plains;
 
     private PalettedContainer<net.minecraft.core.Holder<net.minecraft.world.level.biome.Biome>> plains(
-            net.minecraft.core.Registry<net.minecraft.world.level.biome.Biome> registry) {
+            Palettes palettes) {
         if (plains == null) {
-            plains = new PalettedContainer<>(registry.asHolderIdMap(),
-                    registry.getHolderOrThrow(net.minecraft.world.level.biome.Biomes.PLAINS),
-                    PalettedContainer.Strategy.SECTION_BIOMES);
+            plains = palettes.biomes(palettes.plains());
         }
         return plains;
+    }
+
+    /** This level's chunk palettes (ADR-165); made once. */
+    private Palettes palettes;
+
+    private Palettes palettes() {
+        if (palettes == null) {
+            palettes = new Palettes(level);
+        }
+        return palettes;
     }
 
     // ---------------------------------------------------------------- what grew

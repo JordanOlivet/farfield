@@ -1,5 +1,7 @@
 package io.lakio.farfield.server;
 
+import io.lakio.farfield.compat.Palettes;
+
 import io.lakio.farfield.Farfield;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
@@ -107,12 +109,12 @@ final class SurfaceColumns {
             RandomState random = level.getChunkSource().randomState();
             SurfaceSystem system = random.surfaceSystem();
             Registry<Biome> registry = level.registryAccess().registryOrThrow(Registries.BIOME);
+            Palettes palettes = new Palettes(level);
             LevelChunkSection[] sections = new LevelChunkSection[level.getSectionsCount()];
             for (int i = 0; i < sections.length; i++) {
-                sections[i] = new LevelChunkSection(registry);
+                sections[i] = palettes.emptySection();
             }
-            ProtoChunk host = new ProtoChunk(new ChunkPos(0, 0), UpgradeData.EMPTY, sections,
-                    new ProtoChunkTicks<>(), new ProtoChunkTicks<>(), level, registry, null);
+            ProtoChunk host = palettes.protoChunk(new ChunkPos(0, 0), sections, level);
             host.setPersistedStatus(ChunkStatus.NOISE);
             Object context = a.context().newInstance(system, random, host, noise, biomes, registry,
                     new WorldGenerationContext(generator, level));

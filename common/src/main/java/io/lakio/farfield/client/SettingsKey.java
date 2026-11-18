@@ -12,8 +12,15 @@ import net.minecraft.client.Minecraft;
  */
 public final class SettingsKey {
 
+    // Since 1.21.9 a key's category is a registered id (label key.category.farfield.farfield).
+    //? if >=1.21.11 {
+    /*public static final KeyMapping KEY = new KeyMapping("key.farfield.settings",
+            InputConstants.UNKNOWN.getValue(), KeyMapping.Category.register(
+                    net.minecraft.resources.ResourceLocation.fromNamespaceAndPath("farfield", "farfield")));
+    *///?} else {
     public static final KeyMapping KEY = new KeyMapping("key.farfield.settings",
             InputConstants.UNKNOWN.getValue(), "key.categories.farfield");
+    //?}
 
     private SettingsKey() {
     }

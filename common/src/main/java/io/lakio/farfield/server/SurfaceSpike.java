@@ -1,5 +1,7 @@
 package io.lakio.farfield.server;
 
+import io.lakio.farfield.compat.Mc;
+
 import io.lakio.farfield.Farfield;
 import io.lakio.farfield.core.preview.PreviewTile;
 import net.minecraft.core.BlockPos;
@@ -76,7 +78,7 @@ final class SurfaceSpike {
         BlockPos center = at;
         if (center == null) {
             ResourceKey<Biome> key = ResourceKey.create(Registries.BIOME, biomeId);
-            BlockPos from = level.getSharedSpawnPos().offset(4000, 0, 4000);
+            BlockPos from = Mc.spawnPos(level).offset(4000, 0, 4000);
             var found = level.findClosestBiome3d(h -> h.is(key), from, 6400, 32, 64);
             if (found == null) {
                 report.accept("no " + biomeId + " within 6400 blocks of " + from.toShortString());

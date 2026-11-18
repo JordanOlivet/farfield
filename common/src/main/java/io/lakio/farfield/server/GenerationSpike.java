@@ -58,8 +58,13 @@ import java.util.function.Consumer;
  */
 final class GenerationSpike {
 
+    // Since 1.21.5 ticket types are registered before the registries freeze: a loading-only one of the game's.
+    //? if >=1.21.11 {
+    /*private static final TicketType TICKET = TicketType.PLAYER_LOADING;
+    *///?} else {
     private static final TicketType<ChunkPos> TICKET =
             TicketType.create("farfield_spike", Comparator.comparingLong(ChunkPos::toLong));
+    //?}
     private static final AtomicBoolean RUNNING = new AtomicBoolean();
     /** Columns of the noise sample: a square of this many chunks per side, one column each. */
     private static final int NOISE_SIDE = 64;
@@ -131,7 +136,11 @@ final class GenerationSpike {
         }
         RandomState state = chunks.randomState();
         Noise noise = new Noise(level, generator, state, generator.getBiomeSource(), state.sampler(),
+                //? if >=1.21.11 {
+                /*state.router().preliminarySurfaceLevel(), state.router().finalDensity(),
+                *///?} else {
                 state.router().initialDensityWithoutJaggedness(), state.router().finalDensity(),
+                //?}
                 noiseGenerator.generatorSettings().value().noiseSettings());
         int threads = Math.max(1, Runtime.getRuntime().availableProcessors() / 2);
         ExecutorService pool = Executors.newFixedThreadPool(threads, r -> {
@@ -302,7 +311,11 @@ final class GenerationSpike {
             ServerChunkCache chunks = level.getChunkSource();
             List<CompletableFuture<ChunkResult<ChunkAccess>>> list = new ArrayList<>(area.size());
             for (ChunkPos p : area) {
+                //? if >=1.21.11 {
+                /*chunks.addTicketWithRadius(TICKET, p, distance);
+                *///?} else {
                 chunks.addRegionTicket(TICKET, p, distance, p);
+                //?}
             }
             for (ChunkPos p : area) {
                 list.add(chunks.getChunkFuture(p.x, p.z, status, true));
@@ -314,7 +327,11 @@ final class GenerationSpike {
         } finally {
             server.submit(() -> {
                 for (ChunkPos p : area) {
+                    //? if >=1.21.11 {
+                    /*level.getChunkSource().removeTicketWithRadius(TICKET, p, distance);
+                    *///?} else {
                     level.getChunkSource().removeRegionTicket(TICKET, p, distance, p);
+                    //?}
                 }
             }).get();
         }

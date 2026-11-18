@@ -1,5 +1,7 @@
 package io.lakio.farfield.server;
 
+import io.lakio.farfield.compat.Mc;
+
 import io.lakio.farfield.Farfield;
 import io.lakio.farfield.core.LodKey;
 import io.lakio.farfield.core.anvil.KeyRegistry;
@@ -243,7 +245,7 @@ public final class StreamServer {
                 }
             }
         } catch (RuntimeException e) {
-            Farfield.LOG.warn("LOD streaming: bad message from {}", player.getGameProfile().getName(), e);
+            Farfield.LOG.warn("LOD streaming: bad message from {}", Mc.playerName(player), e);
         }
     }
 
@@ -253,7 +255,7 @@ public final class StreamServer {
             // Declined, so its client builds its own LODs instead of waiting for a welcome; the rest
             // of the hello is not read, its shape may be another.
             Farfield.LOG.info("LOD streaming: {} speaks protocol {}, this server {}: not streamed",
-                    sp.getGameProfile().getName(), version, StreamProtocol.VERSION);
+                    Mc.playerName(sp), version, StreamProtocol.VERSION);
             Services.NETWORK.sendToPlayer(sp, StreamProtocol.Welcome.declined(StreamProtocol.VERSION).encode());
             return;
         }
@@ -310,7 +312,7 @@ public final class StreamServer {
                 return Boolean.TRUE;
             });
         }
-        Farfield.LOG.info("LOD streaming to {}: {} (session {}, {} store)", sp.getGameProfile().getName(),
+        Farfield.LOG.info("LOD streaming to {}: {} (session {}, {} store)", Mc.playerName(sp),
                 dimension.location(), session, hello.epoch() == epoch ? "same" : "new");
     }
 
@@ -781,7 +783,7 @@ public final class StreamServer {
                 pushWaitMax.accumulateAndGet(wait, Math::max);
             }
         } catch (IOException | RuntimeException e) {
-            Farfield.LOG.warn("LOD streaming: pushing to {} failed", p.player.getGameProfile().getName(), e);
+            Farfield.LOG.warn("LOD streaming: pushing to {} failed", Mc.playerName(p.player), e);
         } finally {
             p.pushing = false;
         }

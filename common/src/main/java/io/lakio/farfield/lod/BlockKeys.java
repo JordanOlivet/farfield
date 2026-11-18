@@ -1,5 +1,7 @@
 package io.lakio.farfield.lod;
 
+import io.lakio.farfield.compat.Mc;
+
 import io.lakio.farfield.core.lod.MipBuilder;
 import io.lakio.farfield.core.mesh.MaterialClassifier;
 import io.lakio.farfield.core.mesh.ShapeBoxes;
@@ -110,7 +112,7 @@ public final class BlockKeys {
             return state;
         }
         try {
-            state = BlockStateParser.parseForBlock(BuiltInRegistries.BLOCK.asLookup(), key, false).blockState();
+            state = BlockStateParser.parseForBlock(Mc.blockLookup(), key, false).blockState();
         } catch (Exception e) {
             return null;
         }

@@ -35,7 +35,8 @@ public final class LodClient {
         // client chunk's light correct.
         this.pipeline = new LodPipeline("client", l -> l instanceof ClientLevel,
                 l -> LodWorldProvider.remoteStore(mc, (ClientLevel) l),
-                chunk -> ((ClientLevel) chunk.getLevel()).isLightUpdateQueueEmpty());
+                chunk -> ((io.lakio.farfield.mixin.client.ClientLevelAccessor) chunk.getLevel())
+                        .farfield$lightUpdateQueue().isEmpty());
     }
 
     /** End of every client tick: follows the connection and the dimension, snapshots due chunks. */
