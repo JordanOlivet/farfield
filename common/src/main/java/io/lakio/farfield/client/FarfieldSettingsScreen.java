@@ -1,6 +1,5 @@
 package io.lakio.farfield.client;
 
-import io.lakio.farfield.core.config.RenderConfig;
 import io.lakio.farfield.lod.RenderSettings;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.OptionInstance;
@@ -43,25 +42,6 @@ public final class FarfieldSettingsScreen extends OptionsSubScreen {
     private final List<OptionsList> lists = new ArrayList<>();
     private TabNavigationBar tabNavigationBar;
 
-    /** Texture distance slider: 0 off, 1 to {@link #TEXTURE_STEPS} times this many blocks, then all LODs. */
-    private static final int TEXTURE_STEP = 64;
-    private static final int TEXTURE_STEPS = RenderSettings.MAX_TEXTURE_DISTANCE / TEXTURE_STEP;
-    private static final int TEXTURE_ALL = TEXTURE_STEPS + 1;
-    private static final int FOG_STEP = 128;
-    /** Past the default draw distance the fog slider goes by this many blocks (E.3b) to {@link #DOUBLING_FROM}. */
-    private static final int FAR_FOG_STEP = 1024;
-    /** From here the fog slider doubles at each step, to the maximum (E.3d: to the world border). */
-    private static final int DOUBLING_FROM = 32768;
-    /** Steps of {@link #FOG_STEP} from the minimum to the default draw distance included. */
-    private static final int NEAR_FOG_STEPS =
-            (RenderConfig.DEFAULT_DRAW_DISTANCE - RenderConfig.MIN_FOG_DISTANCE) / FOG_STEP + 1;
-    /** Steps up to {@link #DOUBLING_FROM} included. */
-    private static final int LINEAR_FOG_STEPS = NEAR_FOG_STEPS
-            + (DOUBLING_FROM - RenderConfig.DEFAULT_DRAW_DISTANCE) / FAR_FOG_STEP;
-    /** Last step of the normal fog slider (off); the thick fog slider has one more (vanilla first). */
-    private static final int FOG_STEPS = LINEAR_FOG_STEPS
-            + Integer.numberOfTrailingZeros(RenderConfig.MAX_FOG_DISTANCE / DOUBLING_FROM);
-
     public FarfieldSettingsScreen(Screen lastScreen) {
         super(lastScreen, Minecraft.getInstance().options, Component.translatable("farfield.options.title"));
     }
@@ -75,20 +55,16 @@ public final class FarfieldSettingsScreen extends OptionsSubScreen {
     @Override
     protected void init() {
         lists.clear();
-        OptionsList rendering = newList();
-        addRendering(rendering);
-        OptionsList preview = newList();
-        addPreview(preview);
-        OptionsList performance = newList();
-        addPerformance(performance);
-        OptionsList debug = newList();
-        addDebug(debug);
-        tabNavigationBar = TabNavigationBar.builder(tabManager, width)
-                .addTabs(new ListTab("farfield.options.tab.rendering", rendering),
-                        new ListTab("farfield.options.tab.preview", preview),
-                        new ListTab("farfield.options.tab.performance", performance),
-                        new ListTab("farfield.options.tab.debug", debug))
-                .build();
+        List<SettingsModel.Page> pages = SettingsModel.pages();
+        Tab[] tabs = new Tab[pages.size()];
+        for (int i = 0; i < tabs.length; i++) {
+            OptionsList list = newList();
+            for (SettingsModel.Setting setting : pages.get(i).settings()) {
+                list.addBig(option(setting));
+            }
+            tabs[i] = new ListTab(pages.get(i).key(), list);
+        }
+        tabNavigationBar = TabNavigationBar.builder(tabManager, width).addTabs(tabs).build();
         addRenderableWidget(tabNavigationBar);
         layout.addToFooter(Button.builder(CommonComponents.GUI_DONE, b -> onClose()).width(200).build());
         layout.visitWidgets(w -> {
@@ -194,191 +170,25 @@ public final class FarfieldSettingsScreen extends OptionsSubScreen {
         }
     }
 
-    /** What every player sets: the LODs on or off, their detail, textures and fog. */
-    private static void addRendering(OptionsList list) {
-        list.addBig(OptionInstance.createBoolean("farfield.options.rendering",
-                OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.rendering.tooltip")),
-                RenderSettings.enabled(), RenderSettings::set));
-        // Applied when the slider is released: each new value re-selects the LOD sections.
-        list.addBig(new OptionInstance<>("farfield.options.detail",
-                OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.detail.tooltip")),
-                (caption, pixels) -> Options.genericValueLabel(caption,
-                        Component.translatable("farfield.options.detail.value", pixels)),
-                new OptionInstance.IntRange((int) RenderSettings.MIN_VOXEL_PIXELS, (int) RenderSettings.MAX_VOXEL_PIXELS, false),
-                Math.round(RenderSettings.voxelPixels()),
-                pixels -> RenderSettings.setVoxelPixels(pixels)));
-        list.addBig(new OptionInstance<>("farfield.options.textures",
-                OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.textures.tooltip")),
-                (caption, step) -> Options.genericValueLabel(caption, textureLabel(step)),
-                new OptionInstance.IntRange(0, TEXTURE_ALL),
-                textureStep(RenderSettings.textureDistance()),
-                step -> RenderSettings.setTextureDistance(textureDistance(step))));
-        // The draw distance, then the fog shown or not over it (ADR-140): "off" held the LODs to 4,096 blocks.
-        list.addBig(new OptionInstance<>("farfield.options.fog",
-                OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.fog.tooltip")),
-                (caption, step) -> Options.genericValueLabel(caption, fogLabel(fogDistance(step, false))),
-                new OptionInstance.IntRange(0, FOG_STEPS - 1),
-                fogStep(RenderSettings.drawDistance(), false),
-                step -> RenderSettings.setFogDistance(fogDistance(step, false))));
-        list.addBig(OptionInstance.createBoolean("farfield.options.fog_shown",
-                OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.fog_shown.tooltip")),
-                RenderSettings.fog(), RenderSettings::setFog));
-        list.addBig(new OptionInstance<>("farfield.options.thick_fog",
-                OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.thick_fog.tooltip")),
-                (caption, step) -> Options.genericValueLabel(caption, fogLabel(fogDistance(step, true))),
-                new OptionInstance.IntRange(0, FOG_STEPS + 1),
-                fogStep(RenderSettings.thickFogDistance(), true),
-                step -> RenderSettings.setThickFogDistance(fogDistance(step, true))));
-    }
-
-    /** The noise preview beyond the stored terrain. */
-    private static void addPreview(OptionsList list) {
-        list.addBig(OptionInstance.createBoolean("farfield.options.noise_preview",
-                OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.noise_preview.tooltip")),
-                RenderSettings.noisePreview(), RenderSettings::setNoisePreview));
-        list.addBig(OptionInstance.createBoolean("farfield.options.preview_light",
-                OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.preview_light.tooltip")),
-                RenderSettings.previewLight(), RenderSettings::setPreviewLight));
-        list.addBig(previewFeature("farfield.options.preview_trees", RenderConfig.FEATURE_TREES));
-        list.addBig(previewFeature("farfield.options.preview_plants", RenderConfig.FEATURE_PLANTS));
-        list.addBig(previewFeature("farfield.options.preview_others", RenderConfig.FEATURE_OTHERS));
-        // Single player: the integrated server's distance for the world's own features (a dedicated
-        // server has its own preview_features_distance). Steps of 50 blocks.
-        list.addBig(new OptionInstance<>("farfield.options.preview_features_distance",
-                OptionInstance.cachedConstantTooltip(Component.translatable(
-                        "farfield.options.preview_features_distance.tooltip")),
-                (caption, step) -> Options.genericValueLabel(caption, step == 0
-                        ? Component.translatable("farfield.options.preview_features_distance.off")
-                        : Component.translatable("farfield.options.fog.blocks", step * FEATURES_STEP)),
-                new OptionInstance.IntRange(0, io.lakio.farfield.core.config.ServerConfig.MAX_FEATURES_DISTANCE
-                        / FEATURES_STEP),
-                Math.round(RenderSettings.previewFeaturesDistance() / (float) FEATURES_STEP),
-                step -> RenderSettings.setPreviewFeaturesDistance(step * FEATURES_STEP)));
-    }
-
-    /** Blocks a step of the features' distance slider: 1,250 (the default) is 25 of them. */
-    private static final int FEATURES_STEP = 50;
-
-    /** Shown or hidden: one kind of the preview's features (plan item D.3). */
-    private static OptionInstance<Boolean> previewFeature(String key, int feature) {
-        return OptionInstance.createBoolean(key,
-                OptionInstance.cachedConstantTooltip(Component.translatable(key + ".tooltip")),
-                (caption, shown) -> Component.translatable(
-                        shown ? "farfield.options.preview_feature.shown" : "farfield.options.preview_feature.hidden"),
-                RenderSettings.previewShows(feature), shown -> RenderSettings.setPreviewShows(feature, shown));
-    }
-
-    private static void addPerformance(OptionsList list) {
-        list.addBig(threadSlider("farfield.options.mesh_threads", RenderSettings.meshThreads(),
-                RenderSettings::setMeshThreads));
-        list.addBig(threadSlider("farfield.options.preview_threads", RenderSettings.previewThreads(),
-                RenderSettings::setPreviewThreads));
-    }
-
-    private static void addDebug(OptionsList list) {
-        list.addBig(OptionInstance.createBoolean("farfield.options.level_colors",
-                OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.level_colors.tooltip")),
-                RenderSettings.debugLevels(), RenderSettings::setDebugLevels));
-        list.addBig(OptionInstance.createBoolean("farfield.options.performance_logs",
-                OptionInstance.cachedConstantTooltip(Component.translatable("farfield.options.performance_logs.tooltip")),
-                RenderSettings.performanceLogs(), RenderSettings::setPerformanceLogs));
+    /** A vanilla option row for one of the model's settings. */
+    private static OptionInstance<?> option(SettingsModel.Setting setting) {
+        if (setting instanceof SettingsModel.Toggle t) {
+            OptionInstance.TooltipSupplier<Boolean> tooltip = OptionInstance.cachedConstantTooltip(t.tooltip());
+            return t.label() == null
+                    ? OptionInstance.createBoolean(t.key(), tooltip, t.get().getAsBoolean(), t.set()::accept)
+                    : OptionInstance.createBoolean(t.key(), tooltip, (caption, on) -> t.label().apply(on),
+                    t.get().getAsBoolean(), t.set()::accept);
+        }
+        SettingsModel.Slider s = (SettingsModel.Slider) setting;
+        return new OptionInstance<>(s.key(), OptionInstance.cachedConstantTooltip(s.tooltip()),
+                (caption, step) -> Options.genericValueLabel(caption, s.label().apply(step)),
+                new OptionInstance.IntRange(s.min(), s.max(), !s.applyOnRelease()),
+                s.get().getAsInt(), s.set()::accept);
     }
 
     @Override
     public void removed() {
         super.removed();
         RenderSettings.save();
-    }
-
-    /**
-     * A thread count slider: Auto first (the count it stands for on this
-     * machine shown), then 1 to this machine's logical processors.
-     */
-    private static OptionInstance<Integer> threadSlider(String key, int value,
-                                                        java.util.function.IntConsumer setter) {
-        int processors = Runtime.getRuntime().availableProcessors();
-        int max = RenderConfig.maxThreads(processors);
-        return new OptionInstance<>(key,
-                OptionInstance.cachedConstantTooltip(Component.translatable(key + ".tooltip",
-                        RenderSettings.effectiveThreads(RenderConfig.AUTO), max)),
-                (caption, threads) -> Options.genericValueLabel(caption, threads == RenderConfig.AUTO
-                        ? Component.translatable("farfield.options.threads.auto", RenderSettings.effectiveThreads(threads))
-                        : Component.literal(Integer.toString(threads))),
-                new OptionInstance.IntRange(RenderConfig.AUTO, max),
-                Math.min(value, max),
-                setter::accept);
-    }
-
-    private static Component textureLabel(int step) {
-        if (step == 0) {
-            return Component.translatable("farfield.options.textures.off");
-        }
-        if (step == TEXTURE_ALL) {
-            return Component.translatable("farfield.options.textures.all");
-        }
-        return Component.translatable("farfield.options.textures.blocks", step * TEXTURE_STEP);
-    }
-
-    /**
-     * Fog distance sliders: {@link RenderConfig#MIN_FOG_DISTANCE} to the
-     * default draw distance by {@link #FOG_STEP}, then to {@link
-     * RenderConfig#MAX_FOG_DISTANCE} by {@link #FAR_FOG_STEP}, then off; the
-     * thick fog slider starts with vanilla.
-     */
-    private static int fogDistance(int step, boolean thick) {
-        if (thick) {
-            if (step == 0) {
-                return RenderConfig.FOG_VANILLA;
-            }
-            step--;
-        }
-        if (step >= FOG_STEPS) {
-            return RenderConfig.FOG_OFF;
-        }
-        if (step < NEAR_FOG_STEPS) {
-            return RenderConfig.MIN_FOG_DISTANCE + step * FOG_STEP;
-        }
-        if (step < LINEAR_FOG_STEPS) {
-            return RenderConfig.DEFAULT_DRAW_DISTANCE + (step - NEAR_FOG_STEPS + 1) * FAR_FOG_STEP;
-        }
-        return DOUBLING_FROM << (step - LINEAR_FOG_STEPS + 1);
-    }
-
-    private static int fogStep(int blocks, boolean thick) {
-        int offset = thick ? 1 : 0;
-        if (blocks == RenderConfig.FOG_VANILLA) {
-            return 0;
-        }
-        if (blocks == RenderConfig.FOG_OFF) {
-            return FOG_STEPS + offset;
-        }
-        if (blocks <= RenderConfig.DEFAULT_DRAW_DISTANCE) {
-            return Math.round((blocks - RenderConfig.MIN_FOG_DISTANCE) / (float) FOG_STEP) + offset;
-        }
-        if (blocks <= DOUBLING_FROM) {
-            return NEAR_FOG_STEPS - 1 + Math.round((blocks - RenderConfig.DEFAULT_DRAW_DISTANCE) / (float) FAR_FOG_STEP)
-                    + offset;
-        }
-        int doublings = 63 - Long.numberOfLeadingZeros(Math.max(1, Math.round(blocks / (double) DOUBLING_FROM)));
-        return Math.min(FOG_STEPS - 1, LINEAR_FOG_STEPS - 1 + doublings) + offset;
-    }
-
-    private static Component fogLabel(int blocks) {
-        if (blocks == RenderConfig.FOG_OFF) {
-            return Component.translatable("farfield.options.fog.off");
-        }
-        if (blocks == RenderConfig.FOG_VANILLA) {
-            return Component.translatable("farfield.options.fog.vanilla");
-        }
-        return Component.translatable("farfield.options.fog.blocks", blocks);
-    }
-
-    private static int textureDistance(int step) {
-        return step == TEXTURE_ALL ? RenderSettings.ALL_DISTANCES : step * TEXTURE_STEP;
-    }
-
-    /** The nearest slider step; a distance set by command keeps its exact value until the slider moves. */
-    private static int textureStep(int blocks) {
-        return blocks == RenderSettings.ALL_DISTANCES ? TEXTURE_ALL : Math.round(blocks / (float) TEXTURE_STEP);
     }
 }

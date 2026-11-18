@@ -10,7 +10,6 @@
     "LevelChunkMixin"
   ],
   "client": [
-    "client.ChunkSectionsToRenderMixin",
     "client.ClientLevelAccessor",
     "client.FogRendererMixin",
     "client.GlCommandEncoderAccessor",

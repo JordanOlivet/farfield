@@ -64,6 +64,16 @@ repositories {
         )
         filter { includeGroup('org.parchmentmc.data') }
     }
+    // Sodium's config API (its video settings pages), compiled against, never bundled.
+    exclusiveContent {
+        forRepository {
+            maven {
+                name = 'CaffeineMC'
+                url = 'https://maven.caffeinemc.net/releases'
+            }
+        }
+        filter { includeGroup('net.caffeinemc') }
+    }
     // Iris, compiled against for the shader pack path (ADR-113), never bundled.
     exclusiveContent {
         forRepository {

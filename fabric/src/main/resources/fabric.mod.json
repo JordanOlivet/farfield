@@ -19,6 +19,9 @@
     ],
     "modmenu": [
       "io.lakio.farfield.fabric.FarfieldModMenu"
+    ],
+    "sodium:config_api_user": [
+      "io.lakio.farfield.client.sodium.FarfieldSodiumConfig"
     ]
   },
   "mixins": [

@@ -27,6 +27,8 @@ dependencies {
     modCompileOnly "com.terraformersmc:modmenu:${modmenu_version}"
     // Shader packs (ADR-113): compiled against, never bundled.
     modCompileOnly("maven.modrinth:iris:${iris_fabric_version}") { transitive = false }
+    // Sodium's video settings pages (Sodium 0.8 on): compiled against, never bundled.
+    modCompileOnly("net.caffeinemc:sodium-fabric-api:${sodium_api_version}") { transitive = false }
     modLocalRuntime "com.terraformersmc:modmenu:${modmenu_version}"
     // Rehearsal, the test harness mod (ADR-122), in the dev runs only, when a checkout is named.
     def rehearsalJar = rehearsalJar('fabric')

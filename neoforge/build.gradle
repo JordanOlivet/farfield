@@ -94,6 +94,7 @@ dependencies {
     }
     // Shader packs (ADR-113): compiled against, never bundled.
     compileOnly("maven.modrinth:iris:${iris_neoforge_version}") { transitive = false }
+    compileOnly("net.caffeinemc:sodium-neoforge-api:${sodium_api_version}") { transitive = false }
     // Rehearsal, the test harness mod (ADR-122), in the dev runs only, when a checkout is named.
     def rehearsalJar = rehearsalJar('neoforge')
     if (rehearsalJar != null) {
