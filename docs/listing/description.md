@@ -1,7 +1,7 @@
 ![Farfield](https://cdn.modrinth.com/data/3ToF1nXi/images/51830b7991218d6e6fca326bdf0fa9cfaac1a44e.png)
 
 **Farfield** shows your world far past your render distance: 4,096 blocks
-by default, out to the world border if you ask. Mountains, coasts, forests
+by default, out to the world border if you ask (~33 millions blocks). Mountains, coasts, forests
 and seas are drawn as levels of detail (LOD), for a fraction of what real
 chunks would cost, and the terrain your world has not generated yet is
 drawn too, so the horizon is never empty.
