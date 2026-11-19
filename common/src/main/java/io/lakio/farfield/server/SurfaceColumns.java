@@ -116,8 +116,13 @@ final class SurfaceColumns {
             }
             ProtoChunk host = palettes.protoChunk(new ChunkPos(0, 0), sections, level);
             host.setPersistedStatus(ChunkStatus.NOISE);
+            //? if >=26.2 {
+            /*Object context = a.context().newInstance(system, random, host, noise, biomes,
+                    new WorldGenerationContext(generator, level), null);
+            *///?} else {
             Object context = a.context().newInstance(system, random, host, noise, biomes, registry,
                     new WorldGenerationContext(generator, level));
+            //?}
             @SuppressWarnings("unchecked")
             Function<Object, Object> source = (Function<Object, Object>) (Object) generator.generatorSettings().value()
                     .surfaceRule();
@@ -235,9 +240,16 @@ final class SurfaceColumns {
         for (Class<?> nested : SurfaceRules.class.getDeclaredClasses()) {
             for (Constructor<?> c : nested.getDeclaredConstructors()) {
                 Class<?>[] p = c.getParameterTypes();
+                //? if >=26.2 {
+                /*// Since 26.2 the context takes the biomes that can appear (null: any), last, for the registry.
+                if (p.length == 7 && p[0] == SurfaceSystem.class && p[1] == RandomState.class
+                        && p[2] == ChunkAccess.class && p[3] == NoiseChunk.class && p[4] == Function.class
+                        && p[5] == WorldGenerationContext.class && p[6] == java.util.Set.class) {
+                *///?} else {
                 if (p.length == 7 && p[0] == SurfaceSystem.class && p[1] == RandomState.class
                         && p[2] == ChunkAccess.class && p[3] == NoiseChunk.class && p[4] == Function.class
                         && p[5] == Registry.class && p[6] == WorldGenerationContext.class) {
+                //?}
                     context = c;
                 }
             }
