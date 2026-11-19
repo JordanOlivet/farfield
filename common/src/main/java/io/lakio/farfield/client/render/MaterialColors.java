@@ -436,20 +436,20 @@ final class MaterialColors {
             random.setSeed(42);
             List<BakedQuad> quads = Models.quads(state, DIRECTIONS[d], random);
             for (BakedQuad quad : quads) {
-                if (quad.isTinted() && Models.tintIndex(quad) != lastTintIndex) {
+                if (Models.isTinted(quad) && Models.tintIndex(quad) != lastTintIndex) {
                     lastTintIndex = Models.tintIndex(quad);
                     probeTint(blockColors, state, lastTintIndex, tints, probeBiome);
                 }
-                rasterize(d, quad, quad.isTinted());
+                rasterize(d, quad, Models.isTinted(quad));
             }
         }
         random.setSeed(42);
         for (BakedQuad quad : Models.quads(state, null, random)) {
-            if (quad.isTinted() && Models.tintIndex(quad) != lastTintIndex) {
+            if (Models.isTinted(quad) && Models.tintIndex(quad) != lastTintIndex) {
                 lastTintIndex = Models.tintIndex(quad);
                 probeTint(blockColors, state, lastTintIndex, tints, probeBiome);
             }
-            rasterize(faceOf(Models.direction(quad)), quad, quad.isTinted());
+            rasterize(faceOf(Models.direction(quad)), quad, Models.isTinted(quad));
         }
 
         int withQuads = 0;
@@ -527,7 +527,7 @@ final class MaterialColors {
         random.setSeed(42);
         List<BakedQuad> quads = Models.quads(state, null, random);
         TextureAtlasSprite sprite = quads.isEmpty() ? Models.particle(state) : Models.sprite(quads.get(0));
-        boolean isTinted = !quads.isEmpty() && quads.get(0).isTinted();
+        boolean isTinted = !quads.isEmpty() && Models.isTinted(quads.get(0));
         if (isTinted) {
             probeTint(blockColors, state, Models.tintIndex(quads.get(0)), tints, probeBiome);
         } else {
@@ -558,7 +558,7 @@ final class MaterialColors {
         random.setSeed(42);
         List<BakedQuad> quads = Models.quads(look, plant, null, random);
         TextureAtlasSprite sprite = quads.isEmpty() ? Models.particle(look) : Models.sprite(quads.get(0));
-        boolean isTinted = !quads.isEmpty() && quads.get(0).isTinted();
+        boolean isTinted = !quads.isEmpty() && Models.isTinted(quads.get(0));
         int faceKind = kinds[face];
         if (isTinted) {
             probeTint(blockColors, plant, Models.tintIndex(quads.get(0)), tints, probeBiome);
@@ -886,7 +886,13 @@ final class MaterialColors {
         int color;
         try {
             probe.reset(state, probeBiome);
+            //? if >=26.1 {
+            /*// Since 26.1 a block's colors are tint sources, one per tint index (ADR-171).
+            net.minecraft.client.color.block.BlockTintSource source = blockColors.getTintSource(state, tintIndex);
+            color = source == null ? -1 : source.colorInWorld(state, probe, BlockPos.ZERO);
+            *///?} else {
             color = blockColors.getColor(state, probe, BlockPos.ZERO, tintIndex);
+            //?}
             ColorResolver resolver = probe.resolver();
             // Only a color that is the resolver's own output can be redone per biome.
             if (resolver != null && (color & 0xFFFFFF) == (resolver.getColor(probeBiome, 0, 0) & 0xFFFFFF)) {
@@ -894,7 +900,12 @@ final class MaterialColors {
             }
         } catch (RuntimeException e) {
             try {
+                //? if >=26.1 {
+                /*net.minecraft.client.color.block.BlockTintSource source = blockColors.getTintSource(state, tintIndex);
+                color = source == null ? -1 : source.color(state);
+                *///?} else {
                 color = blockColors.getColor(state, null, null, tintIndex);
+                //?}
             } catch (RuntimeException e2) {
                 color = -1;
             }

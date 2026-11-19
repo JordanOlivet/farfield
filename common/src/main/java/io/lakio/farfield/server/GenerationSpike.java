@@ -1,5 +1,6 @@
 package io.lakio.farfield.server;
 
+import io.lakio.farfield.compat.Mc;
 import io.lakio.farfield.Farfield;
 import net.minecraft.core.Holder;
 import net.minecraft.core.QuartPos;
@@ -318,7 +319,7 @@ final class GenerationSpike {
                 //?}
             }
             for (ChunkPos p : area) {
-                list.add(chunks.getChunkFuture(p.x, p.z, status, true));
+                list.add(chunks.getChunkFuture(Mc.chunkX(p), Mc.chunkZ(p), status, true));
             }
             return list;
         }).get();

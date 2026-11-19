@@ -10,9 +10,12 @@ neoForge {
     if (at.exists()) {
         accessTransformers.from(at.absolutePath)
     }
-    parchment {
-        minecraftVersion = parchment_minecraft
-        mappingsVersion = parchment_version
+    // Parameter names from Parchment while the game is obfuscated (before 26.1, ADR-171).
+    if (project.hasProperty('parchment_version')) {
+        parchment {
+            minecraftVersion = parchment_minecraft
+            mappingsVersion = parchment_version
+        }
     }
 }
 

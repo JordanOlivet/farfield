@@ -1,5 +1,6 @@
 package io.lakio.farfield.lod;
 
+import io.lakio.farfield.compat.Mc;
 import io.lakio.farfield.core.anvil.ChunkData;
 import io.lakio.farfield.core.anvil.SectionData;
 import net.minecraft.core.Holder;
@@ -50,7 +51,7 @@ final class ChunkSnapshot {
         LevelChunkSection[] sections = chunk.getSections();
         int minSection = chunk.getMinSection();
         boolean noSky = !level.dimensionType().hasSkyLight();
-        ChunkSnapshot s = new ChunkSnapshot(chunk.getPos().x, chunk.getPos().z, minSection, sections.length, noSky);
+        ChunkSnapshot s = new ChunkSnapshot(Mc.chunkX(chunk.getPos()), Mc.chunkZ(chunk.getPos()), minSection, sections.length, noSky);
         var skyListener = level.getLightEngine().getLayerListener(LightLayer.SKY);
         var blockListener = level.getLightEngine().getLayerListener(LightLayer.BLOCK);
         for (int i = 0; i < sections.length; i++) {

@@ -792,7 +792,7 @@ final class PreviewFeatures {
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
     private void layGround(ProtoChunk chunk) {
-        NoiseChunk shared = noiseChunk(chunk.getPos().x, chunk.getPos().z);
+        NoiseChunk shared = noiseChunk(Mc.chunkX(chunk.getPos()), Mc.chunkZ(chunk.getPos()));
         chunk.getOrCreateNoiseChunk(c -> shared);
         // Rules may raise the ground (badlands pillars, icebergs) or open it (a swamp's water, powder
         // snow): each block they set updates the chunk's heightmaps (ProtoChunk.setBlockState at the
@@ -885,8 +885,8 @@ final class PreviewFeatures {
      * to snow keeps a snow top over the rules' block, as the guess had it.
      */
     private void readCells(ProtoChunk chunk, int[] heights) {
-        int chunkX = chunk.getPos().x;
-        int chunkZ = chunk.getPos().z;
+        int chunkX = Mc.chunkX(chunk.getPos());
+        int chunkZ = Mc.chunkZ(chunk.getPos());
         int lx = chunkX - (x0 >> 4);
         int lz = chunkZ - (z0 >> 4);
         cellsRead[lz * PreviewTile.CHUNKS + lx] = true;

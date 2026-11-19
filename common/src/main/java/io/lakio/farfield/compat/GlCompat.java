@@ -2,8 +2,14 @@ package io.lakio.farfield.compat;
 
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import net.minecraft.client.Minecraft;
-//? if >=1.21.11 {
+//? if >=26.1 {
+/*import io.lakio.farfield.mixin.client.GlDeviceAccessor;
+import io.lakio.farfield.mixin.client.GpuDeviceAccessor;
+*///?} else if >=1.21.11 {
 /*import com.mojang.blaze3d.opengl.GlDevice;
+*///?}
+//? if >=1.21.11 {
+/*import com.mojang.blaze3d.opengl.DirectStateAccess;
 import com.mojang.blaze3d.opengl.GlStateManager;
 import com.mojang.blaze3d.opengl.GlTexture;
 import com.mojang.blaze3d.systems.RenderSystem;
@@ -61,9 +67,33 @@ public final class GlCompat {
         return texture == null ? null : (GlTexture) real(texture);
     }
 
-    // The game's OpenGL device.
-    public static GlDevice glDevice() {
+    *///?}
+    //? if >=26.1 {
+    /*// Since 26.1 the GPU device is a front over a backend, and the OpenGL backend's classes
+    // are package-private: their fields are read through accessor mixins (ADR-171).
+    private static GlDeviceAccessor glDevice() {
+        return (GlDeviceAccessor) real(((GpuDeviceAccessor) RenderSystem.getDevice()).farfield$backend());
+    }
+
+    private static DirectStateAccess directStateAccess() {
+        return glDevice().farfield$directStateAccess();
+    }
+
+    private static GlCommandEncoderAccessor encoder() {
+        return (GlCommandEncoderAccessor) real(glDevice().farfield$encoder());
+    }
+    *///?} else if >=1.21.11 {
+    /*// The game's OpenGL device.
+    private static GlDevice glDevice() {
         return (GlDevice) real(RenderSystem.getDevice());
+    }
+
+    private static DirectStateAccess directStateAccess() {
+        return glDevice().directStateAccess();
+    }
+
+    private static GlCommandEncoderAccessor encoder() {
+        return (GlCommandEncoderAccessor) glDevice().createCommandEncoder();
     }
     *///?}
 
@@ -91,7 +121,9 @@ public final class GlCompat {
 
     /** The OpenGL name of vanilla's lightmap, as the game renderer updated it for this frame. */
     public static int lightmapTexture(Minecraft mc) {
-        //? if >=1.21.11 {
+        //? if >=26.1 {
+        /*return glTexture(mc.gameRenderer.levelLightmap().texture()).glId();
+        *///?} else if >=1.21.11 {
         /*return glTexture(mc.gameRenderer.lightTexture().getTextureView().texture()).glId();
         *///?} else {
         mc.gameRenderer.lightTexture().turnOnLightLayer();
@@ -103,7 +135,7 @@ public final class GlCompat {
     public static int mainFramebuffer() {
         RenderTarget main = Minecraft.getInstance().getMainRenderTarget();
         //? if >=1.21.11 {
-        /*return glTexture(main.getColorTexture()).getFbo(glDevice().directStateAccess(),
+        /*return glTexture(main.getColorTexture()).getFbo(directStateAccess(),
                 glTexture(main.getDepthTexture()));
         *///?} else {
         return main.frameBufferId;
@@ -127,7 +159,7 @@ public final class GlCompat {
     public static void bindTarget(RenderTarget target) {
         //? if >=1.21.11 {
         /*GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER, glTexture(target.getColorTexture()).getFbo(
-                glDevice().directStateAccess(), glTexture(target.getDepthTexture())));
+                directStateAccess(), glTexture(target.getDepthTexture())));
         GlStateManager._viewport(0, 0, target.width, target.height);
         *///?}
     }
@@ -148,7 +180,7 @@ public final class GlCompat {
      */
     public static void endRawDraw() {
         //? if >=1.21.11 {
-        /*((GlCommandEncoderAccessor) glDevice().createCommandEncoder()).farfield$setLastProgram(null);
+        /*encoder().farfield$setLastProgram(null);
         *///?} else {
         BufferUploader.invalidate();
         //?}

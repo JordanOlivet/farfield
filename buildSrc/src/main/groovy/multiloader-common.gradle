@@ -21,12 +21,18 @@ ext.versionedRunDir = { String path ->
             : new File(branchDir, "runs/${minecraft_version}/${path - ~/^runs\//}")
 }
 
-// Code and resources of this Minecraft version alone (ADR-165): a file that differs as a
-// whole between versions (a mixin on a class the game rewrote, a mixin config) lives in
-// src/versioned/<minecraft version>/ of the branch, one copy per version, never in
-// Stonecutter comments.
-sourceSets.main.java.srcDir(new File(branchDir, "src/versioned/${minecraft_version}/java"))
-sourceSets.main.resources.srcDir(new File(branchDir, "src/versioned/${minecraft_version}/resources"))
+// Code and resources that differ as a whole between versions (ADR-165): a mixin on a class
+// the game rewrote, a mixin config. They live in src/versioned/<minecraft version>/ of the
+// branch, never in Stonecutter comments. A node takes the folder of the newest version not
+// above its own (ADR-171): src/versioned/26.1/ serves 26.1.2, 26.2 and 26.3 until one of
+// them needs a folder of its own.
+def versionedDirs = (new File(branchDir, 'src/versioned').listFiles() ?: [] as File[])
+        .findAll { it.directory && stonecutter.compare(it.name, minecraft_version as String) <= 0 }
+def versionedDir = versionedDirs.max { a, b -> stonecutter.compare(a.name, b.name) }
+if (versionedDir != null) {
+    sourceSets.main.java.srcDir(new File(versionedDir, 'java'))
+    sourceSets.main.resources.srcDir(new File(versionedDir, 'resources'))
+}
 
 base {
     archivesName = "${mod_id}-${platform}-${minecraft_version}"

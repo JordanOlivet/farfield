@@ -19,7 +19,9 @@ import net.minecraft.client.model.geom.builders.UVPair;
  * The block models the material looks are baked from, across Minecraft
  * versions (ADR-165): up to 1.21.4 a block state's {@code BakedModel} gives
  * its quads; since 1.21.5 a {@code BlockStateModel} gives parts, each with
- * its quads, and a quad is a record of its four positions and UVs.
+ * its quads, and a quad is a record of its four positions and UVs; since
+ * 26.1 the model set of the model manager gives the models, and a quad's
+ * sprite and tint sit in its material info.
  */
 public final class Models {
     private Models() {
@@ -33,10 +35,16 @@ public final class Models {
     /** The quads of {@code modelState}'s model, as drawn for {@code state}, on {@code side}. */
     public static List<BakedQuad> quads(BlockState modelState, BlockState state, @Nullable Direction side,
                                         RandomSource random) {
-        //? if >=1.21.11 {
+        //? if >=26.1 {
+        /*BlockStateModel model = Minecraft.getInstance().getModelManager().getBlockStateModelSet().get(modelState);
+        List<BlockModelPart> parts = new ArrayList<>();
+        model.collectParts(random, parts);
+        *///?} else if >=1.21.11 {
         /*BlockStateModel model = Minecraft.getInstance().getBlockRenderer().getBlockModel(modelState);
         List<BlockModelPart> parts = model.collectParts(random);
-        if (parts.size() == 1) {
+        *///?}
+        //? if >=1.21.11 {
+        /*if (parts.size() == 1) {
             return parts.get(0).getQuads(side);
         }
         List<BakedQuad> quads = new ArrayList<>();
@@ -51,7 +59,9 @@ public final class Models {
 
     /** The sprite of {@code state}'s particles (its model's icon). */
     public static TextureAtlasSprite particle(BlockState state) {
-        //? if >=1.21.11 {
+        //? if >=26.1 {
+        /*return Minecraft.getInstance().getModelManager().getBlockStateModelSet().getParticleMaterial(state).sprite();
+        *///?} else if >=1.21.11 {
         /*return Minecraft.getInstance().getBlockRenderer().getBlockModel(state).particleIcon();
         *///?} else {
         return Minecraft.getInstance().getBlockRenderer().getBlockModel(state).getParticleIcon();
@@ -60,7 +70,9 @@ public final class Models {
 
     /** The missing model: a new object after each resource reload. */
     public static Object missingModel() {
-        //? if >=1.21.11 {
+        //? if >=26.1 {
+        /*return Minecraft.getInstance().getModelManager().getBlockStateModelSet().missingModel();
+        *///?} else if >=1.21.11 {
         /*return Minecraft.getInstance().getModelManager().getMissingBlockStateModel();
         *///?} else {
         return Minecraft.getInstance().getModelManager().getMissingModel();
@@ -69,7 +81,9 @@ public final class Models {
 
     /** The missing model's particle sprite (the magenta and black checker). */
     public static TextureAtlasSprite missingSprite() {
-        //? if >=1.21.11 {
+        //? if >=26.1 {
+        /*return Minecraft.getInstance().getModelManager().getBlockStateModelSet().missingModel().particleMaterial().sprite();
+        *///?} else if >=1.21.11 {
         /*return Minecraft.getInstance().getModelManager().getMissingBlockStateModel().particleIcon();
         *///?} else {
         return Minecraft.getInstance().getModelManager().getMissingModel().getParticleIcon();
@@ -77,15 +91,27 @@ public final class Models {
     }
 
     public static int tintIndex(BakedQuad quad) {
-        //? if >=1.21.11 {
+        //? if >=26.1 {
+        /*return quad.materialInfo().tintIndex();
+        *///?} else if >=1.21.11 {
         /*return quad.tintIndex();
         *///?} else {
         return quad.getTintIndex();
         //?}
     }
 
+    public static boolean isTinted(BakedQuad quad) {
+        //? if >=26.1 {
+        /*return quad.materialInfo().isTinted();
+        *///?} else {
+        return quad.isTinted();
+        //?}
+    }
+
     public static TextureAtlasSprite sprite(BakedQuad quad) {
-        //? if >=1.21.11 {
+        //? if >=26.1 {
+        /*return quad.materialInfo().sprite();
+        *///?} else if >=1.21.11 {
         /*return quad.sprite();
         *///?} else {
         return quad.getSprite();

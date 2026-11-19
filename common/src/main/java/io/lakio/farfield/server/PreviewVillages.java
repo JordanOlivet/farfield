@@ -1,5 +1,6 @@
 package io.lakio.farfield.server;
 
+import io.lakio.farfield.compat.Mc;
 import io.lakio.farfield.Farfield;
 import net.minecraft.core.Holder;
 import net.minecraft.server.level.ServerLevel;
@@ -86,7 +87,7 @@ final class PreviewVillages {
                         int x = chunk.getMiddleBlockX();
                         int z = chunk.getMiddleBlockZ();
                         if (x < x0 || x > x1 || z < z0 || z > z1
-                                || !set.placement.isStructureChunk(state, chunk.x, chunk.z)) {
+                                || !set.placement.isStructureChunk(state, Mc.chunkX(chunk), Mc.chunkZ(chunk))) {
                             continue;
                         }
                         Holder<Biome> biome = biomeAt.biome(x, z);

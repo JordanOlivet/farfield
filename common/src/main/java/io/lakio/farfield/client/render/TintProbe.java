@@ -39,10 +39,17 @@ final class TintProbe implements BlockAndTintGetter {
         return colorResolver.getColor(biome, pos.getX(), pos.getZ());
     }
 
+    //? if >=26.1 {
+    /*@Override
+    public net.minecraft.world.level.CardinalLighting cardinalLighting() {
+        return net.minecraft.world.level.CardinalLighting.DEFAULT;
+    }
+    *///?} else {
     @Override
     public float getShade(Direction direction, boolean shade) {
         return 1f;
     }
+    //?}
 
     @Override
     public LevelLightEngine getLightEngine() {
