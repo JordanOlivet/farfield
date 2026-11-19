@@ -448,8 +448,9 @@ The user (2026-11-18), after 1.0.0: the other 1.21.x, starting with 1.21.11.
   2026-11-19: 1.1.0 published (run 44568398368, seven jobs green, the four
   publish jobs `Successfully published the assets to CurseForge, Modrinth`,
   versions `1.1.0+<loader>-<mc>`, type release; GitHub Release with the four
-  jars). Remains: the store pages' text (version-free, ADR-167's line) to push
-  once the user validates it, and his look at both stores' pages.
+  jars). The store text (version-free, ADR-168's line), the user: "valide la
+  description": pushed to Modrinth (HTTP 204, read back equal to the file).
+  Remains: the user pastes it on CurseForge, and his look at both stores' pages.
 - [ ] H.8 Minecraft 26.x (Java 25, no obfuscation, Vulkan later, ADR-004/007).
 
 ## M2.G — Ideas to study (the user, 2026-11-09)
