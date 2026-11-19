@@ -1,5 +1,6 @@
 package io.lakio.farfield.compat;
 
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
@@ -23,6 +24,24 @@ import net.minecraft.world.level.block.Block;
  */
 public final class Mc {
     private Mc() {
+    }
+
+    /** A chunk position's X, in chunks: a field up to 1.21.11, a record component since 26.1. */
+    public static int chunkX(ChunkPos pos) {
+        //? if >=26.1 {
+        /*return pos.x();
+        *///?} else {
+        return pos.x;
+        //?}
+    }
+
+    /** A chunk position's Z, in chunks. */
+    public static int chunkZ(ChunkPos pos) {
+        //? if >=26.1 {
+        /*return pos.z();
+        *///?} else {
+        return pos.z;
+        //?}
     }
 
     /** The level's world spawn point. */

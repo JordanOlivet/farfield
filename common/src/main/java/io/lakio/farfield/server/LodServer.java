@@ -69,11 +69,56 @@ public final class LodServer {
     private LodServer(boolean preview) {
         this.preview = preview ? new NoisePreview() : null;
         this.pipeline = new LodPipeline("server", level -> level instanceof ServerLevel,
-                level -> dimensionFolder((ServerLevel) level).resolve("farfield"), LevelChunk::isLightCorrect);
+                level -> storeFolder((ServerLevel) level), LevelChunk::isLightCorrect);
     }
 
     private static Path dimensionFolder(ServerLevel level) {
         return DimensionType.getStorageFolder(level.dimension(), level.getServer().getWorldPath(LevelResource.ROOT));
+    }
+
+    /**
+     * The dimension's LOD store, {@code farfield} in its folder. Since 26.1 the vanilla
+     * dimensions live in {@code dimensions/minecraft/<name>} (the world root, {@code DIM-1}
+     * and {@code DIM1} before); the game's upgrade moves its own folders, not ours, so a
+     * store left at the old place moves to the new one (ADR-171). Modded dimensions were
+     * in {@code dimensions/} already. Before 26.1 both places are one: nothing moves.
+     */
+    private static Path storeFolder(ServerLevel level) {
+        Path store = dimensionFolder(level).resolve("farfield");
+        Path root = level.getServer().getWorldPath(LevelResource.ROOT);
+        String legacyFolder = switch (level.dimension().location().toString()) {
+            case "minecraft:overworld" -> "";
+            case "minecraft:the_nether" -> "DIM-1";
+            case "minecraft:the_end" -> "DIM1";
+            default -> null;
+        };
+        if (legacyFolder == null) {
+            return store;
+        }
+        Path legacyDir = legacyFolder.isEmpty() ? root : root.resolve(legacyFolder);
+        Path legacy = legacyDir.resolve("farfield");
+        if (legacy.toAbsolutePath().normalize().equals(store.toAbsolutePath().normalize())
+                || !java.nio.file.Files.isDirectory(legacy) || java.nio.file.Files.exists(store)) {
+            return store;
+        }
+        try {
+            java.nio.file.Files.createDirectories(store.getParent());
+            java.nio.file.Files.move(legacy, store);
+            if (!legacyFolder.isEmpty()) {
+                try (var left = java.nio.file.Files.list(legacyDir)) {
+                    if (left.findAny().isEmpty()) {
+                        java.nio.file.Files.delete(legacyDir);
+                    }
+                }
+            }
+            Farfield.LOG.info("LOD store of {} moved from {} to {}, where the game keeps the dimension since 26.1",
+                    level.dimension().location(), root.relativize(legacy), root.relativize(store));
+            return store;
+        } catch (java.io.IOException e) {
+            Farfield.LOG.warn("LOD store of {}: could not move it from {} to {}, it stays where it is",
+                    level.dimension().location(), legacy, store, e);
+            return legacy;
+        }
     }
 
     // ---------------------------------------------------------------- loader events

@@ -1,5 +1,6 @@
 package io.lakio.farfield.server;
 
+import io.lakio.farfield.compat.Mc;
 import io.lakio.farfield.mixin.ChunkGeneratorAccessor;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import net.minecraft.core.BlockPos;
@@ -188,7 +189,7 @@ final class FeatureSandbox implements WorldGenLevel {
         long decorationSeed = worldRandom.setDecorationSeed(getSeed(), origin.getX(), origin.getZ());
         Set<Holder<Biome>> biomes = new it.unimi.dsi.fastutil.objects.ObjectArraySet<>();
         ChunkPos.rangeClosed(chunkPos, 1).forEach(p -> {
-            for (var section : getChunk(p.x, p.z).getSections()) {
+            for (var section : getChunk(Mc.chunkX(p), Mc.chunkZ(p)).getSections()) {
                 section.getBiomes().getAll(biomes::add);
             }
         });
@@ -425,20 +426,25 @@ final class FeatureSandbox implements WorldGenLevel {
         return 0;
     }
 
+    // Since 26.1 shade and tint are the client's (its own BlockAndTintGetter, ADR-171).
+    //? if <26.1 {
     @Override
     public float getShade(Direction direction, boolean shade) {
         return 1f;
     }
+    //?}
 
     @Override
     public LevelLightEngine getLightEngine() {
         return level.getLightEngine();
     }
 
+    //? if <26.1 {
     @Override
     public int getBlockTint(BlockPos pos, net.minecraft.world.level.ColorResolver resolver) {
         return resolver.getColor(getBiome(pos).value(), pos.getX(), pos.getZ());
     }
+    //?}
 
     @Override
     public WorldBorder getWorldBorder() {

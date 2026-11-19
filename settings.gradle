@@ -90,8 +90,10 @@ stonecutter {
     }
 }
 
-// A node's version properties, set before its build script runs; -P on the
-// command line and local.properties still win.
+// A node's version properties, set before its build script runs: they win over
+// gradle.properties (java_version, 25 from 26.1), -P on the command line and
+// local.properties win over them.
+def commandLineProperties = gradle.startParameter.projectProperties
 gradle.beforeProject { p ->
     if (p.parent != null && p.parent.parent == p.rootProject && p.parent.name in versionedProjects) {
         def file = new File(settingsDir, "versions/${p.name}.properties")
@@ -101,7 +103,7 @@ gradle.beforeProject { p ->
         def props = new Properties()
         file.withReader('UTF-8') { props.load(it) }
         props.each { key, value ->
-            if (!p.hasProperty(key as String)) {
+            if (!commandLineProperties.containsKey(key) && !localProperties.containsKey(key)) {
                 p.ext.set(key as String, value)
             }
         }

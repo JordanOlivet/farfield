@@ -7,11 +7,13 @@ import java.security.MessageDigest
 // written for now; its tasks switch them to another version.
 plugins {
     id 'dev.kikugie.stonecutter'
-    // see https://fabricmc.net/develop/ for new versions
-    id 'fabric-loom' version '1.16.3' apply false
+    // see https://fabricmc.net/develop/ for new versions. One jar, two plugins: Loom
+    // with remapping for the obfuscated versions (1.21.x), without from 26.1 (ADR-171).
+    // Loom 1.19 runs on Java 25 and Gradle 9.8+ (gradle/gradle-daemon-jvm.properties).
+    id 'net.fabricmc.fabric-loom' version '1.19.4' apply false
     // see https://projects.neoforged.net/neoforged/moddevgradle for new versions
     id 'net.neoforged.moddev' version '2.0.148' apply false
-    // Toolchains for the vanilla server below (JDK 21, as the game).
+    // Toolchains for the vanilla server below (the game's JDK: 21, 25 from 26.1).
     id 'jvm-toolchains'
 }
 
@@ -44,6 +46,37 @@ stonecutter.parameters { sc ->
         r.replace('camera.getBlockPosition()', 'camera.blockPosition()')
         r.replace('.getLookVector()', '.forwardVector()')
         r.replace('.isSectionCompiled(', '.isSectionCompiledAndVisible(')
+    }
+    // 26.1: block models move to their own packages, the GUI draws through an extractor
+    // of render state, the tint getter is the client's (ADR-171).
+    sc.replacements.string(atLeast('26.1')) { r ->
+        r.replace('net.minecraft.client.renderer.block.model.BakedQuad', 'net.minecraft.client.resources.model.geometry.BakedQuad')
+        r.replace('net.minecraft.client.renderer.block.model.BlockStateModel', 'net.minecraft.client.renderer.block.dispatch.BlockStateModel')
+        r.replace('net.minecraft.client.renderer.block.model.BlockModelPart', 'net.minecraft.client.renderer.block.dispatch.BlockStateModelPart')
+        r.replace('BlockModelPart', 'BlockStateModelPart')
+        r.replace('net.minecraft.world.level.BlockAndTintGetter', 'net.minecraft.client.renderer.block.BlockAndTintGetter')
+        r.replace('GuiGraphics', 'GuiGraphicsExtractor')
+        r.replace('renderMenuBackground(', 'extractMenuBackground(')
+        r.replace('tabNavigationBar.setWidth(', 'tabNavigationBar.updateWidth(')
+        r.replace('getChat().addMessage(', 'getChat().addClientSystemMessage(')
+        // Chunk positions are a record, packed rather than turned into a long.
+        r.replace('ChunkPos.asLong(', 'ChunkPos.pack(')
+        r.replace('.getPos().toLong()', '.getPos().pack()')
+        r.replace('level.getDayTime()', 'level.getOverworldClockTime()')
+        r.replace('SnowyDirtBlock.SNOWY', 'SnowyBlock.SNOWY')
+        // The color mask is a bit mask of the targets' channels.
+        r.replace('_colorMask(true, true, true, true)', '_colorMask(com.mojang.blaze3d.pipeline.ColorTargetState.WRITE_ALL)')
+        r.replace('_colorMask(false, false, false, false)', '_colorMask(com.mojang.blaze3d.pipeline.ColorTargetState.WRITE_NONE)')
+    }
+    // Fabric API for 26.1: key mappings by the game's name, payload registries by direction, and
+    // the chunk load event tells whether the chunk is new.
+    sc.replacements.string(atLeast('26.1')) { r ->
+        r.replace('fabric.api.client.keybinding.v1.KeyBindingHelper', 'fabric.api.client.keymapping.v1.KeyMappingHelper')
+        r.replace('KeyBindingHelper.registerKeyBinding(', 'KeyMappingHelper.registerKeyMapping(')
+        r.replace('PayloadTypeRegistry.playC2S()', 'PayloadTypeRegistry.serverboundPlay()')
+        r.replace('PayloadTypeRegistry.playS2C()', 'PayloadTypeRegistry.clientboundPlay()')
+        r.replace('ServerChunkEvents.CHUNK_LOAD.register(LodServer::onChunkLoad)',
+                'ServerChunkEvents.CHUNK_LOAD.register((level, chunk, isNew) -> LodServer.onChunkLoad(level, chunk))')
     }
     // NeoForge 21.11 (FML 10): the environment's getters, the client's own packet distributor.
     sc.replacements.string(atLeast('1.21.11')) { r ->
@@ -106,7 +139,7 @@ tasks.register('runVanillaServer', Exec) {
     workingDir vanillaServerDir
     standardInput = System.in
     def java = javaToolchains.launcherFor {
-        languageVersion = JavaLanguageVersion.of(java_version)
+        languageVersion = JavaLanguageVersion.of(activeProperties.getProperty('java_version') ?: java_version)
     }
     doFirst {
         commandLine java.get().executablePath.asFile.absolutePath, '-Xmx2G', '-jar', 'server.jar', 'nogui'

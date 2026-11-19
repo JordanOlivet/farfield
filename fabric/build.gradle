@@ -1,7 +1,15 @@
 plugins {
     id 'multiloader-loader'
-    id 'fabric-loom'
 }
+
+// 26.1 on, the game ships unobfuscated (ADR-171): Loom without remapping, the mods on
+// the plain configurations (implementation, compileOnly, localRuntime) and no
+// mappings. Before, Loom remaps to Mojang's names with Parchment's, the mods on the
+// mod* configurations.
+def unobfuscated = mcAtLeast('26.1')
+apply plugin: unobfuscated ? 'net.fabricmc.fabric-loom' : 'net.fabricmc.fabric-loom-remap'
+// A configuration that holds mods: modImplementation before 26.1, implementation from it.
+def mod = { String configuration -> unobfuscated ? configuration : "mod${configuration.capitalize()}" }
 
 repositories {
     exclusiveContent {
@@ -17,23 +25,25 @@ repositories {
 
 dependencies {
     minecraft "com.mojang:minecraft:${minecraft_version}"
-    mappings loom.layered {
-        officialMojangMappings()
-        parchment("org.parchmentmc.data:parchment-${parchment_minecraft}:${parchment_version}@zip")
+    if (!unobfuscated) {
+        mappings loom.layered {
+            officialMojangMappings()
+            parchment("org.parchmentmc.data:parchment-${parchment_minecraft}:${parchment_version}@zip")
+        }
     }
-    modImplementation "net.fabricmc:fabric-loader:${fabric_loader_version}"
-    modImplementation "net.fabricmc.fabric-api:fabric-api:${fabric_version}"
+    add(mod('implementation'), "net.fabricmc:fabric-loader:${fabric_loader_version}")
+    add(mod('implementation'), "net.fabricmc.fabric-api:fabric-api:${fabric_version}")
     // Mod Menu opens the settings screen; optional at runtime, present in the dev client.
-    modCompileOnly "com.terraformersmc:modmenu:${modmenu_version}"
+    add(mod('compileOnly'), "com.terraformersmc:modmenu:${modmenu_version}")
     // Shader packs (ADR-113): compiled against, never bundled.
-    modCompileOnly("maven.modrinth:iris:${iris_fabric_version}") { transitive = false }
+    add(mod('compileOnly'), "maven.modrinth:iris:${iris_fabric_version}") { transitive = false }
     // Sodium's video settings pages (Sodium 0.8 on): compiled against, never bundled.
-    modCompileOnly("net.caffeinemc:sodium-fabric-api:${sodium_api_version}") { transitive = false }
-    modLocalRuntime "com.terraformersmc:modmenu:${modmenu_version}"
+    add(mod('compileOnly'), "net.caffeinemc:sodium-fabric-api:${sodium_api_version}") { transitive = false }
+    add(mod('localRuntime'), "com.terraformersmc:modmenu:${modmenu_version}")
     // Rehearsal, the test harness mod (ADR-122), in the dev runs only, when a checkout is named.
     def rehearsalJar = rehearsalJar('fabric')
     if (rehearsalJar != null) {
-        modLocalRuntime files(rehearsalJar)
+        add(mod('localRuntime'), files(rehearsalJar))
     }
     // Libraries of the engine core, nested in the mod jar.
     include(implementation("io.airlift:aircompressor:${aircompressor_version}"))
@@ -44,9 +54,8 @@ loom {
     if (aw.exists()) {
         accessWidenerPath.set(aw)
     }
-    mixin {
-        defaultRefmapName.set("${mod_id}.refmap.json")
-    }
+    // No refmap: since Loom 1.19 the remapped jar's mixins name their targets in
+    // intermediary themselves (tiny-remapper's mixin extension), and 26.1 on needs none.
     def clientRunSettings = { run ->
         // Rehearsal, the test harness mod (ADR-122), drives the dev client through files
         // when its jar is there (rehearsal.dir in local.properties); Farfield's part of it
