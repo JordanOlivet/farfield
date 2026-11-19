@@ -797,9 +797,15 @@ final class PreviewFeatures {
         // Rules may raise the ground (badlands pillars, icebergs) or open it (a swamp's water, powder
         // snow): each block they set updates the chunk's heightmaps (ProtoChunk.setBlockState at the
         // noise status), no priming again after them.
+        //? if >=26.2 {
+        /*// Since 26.2 the rules take the biomes that can appear (null: any) instead of the registry.
+        surface.buildSurface(chunk, new WorldGenerationContext(surface, level), level.getChunkSource().randomState(),
+                level.structureManager(), surfaceBiomes, Blender.empty(), null);
+        *///?} else {
         surface.buildSurface(chunk, new WorldGenerationContext(surface, level), level.getChunkSource().randomState(),
                 level.structureManager(), surfaceBiomes, level.registryAccess().registryOrThrow(Registries.BIOME),
                 Blender.empty());
+        //?}
     }
 
     /** The noise chunk the surface rules share for the tile, made at the first chunk asked. */
