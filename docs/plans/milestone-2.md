@@ -436,12 +436,13 @@ The user (2026-11-18), after 1.0.0: the other 1.21.x, starting with 1.21.11.
   early window, NVIDIA. Not checked: AMD, Intel.
 - [x] H.5 Rehearsal on 1.21.11 (its own repository): Stonecutter build,
   screenshots after the asynchronous read back.
-- [~] H.6 Iris 1.10 on 1.21.11, the 3.3 context included: the user's test pass.
+- [x] H.6 Iris 1.10 on 1.21.11, the 3.3 context included: the user's test pass.
   Done 2026-11-19 in the user's "Immersed With Shaders" pack (the user: "C'est good
   pour neoforge"): NeoForge 21.11.36, Sodium 0.8, C2ME, OpenGL 3.3 from FML's early
   window, Complementary Reimagined r5.6.1 through its Distant Horizons contract, 5,276
   sections drawn, no preview tile failed; Fabric in the same pack (shaders off) after
-  ADR-170. Remains: the Voxy contract (Photon) on 1.21.11.
+  ADR-170. The Voxy contract: Photon (photon-gcea) on both loaders of the pack, forced
+  with `/farfield debug shaderpack voxy`, the user: "ça marche".
 - [ ] H.7 The 1.21.11 release: version bump, the store pages, the tag
   (`release.yml`'s four targets, ci-workflows v1.0.14, first run).
 - [ ] H.8 Minecraft 26.x (Java 25, no obfuscation, Vulkan later, ADR-004/007).
