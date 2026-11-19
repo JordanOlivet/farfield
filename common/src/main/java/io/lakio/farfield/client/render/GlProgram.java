@@ -160,7 +160,9 @@ final class GlProgram implements AutoCloseable {
                     out.append(line).append('\n');
                 }
             }
-            return out.toString();
+            // The depth the game clears to (1 up to 26.1, 0 since its reversed depth of 26.2, ADR-171).
+            return out.toString().replace("FARFIELD_GAME_CLEAR_DEPTH",
+                    io.lakio.farfield.compat.GlCompat.gameClearDepth() == 0.0 ? "0.0" : "1.0");
         } catch (IOException e) {
             throw new IllegalStateException("cannot read shader " + resource, e);
         }

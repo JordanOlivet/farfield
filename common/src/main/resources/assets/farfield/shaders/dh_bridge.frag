@@ -20,7 +20,7 @@ flat in uint farfield_handoff;
 flat in uint farfield_direction;
 
 void farfield_clip() {
-    if (u_translucent && texelFetch(u_gameDepth, ivec2(gl_FragCoord.xy), 0).r < 1.0) {
+    if (u_translucent && texelFetch(u_gameDepth, ivec2(gl_FragCoord.xy), 0).r != FARFIELD_GAME_CLEAR_DEPTH) {
         discard;
     }
     if (farfield_handoff != 0u) {
