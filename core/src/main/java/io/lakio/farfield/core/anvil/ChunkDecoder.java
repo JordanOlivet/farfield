@@ -43,6 +43,11 @@ public final class ChunkDecoder {
     private static final byte[] BLOCK_LIGHT = ascii("BlockLight");
     private static final byte[] NAME = ascii("Name");
     private static final byte[] PROPERTIES = ascii("Properties");
+    // Minecraft 26.3's palette entries: {id, properties} with the properties at their default left
+    // out, a bare name wrapped as {"": name} in a list that mixes both (ADR-171).
+    private static final byte[] ID = ascii("id");
+    private static final byte[] PROPERTIES_26_3 = ascii("properties");
+    private static final byte[] WRAPPED = new byte[0];
 
     private final KeyRegistry blockStates;
     private final KeyRegistry biomes;
@@ -195,12 +200,14 @@ public final class ChunkDecoder {
             if (type == NbtTag.LIST && is(name, nameLength, PALETTE)) {
                 int elementType = r.readTagType();
                 int count = checkedCount(r.readArrayLength());
-                if (count > 0 && elementType != NbtTag.COMPOUND) {
-                    throw new NbtFormatException("block palette is not a list of compounds");
+                // Up to 26.2 a list of {Name, Properties}; since 26.3 a list of names when no entry
+                // has properties, else of compounds (ADR-171).
+                if (count > 0 && elementType != NbtTag.COMPOUND && elementType != NbtTag.STRING) {
+                    throw new NbtFormatException("block palette is not a list of compounds or names");
                 }
                 int[] palette = s.ensureBlockPalette(count);
                 for (int i = 0; i < count; i++) {
-                    palette[i] = blockStates.id(readBlockStateKey());
+                    palette[i] = blockStates.id(elementType == NbtTag.STRING ? r.readString() : readBlockStateKey());
                 }
                 paletteSize = count;
             } else if (type == NbtTag.LONG_ARRAY && is(name, nameLength, DATA)) {
@@ -276,6 +283,9 @@ public final class ChunkDecoder {
      * Reads a block-state compound ({@code Name}, optional {@code Properties})
      * into its canonical key: the name, then the properties sorted by name in
      * brackets, e.g. {@code minecraft:oak_stairs[facing=north,half=top,shape=straight,waterlogged=false]}.
+     * Since 26.3 the compound is {@code id} and {@code properties}, the
+     * properties at their default left out (the game's parser fills them in),
+     * or a bare name under the empty key.
      */
     private String readBlockStateKey() {
         NbtReader r = reader;
@@ -286,9 +296,11 @@ public final class ChunkDecoder {
             int nameLength = r.readStringLength();
             int name = r.position();
             r.skip(nameLength);
-            if (type == NbtTag.STRING && is(name, nameLength, NAME)) {
+            if (type == NbtTag.STRING && (is(name, nameLength, NAME) || is(name, nameLength, ID)
+                    || is(name, nameLength, WRAPPED))) {
                 blockName = r.readString();
-            } else if (type == NbtTag.COMPOUND && is(name, nameLength, PROPERTIES)) {
+            } else if (type == NbtTag.COMPOUND && (is(name, nameLength, PROPERTIES)
+                    || is(name, nameLength, PROPERTIES_26_3))) {
                 int propertyType;
                 while ((propertyType = r.readTagType()) != NbtTag.END) {
                     String key = r.readString();

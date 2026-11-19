@@ -30,8 +30,28 @@ def versionedDirs = (new File(branchDir, 'src/versioned').listFiles() ?: [] as F
         .findAll { it.directory && stonecutter.compare(it.name, minecraft_version as String) <= 0 }
 def versionedDir = versionedDirs.max { a, b -> stonecutter.compare(a.name, b.name) }
 if (versionedDir != null) {
-    sourceSets.main.java.srcDir(new File(versionedDir, 'java'))
+    def versionedJava = new File(versionedDir, 'java')
+    sourceSets.main.java.srcDir(versionedJava)
     sourceSets.main.resources.srcDir(new File(versionedDir, 'resources'))
+    // A file of the folder stands in for the shared one at the same path, and the folder's
+    // excluded.txt names shared sources this version leaves out (one path a line, under
+    // java/, # for comments): 26.3's noise preview waits for its port (ADR-171).
+    def replaced = [] as Set
+    if (versionedJava.directory) {
+        versionedJava.eachFileRecurse(groovy.io.FileType.FILES) {
+            replaced << versionedJava.toPath().relativize(it.toPath()).toString().replace(File.separator, '/')
+        }
+    }
+    def excludedFile = new File(versionedDir, 'excluded.txt')
+    def excluded = excludedFile.exists()
+            ? excludedFile.readLines('UTF-8')*.trim().findAll { it && !it.startsWith('#') } as Set
+            : [] as Set
+    def versionedPath = versionedJava.toPath()
+    sourceSets.main.java.exclude { element ->
+        String path = element.relativePath.pathString
+        boolean fromVersioned = element.file.toPath().startsWith(versionedPath)
+        !fromVersioned && (replaced.contains(path) || excluded.contains(path))
+    }
 }
 
 base {
