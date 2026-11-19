@@ -18,6 +18,8 @@ A release is a pushed tag `v<version>[-alpha.N]`. Do not tag until the user says
 7. The Modrinth public API returns 404 for an unlisted, unapproved project. Modrinth and CurseForge pages stay unverified: ask the user to check loaders, game version, dependencies. Say so in the report.
 8. Log the release in the day's `docs/progress` file (session wrap-up skill). The GitHub Release body defaults to the commit list: prepend a readable summary with `gh release edit TAG --notes-file FILE`, where FILE holds the summary followed by the old body from `gh release view TAG --json body --jq .body`.
 
+Several Minecraft versions (Farfield ships 1.21.1 and 1.21.11, NeoForge and Fabric): `publish-mod.yml` takes one `game-versions` list for every target and names each Modrinth version `<version>+<loader>`, so two NeoForge jars collide. Each target of the `targets` JSON then needs its own `game-versions` and a `version-suffix` (e.g. `neoforge-1.21.11`). Since ci-workflows v1.0.14 (PR #10, merged 2026-11-19, under `@v1`) the fields exist, and Farfield's `release.yml` has four targets (NeoForge and Fabric, 1.21.1 and 1.21.11, suffixes `<loader>-<mc>`); a new Minecraft version gets two more targets there. The workflow's `Check the targets` step fails before the build on a missing game version or a repeated suffix.
+
 Details, run ids and warnings: see `references/release-checklist-details.md`.
 
 ## Store listing text and gallery

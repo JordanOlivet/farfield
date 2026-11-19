@@ -1,14 +1,15 @@
 name: Release
 
 # Push a tag v<gradle.properties version>[-<pre-release>] (e.g. v0.1.0-alpha.1)
-# to build both loader jars at that version and publish them to Modrinth,
-# CurseForge and a GitHub Release (ADR-031). Needs the repository variables
-# MODRINTH_ID and CURSEFORGE_ID and the secrets MODRINTH_TOKEN and
-# CURSEFORGE_TOKEN.
+# to build every loader and Minecraft version's jar at that version and publish
+# them to Modrinth, CurseForge and a GitHub Release (ADR-031, ADR-165). Needs the
+# repository variables MODRINTH_ID and CURSEFORGE_ID and the secrets
+# MODRINTH_TOKEN and CURSEFORGE_TOKEN.
 #
-# Only the 1.21.1 jars for now: the shared workflow takes one list of game
-# versions and one version number per loader, so a second Minecraft version
-# needs per-target game versions there first (ADR-165).
+# One target per loader and Minecraft version, each with its game version and a
+# version suffix of its own (Modrinth refuses one version number twice): a
+# Minecraft version added to minecraft_versions in gradle.properties gets two
+# targets here.
 
 on:
   push:
@@ -22,13 +23,18 @@ jobs:
     with:
       tag: ${{ github.ref_name }}
       mod-name: Farfield
-      game-versions: 1.21.1
       java-versions: 21
       modrinth-id: ${{ vars.MODRINTH_ID }}
       curseforge-id: ${{ vars.CURSEFORGE_ID }}
       targets: >-
-        [{"loader":"neoforge","label":"NeoForge","files":"neoforge/build/libs/farfield-neoforge-1.21.1-*.jar"},
-         {"loader":"fabric","label":"Fabric","files":"fabric/build/libs/farfield-fabric-1.21.1-*.jar"}]
+        [{"loader":"neoforge","label":"NeoForge 1.21.1","files":"neoforge/build/libs/farfield-neoforge-1.21.1-*.jar",
+          "game-versions":"1.21.1","version-suffix":"neoforge-1.21.1"},
+         {"loader":"fabric","label":"Fabric 1.21.1","files":"fabric/build/libs/farfield-fabric-1.21.1-*.jar",
+          "game-versions":"1.21.1","version-suffix":"fabric-1.21.1"},
+         {"loader":"neoforge","label":"NeoForge 1.21.11","files":"neoforge/build/libs/farfield-neoforge-1.21.11-*.jar",
+          "game-versions":"1.21.11","version-suffix":"neoforge-1.21.11"},
+         {"loader":"fabric","label":"Fabric 1.21.11","files":"fabric/build/libs/farfield-fabric-1.21.11-*.jar",
+          "game-versions":"1.21.11","version-suffix":"fabric-1.21.11"}]
     secrets:
       modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
       curseforge-token: ${{ secrets.CURSEFORGE_TOKEN }}

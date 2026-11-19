@@ -1,0 +1,2 @@
+Once PR #10 is merged and tagged: `release.yml` with four targets (NeoForge and Fabric, 1.21.1 and 1.21.11), each with its game version and a suffix such as `neoforge-1.21.11`.
+A mod built for several Minecraft versions (Farfield now ships 1.21.1 and 1.21.11 jars for both NeoForge and Fabric) cannot publish them through `publish-mod.yml`: game versions are one list for every target, and the Modrinth version number is `<version>+<loader>`, so two NeoForge jars collide.
