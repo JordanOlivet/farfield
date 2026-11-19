@@ -5213,3 +5213,54 @@ deco reco sont affiché bizarrement et le brouillard vanilla est toujours là".
   `1 cave branch`, no tile failed (the test world's tiles were cached, so no
   new tile built); no vanilla fog ring under Sodium. Not checked: new tiles
   under C2ME, the fade on a reconnect (the user's pack).
+
+## ADR-171 — Minecraft 26.x: 26.1.2, 26.2 and 26.3 on Java 25, built unobfuscated
+
+Status: accepted, 2026-11-19. Continues ADR-165 for 26.x. The user picked
+the versions: "26.1.2, 26.2 et 26.3" (26.4 is still a snapshot).
+
+- **Context**: 26.1 ships unobfuscated (Mojang's names, no mappings) and
+  runs Java 25. Fabric's Loom 1.19 builds both kinds of version from one
+  jar (the plugin `net.fabricmc.fabric-loom` without remapping,
+  `net.fabricmc.fabric-loom-remap` with it), but runs on Java 25 and Gradle
+  9.8 or later only. Parchment publishes nothing for 26.x. Sodium 0.9, Iris
+  1.11, NeoForge, Fabric API and Mod Menu exist for all three versions.
+- **Decision**:
+  - **Build**: Gradle 9.9.1, its daemon on Java 25
+    (`gradle/gradle-daemon-jvm.properties`, provisioned through foojay when
+    missing), Loom 1.19.4. A version's `java_version` comes from its
+    `versions/<mc>.properties` (25 from 26.1; `core` and `api` stay Java
+    21 bytecode). From 26.1 the Fabric nodes apply Loom without remapping,
+    put mods on the plain configurations and have no mappings; the 26.x
+    nodes have no Parchment.
+  - **No refmap**: since Loom 1.19 the remapped 1.21.x jars carry the
+    intermediary names in their mixins themselves (checked in the 1.21.1
+    jar: `method_12010`, `field_45616`); the refmap and its configs go.
+  - **Versioned folders**: a node takes the `src/versioned/<version>/`
+    of the newest version not above its own, so `src/versioned/26.1/`
+    serves 26.1.2 and 26.2; a version gets its own folder only when one of
+    its files must differ. Files there call version-dependent code through
+    the compat classes, never directly, since Stonecutter does not process
+    them.
+  - **The GL backend's classes are package-private from 26.1**: accessor
+    mixins by name (`GlDevice`, `GlCommandEncoder`, `GpuDevice.backend`);
+    from 26.2 the raw draws make their own framebuffers, one per pair of
+    target textures, dropped once the game closes one.
+  - **LOD stores across the upgrade**: 26.1 keeps the vanilla dimensions in
+    `dimensions/minecraft/<name>` and moves only its own folders; a store
+    left at the 1.21.x place (`farfield`, `DIM-1/farfield`,
+    `DIM1/farfield`) moves to the new one when the dimension opens, and an
+    emptied `DIM-1` or `DIM1` goes.
+  - **26.3** reworks world generation (the surface rules become
+    `levelgen/material`, the density functions move to
+    `levelgen/densityfunction`) and moves the GPU API into Renderpearl
+    (`com.mojang.renderpearl`). The noise preview's files that read those
+    internals become versioned files for 26.3 (ADR-165's rule).
+- **Result (26.1.2 and 26.2)**: all six jars of 1.21.1, 1.21.11 and 26.1.2
+  build, and 26.2's; dev servers boot to `Done` on both loaders of 26.1.2
+  and 26.2 with no exception and no mixin failure; a 1.21.1 world upgraded
+  to 26.1.2 moved its two stores (`LOD store of minecraft:the_nether moved
+  from DIM-1\farfield`) and read them; chunks saved by 26.1.2 and 26.2 read
+  back by the import (324 chunks, 0 failed). Not checked: the dev clients
+  (the renderer's mixins, the GL path, Sodium and Iris), the shipped jars
+  in a real 26.x install, CI on Java 25.

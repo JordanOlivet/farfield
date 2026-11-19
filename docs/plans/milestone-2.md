@@ -454,7 +454,22 @@ The user (2026-11-18), after 1.0.0: the other 1.21.x, starting with 1.21.11.
   both stores: "les deux s'affiche correctement maintenant". The four files of 1.1.0
   on both stores, loaders and game versions, checked by the user: "c'est bon pour les
   versions et loader".
-- [ ] H.8 Minecraft 26.x (Java 25, no obfuscation, Vulkan later, ADR-004/007).
+- [~] H.8 Minecraft 26.x (Java 25, no obfuscation, Vulkan later, ADR-004/007).
+  The user: "26.1.2, 26.2 et 26.3" (ADR-171).
+  - [x] H.8a Build: Gradle 9.9.1 on Java 25, Loom 1.19.4 with and without
+    remapping, no Parchment for 26.x, versioned folders shared up to the
+    next version. Verified 2026-11-19: the 1.21.1 and 1.21.11 jars still
+    build, their Fabric mixins carry intermediary names without a refmap.
+  - [~] H.8b 26.1.2 on both loaders: builds, dev servers boot, stores move
+    on a world upgrade, the import reads 26.1.2 chunks. Remains: the dev
+    clients (renderer, fog, GL, Sodium, Iris), a real install.
+  - [~] H.8c 26.2 on both loaders: builds, dev servers boot, the import
+    reads 26.2 chunks. Remains: as H.8b.
+  - [ ] H.8d 26.3: Renderpearl's packages, and the noise preview on the new
+    material rules and density functions (79 compile errors before the
+    first fix, most in the preview).
+  - [ ] H.8e Rehearsal nodes for 26.x (minimized test runs), CI and
+    `release.yml` on Java 25 with the 26.x targets, the docs.
 
 ## M2.G — Ideas to study (the user, 2026-11-09)
 
