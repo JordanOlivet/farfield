@@ -19,6 +19,9 @@ public final class FarfieldFabricClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        if (io.lakio.farfield.compat.RivalLodMods.any()) {
+            return; // beside another LOD mod (ADR-167): Farfield.init said so
+        }
         KeyBindingHelper.registerKeyBinding(SettingsKey.KEY);
         ClientTickEvents.END_CLIENT_TICK.register(SettingsKey::tick);
         // Client mode (ADR-022): LODs built from the chunks a remote server sends.

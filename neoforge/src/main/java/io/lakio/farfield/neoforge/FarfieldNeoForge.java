@@ -21,7 +21,9 @@ import net.neoforged.neoforge.event.tick.ServerTickEvent;
 public final class FarfieldNeoForge {
 
     public FarfieldNeoForge(IEventBus modBus, ModContainer container) {
-        Farfield.init();
+        if (!Farfield.init()) {
+            return; // beside another LOD mod (ADR-167)
+        }
         modBus.addListener(NeoForgeNetwork::register);
         if (FMLEnvironment.dist.isClient()) {
             FarfieldNeoForgeClient.init(modBus, container);

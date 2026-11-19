@@ -29,6 +29,9 @@ public final class FarfieldSodiumConfig implements ConfigEntryPoint {
 
     @Override
     public void registerConfigLate(ConfigBuilder builder) {
+        if (io.lakio.farfield.compat.RivalLodMods.any()) {
+            return; // Farfield stays off beside another LOD mod (ADR-167): no settings to show
+        }
         ModOptionsBuilder mod = builder.registerOwnModOptions();
         int pages = 0;
         int options = 0;

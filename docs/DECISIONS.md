@@ -5144,3 +5144,23 @@ de provoquer des blue screens".
   updater off: its update prompt held the first run at the title screen):
   the warning and the chat line, 0 sections drawn, Distant Horizons drawing
   alone. Not checked: Voxy, NeoForge, the user's pack again.
+
+## ADR-168 — Beside another LOD mod, all of Farfield stays off
+
+Status: accepted, 2026-11-19. Amends ADR-167, which turned off the
+client's rendering only. The user: "coupe aussi le côté serveur à côté de
+DH. En gros, on coupe tout si jamais on détecte un autre mod concurrent.
+ça sert à rien de prendre des ressources si on ne les utilisera pas", and
+"Il faut parcontre toujours logger et avertir dans le chat".
+
+- **Decision**: `Farfield.init` returns false beside a rival
+  (`RivalLodMods`): it logs `Farfield stays off: <mod> is installed ...`,
+  starts no CPU stats thread, and each loader's entry point then registers
+  nothing (server lifecycle and ticks, chunk events, commands, the stream
+  payload, the client's ticks, key and commands; Sodium's pages are not
+  registered). The mixins still apply: the renderer's `init` turns
+  rendering off and tells the player in the chat (ADR-167), the fog mixin
+  leaves the game's fog alone, the others find no pipeline running.
+- **Result**: dev, Fabric 1.21.11 with Distant Horizons 2.4.5: the `stays
+  off` line, the chat line, and no LOD store, pipeline, preview or
+  streaming line. Not checked: NeoForge, Voxy, a dedicated server.

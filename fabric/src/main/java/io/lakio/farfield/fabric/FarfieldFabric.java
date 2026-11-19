@@ -13,7 +13,9 @@ public final class FarfieldFabric implements ModInitializer {
 
     @Override
     public void onInitialize() {
-        Farfield.init();
+        if (!Farfield.init()) {
+            return; // beside another LOD mod (ADR-167)
+        }
         FabricNetwork.registerCommon();
         ServerLifecycleEvents.SERVER_STARTING.register(LodServer::onServerStarting);
         ServerLifecycleEvents.SERVER_STOPPING.register(LodServer::onServerStopping);
