@@ -229,5 +229,9 @@ public final class GlCompat {
         *///?} else {
         BufferUploader.invalidate();
         //?}
+        // Since 26.2 the encoder also keeps the vertex array it set up last (ADR-171).
+        //? if >=26.2 {
+        /*encoder().farfield$setLastVertexArray(null);
+        *///?}
     }
 }
