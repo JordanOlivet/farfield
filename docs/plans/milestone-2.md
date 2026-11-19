@@ -467,9 +467,11 @@ The user (2026-11-18), after 1.0.0: the other 1.21.x, starting with 1.21.11.
   - [~] H.8c 26.2 on both loaders: builds, dev servers boot, the import
     reads 26.2 chunks; dev clients checked 2026-11-19 after the reversed
     depth fix (ADR-171). Remains: as H.8b.
-  - [ ] H.8d 26.3: Renderpearl's packages, and the noise preview on the new
-    material rules and density functions (79 compile errors before the
-    first fix, most in the preview).
+  - [~] H.8d 26.3, in two phases (the user, 2026-11-20). Phase 1 done on
+    the server side: builds, dev servers boot, the importer reads 26.3's
+    palettes; the preview off. Remains: Rehearsal on 26.3 (SDL3), the dev
+    clients; phase 2, the noise preview on the compiled density samplers
+    and the material system.
   - [~] H.8e Rehearsal nodes for 26.1.2 and 26.2 (done 2026-11-19), CI and
     `release.yml` on Java 25 with the 26.x targets, the docs.
 
