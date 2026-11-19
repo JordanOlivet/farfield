@@ -5080,3 +5080,35 @@ several Minecraft versions are built). The user, after 1.0.0: start the
   boot), then a 1.21.11 node; its compile errors size the port. The spike
   also checks Stonecutter works with the Groovy `buildSrc`, or converts the
   settings and the controller to the Kotlin DSL.
+
+## ADR-166 — The renderer checks the functions it calls, not OpenGL 4.6
+
+Status: accepted, 2026-11-19. Amends ADR-007 (OpenGL 4.6 first) on how the
+renderer decides it can run. The user, on NeoForge 1.21.11's early window:
+"il n'y a pas d'autres solutions pour qu'on récupère le bon contexte
+OpenGL 4.6 ?", then "go détection".
+
+- **Context**: up to 1.21.1 FML's early window tried OpenGL 4.6 down to 3.2
+  and kept the highest. Since FML 7.0.4 (PR #262: "Mods are supposed to just
+  use the extension capability detection and use the features directly")
+  it asks for exactly vanilla's version, 3.3 core since 1.21.9, before any
+  mod loads; the game takes that window over. With `earlyWindowControl =
+  true`, the default, the renderer's `caps.OpenGL46` test turned the LODs
+  off for every NeoForge 1.21.11 player. Distant Horizons 3 draws through
+  the game's own GPU device; Voxy (Fabric) runs in the game's 3.3 context
+  and tests function pointers, its shaders in `#version 460 core`.
+- **Decision**: `GlFeatures.missing` lists the functions the renderer calls
+  (direct state access, indirect draws and counts, compute, texture storage,
+  copies and clears, blending per draw buffer, timer queries, fences) and
+  the LODs turn off only when one is missing, naming it. The indirect count
+  and the per-buffer blend fall back to their ARB entry points
+  (`ARB_indirect_parameters`, `ARB_draw_buffers_blend`) when the context has
+  no 4.6 or 4.0 one. The shaders keep `#version 460`. A context under 4.6
+  logs `LOD rendering on an OpenGL <version> context`. `WindowMixin` still
+  asks for 4.6 where it can (Fabric, NeoForge without its early window).
+  Rejected: closing FML's window to make a 4.6 one (the user: "un peu
+  bancal"; NeoForge's loading overlay reads a texture of FML's context).
+- **Result**: dev, NeoForge 1.21.11 with FML's early window (OpenGL 3.3.0,
+  NVIDIA 621.01): 428 sections drawn, as on a 4.6 context, draw counts from
+  the ARB entry point; `-PearlyWindow` keeps the early window in an agent's
+  run for this check. Not checked: AMD and Intel drivers, Iris on 3.3.

@@ -107,7 +107,9 @@ registerPrepareRuns(versionedRunDir('run'), versionedRunDir('run'))
 
 // An agent's run (-PagentWindow) goes without FML's loading window, which takes the
 // focus before any mod code runs (ADR-096); fml.toml is put back once the game exits.
-if (project.hasProperty('agentWindow')) {
+// -PearlyWindow keeps it, to check what players get by default (FML 10's window makes
+// an OpenGL 3.3 context, ADR-166); it takes the focus for a few seconds at start.
+if (project.hasProperty('agentWindow') && !project.hasProperty('earlyWindow')) {
     [runClient: versionedRunDir('run'), runPackClient: versionedRunDir('runs/pack')].each { String runTask, File runDir ->
         def fmlConfig = new File(runDir, 'config/fml.toml')
         def saved = new File(runDir, 'config/fml.toml.agent-saved')

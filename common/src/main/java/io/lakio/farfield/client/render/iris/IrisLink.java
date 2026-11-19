@@ -96,7 +96,6 @@ import static org.lwjgl.opengl.GL45C.glTextureStorage2D;
 import static org.lwjgl.opengl.GL45C.glNamedFramebufferDrawBuffers;
 import static org.lwjgl.opengl.GL30C.glDisablei;
 import static org.lwjgl.opengl.GL30C.glEnablei;
-import static org.lwjgl.opengl.GL40C.glBlendFuncSeparatei;
 import static org.lwjgl.opengl.GL43C.glCopyImageSubData;
 import static org.lwjgl.opengl.GL45C.glCheckNamedFramebufferStatus;
 import static org.lwjgl.opengl.GL45C.glNamedFramebufferTexture;
@@ -430,7 +429,7 @@ public final class IrisLink implements ShaderPackLink {
                 glDisablei(GL_BLEND, i);
             } else {
                 glEnablei(GL_BLEND, i);
-                glBlendFuncSeparatei(i, info.blendMode().srcRgb(), info.blendMode().dstRgb(),
+                io.lakio.farfield.client.render.GlFeatures.blendFuncSeparatei(i, info.blendMode().srcRgb(), info.blendMode().dstRgb(),
                         info.blendMode().srcAlpha(), info.blendMode().dstAlpha());
             }
         }
@@ -455,7 +454,7 @@ public final class IrisLink implements ShaderPackLink {
             return;
         }
         glEnablei(GL_BLEND, buffer);
-        glBlendFuncSeparatei(buffer, factor(f[0]), factor(f[1]), factor(f[2]), factor(f[3]));
+        io.lakio.farfield.client.render.GlFeatures.blendFuncSeparatei(buffer, factor(f[0]), factor(f[1]), factor(f[2]), factor(f[3]));
     }
 
     private static int factor(String name) {

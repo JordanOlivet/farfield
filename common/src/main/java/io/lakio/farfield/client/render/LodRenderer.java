@@ -1342,11 +1342,19 @@ public final class LodRenderer {
         }
         initialized = true;
         GLCapabilities caps = GL.getCapabilities();
-        if (!caps.OpenGL46) {
+        // The functions it calls, not the context's version (ADR-166): NeoForge's early window makes a
+        // 3.3 context since FML 10, and drivers give its 4.x functions through their extensions.
+        String missing = GlFeatures.missing(caps);
+        if (missing != null) {
             disabled = true;
-            Farfield.LOG.warn("LOD rendering disabled: OpenGL 4.6 is not available ({})",
-                    glGetString(GL_VERSION));
+            Farfield.LOG.warn("LOD rendering disabled: the OpenGL context ({}) lacks {}", glGetString(GL_VERSION),
+                    missing);
             return false;
+        }
+        if (!caps.OpenGL46) {
+            Farfield.LOG.info("LOD rendering on an OpenGL {} context, its 4.x functions from the driver's extensions{}",
+                    glGetString(GL_VERSION), GlFeatures.indirectCountFromExtension()
+                            ? " (draw counts from ARB_indirect_parameters)" : "");
         }
         try {
             plain = new Shader("");
@@ -2804,8 +2812,8 @@ public final class LodRenderer {
         }
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, gpuCommands.id());
         glBindBuffer(GL_PARAMETER_BUFFER, gpuCounts.id());
-        glMultiDrawElementsIndirectCount(GL_TRIANGLES, GL_UNSIGNED_INT, (long) list * gpuMaxCommands * COMMAND_BYTES,
-                (long) list * 4, gpuMaxCommands, 0);
+        GlFeatures.multiDrawElementsIndirectCount(GL_TRIANGLES, GL_UNSIGNED_INT,
+                (long) list * gpuMaxCommands * COMMAND_BYTES, (long) list * 4, gpuMaxCommands, 0);
         glBindBuffer(GL_PARAMETER_BUFFER, 0);
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirect.id());
     }
