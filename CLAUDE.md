@@ -6,9 +6,11 @@ code in this repository.
 ## What this is
 
 **Farfield**, a far-distance terrain rendering mod for Minecraft using levels
-of detail (LOD). MC 1.21.1 and 1.21.11 (Java 21; one source tree with
-Stonecutter, ADR-165), NeoForge + Fabric from one codebase (MultiLoader
-pattern, no Architectury), Minecraft 26.x / Vulkan planned. Public repository (ADR-066), LGPL-3.0-only (ADR-067).
+of detail (LOD). MC 1.21.1 and 1.21.11 (Java 21), 26.1.2 and 26.2 (Java 25,
+unobfuscated; 26.3 in progress), one source tree with Stonecutter (ADR-165,
+ADR-171), NeoForge + Fabric from one codebase (MultiLoader pattern, no
+Architectury), Vulkan planned. Gradle runs on Java 25 (Loom 1.19, its daemon
+toolchain in `gradle/gradle-daemon-jvm.properties`). Public repository (ADR-066), LGPL-3.0-only (ADR-067).
 
 It replaces our Neo-Voxy fork of Voxy. Reuse Neo-Voxy *concepts*, never copy
 its code as is, and never port Voxy-derived code (ADR-001).
@@ -39,7 +41,8 @@ Several Minecraft versions (ADR-165, Stonecutter): `common`, `fabric` and
 picks another. Run dirs: the paths above are 1.21.1's, another version uses
 `<loader>/runs/<mc>/...`. Version-specific code goes in Stonecutter comments
 (`//? if >=1.21.5 {`); a part that differs as a whole is a module of its own
-(a whole file: `src/versioned/<mc>/`). Plain renames are Stonecutter
+(a whole file: `src/versioned/<mc>/`, which also serves the later versions until
+one has its own folder, ADR-171). Plain renames are Stonecutter
 replacements in `stonecutter.gradle`; calls that changed shape go through
 `common/.../compat/`. Edit the sources at the active version, 1.21.1: switching
 it applies the replacements backwards.
