@@ -5183,3 +5183,33 @@ aussi."
   Farfield's. The rival rule of ADR-167 and ADR-168 stays: two LOD mods
   still do the same work twice, and two engines over Iris's DH contract
   were never tested.
+
+## ADR-170 — 1.21.11 in a real pack: C2ME's densities, Sodium's fog, the chunk fade
+
+Status: accepted, 2026-11-19. The user, in his 1.21.11 Fabric pack (Sodium
+0.8.4, C2ME 0.3.6, shaders off): "la preview ne se charge pas, les LOD au
+deco reco sont affiché bizarrement et le brouillard vanilla est toujours là".
+
+- **Preview**: every tile failed (1,299 in the log) with C2ME's density
+  function compiler: its compiled functions refuse a visitor that wraps
+  their nodes (`Unsupported transformation on Wrapping node`), which the
+  per-column caches are, and hide their branches from the cave cut (0 cave
+  branches instead of 1). `ColumnDensity.vanilla` reads a C2ME-compiled
+  function through the tree it was compiled from (its `getFallback`, by
+  reflection), for the caches and for `UncutDensity`; a function that
+  still refuses is read as it is, without caches, and logged once.
+- **Fog**: Sodium 0.8 reads the frame's `FogData` for its own terrain
+  shader; the 1.21.11 fog mixin changed only the values uploaded, so the
+  game's terrain kept vanilla's fog under Sodium. The mixin now changes
+  `FogData` once the game has filled it (after `renderDistanceEnd` is set).
+- **Reconnect**: since 1.21.9 a section the game builds fades in over the
+  Chunk Fade time (0.75 s by default; Sodium 0.8 does it too), and the LODs
+  gave way as soon as it was built: the sky showed through the fading
+  terrain, white patches over whole areas after a reconnect. The LODs now
+  give way once the section has been built for the Chunk Fade time
+  (Sodium) or is fully opaque (vanilla, `getVisibility` at 1).
+- **Result**: dev, Fabric 1.21.11 with Sodium 0.8.14 and the pack's C2ME:
+  `C2ME's compiled density functions read through their original trees`,
+  `1 cave branch`, no tile failed (the test world's tiles were cached, so no
+  new tile built); no vanilla fog ring under Sodium. Not checked: new tiles
+  under C2ME, the fade on a reconnect (the user's pack).

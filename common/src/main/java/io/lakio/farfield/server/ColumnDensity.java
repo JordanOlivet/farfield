@@ -28,7 +28,70 @@ final class ColumnDensity {
 
     /** {@code root} with its cache markers replaced by single-entry caches. */
     static DensityFunction of(DensityFunction root) {
-        return root.mapAll(new Caches());
+        return mapped(root, new Caches());
+    }
+
+    /** The class names of the density functions C2ME compiles (its density function compiler, ADR-170). */
+    private static final String C2ME_COMPILED = "com.ishland.c2me.opts.dfc.";
+    private static volatile boolean c2meSaid;
+    private static volatile boolean opaqueSaid;
+
+    /**
+     * The vanilla tree of a function C2ME compiled (ADR-170): its compiled
+     * functions refuse a visitor that wraps their nodes ("Unsupported
+     * transformation on Wrapping node"), and they keep the tree they were
+     * compiled from ({@code getFallback}), which takes every visitor. Any
+     * other function is returned as it is.
+     */
+    static DensityFunction vanilla(DensityFunction f) {
+        for (int depth = 0; depth < 8 && f != null && f.getClass().getName().startsWith(C2ME_COMPILED); depth++) {
+            DensityFunction tree = fallback(f);
+            if (tree == null || tree == f) {
+                break;
+            }
+            if (!c2meSaid) {
+                c2meSaid = true;
+                io.lakio.farfield.Farfield.LOG.info("Noise preview: C2ME's compiled density functions read through"
+                        + " their original trees (ADR-170)");
+            }
+            f = tree;
+        }
+        return f;
+    }
+
+    private static DensityFunction fallback(DensityFunction f) {
+        for (Class<?> c = f.getClass(); c != null && c != Object.class; c = c.getSuperclass()) {
+            try {
+                java.lang.reflect.Method m = c.getDeclaredMethod("getFallback");
+                m.setAccessible(true);
+                Object tree = m.invoke(f);
+                return tree instanceof DensityFunction d ? d : null;
+            } catch (NoSuchMethodException e) {
+                // up the hierarchy
+            } catch (ReflectiveOperationException | RuntimeException e) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * {@code f} (its vanilla tree, {@link #vanilla}) mapped by {@code visitor};
+     * a function that still refuses it is read as it is, without the caches:
+     * slower, never wrong.
+     */
+    static DensityFunction mapped(DensityFunction f, DensityFunction.Visitor visitor) {
+        DensityFunction tree = vanilla(f);
+        try {
+            return tree.mapAll(visitor);
+        } catch (RuntimeException e) {
+            if (!opaqueSaid) {
+                opaqueSaid = true;
+                io.lakio.farfield.Farfield.LOG.warn("Noise preview: a density function ({}) takes no column caches,"
+                        + " read as it is: {}", f.getClass().getName(), String.valueOf(e));
+            }
+            return f;
+        }
     }
 
     /**
@@ -42,7 +105,7 @@ final class ColumnDensity {
         Caches caches = new Caches();
         DensityFunction[] out = new DensityFunction[roots.length];
         for (int i = 0; i < roots.length; i++) {
-            out[i] = roots[i].mapAll(caches);
+            out[i] = mapped(roots[i], caches);
         }
         return out;
     }
@@ -50,9 +113,9 @@ final class ColumnDensity {
     /** A climate sampler whose six functions share their caches. */
     static Climate.Sampler of(Climate.Sampler sampler) {
         Caches caches = new Caches();
-        return new Climate.Sampler(sampler.temperature().mapAll(caches), sampler.humidity().mapAll(caches),
-                sampler.continentalness().mapAll(caches), sampler.erosion().mapAll(caches),
-                sampler.depth().mapAll(caches), sampler.weirdness().mapAll(caches), sampler.spawnTarget());
+        return new Climate.Sampler(mapped(sampler.temperature(), caches), mapped(sampler.humidity(), caches),
+                mapped(sampler.continentalness(), caches), mapped(sampler.erosion(), caches),
+                mapped(sampler.depth(), caches), mapped(sampler.weirdness(), caches), sampler.spawnTarget());
     }
 
     /** Replaces cache markers, one cache per distinct marked function (records compare by value). */

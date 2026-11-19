@@ -1,21 +1,24 @@
 package io.lakio.farfield.mixin.client;
 
-import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
-import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import com.llamalad7.mixinextras.sugar.Local;
 import io.lakio.farfield.client.render.LodRenderer;
 import io.lakio.farfield.compat.GameFog;
 import io.lakio.farfield.core.config.RenderConfig;
 import io.lakio.farfield.lod.RenderSettings;
-import java.nio.ByteBuffer;
 import net.minecraft.client.Camera;
-import net.minecraft.client.Minecraft;
+import net.minecraft.client.DeltaTracker;
+import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.fog.FogData;
 import net.minecraft.client.renderer.fog.FogRenderer;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.material.FogType;
 import org.joml.Vector4f;
+import org.objectweb.asm.Opcodes;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /**
  * Hand-off with vanilla terrain (ADR-011), Minecraft 1.21.11 (ADR-165): the
@@ -26,7 +29,12 @@ import org.spongepowered.asm.mixin.injection.At;
  * environment fog (the Nether, the boss fog) moves out to its own distance,
  * unless set to vanilla, and then, in water, lava, powder snow, blindness
  * or darkness, the LODs take the game's fog (ADR-033). The fog the LODs read
- * goes to {@link GameFog}. Optional: without it the seam keeps its fog ring.
+ * goes to {@link GameFog}.
+ *
+ * <p>The frame's {@link FogData} itself is changed, once the game has filled
+ * it, not the values it uploads: Sodium reads that object for its own terrain
+ * shader, and with the uploaded values alone its terrain kept vanilla's fog
+ * (ADR-170). Optional: without it the seam keeps its fog ring.
  */
 @Mixin(FogRenderer.class)
 public abstract class FogRendererMixin {
@@ -34,32 +42,29 @@ public abstract class FogRendererMixin {
     /** An environment fog ending closer than this is thick (the Nether's ends at 96, rain's at 768 or more). */
     private static final float THICK_END = 512f;
 
-    @WrapOperation(method = "setupFog", at = @At(value = "INVOKE",
-            target = "Lnet/minecraft/client/renderer/fog/FogRenderer;updateBuffer(Ljava/nio/ByteBuffer;ILorg/joml/Vector4f;FFFFFF)V"),
-            require = 0)
-    private void farfield$lodFog(FogRenderer renderer, ByteBuffer buffer, int offset, Vector4f color,
-                                 float environmentalStart, float environmentalEnd, float renderDistanceStart,
-                                 float renderDistanceEnd, float skyEnd, float cloudEnd, Operation<Void> original) {
-        Camera camera = Minecraft.getInstance().gameRenderer.getMainCamera();
+    @Inject(method = "setupFog", at = @At(value = "FIELD",
+            target = "Lnet/minecraft/client/renderer/fog/FogData;renderDistanceEnd:F",
+            opcode = Opcodes.PUTFIELD, shift = At.Shift.AFTER), require = 0)
+    private void farfield$lodFog(Camera camera, int renderDistance, DeltaTracker deltaTracker, float darkenWorldAmount,
+                                 ClientLevel level, CallbackInfoReturnable<Vector4f> cir, @Local FogData data,
+                                 @Local Vector4f color) {
         boolean fluid = camera.getFluidInCamera() != FogType.NONE;
         boolean effect = camera.entity() instanceof LivingEntity living
                 && (living.hasEffect(MobEffects.BLINDNESS) || living.hasEffect(MobEffects.DARKNESS));
-        float farPlane = renderDistanceEnd;
-        boolean thick = !fluid && !effect && environmentalEnd < THICK_END;
+        float farPlane = data.renderDistanceEnd;
+        boolean thick = !fluid && !effect && data.environmentalEnd < THICK_END;
         boolean normal = !fluid && !effect && !thick;
         int distance = thick ? RenderSettings.thickFogDistance() : RenderSettings.fogDistance();
         boolean pushOut = (normal || (thick && distance != RenderConfig.FOG_VANILLA))
                 && LodRenderer.drawsBeyondVanilla();
         if (pushOut) {
             LodRenderer.pushFog(distance, farPlane, normal);
-            environmentalStart = LodRenderer.pushedFogStart();
-            environmentalEnd = LodRenderer.pushedFogEnd();
-            renderDistanceStart = environmentalStart;
-            renderDistanceEnd = environmentalEnd;
+            data.environmentalStart = LodRenderer.pushedFogStart();
+            data.environmentalEnd = LodRenderer.pushedFogEnd();
+            data.renderDistanceStart = data.environmentalStart;
+            data.renderDistanceEnd = data.environmentalEnd;
         }
         LodRenderer.setFogState(pushOut, fluid || effect || (thick && !pushOut), thick);
-        GameFog.set(environmentalStart, environmentalEnd, color.x(), color.y(), color.z(), color.w());
-        original.call(renderer, buffer, offset, color, environmentalStart, environmentalEnd, renderDistanceStart,
-                renderDistanceEnd, skyEnd, cloudEnd);
+        GameFog.set(data.environmentalStart, data.environmentalEnd, color.x(), color.y(), color.z(), color.w());
     }
 }

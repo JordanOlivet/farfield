@@ -41,7 +41,8 @@ final class UncutDensity {
         failure = null;
         Set<DensityFunction> counted = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
         Map<DensityFunction, DensityFunction> done = new IdentityHashMap<>();
-        return root.mapAll(f -> {
+        // C2ME's compiled functions hide their branches: their vanilla tree shows them (ADR-170).
+        return ColumnDensity.vanilla(root).mapAll(f -> {
             DensityFunction known = done.get(f);
             if (known != null) {
                 return known;

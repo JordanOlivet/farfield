@@ -378,6 +378,14 @@ public final class LodRenderer {
     private int[] drawnBits = new int[0];
     /** Raw compiled state of the last pass, same layout: a section must stay built for two passes. */
     private int[] compiledBits = new int[0];
+    /**
+     * When each built section was first seen built, in milliseconds since
+     * {@link #FADE_EPOCH} (0: before the grid knew it), same layout: since
+     * 1.21.9 a section fades in over the Chunk Fade time, and LODs giving
+     * way at once showed the sky through it (white patches, ADR-170).
+     */
+    private int[] compiledAt = new int[0];
+    private static final long FADE_EPOCH = System.currentTimeMillis();
     private final BlockPos.MutableBlockPos sectionPos = new BlockPos.MutableBlockPos();
     private int gridMinX;
     private int gridMinY;
@@ -1927,6 +1935,8 @@ public final class LodRenderer {
             return;
         }
         int ring = rd - RING_CHUNKS;
+        long fade = io.lakio.farfield.compat.GlCompat.chunkFadeMillis(mc);
+        int now = (int) (System.currentTimeMillis() - FADE_EPOCH);
         net.minecraft.client.renderer.LevelRenderer renderer = mc.levelRenderer;
         if (terrainReloaded) {
             terrainReloaded = false;
@@ -1982,10 +1992,15 @@ public final class LodRenderer {
                     int mask = 1 << (bit & 31);
                     boolean compiled = renderer.isSectionCompiled(sectionPos);
                     boolean before = (compiledBits[bit >> 5] & mask) != 0;
+                    if (compiled && !before) {
+                        compiledAt[bit] = Math.max(1, now);
+                    }
+                    // Faded in: the game's Chunk Fade time since it was first seen built (1.21.9 on).
+                    boolean faded = fade <= 0 || compiledAt[bit] == 0 || now - compiledAt[bit] >= fade;
                     // A section built this frame enters Sodium's render lists only on
                     // the next one: LODs give way once it has been built for two
                     // passes, else the area showed neither for a frame.
-                    if (compiled && before) {
+                    if (compiled && before && faded) {
                         drawnBits[bit >> 5] |= mask;
                     } else {
                         drawnBits[bit >> 5] &= ~mask;
@@ -1994,7 +2009,7 @@ public final class LodRenderer {
                     if (compiled) {
                         compiledBits[bit >> 5] |= mask;
                         empty = false;
-                        settled &= before; // built since the last test: drawn on the next one
+                        settled &= before && faded; // built since the last test, or fading in: tested again
                     } else {
                         compiledBits[bit >> 5] &= ~mask;
                     }
@@ -2074,6 +2089,10 @@ public final class LodRenderer {
             /*if (s.sectionMesh.get() == net.minecraft.client.renderer.chunk.CompiledSectionMesh.UNCOMPILED) {
                 continue;
             }
+            // Fading in (the Chunk Fade option): the LODs stay under it until it is opaque (ADR-170).
+            if (s.getVisibility(net.minecraft.util.Util.getMillis()) < 1.0F) {
+                continue;
+            }
             BlockPos origin = s.getRenderOrigin();
             *///?} else {
             if (s.compiled.get() == SectionRenderDispatcher.CompiledSection.UNCOMPILED) {
@@ -2104,6 +2123,7 @@ public final class LodRenderer {
     private void remapCompiled(int minX, int minY, int minZ, int width, int height) {
         int ints = (width * width * height + 31) >> 5;
         int[] compiled = new int[ints];
+        int[] at = new int[width * width * height];
         if (gridWidth > 0 && minY == gridMinY && height == gridHeight) {
             for (int z = 0; z < width; z++) {
                 int oz = z + minZ - gridMinZ;
@@ -2122,12 +2142,14 @@ public final class LodRenderer {
                         if ((compiledBits[f >> 5] >>> (f & 31) & 1) != 0) {
                             int t = to + y;
                             compiled[t >> 5] |= 1 << (t & 31);
+                            at[t] = compiledAt[f];
                         }
                     }
                 }
             }
         }
         compiledBits = compiled;
+        compiledAt = at;
         drawnBits = new int[ints];
         wholeColumns = new boolean[width * width];
         emptyColumns = new boolean[width * width];

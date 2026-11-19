@@ -67,6 +67,19 @@ public final class GlCompat {
     }
     *///?}
 
+    /**
+     * How long a section the game just built takes to fade in, in
+     * milliseconds: vanilla's Chunk Fade option since 1.21.9 (Sodium 0.8
+     * follows it), 0 before.
+     */
+    public static long chunkFadeMillis(Minecraft mc) {
+        //? if >=1.21.11 {
+        /*return Math.round(mc.options.chunkSectionFadeInTime().get() * 1000.0);
+        *///?} else {
+        return 0;
+        //?}
+    }
+
     /** The active texture unit, {@code GL_TEXTURE0 + n}. */
     public static int activeTexture() {
         //? if >=1.21.11 {
