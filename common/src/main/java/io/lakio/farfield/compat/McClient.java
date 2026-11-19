@@ -24,6 +24,21 @@ public final class McClient {
         //?}
     }
 
+    /**
+     * Whether the game draws the section at {@code pos}: compiled up to 1.21.10, compiled and
+     * through its fade-in since (the Chunk Fade option, ADR-170), which 26.3 times itself.
+     */
+    public static boolean sectionCompiled(net.minecraft.client.renderer.LevelRenderer renderer,
+                                          net.minecraft.core.BlockPos pos) {
+        //? if >=26.3 {
+        /*return renderer.isSectionCompiledAndVisible(pos, GlCompat.chunkFadeMillis(Minecraft.getInstance()));
+        *///?} else if >=1.21.11 {
+        /*return renderer.isSectionCompiledAndVisible(pos);
+        *///?} else {
+        return renderer.isSectionCompiled(pos);
+        //?}
+    }
+
     /** The camera the game renders the level from. */
     public static Camera mainCamera() {
         return Minecraft.getInstance().gameRenderer.getMainCamera();

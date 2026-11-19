@@ -67,7 +67,7 @@ public final class LodServer {
     private boolean importHeldForPlayers;
 
     private LodServer(boolean preview) {
-        this.preview = preview ? new NoisePreview() : null;
+        this.preview = preview && NoisePreview.supported() ? new NoisePreview() : null;
         this.pipeline = new LodPipeline("server", level -> level instanceof ServerLevel,
                 level -> storeFolder((ServerLevel) level), LevelChunk::isLightCorrect);
     }

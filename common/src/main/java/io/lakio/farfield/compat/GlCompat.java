@@ -98,6 +98,17 @@ public final class GlCompat {
     }
     *///?}
 
+    /** The game's graphics backend when it is not OpenGL (26.3's Vulkan), else null (ADR-171). */
+    public static String backendName() {
+        //? if >=26.3 {
+        /*Object backend = real(((GpuDeviceAccessor) RenderSystem.getDevice()).farfield$backend());
+        String name = backend.getClass().getSimpleName();
+        return name.equals("GlDevice") ? null : name;
+        *///?} else {
+        return null;
+        //?}
+    }
+
     /**
      * How long a section the game just built takes to fade in, in
      * milliseconds: vanilla's Chunk Fade option since 1.21.9 (Sodium 0.8
@@ -284,8 +295,8 @@ public final class GlCompat {
         *///?} else {
         BufferUploader.invalidate();
         //?}
-        // Since 26.2 the encoder also keeps the vertex array it set up last (ADR-171).
-        //? if >=26.2 {
+        // 26.2's encoder also keeps the vertex array it set up last; 26.3's sets it up at every draw (ADR-171).
+        //? if >=26.2 && <26.3 {
         /*encoder().farfield$setLastVertexArray(null);
         *///?}
     }

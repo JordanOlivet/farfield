@@ -206,6 +206,40 @@ class ChunkDecoderTest {
         assertEquals(ChunkData.WARN_BAD_DATA_LENGTH, chunk.warnings());
     }
 
+    /** Minecraft 26.3: a palette of names, or of {id, properties} and {"": name} compounds (ADR-171). */
+    @Test
+    void decodes26_3Palettes() {
+        long[] data = new long[256];
+        data[0] = 1L; // block 0 of the second section points at palette entry 1
+        byte[] nbt = new NbtWriter().root()
+                .putInt("DataVersion", TestChunks.DATA_VERSION_1_21_1)
+                .putString("Status", "minecraft:full")
+                .beginList("sections", NbtTag.COMPOUND, 2)
+                .putByte("Y", 0)
+                .beginCompound("block_states")
+                .beginList("palette", NbtTag.STRING, 1).string("minecraft:air").end()
+                .beginCompound("biomes").beginList("palette", NbtTag.STRING, 1).string("a:p").end()
+                .end()
+                .putByte("Y", 1)
+                .beginCompound("block_states")
+                .beginList("palette", NbtTag.COMPOUND, 2)
+                .putString("", "minecraft:stone").end()
+                .putString("id", "minecraft:grass_block")
+                .beginCompound("properties").putString("snowy", "true").putString("a", "b").end()
+                .end()
+                .putLongArray("data", data)
+                .end()
+                .beginCompound("biomes").beginList("palette", NbtTag.STRING, 1).string("a:p").end()
+                .end()
+                .end()
+                .end().toByteArray();
+        decode(nbt, 0, 0);
+        assertEquals(2, chunk.sectionCount());
+        assertEquals("minecraft:air", blocks.key(chunk.section(0).blockAt(0)));
+        assertEquals("minecraft:stone", blocks.key(chunk.section(1).blockAt(1)));
+        assertEquals("minecraft:grass_block[a=b,snowy=true]", blocks.key(chunk.section(1).blockAt(0)));
+    }
+
     @Test
     void clampsOutOfRangeIndices() {
         int[] indices = new int[SectionData.BLOCK_COUNT];

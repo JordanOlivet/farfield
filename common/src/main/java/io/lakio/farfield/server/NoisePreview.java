@@ -79,6 +79,11 @@ import java.util.function.IntBinaryOperator;
  */
 final class NoisePreview {
 
+    /** Whether this Minecraft version has the preview: 26.3 has it once its port is done (ADR-171). */
+    static boolean supported() {
+        return true;
+    }
+
     /** Every half second: at 2 s, the threads sat idle once the tiles in flight were done. */
     private static final int UPDATE_TICKS = 10;
     /** A player this far (squared blocks) from their place at the last update jumped: the fill line starts. */

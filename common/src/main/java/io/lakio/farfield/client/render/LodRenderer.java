@@ -1363,6 +1363,14 @@ public final class LodRenderer {
             }
             return false;
         }
+        // Since 26.3 the game may draw through Vulkan (the player's choice): the renderer is OpenGL's (ADR-171).
+        String backend = GlCompat.backendName();
+        if (backend != null) {
+            disabled = true;
+            Farfield.LOG.warn("LOD rendering disabled: the game draws through {}, and the LOD renderer through OpenGL"
+                    + " (set the graphics API to OpenGL)", backend);
+            return false;
+        }
         GLCapabilities caps = GL.getCapabilities();
         // The functions it calls, not the context's version (ADR-166): NeoForge's early window makes a
         // 3.3 context since FML 10, and drivers give its 4.x functions through their extensions.
@@ -1971,7 +1979,7 @@ public final class LodRenderer {
                     // reloaded, which clears this mark): one still built means all are. Testing every
                     // section took about 30 ns each, 287 us per frame at 12 chunks.
                     sectionPos.set((gridMinX + x) << 4, gridMinY << 4, (gridMinZ + z) << 4);
-                    if (renderer.isSectionCompiled(sectionPos)) {
+                    if (io.lakio.farfield.compat.McClient.sectionCompiled(renderer, sectionPos)) {
                         continue;
                     }
                     wholeColumns[index] = false;
@@ -1990,7 +1998,7 @@ public final class LodRenderer {
                     sectionPos.set((gridMinX + x) << 4, (gridMinY + y) << 4, (gridMinZ + z) << 4);
                     int bit = column + y;
                     int mask = 1 << (bit & 31);
-                    boolean compiled = renderer.isSectionCompiled(sectionPos);
+                    boolean compiled = io.lakio.farfield.compat.McClient.sectionCompiled(renderer, sectionPos);
                     boolean before = (compiledBits[bit >> 5] & mask) != 0;
                     if (compiled && !before) {
                         compiledAt[bit] = Math.max(1, now);

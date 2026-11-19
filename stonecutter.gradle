@@ -34,8 +34,18 @@ stonecutter.parameters { sc ->
         r.replace('registryOrThrow(', 'lookupOrThrow(')
     }
     // 1.21.5: the OpenGL state manager moves with the GPU device's OpenGL backend.
-    sc.replacements.string(atLeast('1.21.5')) { r ->
+    // (26.3 moves it again, below: two replacements of one name do not chain.)
+    sc.replacements.string(atLeast('1.21.5') && !atLeast('26.3')) { r ->
         r.replace('com.mojang.blaze3d.platform.GlStateManager', 'com.mojang.blaze3d.opengl.GlStateManager')
+    }
+    // 26.3: the GPU API moves into Renderpearl, its OpenGL backend apart (ADR-171).
+    sc.replacements.string(atLeast('26.3')) { r ->
+        r.replace('com.mojang.blaze3d.platform.GlStateManager', 'com.mojang.renderpearl.backend.opengl.GlStateManager')
+        r.replace('com.mojang.blaze3d.opengl.', 'com.mojang.renderpearl.backend.opengl.')
+        r.replace('com.mojang.blaze3d.systems.GpuDeviceBackend', 'com.mojang.renderpearl.backend.api.GpuDeviceBackend')
+        r.replace('com.mojang.blaze3d.pipeline.ColorTargetState', 'com.mojang.renderpearl.api.pipeline.ColorTargetState')
+        r.replace('com.mojang.blaze3d.textures.', 'com.mojang.renderpearl.api.textures.')
+        r.replace('com.mojang.blaze3d.buffers.', 'com.mojang.renderpearl.api.buffers.')
     }
     // 1.21.11: ResourceLocation becomes Identifier, ResourceKey.location() identifier().
     sc.replacements.string(atLeast('1.21.11')) { r ->
@@ -45,7 +55,14 @@ stonecutter.parameters { sc ->
         r.replace('camera.getPosition()', 'camera.position()')
         r.replace('camera.getBlockPosition()', 'camera.blockPosition()')
         r.replace('.getLookVector()', '.forwardVector()')
-        r.replace('.isSectionCompiled(', '.isSectionCompiledAndVisible(')
+    }
+    // 26.3: a section's visibility takes the fade's duration (the Chunk Fade option, ADR-170).
+    sc.replacements.string(atLeast('26.3')) { r ->
+        r.replace('s.getVisibility(net.minecraft.util.Util.getMillis())',
+                's.getVisibility(net.minecraft.util.Util.getMillis(), GlCompat.chunkFadeMillis(mc))')
+        // Iris 1.11.7: the DH program patch takes a set of names more (none here).
+        r.replace('vertex, null, null, null, fragment, iris.getTextureMap());',
+                'vertex, null, null, null, fragment, iris.getTextureMap(), java.util.Set.of());')
     }
     // 26.1: block models move to their own packages, the GUI draws through an extractor
     // of render state, the tint getter is the client's (ADR-171).
@@ -63,9 +80,10 @@ stonecutter.parameters { sc ->
         r.replace('.getPos().toLong()', '.getPos().pack()')
         r.replace('level.getDayTime()', 'level.getOverworldClockTime()')
         r.replace('SnowyDirtBlock.SNOWY', 'SnowyBlock.SNOWY')
-        // The color mask is a bit mask of the targets' channels.
-        r.replace('_colorMask(true, true, true, true)', '_colorMask(com.mojang.blaze3d.pipeline.ColorTargetState.WRITE_ALL)')
-        r.replace('_colorMask(false, false, false, false)', '_colorMask(com.mojang.blaze3d.pipeline.ColorTargetState.WRITE_NONE)')
+        // The color mask is a bit mask of the targets' channels (ColorTargetState's WRITE_ALL, WRITE_NONE:
+        // the values, since 26.3 moves the class and two replacements of one name do not chain).
+        r.replace('_colorMask(true, true, true, true)', '_colorMask(15)')
+        r.replace('_colorMask(false, false, false, false)', '_colorMask(0)')
     }
     // Fabric API for 26.1: key mappings by the game's name, payload registries by direction, and
     // the chunk load event tells whether the chunk is new.
