@@ -71,16 +71,17 @@ public final class GlCompat {
     //? if >=26.1 {
     /*// Since 26.1 the GPU device is a front over a backend, and the OpenGL backend's classes
     // are package-private: their fields are read through accessor mixins (ADR-171).
-    private static GlDeviceAccessor glDevice() {
-        return (GlDeviceAccessor) real(((GpuDeviceAccessor) RenderSystem.getDevice()).farfield$backend());
+    private static com.mojang.blaze3d.systems.GpuDeviceBackend glDevice() {
+        return (com.mojang.blaze3d.systems.GpuDeviceBackend) real(((GpuDeviceAccessor) RenderSystem.getDevice()).farfield$backend());
     }
 
     private static DirectStateAccess directStateAccess() {
-        return glDevice().farfield$directStateAccess();
+        return ((GlDeviceAccessor) glDevice()).farfield$directStateAccess();
     }
 
+    // The OpenGL backend's one encoder.
     private static GlCommandEncoderAccessor encoder() {
-        return (GlCommandEncoderAccessor) real(glDevice().farfield$encoder());
+        return (GlCommandEncoderAccessor) real(glDevice().createCommandEncoder());
     }
     *///?} else if >=1.21.11 {
     /*// The game's OpenGL device.
@@ -131,12 +132,56 @@ public final class GlCompat {
         //?}
     }
 
+    //? if >=26.2 {
+    /*// Since 26.2 the device keeps its framebuffers in a cache of its package-private backend:
+    // the raw draws make their own, one per pair of target textures (ADR-171), dropped once the
+    // game closes a texture (a resize makes new ones).
+    private record Framebuffer(com.mojang.blaze3d.textures.GpuTexture color,
+                               com.mojang.blaze3d.textures.GpuTexture depth, int id) {
+    }
+
+    private static final java.util.List<Framebuffer> FRAMEBUFFERS = new java.util.ArrayList<>();
+
+    private static int framebuffer(com.mojang.blaze3d.textures.GpuTexture color,
+                                   com.mojang.blaze3d.textures.GpuTexture depth) {
+        int found = 0;
+        for (java.util.Iterator<Framebuffer> it = FRAMEBUFFERS.iterator(); it.hasNext(); ) {
+            Framebuffer f = it.next();
+            if (f.color().isClosed() || (f.depth() != null && f.depth().isClosed())) {
+                GlStateManager._glDeleteFramebuffers(f.id());
+                it.remove();
+            } else if (f.color() == color && f.depth() == depth) {
+                found = f.id();
+            }
+        }
+        if (found != 0) {
+            return found;
+        }
+        int previous = GL11C.glGetInteger(GL30C.GL_FRAMEBUFFER_BINDING);
+        int id = GL30C.glGenFramebuffers();
+        GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER, id);
+        GL30C.glFramebufferTexture2D(GL30C.GL_FRAMEBUFFER, GL30C.GL_COLOR_ATTACHMENT0, GL11C.GL_TEXTURE_2D,
+                glTexture(color).glId(), 0);
+        if (depth != null) {
+            GL30C.glFramebufferTexture2D(GL30C.GL_FRAMEBUFFER, GL30C.GL_DEPTH_ATTACHMENT, GL11C.GL_TEXTURE_2D,
+                    glTexture(depth).glId(), 0);
+        }
+        GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER, previous);
+        FRAMEBUFFERS.add(new Framebuffer(color, depth, id));
+        return id;
+    }
+    *///?} else if >=1.21.11 {
+    /*private static int framebuffer(com.mojang.blaze3d.textures.GpuTexture color,
+                                   com.mojang.blaze3d.textures.GpuTexture depth) {
+        return glTexture(color).getFbo(directStateAccess(), glTexture(depth));
+    }
+    *///?}
+
     /** The OpenGL framebuffer of the game's main render target (its color and depth). */
     public static int mainFramebuffer() {
         RenderTarget main = Minecraft.getInstance().getMainRenderTarget();
         //? if >=1.21.11 {
-        /*return glTexture(main.getColorTexture()).getFbo(directStateAccess(),
-                glTexture(main.getDepthTexture()));
+        /*return framebuffer(main.getColorTexture(), main.getDepthTexture());
         *///?} else {
         return main.frameBufferId;
         //?}
@@ -158,8 +203,8 @@ public final class GlCompat {
      */
     public static void bindTarget(RenderTarget target) {
         //? if >=1.21.11 {
-        /*GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER, glTexture(target.getColorTexture()).getFbo(
-                directStateAccess(), glTexture(target.getDepthTexture())));
+        /*GlStateManager._glBindFramebuffer(GL30C.GL_FRAMEBUFFER,
+                framebuffer(target.getColorTexture(), target.getDepthTexture()));
         GlStateManager._viewport(0, 0, target.width, target.height);
         *///?}
     }

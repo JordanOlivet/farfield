@@ -180,6 +180,14 @@ final class ColumnDensity {
             return visitor.apply(new Cached(wrapped.mapAll(visitor), column));
         }
 
+        //? if >=26.2 {
+        /*// Since 26.2 every function maps its direct children; mapAll recurses through them.
+        @Override
+        public DensityFunction mapChildren(Visitor visitor) {
+            return new Cached(visitor.apply(wrapped), column);
+        }
+        *///?}
+
         @Override
         public double minValue() {
             return wrapped.minValue();

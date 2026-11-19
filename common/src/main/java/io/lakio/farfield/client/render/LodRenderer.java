@@ -1357,7 +1357,7 @@ public final class LodRenderer {
                     + " (use one at a time)", names);
             Minecraft mc = Minecraft.getInstance();
             if (mc.gui != null) {
-                mc.gui.getChat().addMessage(net.minecraft.network.chat.Component.translatable(
+                io.lakio.farfield.compat.McClient.clientMessage(mc, net.minecraft.network.chat.Component.translatable(
                         "farfield.rival_lod_mod", String.join(", ", io.lakio.farfield.compat.RivalLodMods.present()))
                         .withStyle(net.minecraft.ChatFormatting.YELLOW));
             }

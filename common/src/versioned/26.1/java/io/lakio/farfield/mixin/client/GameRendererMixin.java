@@ -3,7 +3,7 @@ package io.lakio.farfield.mixin.client;
 import com.llamalad7.mixinextras.sugar.Local;
 import io.lakio.farfield.client.render.LodRenderer;
 import net.minecraft.client.DeltaTracker;
-import net.minecraft.client.Minecraft;
+import io.lakio.farfield.compat.McClient;
 import net.minecraft.client.renderer.GameRenderer;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
@@ -30,6 +30,6 @@ public abstract class GameRendererMixin {
         Matrix4f view = new Matrix4f(modelViewMatrix);
         Matrix4f projection = new Matrix4f(projectionMatrix);
         LodRenderer.beginLevel(view, projection);
-        LodRenderer.setFrame(Minecraft.getInstance().gameRenderer.getMainCamera(), view, projection);
+        LodRenderer.setFrame(McClient.mainCamera(), view, projection);
     }
 }

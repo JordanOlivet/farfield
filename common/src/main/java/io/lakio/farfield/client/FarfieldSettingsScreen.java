@@ -91,8 +91,12 @@ public final class FarfieldSettingsScreen extends OptionsSubScreen {
         if (tabNavigationBar == null) {
             return;
         }
+        //? if >=26.2 {
+        /*tabNavigationBar.arrangeElements(width);
+        *///?} else {
         tabNavigationBar.setWidth(width);
         tabNavigationBar.arrangeElements();
+        //?}
         int top = tabNavigationBar.getRectangle().bottom();
         layout.setHeaderHeight(top);
         layout.arrangeElements();
@@ -141,11 +145,25 @@ public final class FarfieldSettingsScreen extends OptionsSubScreen {
     private static final class ListTab implements Tab {
         private final Component title;
         private final OptionsList list;
+        //? if >=26.2 {
+        /*// Since 26.2 a tab gives its layout; the list is laid out by doLayout alone.
+        private final net.minecraft.client.gui.layouts.FrameLayout layout = new net.minecraft.client.gui.layouts.FrameLayout();
+        *///?}
 
         ListTab(String key, OptionsList list) {
             this.title = Component.translatable(key);
             this.list = list;
+            //? if >=26.2 {
+            /*layout.addChild(list);
+            *///?}
         }
+
+        //? if >=26.2 {
+        /*@Override
+        public net.minecraft.client.gui.layouts.Layout getLayout() {
+            return layout;
+        }
+        *///?}
 
         @Override
         public Component getTabTitle() {

@@ -58,7 +58,6 @@ stonecutter.parameters { sc ->
         r.replace('GuiGraphics', 'GuiGraphicsExtractor')
         r.replace('renderMenuBackground(', 'extractMenuBackground(')
         r.replace('tabNavigationBar.setWidth(', 'tabNavigationBar.updateWidth(')
-        r.replace('getChat().addMessage(', 'getChat().addClientSystemMessage(')
         // Chunk positions are a record, packed rather than turned into a long.
         r.replace('ChunkPos.asLong(', 'ChunkPos.pack(')
         r.replace('.getPos().toLong()', '.getPos().pack()')
@@ -77,6 +76,20 @@ stonecutter.parameters { sc ->
         r.replace('PayloadTypeRegistry.playS2C()', 'PayloadTypeRegistry.clientboundPlay()')
         r.replace('ServerChunkEvents.CHUNK_LOAD.register(LodServer::onChunkLoad)',
                 'ServerChunkEvents.CHUNK_LOAD.register((level, chunk, isNew) -> LodServer.onChunkLoad(level, chunk))')
+    }
+    // 26.2: the open screen is the GUI's, the main target and camera the game renderer's,
+    // blending per color target, menu tab bars of their own (ADR-171).
+    sc.replacements.string(atLeast('26.2')) { r ->
+        r.replace('mc.setScreen(', 'mc.gui.setScreen(')
+        r.replace('minecraft.setScreen(', 'minecraft.gui.setScreen(')
+        r.replace('mc.screen instanceof', 'mc.gui.screen() instanceof')
+        r.replace('minecraft.screen == null', 'minecraft.gui.screen() == null')
+        r.replace('Minecraft.getInstance().getMainRenderTarget()', 'Minecraft.getInstance().gameRenderer.mainRenderTarget()')
+        r.replace('gameRenderer.getMainCamera()', 'gameRenderer.mainCamera()')
+        r.replace('_enableBlend()', '_enableBlend(0)')
+        r.replace('_disableBlend()', '_disableBlend(0)')
+        r.replace('BlockTags.SAPLINGS', 'net.minecraft.tags.BlockItemTags.SAPLINGS.block()')
+        r.replace('TabNavigationBar', 'MenuTabBar')
     }
     // NeoForge 21.11 (FML 10): the environment's getters, the client's own packet distributor.
     sc.replacements.string(atLeast('1.21.11')) { r ->
