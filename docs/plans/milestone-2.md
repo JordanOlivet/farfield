@@ -461,14 +461,16 @@ The user (2026-11-18), after 1.0.0: the other 1.21.x, starting with 1.21.11.
     next version. Verified 2026-11-19: the 1.21.1 and 1.21.11 jars still
     build, their Fabric mixins carry intermediary names without a refmap.
   - [~] H.8b 26.1.2 on both loaders: builds, dev servers boot, stores move
-    on a world upgrade, the import reads 26.1.2 chunks. Remains: the dev
-    clients (renderer, fog, GL, Sodium, Iris), a real install.
+    on a world upgrade, the import reads 26.1.2 chunks; dev clients checked
+    2026-11-19 (LODs, day and night, level colors, settings screen).
+    Remains: Sodium 0.9, Iris 1.11, a real install.
   - [~] H.8c 26.2 on both loaders: builds, dev servers boot, the import
-    reads 26.2 chunks. Remains: as H.8b.
+    reads 26.2 chunks; dev clients checked 2026-11-19 after the reversed
+    depth fix (ADR-171). Remains: as H.8b.
   - [ ] H.8d 26.3: Renderpearl's packages, and the noise preview on the new
     material rules and density functions (79 compile errors before the
     first fix, most in the preview).
-  - [ ] H.8e Rehearsal nodes for 26.x (minimized test runs), CI and
+  - [~] H.8e Rehearsal nodes for 26.1.2 and 26.2 (done 2026-11-19), CI and
     `release.yml` on Java 25 with the 26.x targets, the docs.
 
 ## M2.G — Ideas to study (the user, 2026-11-09)

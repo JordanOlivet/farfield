@@ -5264,3 +5264,32 @@ the versions: "26.1.2, 26.2 et 26.3" (26.4 is still a snapshot).
   back by the import (324 chunks, 0 failed). Not checked: the dev clients
   (the renderer's mixins, the GL path, Sodium and Iris), the shipped jars
   in a real 26.x install, CI on Java 25.
+- **Clients (2026-11-19, later)**: the user: "teste dans un premier temps. On
+  sécurise les deux premières versions avant de se lancer sur le gros
+  morceaux". What the dev clients showed and what changed:
+  - **26.2 draws with reversed depth** (clip control zero to one, depth
+    cleared to 0, tests greater or equal). The LODs keep their own
+    convention: their draws put back 26.1's clip control and clear the
+    target's depth to 1, then restore the game's clip control and clear the
+    depth to the game's value; the shaders' "the game drew here" test
+    compares with that value (`FARFIELD_GAME_CLEAR_DEPTH`).
+  - **26.2 renames the level renderer's hooks** (`render`,
+    `invalidateCompiledGeometry`, `resetLevelRenderData`) and its encoder
+    keeps the vertex array it set up last: `src/versioned/26.2/`, and the
+    raw draws clear that cache as they do the last program.
+  - **26.2's surface rules context** takes the possible biomes, last,
+    instead of the registry.
+  - **NeoForge 26.2 warns about `logoFile`** and holds the game on its
+    loading warning screen: the key is per version (`neoforge_logo_key`,
+    `iconFile` from 26.2).
+  - **Rehearsal** builds for 26.1.2 and 26.2 (the window's focus is the
+    window's since 26.1), answers the upgrade questions a 1.21.x test world
+    asks in 26.1 (backup, then join), and logs each screen a run meets.
+  - Checked, minimized runs, both loaders of both versions: the world opens,
+    `LOD renderer ready` on the OpenGL 3.3 context with its 4.x extensions,
+    429 to 455 sections drawn, the day and night views, the level colors, the
+    settings screen's tabs; on 26.2 the frame with the LODs on matches 26.1.2's
+    and comes back after `render off` then `on`. No exception, no mixin failure.
+    Not checked: Sodium 0.9, Iris 1.11 and shader packs on 26.x, the user's
+    installs.
+
