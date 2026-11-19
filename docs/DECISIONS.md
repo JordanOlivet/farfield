@@ -5164,3 +5164,22 @@ DH. En gros, on coupe tout si jamais on détecte un autre mod concurrent.
 - **Result**: dev, Fabric 1.21.11 with Distant Horizons 2.4.5: the `stays
   off` line, the chat line, and no LOD store, pipeline, preview or
   streaming line. Not checked: NeoForge, Voxy, a dedicated server.
+
+## ADR-169 — The pack's GPU hang was not Farfield's: the rival rule stays
+
+Status: accepted, 2026-11-19. Corrects the cause ADR-167 gave; ADR-167
+and ADR-168 stay as they are. The user: "Ok le pack sans Farfield plante
+aussi."
+
+- **Context**: in the same pack (Distant Horizons 2.4.5 with distant
+  generation, Iris 1.10.5, Reverie Alpha v0.5 through its DH contract), a
+  new world crashed again with Farfield off (ADR-168: no store, preview or
+  renderer): an NVIDIA TDR (`A TDR has been detected`, error code 7) and
+  `javaw.exe` failing in `nvoglv64.dll`, a second after the world's first
+  shaders loaded. Then the pack without Farfield's jar crashed too. The
+  first crash (bug check `0x10E` at the same moment) is most likely the
+  same GPU hang, from which Windows did not recover.
+- **Decision**: the crash is the pack's (DH and that shader pack), not
+  Farfield's. The rival rule of ADR-167 and ADR-168 stays: two LOD mods
+  still do the same work twice, and two engines over Iris's DH contract
+  were never tested.
