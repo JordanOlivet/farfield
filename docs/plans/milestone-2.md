@@ -291,7 +291,7 @@ Items:
 Put off by the user (2026-10-30): "c'est pas du tout prio". The order
 from there: D.2, then the sea floor's plants and corals in the preview.
 
-- [~] E.1 The user (2026-10-28): raise the limit from 4,096 to 16,384
+- [x] E.1 The user (2026-10-28): raise the limit from 4,096 to 16,384
   blocks, 4,096 staying the default. A server maximum never exceeded
   (`streaming_radius`, capped at 16,384); a client wish (default 4,096),
   clamped by the server's maximum when connected, applied as is in single
@@ -300,7 +300,7 @@ from there: D.2, then the sea floor's plants and corals in the preview.
   texture maxima); update every tooltip and text (en_us, fr_fr).
   Done with E.3b (ADR-136), to 32,768: the client's wish is its fog
   distance, the server's maximum `streaming_radius`; the texture distance
-  stays at 4,096 at most. Remains: the pack.
+  stays at 4,096 at most. Verified by the user (2026-11-19, the features shipped in 1.0.0 and played in his packs and server): "coche E.1, E.3 et G.1b".
 - [ ] E.2 A cheap preview beyond 4,096 blocks: the area is 16 times larger
   (about 3,200 tiles instead of 236, 50 to 60 min of server work after a
   teleport at today's 5 to 7 s a tile, about 250 MB a world and as much
@@ -317,7 +317,7 @@ from there: D.2, then the sea floor's plants and corals in the preview.
   generator's estimate without caves, compiled surface rules, tree shapes
   harvested from the sandbox and stamped on a hashed grid; three open
   questions for the user.
-- [ ] E.3 To the world border (step 5 of
+- [x] E.3 To the world border (step 5 of
   `docs/analysis/preview-to-the-border.md`, the user's "go étape 5",
   2026-11-11), in lots, each measured before the next. Read from the code
   before writing them: `LodKey` holds 4 bits of level and the preview adds
@@ -329,7 +329,8 @@ from there: D.2, then the sea floor's plants and corals in the preview.
   per level-0 tile; `LodSelector` visits every top-level section within
   the distance; coarse tiles take ground, plants and canopy from the
   profiles (`NoisePreview.buildCoarse`).
-  - [~] E.3a Server: tile levels 3 to 5 hold the ground only (3 to 5 h).
+  Verified by the user (2026-11-19, the features shipped in 1.0.0 and played in his packs and server): "coche E.1, E.3 et G.1b".
+  - [x] E.3a Server: tile levels 3 to 5 hold the ground only (3 to 5 h).
     No profile, no biome sample, no plants or canopy from level 3 up; the
     ground per cell from the surface rules (ADR-134's `SurfaceColumns`,
     the slope's heightmap from the tile's samples). The range stays 4,096,
@@ -341,7 +342,7 @@ from there: D.2, then the sea floor's plants and corals in the preview.
     to 0.86 s a coarse tile, 58 to 83 % of the tops as level 0's, levels 5
     to 3 whole 2.7 s after a pregen's start (level 2 at 6.6 s). Remains:
     a look in a client, the pack's times.
-  - [~] E.3b Client and server to 32,768 blocks (1 to 1.5 days). E.1's
+  - [x] E.3b Client and server to 32,768 blocks (1 to 1.5 days). E.1's
     settings (a client wish, 4,096 by default, clamped by the server's
     maximum); `MAX_DISTANCE`, the fog maximum, the depth's far plane; the
     preview's selector to draw level 7 (tile level 5), its masks for
@@ -354,7 +355,7 @@ from there: D.2, then the sea floor's plants and corals in the preview.
     player to 32,768 blocks (levels 5 to 7 drawn, 2.0 against 1.5 ms of
     GPU a frame at 4,096); a Fabric dev server with `streaming_radius`
     16,384 built its client's preview to 16,384. Remains: the pack.
-  - [~] E.3c Real LODs above level 4 (about 1 day): `LodWorld.LEVELS` 5 to
+  - [x] E.3c Real LODs above level 4 (about 1 day): `LodWorld.LEVELS` 5 to
     8 (real 0 to 7, preview 8 to 15: still 4 bits), its 30 uses in 6
     files (`FaceTextures.LEVELS` is the texture's mips, not this),
     `MIPS_VERSION` bumped so stored worlds build levels 5 to 7 in the
@@ -365,7 +366,7 @@ from there: D.2, then the sea floor's plants and corals in the preview.
     once; protocol 11 unchanged (not released). Verified: unit test, the
     dev store's 82 sections at open, explored land at 20,000 blocks drawn
     at level 7. Remains: the pack.
-  - [~] E.3d Keys and levels to the border (1 to 1.5 days): `LodKey` with
+  - [x] E.3d Keys and levels to the border (1 to 1.5 days): `LodKey` with
     5 bits of level and a preview bit (y on 10 bits); the section store's
     records converted at open (a new store format); tile levels to 15,
     draw levels to 17; the range to the world border. Verify: unit tests
@@ -376,7 +377,7 @@ from there: D.2, then the sea floor's plants and corals in the preview.
     2^25. Verified: unit tests, the dev store converted, a dev client at
     the spawn and at 29,000,000 (four bugs found there and fixed). Remains:
     a server, the pack.
-  - [~] E.3e The renderer at the border (studied first, 0.5 to 1 day): a
+  - [x] E.3e The renderer at the border (studied first, 0.5 to 1 day): a
     24-bit depth from 8 blocks cannot part surfaces millions of blocks
     away (a far pass, then a near one with the depth cleared, or a reversed
     float depth; the game's depth buffer and shader packs decide); the fog
@@ -430,14 +431,13 @@ thought, not a fixed choice.
   start, spawn, pause, resume, cancel, list), saved in the world and
   resumed, paused while players are online by default
   (`pregen_when_players`). Remains: see the progress log of 2026-11-09.
-- [~] G.1b The user (2026-11-09): import the LODs of a world that lived
+- [x] G.1b The user (2026-11-09): import the LODs of a world that lived
   without Farfield at start, unattended, with the same player rule.
   Studied (`docs/analysis/auto-import.md`); the user picked: once, then the
   regions changed without Farfield (a stop mark), every dimension, on by
   default, the pregeneration held past 1,024 blocks while it runs.
   ADR-124, built and checked on the Fabric dev server (never imported, a
-  clean restart, a region changed after the stop, a crash). Remains: the
-  player hold in a run, NeoForge, the user's server.
+  clean restart, a region changed after the stop, a crash). Verified by the user (2026-11-19, the features shipped in 1.0.0 and played in his packs and server): "coche E.1, E.3 et G.1b".
 - [ ] G.2 A chunk pregenerator of our own, like Chunky, with the heavy
   work offloaded to native code (Rust, if possible) for speed. Explored
   (`docs/analysis/native-code-and-pregen.md`, 2026-11-09): generation is

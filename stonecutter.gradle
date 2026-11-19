@@ -55,7 +55,8 @@ stonecutter.parameters { sc ->
 
 // The active version's properties (versions/<version>.properties), for the
 // vanilla server below and the dev task aliases of the loader projects.
-def activeVersion = stonecutter.current.project
+// -Pmc=<version> picks another version, as for the loader projects' dev tasks.
+def activeVersion = (findProperty('mc') ?: stonecutter.current.project) as String
 def activeProperties = new Properties()
 file("versions/${activeVersion}.properties").withReader('UTF-8') { activeProperties.load(it) }
 ext.activeMinecraftVersion = activeVersion
