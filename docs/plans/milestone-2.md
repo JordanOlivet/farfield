@@ -443,7 +443,7 @@ The user (2026-11-18), after 1.0.0: the other 1.21.x, starting with 1.21.11.
   sections drawn, no preview tile failed; Fabric in the same pack (shaders off) after
   ADR-170. The Voxy contract: Photon (photon-gcea) on both loaders of the pack, forced
   with `/farfield debug shaderpack voxy`, the user: "ça marche".
-- [~] H.7 The 1.21.11 release: version bump, the store pages, the tag
+- [x] H.7 The 1.21.11 release: version bump, the store pages, the tag
   (`release.yml`'s four targets, ci-workflows v1.0.14, first run). Done
   2026-11-19: 1.1.0 published (run 44568398368, seven jobs green, the four
   publish jobs `Successfully published the assets to CurseForge, Modrinth`,
@@ -451,8 +451,9 @@ The user (2026-11-18), after 1.0.0: the other 1.21.x, starting with 1.21.11.
   jars). The store text (version-free, ADR-168's line), the user: "valide la
   description": pushed to Modrinth (HTTP 204, read back equal to the file).
   The file is one line per paragraph since (CurseForge's editor); the user pasted it on
-  both stores: "les deux s'affiche correctement maintenant". Remains: his look at the
-  four files of 1.1.0 on both stores (loaders, game versions).
+  both stores: "les deux s'affiche correctement maintenant". The four files of 1.1.0
+  on both stores, loaders and game versions, checked by the user: "c'est bon pour les
+  versions et loader".
 - [ ] H.8 Minecraft 26.x (Java 25, no obfuscation, Vulkan later, ADR-004/007).
 
 ## M2.G — Ideas to study (the user, 2026-11-09)
