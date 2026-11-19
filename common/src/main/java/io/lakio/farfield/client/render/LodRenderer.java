@@ -5363,6 +5363,9 @@ public final class LodRenderer {
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 9, packIds.id());
         }
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, indirect.id());
+        // The LODs' own depth convention, whatever the game's (26.2 reverses it, ADR-171); a pack
+        // gives them a depth target of their own.
+        GlCompat.beginLodDepth(!packed && !dh);
         GlStateManager._enableDepthTest();
         GlStateManager._depthFunc(GL_LEQUAL);
         GlStateManager._depthMask(true);
@@ -5452,6 +5455,7 @@ public final class LodRenderer {
         }
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
         GlStateManager._glBindVertexArray(0);
+        GlCompat.endLodDepth();
         GlCompat.endRawDraw();
         GlStateManager._glUseProgram(0);
         if (packed || dh) {

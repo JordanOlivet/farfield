@@ -178,7 +178,8 @@ void main() {
     }
     vec3 inside = v_relative + u_cameraFrac - normal * 0.01;
 #ifdef VOXY_TRANSLUCENT
-    if (texelFetch(u_gameDepth, ivec2(gl_FragCoord.xy), 0).r < 1.0) {
+    // The game's terrain covers the pixel: its depth is not the one it clears to.
+    if (texelFetch(u_gameDepth, ivec2(gl_FragCoord.xy), 0).r != FARFIELD_GAME_CLEAR_DEPTH) {
         discard;
     }
 #endif

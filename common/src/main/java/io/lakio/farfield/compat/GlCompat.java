@@ -209,11 +209,66 @@ public final class GlCompat {
         *///?}
     }
 
-    /** Clears the main target's depth (the LODs drew with their own depth range). */
+    /**
+     * The depth of a pixel nothing drew on, as the game clears it: 1 (far) up
+     * to 26.1, 0 since 26.2, which draws with reversed depth (clip control
+     * zero to one, depth tests greater or equal, ADR-171).
+     */
+    public static double gameClearDepth() {
+        //? if >=26.2 {
+        /*return 0.0;
+        *///?} else {
+        return 1.0;
+        //?}
+    }
+
+    //? if >=26.2 {
+    /*private static int savedClipOrigin;
+    private static int savedClipDepthMode;
+    private static boolean clipSaved;
+    *///?}
+
+    /**
+     * Before the LODs draw: their depth is a standard one over their own range
+     * (lod.vert), tested less or equal against a depth cleared to 1. Since 26.2
+     * the game draws with reversed depth, so the LODs put back the clip control
+     * of 26.1 for their draws and, when they draw into the game's target
+     * ({@code clearDepth}), clear its depth to their far value first.
+     */
+    public static void beginLodDepth(boolean clearDepth) {
+        //? if >=26.2 {
+        /*org.lwjgl.opengl.GLCapabilities caps = org.lwjgl.opengl.GL.getCapabilities();
+        clipSaved = caps.glClipControl != 0L;
+        if (clipSaved) {
+            savedClipOrigin = GL11C.glGetInteger(org.lwjgl.opengl.GL45C.GL_CLIP_ORIGIN);
+            savedClipDepthMode = GL11C.glGetInteger(org.lwjgl.opengl.GL45C.GL_CLIP_DEPTH_MODE);
+            org.lwjgl.opengl.GL45C.glClipControl(org.lwjgl.opengl.GL45C.GL_LOWER_LEFT,
+                    org.lwjgl.opengl.GL45C.GL_NEGATIVE_ONE_TO_ONE);
+        }
+        if (clearDepth) {
+            GlStateManager._disableScissorTest();
+            GlStateManager._depthMask(true);
+            GL11C.glClearDepth(1.0);
+            GL11C.glClear(GL11C.GL_DEPTH_BUFFER_BIT);
+        }
+        *///?}
+    }
+
+    /** After the LODs drew: the game's own clip control back. */
+    public static void endLodDepth() {
+        //? if >=26.2 {
+        /*if (clipSaved) {
+            org.lwjgl.opengl.GL45C.glClipControl(savedClipOrigin, savedClipDepthMode);
+            clipSaved = false;
+        }
+        *///?}
+    }
+
+    /** Clears the main target's depth (the LODs drew with their own depth range) to the game's clear depth. */
     public static void clearMainDepth() {
         //? if >=1.21.11 {
         /*RenderSystem.getDevice().createCommandEncoder().clearDepthTexture(
-                Minecraft.getInstance().getMainRenderTarget().getDepthTexture(), 1.0);
+                Minecraft.getInstance().getMainRenderTarget().getDepthTexture(), gameClearDepth());
         *///?} else {
         RenderSystem.clear(GL11C.GL_DEPTH_BUFFER_BIT, Minecraft.ON_OSX);
         //?}
