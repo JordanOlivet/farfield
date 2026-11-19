@@ -6,9 +6,9 @@ code in this repository.
 ## What this is
 
 **Farfield**, a far-distance terrain rendering mod for Minecraft using levels
-of detail (LOD). MC 1.21.1 first (Java 21), NeoForge + Fabric from one
-codebase (MultiLoader pattern, no Architectury), Minecraft 26.x / Vulkan
-planned. Public repository (ADR-066), LGPL-3.0-only (ADR-067).
+of detail (LOD). MC 1.21.1 and 1.21.11 (Java 21; one source tree with
+Stonecutter, ADR-165), NeoForge + Fabric from one codebase (MultiLoader
+pattern, no Architectury), Minecraft 26.x / Vulkan planned. Public repository (ADR-066), LGPL-3.0-only (ADR-067).
 
 It replaces our Neo-Voxy fork of Voxy. Reuse Neo-Voxy *concepts*, never copy
 its code as is, and never port Voxy-derived code (ADR-001).
@@ -38,7 +38,11 @@ Several Minecraft versions (ADR-165, Stonecutter): `common`, `fabric` and
 (`stonecutter.active` in `stonecutter.gradle`, the root build file); `-Pmc=<mc>`
 picks another. Run dirs: the paths above are 1.21.1's, another version uses
 `<loader>/runs/<mc>/...`. Version-specific code goes in Stonecutter comments
-(`//? if >=1.21.5 {`); a part that differs as a whole is a module of its own.
+(`//? if >=1.21.5 {`); a part that differs as a whole is a module of its own
+(a whole file: `src/versioned/<mc>/`). Plain renames are Stonecutter
+replacements in `stonecutter.gradle`; calls that changed shape go through
+`common/.../compat/`. Edit the sources at the active version, 1.21.1: switching
+it applies the replacements backwards.
 
 Double-click launchers at the root (they open the test world `farfield-test`
 directly and remove a stale `session.lock` first): `client-fabric.bat`,
@@ -120,8 +124,8 @@ both to `output/` at the root (gitignored, ADR-110).
   `(sleep 90; echo "farfield import"; sleep 20; echo stop) | ./gradlew.bat :neoforge:runServer --no-daemon --console plain > log`
   (Git Bash). Stopping with `stop` closes the LOD stores and logs their
   counters.
-- Client mode (E.6) is checked against the vanilla 1.21.1 server of
-  `runVanillaServer` (downloaded from Mojang's piston-meta manifest, JDK 21,
+- Client mode (E.6) is checked against the vanilla server of
+  `runVanillaServer` (1.21.1, or `-Pmc=<mc>` in `runs/vanilla-server-<mc>`; downloaded from Mojang's piston-meta manifest, JDK 21,
   `online-mode=false`, `Dev` operator, the test world; reads stdin like the
   dev servers): `runClient -PquickPlayServer=localhost:25565
   -PclientUsername=Dev` joins it with a stable offline name. Use spectator

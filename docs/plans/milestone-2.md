@@ -415,6 +415,32 @@ from there: D.2, then the sea floor's plants and corals in the preview.
   NeoForge pack through `neoforge_pack.py` (shader switch, measures,
   replay); `mc-test-harness` archived.
 
+## M2.H — Several Minecraft versions (ADR-165)
+
+The user (2026-11-18), after 1.0.0: the other 1.21.x, starting with 1.21.11.
+
+- [x] H.1 Stonecutter build: `common`, `fabric` and `neoforge` with a node per
+  Minecraft version, `versions/<mc>.properties`, `src/versioned/<mc>/`, the dev
+  tasks on the active version or `-Pmc`. Gradle 9.4.1, Loom 1.16.3,
+  ModDevGradle 2.0.148. Verified: the 1.21.1 jars as before (but Loom's refmap),
+  every dev server and client of 1.21.1 as before.
+- [x] H.2 The 1.21.11 port (`compat/` classes, versioned mixins, NeoForge 21.11).
+  Verified on dev clients with Rehearsal: LODs on both loaders, with Sodium
+  0.8.14, streaming (Fabric server, NeoForge client), the End's preview,
+  Farfield's settings screen, client mode against the vanilla 1.21.11 server.
+- [x] H.3 Farfield's settings in Sodium's video settings (Sodium 0.8, its
+  config API, `SettingsModel`). Verified on screen with the `video` verb: Fabric
+  1.21.1 (0.8.13), Fabric and NeoForge 1.21.11 (0.8.14).
+- [x] H.4 The renderer on the functions the context gives (ADR-166): NeoForge
+  1.21.11's early window makes OpenGL 3.3. Verified: NeoForge 1.21.11 with the
+  early window, NVIDIA. Not checked: AMD, Intel.
+- [x] H.5 Rehearsal on 1.21.11 (its own repository): Stonecutter build,
+  screenshots after the asynchronous read back.
+- [ ] H.6 Iris 1.10 on 1.21.11, the 3.3 context included: the user's test pass.
+- [ ] H.7 The 1.21.11 release: version bump, the store pages, the tag
+  (`release.yml`'s four targets, ci-workflows v1.0.14, first run).
+- [ ] H.8 Minecraft 26.x (Java 25, no obfuscation, Vulkan later, ADR-004/007).
+
 ## M2.G — Ideas to study (the user, 2026-11-09)
 
 Raw ideas, written down so they are not lost; each needs a study (what

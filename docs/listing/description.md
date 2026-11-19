@@ -6,7 +6,7 @@ and seas are drawn as levels of detail (LOD), for a fraction of what real
 chunks would cost, and the terrain your world has not generated yet is
 drawn too, so the horizon is never empty.
 
-Minecraft 1.21.1 · NeoForge and Fabric · single player and servers
+Minecraft 1.21.1 and 1.21.11 · NeoForge and Fabric · single player and servers
 
 ![Vanilla at 8 chunks against Farfield, the same view](https://cdn.modrinth.com/data/3ToF1nXi/images/8fb598c574cfe1c5523934b431dd147eee863783.png)
 
@@ -154,8 +154,8 @@ players use `/farfieldclient` for the drawing ones.
   distance set to your render distance hides the gap.
 - **Ambient occlusion** through a pack's Distant Horizons contract (the
   Voxy contract has it).
-- **Other Minecraft versions**: 1.21.1 only; the other 1.21.x come in a
-  later release, 26.x after them.
+- **Other Minecraft versions**: 1.21.1 and 1.21.11 only, one jar each per
+  loader; 26.x comes later.
 
 ## Feedback
 
