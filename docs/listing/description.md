@@ -6,7 +6,7 @@ and seas are drawn as levels of detail (LOD), for a fraction of what real
 chunks would cost, and the terrain your world has not generated yet is
 drawn too, so the horizon is never empty.
 
-Minecraft 1.21.1 and 1.21.11 · NeoForge and Fabric · single player and servers
+NeoForge and Fabric · single player and servers
 
 ![Vanilla at 8 chunks against Farfield, the same view](https://cdn.modrinth.com/data/3ToF1nXi/images/8fb598c574cfe1c5523934b431dd147eee863783.png)
 
@@ -82,7 +82,7 @@ server does it by itself at start for the chunks its LODs never saw.
 ## For server owners
 
 Install Farfield on the server and on the players' clients; both need the
-same Farfield version (1.0.x) to stream. Settings in
+same Farfield version to stream. Settings in
 `config/farfield-server.properties`:
 
 - `streaming_radius`: how far around a player LODs and the preview are
@@ -155,8 +155,6 @@ players use `/farfieldclient` for the drawing ones.
   distance set to your render distance hides the gap.
 - **Ambient occlusion** through a pack's Distant Horizons contract (the
   Voxy contract has it).
-- **Other Minecraft versions**: 1.21.1 and 1.21.11 only, one jar each per
-  loader; 26.x comes later.
 
 ## Feedback
 
