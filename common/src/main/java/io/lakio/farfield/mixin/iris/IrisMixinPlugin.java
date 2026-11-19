@@ -9,12 +9,13 @@ import java.util.Set;
 
 /**
  * Applies the Iris mixins (shader packs, ADR-113) only when Iris is
- * installed and Voxy is not: Voxy hooks the same contract into Iris itself.
+ * installed and no other LOD mod is (ADR-167): Voxy and Distant Horizons
+ * hook the same contracts into Iris themselves.
  */
 public final class IrisMixinPlugin implements IMixinConfigPlugin {
 
     private static final boolean APPLY = present("net/irisshaders/iris/Iris.class")
-            && !present("me/cortex/voxy/client/VoxyClient.class");
+            && !io.lakio.farfield.compat.RivalLodMods.any();
 
     private static boolean present(String resource) {
         return IrisMixinPlugin.class.getClassLoader().getResource(resource) != null;

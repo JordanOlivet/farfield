@@ -1,5 +1,6 @@
 {
   "farfield.options.title": "Paramètres de Farfield",
+  "farfield.rival_lod_mod": "Farfield est désactivé : %s est installé. Deux mods de LOD se dessinent l'un sur l'autre ; n'en gardez qu'un.",
   "farfield.options.tab.rendering": "Rendu",
   "farfield.options.tab.preview": "Aperçu",
   "farfield.options.tab.performance": "Performances",

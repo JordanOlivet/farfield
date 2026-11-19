@@ -1341,6 +1341,20 @@ public final class LodRenderer {
             return !disabled;
         }
         initialized = true;
+        // Beside another LOD mod (ADR-167): off, said once in the log and to the player.
+        if (io.lakio.farfield.compat.RivalLodMods.any()) {
+            disabled = true;
+            String names = io.lakio.farfield.compat.RivalLodMods.names();
+            Farfield.LOG.warn("LOD rendering disabled: {} is installed, and two LOD mods draw over each other"
+                    + " (use one at a time)", names);
+            Minecraft mc = Minecraft.getInstance();
+            if (mc.gui != null) {
+                mc.gui.getChat().addMessage(net.minecraft.network.chat.Component.translatable(
+                        "farfield.rival_lod_mod", String.join(", ", io.lakio.farfield.compat.RivalLodMods.present()))
+                        .withStyle(net.minecraft.ChatFormatting.YELLOW));
+            }
+            return false;
+        }
         GLCapabilities caps = GL.getCapabilities();
         // The functions it calls, not the context's version (ADR-166): NeoForge's early window makes a
         // 3.3 context since FML 10, and drivers give its 4.x functions through their extensions.
@@ -1543,8 +1557,8 @@ public final class LodRenderer {
      */
     public static String forcePackContract(int contract) {
         LodRenderer r = INSTANCE;
-        if (!Services.PLATFORM.isModLoaded("iris") || Services.PLATFORM.isModLoaded("voxy")) {
-            return "No shader pack path here (Iris missing, or Voxy installed).";
+        if (!Services.PLATFORM.isModLoaded("iris") || io.lakio.farfield.compat.RivalLodMods.any()) {
+            return "No shader pack path here (Iris missing, or another LOD mod installed).";
         }
         io.lakio.farfield.client.render.iris.PackContract.force(contract);
         if (r.packLink == null) {

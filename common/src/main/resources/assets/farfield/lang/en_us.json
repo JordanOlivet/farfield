@@ -1,5 +1,6 @@
 {
   "farfield.options.title": "Farfield Settings",
+  "farfield.rival_lod_mod": "Farfield is off: %s is installed. Two LOD mods draw over each other; keep one of them.",
   "farfield.options.tab.rendering": "Rendering",
   "farfield.options.tab.preview": "Preview",
   "farfield.options.tab.performance": "Performance",

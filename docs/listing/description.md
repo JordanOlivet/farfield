@@ -123,7 +123,8 @@ Tested with Sodium 0.8, Iris with Photon, Complementary Reimagined and
 Unbound, BSL and MakeUp, C2ME, ModernFix, Lithium, FerriteCore, Chunky and
 Sinytra Connector, in a NeoForge pack of 386 mods and a Fabric pack of 76,
 with Biomes O' Plenty and Terralith in the preview. Other LOD mods
-(Distant Horizons, Voxy) are not tested beside it: use one at a time.
+(Distant Horizons, Voxy): use one at a time. Beside one of them Farfield
+turns its rendering off and says so in the chat.
 
 ![Levels of detail: finer near, coarser far](https://cdn.modrinth.com/data/3ToF1nXi/images/2724da186657ca00d678ebbf5888423d808e91ef.png)
 

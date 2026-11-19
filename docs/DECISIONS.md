@@ -5112,3 +5112,35 @@ OpenGL 4.6 ?", then "go détection".
   NVIDIA 621.01): 428 sections drawn, as on a 4.6 context, draw counts from
   the ARB entry point; `-PearlyWindow` keeps the early window in an agent's
   run for this check. Not checked: AMD and Intel drivers, Iris on 3.3.
+
+## ADR-167 — Beside another LOD mod, Farfield's renderer stays off
+
+Status: accepted, 2026-11-19. The user, after his PC went down in a
+1.21.11 Fabric pack that shipped Distant Horizons beside Farfield: "go
+détection de Distant Horizons et aussi de Voxy tant qu'à y être, autant
+essayer de détecter le plus de mod concurrent et sortir avec grâce au lieu
+de provoquer des blue screens".
+
+- **Context**: the pack (Iris 1.10.5, the Reverie pack with only a DH
+  contract, Distant Horizons 2.4.5 with distant generation, Farfield at the
+  world border's distance) bug-checked Windows with `0x10E`
+  (VIDEO_MEMORY_MANAGEMENT_INTERNAL, parameter `0x37`) at the first frame
+  after joining a new single player world. The game log stops at `Joined
+  server`. Farfield had taken the pack's DH contract (`DHCompatMixin` into
+  Iris's `DHCompat`, which DH itself drives) while DH drew too. Only Voxy
+  was detected before, and only to skip the Iris mixins. The dump was not
+  read (no debugger here); the user: "le pc ne faisait rien d'autres à ce
+  moment".
+- **Decision**: `RivalLodMods` finds Distant Horizons
+  (`com/seibel/distanthorizons/api/DhApi.class`) and Voxy
+  (`me/cortex/voxy/client/VoxyClient.class`) as resources, so none of their
+  classes load and the check runs in a mixin config plugin. With one
+  installed, the Iris mixins are not applied and `LodRenderer.init` turns
+  rendering off before any GPU resource is made, logs `LOD rendering
+  disabled: <mod> is installed`, and tells the player once in the chat
+  (`farfield.rival_lod_mod`, both lang files). The integrated or dedicated
+  server's side is left as it is. A new rival is one more line in the list.
+- **Result**: dev, Fabric 1.21.11 with Distant Horizons 2.4.5 (its auto
+  updater off: its update prompt held the first run at the title screen):
+  the warning and the chat line, 0 sections drawn, Distant Horizons drawing
+  alone. Not checked: Voxy, NeoForge, the user's pack again.
