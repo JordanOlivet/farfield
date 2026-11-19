@@ -144,8 +144,9 @@ players use `/farfieldclient` for the drawing ones.
 
 ## Requirements
 
-- A graphics card with **OpenGL 4.6**. macOS stops at OpenGL 4.1, so
-  Farfield draws nothing there.
+- A graphics card and driver with **OpenGL 4.6** features (Farfield checks
+  the functions it needs and says which one is missing). macOS stops at
+  OpenGL 4.1, so Farfield draws nothing there.
 - Fabric: Fabric API. Mod Menu is optional.
 
 ## Not there yet
