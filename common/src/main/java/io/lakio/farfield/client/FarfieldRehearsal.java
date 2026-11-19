@@ -16,8 +16,10 @@ import java.util.Map;
  * methods by name, so Farfield has no dependency on it and this class does
  * nothing without it. Adds the renderer's counters to {@code state}, keeps
  * {@code wait stable} waiting while LODs are wanted in view, meshed or
- * fetched, and adds the verbs {@code frames on|off} (the frame probe) and
- * {@code settings <tab>|close} (the settings screen). Client thread only.
+ * fetched, and adds the verbs {@code frames on|off} (the frame probe),
+ * {@code settings <tab>|close} (the settings screen) and {@code video [<mod
+ * id> [<page>]]|close} (the game's video settings: Sodium's screen when
+ * Sodium 0.8 is installed, on a mod's page). Client thread only.
  */
 public final class FarfieldRehearsal {
 
@@ -87,9 +89,87 @@ public final class FarfieldRehearsal {
                 mc.setScreen(FarfieldSettingsScreen.onTab(null, tab));
                 return "settings open on tab " + tab;
             }
+            case "video" -> {
+                return video(words);
+            }
             default -> {
                 return null;
             }
+        }
+    }
+
+    private static final String SODIUM_SCREEN = "net.caffeinemc.mods.sodium.client.gui.VideoSettingsScreen";
+    private static final String SODIUM_CONFIG = "net.caffeinemc.mods.sodium.client.config.ConfigManager";
+
+    /**
+     * The game's video settings: Sodium's screen when Sodium (0.8 on) is
+     * there, through its own methods by name (no compile dependency, the
+     * same on every loader), else vanilla's. With a mod id, Sodium's screen
+     * jumps to that mod's page ({@code <page>}, 0 first).
+     */
+    private static String video(List<String> words) {
+        String usage = "video takes nothing, a mod id and an optional page number, or close";
+        Minecraft mc = Minecraft.getInstance();
+        if (words.size() == 2 && words.get(1).equalsIgnoreCase("close")) {
+            mc.setScreen(null);
+            return "video settings closed";
+        }
+        if (words.size() > 3) {
+            throw new IllegalArgumentException(usage);
+        }
+        Class<?> sodium;
+        try {
+            sodium = Class.forName(SODIUM_SCREEN);
+        } catch (ClassNotFoundException e) {
+            if (words.size() > 1) {
+                throw new IllegalArgumentException("no Sodium 0.8: its pages are not there");
+            }
+            mc.setScreen(new net.minecraft.client.gui.screens.options.VideoSettingsScreen(null, mc, mc.options));
+            return "video settings open (vanilla)";
+        }
+        try {
+            Object screen = null;
+            for (java.lang.reflect.Method m : sodium.getMethods()) {
+                if (m.getName().equals("createScreen") && m.getParameterCount() == 1) {
+                    screen = m.invoke(null, (Object) null);
+                }
+            }
+            if (!(screen instanceof net.minecraft.client.gui.screens.Screen s)) {
+                throw new IllegalStateException("Sodium's VideoSettingsScreen.createScreen not found");
+            }
+            mc.setScreen(s);
+            if (words.size() == 1) {
+                return "video settings open (Sodium)";
+            }
+            String mod = words.get(1);
+            int page = 0;
+            if (words.size() == 3) {
+                try {
+                    page = Integer.parseInt(words.get(2));
+                } catch (NumberFormatException e) {
+                    throw new IllegalArgumentException(usage);
+                }
+            }
+            Object config = Class.forName(SODIUM_CONFIG).getField("CONFIG").get(null);
+            List<?> mods = (List<?>) config.getClass().getMethod("getModOptions").invoke(config);
+            for (Object options : mods) {
+                if (mod.equals(options.getClass().getMethod("configId").invoke(options))) {
+                    List<?> pages = (List<?>) options.getClass().getMethod("pages").invoke(options);
+                    if (page < 0 || page >= pages.size()) {
+                        throw new IllegalArgumentException(mod + " has " + pages.size() + " pages in Sodium");
+                    }
+                    for (java.lang.reflect.Method m : s.getClass().getMethods()) {
+                        if (m.getName().equals("jumpToPage") && m.getParameterCount() == 1) {
+                            m.invoke(s, pages.get(page));
+                            return "video settings open (Sodium) on " + mod + " page " + page + " of " + pages.size();
+                        }
+                    }
+                    throw new IllegalStateException("Sodium's jumpToPage not found");
+                }
+            }
+            throw new IllegalArgumentException("no Sodium pages for the mod " + mod);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Sodium's video settings: " + e, e);
         }
     }
 }
