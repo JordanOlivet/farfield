@@ -5293,3 +5293,27 @@ the versions: "26.1.2, 26.2 et 26.3" (26.4 is still a snapshot).
     Not checked: Sodium 0.9, Iris 1.11 and shader packs on 26.x, the user's
     installs.
 
+
+## ADR-172 — A running pregeneration keeps an empty dedicated server ticking
+
+Status: accepted, 2026-11-20. Found by the 26.x dev server checks after the
+user's "fais les test qu'il reste".
+
+- **Problem**: from 1.21.2 the game stops ticking a dedicated server left
+  empty for `pause-when-empty-seconds` (60 by default, "Server empty for 60
+  seconds, pausing"). The preview's planner (ADR-123, ADR-126) runs on the
+  server's ticks, so a pregeneration, meant for an empty server, stopped a
+  minute in on 1.21.11 and 26.x: 55 of 64 level-0 tiles then nothing for
+  minutes (26.2), the workers idle in a thread dump (26.1.2). 1.21.1 has no
+  such pause.
+- **Decision**: while a pregeneration task is running, the server does not
+  pause when empty (`DedicatedServerMixin` makes `pauseWhenEmptySeconds`
+  return 0, listed in the mixin configs of 1.21.11 and later); once no task
+  runs, the server's own setting applies again. Logged on each change.
+  Driving the planner from a thread of its own was set aside: the planner
+  reads the levels and their players on the server thread.
+- **Also found in the same checks**: the 26.2 surface rules context takes
+  `updateY(stoneDepthAbove, stoneDepthBelow, waterHeight, blockY)` (four
+  ints): the preview's column-by-column rules failed to resolve on 26.2 and
+  fell back to the stand-in chunks; and since 26.1 water's biome color is
+  its fluid model's tint source, so LOD water was baked grey (looks bake 2).
