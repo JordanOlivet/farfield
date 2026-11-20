@@ -823,6 +823,8 @@ public final class LodRenderer {
     }
     private final Matrix4f viewProj = new Matrix4f();
     private final float[] matrix = new float[16];
+    /** The LOD depth kept for other mods, once one asked (ADR-172). */
+    private final LodDepthShare depthShare = new LodDepthShare();
     /** Draw commands per list ({@link #SOLID}, {@link #DISCARD}, {@link #TRANSLUCENT}, {@link #PLANTS}), in indirect buffer order. */
     private final IntBuffer[] commands = {MemoryUtil.memAllocInt(4 * 1024), MemoryUtil.memAllocInt(4 * 1024),
             MemoryUtil.memAllocInt(4 * 1024), MemoryUtil.memAllocInt(1024)};
@@ -1296,6 +1298,7 @@ public final class LodRenderer {
     public static void beginLevel(Matrix4f viewRotation, Matrix4f projection) {
         LodRenderer r = INSTANCE;
         r.translucentPending = false;
+        r.depthShare.beginFrame();
         // The depth range follows the drawn extent (ADR-140): a fixed far plane at twice the maximum
         // (67 million blocks) against a near plane of 8 lost the packs' inverse projection in float,
         // and Photon drew black squares over the LODs at every distance.
@@ -5470,6 +5473,8 @@ public final class LodRenderer {
             translucentCount = translucentDraws;
             return;
         }
+        // The LODs' depth for the mods that asked (clouds, sky), before it goes (ADR-172).
+        depthShare.capture(projection, viewRotation, depthNear, depthFar, drawnExtent);
         // Vanilla terrain draws next with its own depth range: start it clean.
         GlCompat.clearMainDepth();
     }
