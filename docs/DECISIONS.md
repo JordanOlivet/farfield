@@ -5372,3 +5372,10 @@ Status: accepted, 2026-11-20. Amends ADR-172.
   game turns its clouds off below 4 chunks, a common setting with Farfield
   (the user's pack check: no clouds below 4); keeping them on is the
   consumer's call, as Create: Sky already does for Distant Horizons.
+- **Result**: the user's pack, same setup: `view distance 95 blocks` on the
+  first frame with geometry, then 4,634 blocks 6 s in and 31,977,114 at 18 s.
+  With the preview on and the setting at its maximum, the preview's coarsest
+  tiles do reach that far, so the announced distance stays that large in this
+  setup (the user: the preview looks like LODs, so it counts); it differs
+  from the setting while the LODs load and with the preview off. A consumer
+  tuned for a shorter range caps it on its side, as the API doc says.
