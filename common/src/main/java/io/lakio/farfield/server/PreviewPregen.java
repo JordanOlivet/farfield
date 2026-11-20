@@ -173,6 +173,11 @@ final class PreviewPregen {
         return tasks.tasks().stream().anyMatch(this::runs);
     }
 
+    /** Whether a task is running (held by players or not). */
+    boolean running() {
+        return tasks.tasks().stream().anyMatch(t -> t.state() == PregenTasks.State.RUNNING);
+    }
+
     /** Running, and not held by players (or forced by an operator). */
     private boolean runs(PregenTasks.Task t) {
         return t.state() == PregenTasks.State.RUNNING && (!held || forced.contains(t.id()));

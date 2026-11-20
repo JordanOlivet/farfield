@@ -20,6 +20,9 @@
     "client.SpriteContentsAccessor",
     "client.WindowMixin"
   ],
+  "server": [
+    "DedicatedServerMixin"
+  ],
   "injectors": {
     "defaultRequire": 1
   }

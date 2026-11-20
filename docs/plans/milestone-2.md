@@ -474,7 +474,9 @@ The user (2026-11-18), after 1.0.0: the other 1.21.x, starting with 1.21.11.
     compiled samplers, its ground on the material system, its features,
     the cave cut; a pregeneration on the Fabric dev server, no failure.
     The preview seen in dev clients on both loaders (2026-11-20), with
-    26.x water tinted from its fluid model. Remains: the spikes on 26.3.
+    26.x water tinted from its fluid model. Tiles as fast as 26.2's (109
+    in 0.5 min, Fabric dev server); a pregeneration no longer stops when an
+    empty server pauses (ADR-172). Remains: the spikes on 26.3.
   - [~] H.8e Rehearsal nodes for 26.1.2, 26.2 (2026-11-19) and 26.3 (SDL3
     window, 2026-11-20), CI and
     `release.yml` on Java 25 with the 26.x targets, the docs.

@@ -317,6 +317,25 @@ public final class LodServer {
         return s == null || s.preview == null ? null : s.preview.pregen();
     }
 
+    private static boolean keptAwake;
+
+    /**
+     * Whether a dedicated server must keep ticking while empty (ADR-172): a
+     * preview pregeneration runs, and the game (1.21.2 on) pauses an empty
+     * server, which stopped the tasks a minute in. Server thread.
+     */
+    public static boolean keepsServerAwake() {
+        PreviewPregen p = pregen();
+        boolean awake = p != null && p.running();
+        if (awake != keptAwake) {
+            keptAwake = awake;
+            Farfield.LOG.info(awake
+                    ? "Noise preview pregen: the server keeps running while empty until the pregeneration ends"
+                    : "Noise preview pregen: no task left, the server pauses when empty again");
+        }
+        return awake;
+    }
+
     /** Whether a preview tile of a dimension is built at the finest grid; null when not known yet. */
     static java.util.function.LongPredicate previewBuilt(String dimension) {
         LodServer s = instance;

@@ -19,6 +19,9 @@
     "client.LevelRendererMixin",
     "client.SpriteContentsAccessor"
   ],
+  "server": [
+    "DedicatedServerMixin"
+  ],
   "injectors": {
     "defaultRequire": 1
   }
