@@ -9,7 +9,8 @@ name: Release
 # One target per loader and Minecraft version, each with its game version and a
 # version suffix of its own (Modrinth refuses one version number twice): a
 # Minecraft version added to minecraft_versions in gradle.properties gets two
-# targets here.
+# targets here. 26.x targets declare Java 25 (ADR-171); Gradle itself runs on the
+# Java 25 of gradle/gradle-daemon-jvm.properties whatever JDK starts it.
 
 on:
   push:
@@ -34,7 +35,19 @@ jobs:
          {"loader":"neoforge","label":"NeoForge 1.21.11","files":"neoforge/build/libs/farfield-neoforge-1.21.11-*.jar",
           "game-versions":"1.21.11","version-suffix":"neoforge-1.21.11"},
          {"loader":"fabric","label":"Fabric 1.21.11","files":"fabric/build/libs/farfield-fabric-1.21.11-*.jar",
-          "game-versions":"1.21.11","version-suffix":"fabric-1.21.11"}]
+          "game-versions":"1.21.11","version-suffix":"fabric-1.21.11"},
+         {"loader":"neoforge","label":"NeoForge 26.1.2","files":"neoforge/build/libs/farfield-neoforge-26.1.2-*.jar",
+          "game-versions":"26.1.2","java-versions":"25","version-suffix":"neoforge-26.1.2"},
+         {"loader":"fabric","label":"Fabric 26.1.2","files":"fabric/build/libs/farfield-fabric-26.1.2-*.jar",
+          "game-versions":"26.1.2","java-versions":"25","version-suffix":"fabric-26.1.2"},
+         {"loader":"neoforge","label":"NeoForge 26.2","files":"neoforge/build/libs/farfield-neoforge-26.2-*.jar",
+          "game-versions":"26.2","java-versions":"25","version-suffix":"neoforge-26.2"},
+         {"loader":"fabric","label":"Fabric 26.2","files":"fabric/build/libs/farfield-fabric-26.2-*.jar",
+          "game-versions":"26.2","java-versions":"25","version-suffix":"fabric-26.2"},
+         {"loader":"neoforge","label":"NeoForge 26.3","files":"neoforge/build/libs/farfield-neoforge-26.3-*.jar",
+          "game-versions":"26.3","java-versions":"25","version-suffix":"neoforge-26.3"},
+         {"loader":"fabric","label":"Fabric 26.3","files":"fabric/build/libs/farfield-fabric-26.3-*.jar",
+          "game-versions":"26.3","java-versions":"25","version-suffix":"fabric-26.3"}]
     secrets:
       modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
       curseforge-token: ${{ secrets.CURSEFORGE_TOKEN }}
