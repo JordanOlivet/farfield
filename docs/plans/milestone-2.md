@@ -473,7 +473,8 @@ The user (2026-11-18), after 1.0.0: the other 1.21.x, starting with 1.21.11.
     Phase 2 built on the server (2026-11-20): the preview's relief on the
     compiled samplers, its ground on the material system, its features,
     the cave cut; a pregeneration on the Fabric dev server, no failure.
-    Remains: the preview seen in a dev client, the spikes on 26.3.
+    The preview seen in dev clients on both loaders (2026-11-20), with
+    26.x water tinted from its fluid model. Remains: the spikes on 26.3.
   - [~] H.8e Rehearsal nodes for 26.1.2, 26.2 (2026-11-19) and 26.3 (SDL3
     window, 2026-11-20), CI and
     `release.yml` on Java 25 with the 26.x targets, the docs.
