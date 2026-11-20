@@ -1,7 +1,4 @@
 # Minecraft 26.3: shared sources this version leaves out (ADR-171). The noise
-# preview's port is in phases: 2a has the relief (stand-ins in java/ for the
-# features and the coarse ground), these wait for 2b (the material system) and
-# 2c (the features' stand-in world).
-io/lakio/farfield/server/SurfaceColumns.java
-io/lakio/farfield/server/FeatureSandbox.java
+# preview's port is in phases: 2a the relief, 2b the surface rules (26.3's own
+# SurfaceColumns in java/), 2c the features' stand-in world, which waits.
 io/lakio/farfield/mixin/client/WindowMixin.java

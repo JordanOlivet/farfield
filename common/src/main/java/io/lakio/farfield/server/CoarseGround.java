@@ -83,7 +83,7 @@ final class CoarseGround {
                     long key = ChunkPos.asLong(qx, qz);
                     Holder<Biome> biome = quarts.get(key);
                     if (biome == null) {
-                        biome = biomes.getNoiseBiome(qx, QuartPos.fromBlock(pos.getY()), qz, sampler);
+                        biome = Mc.noiseBiome(biomes, qx, QuartPos.fromBlock(pos.getY()), qz, sampler);
                         quarts.put(key, biome);
                     }
                     return biome;

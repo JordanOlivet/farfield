@@ -792,6 +792,10 @@ final class PreviewFeatures {
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
     private void layGround(ProtoChunk chunk) {
+        //? if >=26.3 {
+        /*// 26.3 (ADR-171): the material rules run column by column on the stand-in, as for the cells.
+        layGroundByColumns(chunk);
+        *///?} else {
         NoiseChunk shared = noiseChunk(Mc.chunkX(chunk.getPos()), Mc.chunkZ(chunk.getPos()));
         chunk.getOrCreateNoiseChunk(c -> shared);
         // Rules may raise the ground (badlands pillars, icebergs) or open it (a swamp's water, powder
@@ -806,7 +810,57 @@ final class PreviewFeatures {
                 level.structureManager(), surfaceBiomes, level.registryAccess().registryOrThrow(Registries.BIOME),
                 Blender.empty());
         //?}
+        //?}
     }
+
+    //? if >=26.3 {
+    /*/^*
+     * The stand-in's top and filler from the material rules, column by column
+     * ({@link SurfaceColumns}): 26.3's buildSurface asks for a noise chunk of
+     * the real generation. The eroded badlands' pillars raise the column with
+     * the dimension's default block.
+     ^/
+    private void layGroundByColumns(ProtoChunk chunk) {
+        int chunkX = Mc.chunkX(chunk.getPos());
+        int chunkZ = Mc.chunkZ(chunk.getPos());
+        if (!columnsTried) {
+            columnsTried = true;
+            columns = SurfaceColumns.create(level, surface, null, surfaceBiomes::getBiome, fluid, seaLevel);
+        }
+        if (columns == null) {
+            throw new IllegalStateException("the surface rules do not run column by column on 26.3");
+        }
+        int[] heights = new int[256];
+        int lowest = Integer.MAX_VALUE;
+        for (int z = 0; z < 16; z++) {
+            for (int x = 0; x < 16; x++) {
+                int h = chunk.getHeight(Heightmap.Types.OCEAN_FLOOR_WG, x, z) + 1;
+                heights[z * 16 + x] = h;
+                lowest = Math.min(lowest, h);
+            }
+        }
+        int bottom = Math.max(level.getMinBuildHeight(), Math.floorDiv(lowest - RULES_DEPTH, 16) * 16);
+        columns.chunk(heights);
+        BlockState[] out = new BlockState[2];
+        BlockState stone = surface.generatorSettings().value().defaultBlock();
+        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        try {
+            for (int z = 0; z < 16; z++) {
+                for (int x = 0; x < 16; x++) {
+                    int h = heights[z * 16 + x];
+                    int raised = columns.column((chunkX << 4) + x, (chunkZ << 4) + z, h, bottom, out);
+                    for (int y = h; y < raised - 2; y++) {
+                        chunk.setBlockState(pos.set(x, y, z), stone);
+                    }
+                    chunk.setBlockState(pos.set(x, raised - 1, z), out[0]);
+                    chunk.setBlockState(pos.set(x, raised - 2, z), out[1]);
+                }
+            }
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+    *///?}
 
     /** The noise chunk the surface rules share for the tile, made at the first chunk asked. */
     @SuppressWarnings({"unchecked", "rawtypes"})
@@ -828,6 +882,9 @@ final class PreviewFeatures {
     @SuppressWarnings({"unchecked", "rawtypes"})
     static NoiseChunk surfaceNoise(ServerLevel level, NoiseBasedChunkGenerator surface, BlockState fluid,
                                    int seaLevel, int chunkX, int chunkZ) {
+        //? if >=26.3 {
+        /*return null; // 26.3: the material rules read the densities themselves (SurfaceColumns)
+        *///?} else {
         var random = level.getChunkSource().randomState();
         {
             var noiseSettings = surface.generatorSettings().value();
@@ -838,6 +895,7 @@ final class PreviewFeatures {
             return new SurfaceNoise(16 / clamped.getCellWidth(), random, chunkX << 4, chunkZ << 4, clamped,
                     none, noiseSettings, (x, y, z) -> sea, level.getMinBuildHeight());
         }
+        //?}
     }
 
     /** What the surface rules read; then all a feature may read. */
@@ -848,6 +906,7 @@ final class PreviewFeatures {
             Heightmap.Types.OCEAN_FLOOR, Heightmap.Types.WORLD_SURFACE);
     private static final Heightmap.Types[] HEIGHTMAPS = ALL_HEIGHTMAPS.toArray(new Heightmap.Types[0]);
 
+    //? if <26.3 {
     /** A noise chunk for the surface rules alone: every block is above its preliminary surface. */
     private static final class SurfaceNoise extends NoiseChunk {
         private final int bottom;
@@ -865,6 +924,7 @@ final class PreviewFeatures {
             return bottom;
         }
     }
+    //?}
 
     /**
      * The biome source's biome of a quart column, sampled once per tile at
@@ -878,7 +938,7 @@ final class PreviewFeatures {
         long key = ChunkPos.asLong(qx, qz);
         var biome = quarts.get(key);
         if (biome == null) {
-            biome = biomes.getNoiseBiome(qx, qy, qz, sampler);
+            biome = Mc.noiseBiome(biomes, qx, qy, qz, sampler);
             quarts.put(key, biome);
         }
         return biome;
