@@ -44,6 +44,26 @@ public final class Mc {
         //?}
     }
 
+    /** The biome a biome source places at quart (x, y, z): since 26.3 through a resolver over the sampler. */
+    public static net.minecraft.core.Holder<Biome> noiseBiome(net.minecraft.world.level.biome.BiomeSource source,
+                                                              int x, int y, int z,
+                                                              net.minecraft.world.level.biome.Climate.Sampler sampler) {
+        //? if >=26.3 {
+        /*return source.createResolver(sampler).getNoiseBiome(x, y, z);
+        *///?} else {
+        return source.getNoiseBiome(x, y, z, sampler);
+        //?}
+    }
+
+    /** The height of the noise's cells: a setting up to 26.2, 8 blocks in 26.3's interpolation. */
+    public static int cellHeight(net.minecraft.world.level.levelgen.NoiseSettings noise) {
+        //? if >=26.3 {
+        /*return 8;
+        *///?} else {
+        return noise.getCellHeight();
+        //?}
+    }
+
     /** The level's world spawn point. */
     public static BlockPos spawnPos(ServerLevel level) {
         //? if >=1.21.11 {

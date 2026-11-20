@@ -60,6 +60,18 @@ stonecutter.parameters { sc ->
     sc.replacements.string(atLeast('26.3')) { r ->
         r.replace('s.getVisibility(net.minecraft.util.Util.getMillis())',
                 's.getVisibility(net.minecraft.util.Util.getMillis(), GlCompat.chunkFadeMillis(mc))')
+        // The preliminary surface is the chunk surface level, interpolated over 16 blocks.
+        r.replace('router.preliminarySurfaceLevel()', 'router.chunkSurfaceLevel()')
+        // A biome from a resolver, the cell height a constant, the noises an interface.
+        r.replace('d.biomes.getNoiseBiome(', 'Mc.noiseBiome(d.biomes, ')
+        r.replace('d.noise.getCellHeight()', 'Mc.cellHeight(d.noise)')
+        r.replace('final NormalNoise icebergPillar', 'final net.minecraft.world.level.levelgen.synth.Noise icebergPillar')
+        r.replace('final NormalNoise icebergSurface', 'final net.minecraft.world.level.levelgen.synth.Noise icebergSurface')
+        r.replace('icebergSurface.getValue(', 'icebergSurface.get(')
+        r.replace('icebergPillar.getValue(', 'icebergPillar.get(')
+        r.replace('icebergPillarRoof.getValue(', 'icebergPillarRoof.get(')
+        // The density functions move to a package of their own (and are compiled to samplers).
+        r.replace('net.minecraft.world.level.levelgen.DensityFunction', 'net.minecraft.world.level.levelgen.densityfunction.DensityFunction')
         // Iris 1.11.7: the DH program patch takes a set of names more (none here).
         r.replace('vertex, null, null, null, fragment, iris.getTextureMap());',
                 'vertex, null, null, null, fragment, iris.getTextureMap(), java.util.Set.of());')

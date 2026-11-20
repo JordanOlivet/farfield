@@ -1,10 +1,7 @@
-# Minecraft 26.3: the noise preview's sources that read the world generation 26.3
-# reworked (compiled density functions, the material system), left out until the
-# preview's port (ADR-171, phase 2). Its entry points have stand-ins in java/.
-io/lakio/farfield/server/ColumnDensity.java
-io/lakio/farfield/server/UncutDensity.java
+# Minecraft 26.3: shared sources this version leaves out (ADR-171). The noise
+# preview's port is in phases: 2a has the relief (stand-ins in java/ for the
+# features and the coarse ground), these wait for 2b (the material system) and
+# 2c (the features' stand-in world).
 io/lakio/farfield/server/SurfaceColumns.java
-io/lakio/farfield/server/PreviewFeatures.java
-io/lakio/farfield/server/CoarseGround.java
-io/lakio/farfield/mixin/client/WindowMixin.java
 io/lakio/farfield/server/FeatureSandbox.java
+io/lakio/farfield/mixin/client/WindowMixin.java

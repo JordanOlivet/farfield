@@ -140,7 +140,7 @@ final class NoisePreview {
         /** The generator, for the spike's exact heights. */
         final NoiseBasedChunkGenerator generator;
         /** {@link #density} with vanilla's per-column caches, one per preview thread (ADR-057). */
-        final ThreadLocal<DensityFunction> columnDensity;
+        final ThreadLocal<PointDensity> columnDensity;
         /**
          * {@link #sampler} with the same caches, shared by its six functions
          * (ADR-057), for a multi-noise biome source; any other source gets
@@ -154,8 +154,8 @@ final class NoisePreview {
          * each with the per-column caches.
          */
         final int cutBranches;
-        final ThreadLocal<DensityFunction> columnUncut;
-        final ThreadLocal<DensityFunction> columnInitial;
+        final ThreadLocal<PointDensity> columnUncut;
+        final ThreadLocal<PointDensity> columnInitial;
         final NoiseSettings noise;
         final int seaLevel;
         final BlockState defaultBlock;
@@ -225,12 +225,23 @@ final class NoisePreview {
             RandomState state = level.getChunkSource().randomState();
             biomes = generator.getBiomeSource();
             this.generator = generator;
+            //? if >=26.3 {
+            /*// Since 26.3 a climate sampler is made per use, over a sampler context (ADR-171).
+            sampler = state.createClimateSampler(net.minecraft.world.level.levelgen.densityfunction.SamplerContext.EMPTY_UNCACHED);
+            *///?} else {
             sampler = state.sampler();
-            density = state.router().finalDensity();
+            //?}
+            //? if >=26.3 {
+            /*// Since 26.3 the world keeps no wired router: its sampler compiles the settings' own (ADR-171).
+            net.minecraft.world.level.levelgen.NoiseRouter router = generator.generatorSettings().value().noiseRouter();
+            *///?} else {
+            net.minecraft.world.level.levelgen.NoiseRouter router = state.router();
+            //?}
+            density = router.finalDensity();
             // The cached copy only where the climate is what the biome source reads (ADR-157): Fabric's End
             // biome API asks the world's own sampler for the seed it set on it, and a copy has none.
             columnSampler = biomes instanceof MultiNoiseBiomeSource
-                    ? ThreadLocal.withInitial(() -> ColumnDensity.of(sampler))
+                    ? ThreadLocal.withInitial(() -> ColumnDensity.climate(state, sampler))
                     : ThreadLocal.withInitial(() -> sampler);
             int[] cut = new int[1];
             DensityFunction uncut = UncutDensity.of(density, cut);
@@ -238,15 +249,15 @@ final class NoisePreview {
             // Up to 1.21.10 the density without jaggedness, searched for the preliminary surface;
             // since, the router gives that surface's height itself (a 2D function).
             //? if >=1.21.11 {
-            /*DensityFunction initial = state.router().preliminarySurfaceLevel();
+            /*DensityFunction initial = router.preliminarySurfaceLevel();
             *///?} else {
-            DensityFunction initial = state.router().initialDensityWithoutJaggedness();
+            DensityFunction initial = router.initialDensityWithoutJaggedness();
             //?}
             // One set of caches per thread for the three: each computed the terrain's 2D functions on its
             // own, three times per column of the surface search. The climate sampler keeps its own: it reads
             // other columns (quart corners) in between, which would push the shared single entries out.
-            ThreadLocal<DensityFunction[]> columns =
-                    ThreadLocal.withInitial(() -> ColumnDensity.of(density, uncut, initial));
+            ThreadLocal<PointDensity[]> columns =
+                    ThreadLocal.withInitial(() -> ColumnDensity.points(state, density, uncut, initial));
             columnDensity = ThreadLocal.withInitial(() -> columns.get()[0]);
             columnUncut = ThreadLocal.withInitial(() -> columns.get()[1]);
             columnInitial = ThreadLocal.withInitial(() -> columns.get()[2]);
@@ -284,7 +295,7 @@ final class NoisePreview {
         }
 
         boolean solid(int x, int y, int z) {
-            return columnDensity.get().compute(new DensityFunction.SinglePointContext(x, y, z)) > 0;
+            return columnDensity.get().at(x, y, z) > 0;
         }
 
         Path profilesFile() {
@@ -1071,11 +1082,11 @@ final class NoisePreview {
      * bottom of the world, every End column came out empty (ADR-158).
      */
     private static int preliminary(Dimension d, int x, int z, int hint) {
-        DensityFunction f = d.columnInitial.get();
+        PointDensity f = d.columnInitial.get();
         //? if >=1.21.11 {
         /*// The router's own preliminary surface: its search stops at the world's floor (-64 in the
         // Overworld) and the End's is zero, so a height at or under the floor is none, as before.
-        int found = net.minecraft.util.Mth.floor(f.compute(new DensityFunction.SinglePointContext(x, 0, z)));
+        int found = net.minecraft.util.Mth.floor(f.at(x, 0, z));
         return found <= d.noise.minY() ? NO_ESTIMATE : found;
         *///?} else {
         return preliminaryFromDensity(d, f, x, z, hint);
@@ -1083,7 +1094,7 @@ final class NoisePreview {
     }
 
     /** {@link #preliminary} from the density without jaggedness, as vanilla up to 1.21.10. */
-    private static int preliminaryFromDensity(Dimension d, DensityFunction f, int x, int z, int hint) {
+    private static int preliminaryFromDensity(Dimension d, PointDensity f, int x, int z, int hint) {
         int minY = d.noise.minY();
         int step = d.noise.getCellHeight();
         int top = minY + d.noise.height();
@@ -1124,7 +1135,7 @@ final class NoisePreview {
         if (surface <= minY) {
             return surface;
         }
-        DensityFunction density = d.columnUncut.get();
+        PointDensity density = d.columnUncut.get();
         int step = d.noise.getCellHeight();
         int solid = surface - 1;
         while (solid - step >= minY && solid(density, x, solid - step, z)) {
@@ -1142,8 +1153,8 @@ final class NoisePreview {
         return solid;
     }
 
-    private static boolean above(DensityFunction f, int x, int y, int z) {
-        return f.compute(new DensityFunction.SinglePointContext(x, y, z)) > PRELIMINARY_THRESHOLD;
+    private static boolean above(PointDensity f, int x, int y, int z) {
+        return f.at(x, y, z) > PRELIMINARY_THRESHOLD;
     }
 
     /**
@@ -1156,7 +1167,7 @@ final class NoisePreview {
      * the surface) the search goes on down on the full density, then climbs
      * on it again, below the first result.
      */
-    private static int surfaceFromEstimate(Dimension d, DensityFunction density, boolean check, int x, int z,
+    private static int surfaceFromEstimate(Dimension d, PointDensity density, boolean check, int x, int z,
                                            int estimate) {
         int minY = d.noise.minY();
         int step = d.noise.getCellHeight();
@@ -1171,7 +1182,7 @@ final class NoisePreview {
         }
         int h = lo < minY ? minY : climb(density, x, z, lo, step, top);
         if (check && h > minY && h <= top && !d.solid(x, h - 1, z)) {
-            DensityFunction full = d.columnDensity.get();
+            PointDensity full = d.columnDensity.get();
             int ceiling = h - 1;
             int down = ceiling - step;
             while (down >= minY && !solid(full, x, down, z)) {
@@ -1188,7 +1199,7 @@ final class NoisePreview {
      * solid (a ledge over a gap, a noodle cave under the surface), on from
      * there. Never above {@code top}.
      */
-    private static int climb(DensityFunction density, int x, int z, int lo, int step, int top) {
+    private static int climb(PointDensity density, int x, int z, int lo, int step, int top) {
         while (true) {
             int hi = lo + step;
             while (hi <= top && solid(density, x, hi, z)) {
@@ -1210,12 +1221,12 @@ final class NoisePreview {
         }
     }
 
-    private static boolean solid(DensityFunction f, int x, int y, int z) {
-        return f.compute(new DensityFunction.SinglePointContext(x, y, z)) > 0;
+    private static boolean solid(PointDensity f, int x, int y, int z) {
+        return f.at(x, y, z) > 0;
     }
 
     /** {@link #bisect(Dimension, int, int, int, int)} on another density. */
-    private static int bisect(DensityFunction f, int x, int z, int lo, int hi) {
+    private static int bisect(PointDensity f, int x, int z, int lo, int hi) {
         while (hi - lo > 1) {
             int mid = (lo + hi) >>> 1;
             if (solid(f, x, mid, z)) {
