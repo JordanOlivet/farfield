@@ -5317,3 +5317,59 @@ user's "fais les test qu'il reste".
   ints): the preview's column-by-column rules failed to resolve on 26.2 and
   fell back to the stand-in chunks; and since 26.1 water's biome color is
   its fluid model's tint source, so LOD water was baked grey (looks bake 2).
+
+
+## ADR-172 — A client API: the LOD depth for mods that draw over the far terrain
+
+Status: accepted, 2026-11-20. Makes the `api` project public (ADR-006).
+
+- **Context**: a player asked for compatibility with Create: Sky
+  (https://www.curseforge.com/minecraft/mc-mods/create-sky, NeoForge 1.21.1,
+  All Rights Reserved), which replaces the clouds with 3D clouds, cloud
+  shadows and light shafts. Next to Farfield its clouds stopped short of the
+  horizon, cast no shadow on the LODs and were drawn over every LOD pixel: the
+  LODs draw with their own depth range, then the main depth is cleared for the
+  game's terrain, so a mod that reads the depth after the level sees sky where
+  the LODs are. The mod sizes its clouds from the vanilla render distance and
+  reads Distant Horizons' depth, matrices and distance when that mod is there;
+  run alone at a render distance of 32 it shows the shadows a player expects.
+  The user: "une fois livrée, la compatibilité serait du ressort du créateur de
+  Create Sky".
+- **Decision**:
+  - **`FarfieldClientApi`** (`api`, package `io.lakio.farfield.api.client`,
+    `FarfieldApi.API_VERSION` 1): `requestLodDepth(modId)` once, then
+    `lodFrame()` each frame, a `LodFrame` with `active()`, `depthTexture()`
+    (a depth texture the size of the main target, 1 where no LOD drew),
+    `reverseZ()` and `zeroToOne()` (false on every version: the LODs keep
+    OpenGL's default convention, ADR-171), `inverseViewProjection(float[16])`
+    (normalized device position to a camera-relative position in blocks) and
+    `viewDistance()` (the farthest LOD geometry drawn, in blocks). The state
+    behind it lives in `api.internal` (not API), written by the renderer.
+  - **Cost only when asked**: after the opaque LODs drew and before the main
+    depth is cleared, `LodDepthShare` copies the depth (`glCopyImageSubData`,
+    same sized format as the game's) into a texture of its own, once a mod
+    asked. Logged: `LOD depth shared with <mods>`, then the size and format on
+    the first copy; a failed copy logs `LOD depth not shared` and stops.
+  - **The matrix**: `LodDepthMath` (`core`, unit tested) builds the LODs'
+    view-projection as `lod.vert` does (the game's x, y and w, the depth row
+    over the LODs' own near and far planes), whatever the game's own depth
+    row, reversed on 26.2.
+  - **Not shared**: under a shader pack (`active()` stays false; the packs'
+    LOD paths have their own depth), and the translucent LODs (water writes no
+    depth).
+  - **Consumers write their own bridge**: Farfield never patches another mod.
+    The check against Create: Sky used a test-only bridge mod outside the
+    repository, playing the part of the other author's code; the mod's own jar
+    was not modified.
+- **Result**: dev, NeoForge 1.21.1, 3840x2019, Farfield + Create: Sky 0.1.0 +
+  the test bridge: `LOD depth shared: 3840x2019, depth format 0x81a6`, the
+  bridge read texture 66 and 4,104 blocks. The clouds reach the LOD horizon,
+  distant LOD mountains stand in front of the clouds behind them, the cloud
+  shadows fall on the LODs and carry on across the vanilla edge. The LOD
+  renderer's times did not move (313 against 342 us on the render thread,
+  2,191 against 2,224 us on the GPU, same view). The frame rate fell from 251
+  to 209 fps and from 219 to 157 at the high view: Create: Sky now draws its
+  far and horizon clouds, as it does beside Distant Horizons. All 8 jars build
+  (1.21.1 to 26.2); `LodDepthMathTest` passes, a reversed infinite projection
+  included. Not checked: 26.x and Fabric in a game (no consumer exists there),
+  draw distances above 4,096 blocks with the other mod's far clouds.
