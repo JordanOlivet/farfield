@@ -84,7 +84,7 @@ is the world position.
 | `reverseZ()` | nearer surfaces have larger values (far is 0); false today on every version |
 | `zeroToOne()` | normalized device depth is the texture value itself; false today (it is `value * 2 - 1`) |
 | `inverseViewProjection(float[16])` | column-major, as `glUniformMatrix4fv` takes it with transpose false: normalized device position to camera-relative position, in blocks, after the division by w |
-| `viewDistance()` | the farthest LOD geometry drawn, in blocks from the camera |
+| `viewDistance()` | the farthest LOD geometry drawn, in blocks from the camera, the noise preview's included; never the draw distance setting (players set it up to 33,554,432 blocks); it grows while the LODs load |
 
 Notes:
 
@@ -95,3 +95,7 @@ Notes:
   `viewDistance()` on your side.
 - Test the flags rather than assuming them: a later Farfield version may draw
   its LODs with reversed depth.
+- The game turns its clouds off below a render distance of 4 chunks, a
+  common setting with Farfield since the LODs draw the rest. If your mod
+  keeps its clouds on there for another distant terrain mod, do the same
+  when `lodFrame()` is active.

@@ -33,6 +33,8 @@ final class LodDepthShare {
     private boolean failed;
     private boolean checked;
     private int loggedConsumers;
+    /** The view distance last logged: logged again once it moved by a quarter (ADR-173). */
+    private double loggedExtent;
 
     /** At the start of the level's frame: nothing to read until the LODs drew. */
     void beginFrame() {
@@ -45,8 +47,8 @@ final class LodDepthShare {
      */
     void capture(Matrix4f projectionMatrix, Matrix4f viewRotation, float near, float far, double extent) {
         Set<String> consumers = ClientApiState.consumers();
-        if (consumers.isEmpty() || failed) {
-            return;
+        if (consumers.isEmpty() || failed || extent <= 0) {
+            return; // extent 0: no LOD drawn yet, the frame stays inactive
         }
         if (consumers.size() != loggedConsumers) {
             loggedConsumers = consumers.size();
@@ -79,6 +81,10 @@ final class LodDepthShare {
         }
         // The LODs draw with OpenGL's default clip range and depth 1 far, on every version (ADR-171).
         ClientApiState.publish(texture, false, false, inverse, (float) extent);
+        if (Math.abs(extent - loggedExtent) > loggedExtent / 4) {
+            loggedExtent = extent;
+            Farfield.LOG.info("LOD depth shared: view distance {} blocks", Math.round(extent));
+        }
     }
 
     private boolean ensureTexture(int source, int w, int h) {
