@@ -177,7 +177,11 @@ final class SurfaceColumns {
         // Top down as buildSurface walks: a rule that sets a fluid or air at the top (a swamp's water)
         // leaves the top to the block under it, as the heightmap the stand-ins were read by did.
         for (int depth = 1, y = h - 1; found < 2 && depth <= PreviewFeatures.CRUST && y >= bottom; depth++, y--) {
+            //? if >=26.2 {
+            /*a.updateY().invoke(context, depth, y - bottom + 1, water, y);
+            *///?} else {
             a.updateY().invoke(context, depth, y - bottom + 1, water, x, y, z);
+            //?}
             BlockState state = (BlockState) tryApply.invoke(rule, x, y, z);
             if (state == null) {
                 state = defaultBlock;
@@ -267,7 +271,12 @@ final class SurfaceColumns {
             }
             if (p.length == 2 && p[0] == int.class && p[1] == int.class) {
                 updateXZ = updateXZ == null ? m : null;
+            //? if >=26.2 {
+            /*// Since 26.2 the Y update takes the block's height only: X and Z stay those of updateXZ.
+            } else if (p.length == 4 && allInts(p)) {
+            *///?} else {
             } else if (p.length == 6 && allInts(p)) {
+            //?}
                 updateY = updateY == null ? m : null;
             }
         }
