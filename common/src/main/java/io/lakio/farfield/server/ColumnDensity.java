@@ -95,6 +95,21 @@ final class ColumnDensity {
     }
 
     /**
+     * The {@code roots} as densities read at one block, with one set of
+     * column caches ({@link #of(DensityFunction...)}); {@code state} is the
+     * world's (26.3 compiles the functions through it, ADR-171).
+     */
+    static PointDensity[] points(net.minecraft.world.level.levelgen.RandomState state, DensityFunction... roots) {
+        DensityFunction[] cached = of(roots);
+        PointDensity[] points = new PointDensity[cached.length];
+        for (int i = 0; i < cached.length; i++) {
+            DensityFunction f = cached[i];
+            points[i] = (x, y, z) -> f.compute(new DensityFunction.SinglePointContext(x, y, z));
+        }
+        return points;
+    }
+
+    /**
      * The {@code roots} with one set of caches: the 2D functions they share
      * (the terrain splines under the final density, its uncut copy and the
      * initial density) are computed once per column for all of them, not
@@ -111,6 +126,11 @@ final class ColumnDensity {
     }
 
     /** A climate sampler whose six functions share their caches. */
+    /** A climate sampler with column caches, per thread ({@link #of(Climate.Sampler)}). */
+    static Climate.Sampler climate(net.minecraft.world.level.levelgen.RandomState state, Climate.Sampler sampler) {
+        return of(sampler);
+    }
+
     static Climate.Sampler of(Climate.Sampler sampler) {
         Caches caches = new Caches();
         return new Climate.Sampler(mapped(sampler.temperature(), caches), mapped(sampler.humidity(), caches),
