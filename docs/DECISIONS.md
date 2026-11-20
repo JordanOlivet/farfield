@@ -5348,3 +5348,27 @@ Status: accepted, 2026-11-20. Makes the `api` project public (ADR-006).
   (1.21.1 to 26.2); `LodDepthMathTest` passes, a reversed infinite projection
   included. Not checked: 26.x and Fabric in a game (no consumer exists there),
   draw distances above 4,096 blocks with the other mod's far clouds.
+
+
+## ADR-173 — The client API's view distance: the geometry drawn, not the setting
+
+Status: accepted, 2026-11-20. Amends ADR-172.
+
+- **Context**: in the user's Cobblemon pack (NeoForge 1.21.1, Sodium 0.8.13,
+  Iris without a shader pack), with Create: Sky and the test bridge, the
+  bridge logged `33554440 blocks`: `LodFrame.viewDistance()` returned the
+  renderer's `drawnExtent`, which is at least the draw distance setting, and
+  the pack runs it at its maximum, 33,554,432. Nothing is drawn that far; a
+  consumer that scales an effect by the distance (Create: Sky fades over 45 to
+  85 % of it) never shows it. The user on the noise preview: it looks like
+  LODs, so it counts.
+- **Decision**: `viewDistance()` is the farthest geometry of the last applied
+  draw list, the preview sections included (they are in the same list and
+  write the same depth), plus the reselection step, capped by `drawnExtent`.
+  Until a list with geometry is applied the frame stays inactive. Logged:
+  `LOD depth shared: view distance N blocks`, again each time it moves by a
+  quarter. The depth range and the packs' LOD distance still follow
+  `drawnExtent` (ADR-140, ADR-141). The API doc also tells authors that the
+  game turns its clouds off below 4 chunks, a common setting with Farfield
+  (the user's pack check: no clouds below 4); keeping them on is the
+  consumer's call, as Create: Sky already does for Distant Horizons.

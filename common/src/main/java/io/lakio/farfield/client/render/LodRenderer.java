@@ -475,6 +475,12 @@ public final class LodRenderer {
      */
     private double drawnExtent = RenderConfig.DEFAULT_DRAW_DISTANCE;
     /**
+     * The farthest LOD geometry in the last applied draw list (preview sections included), in blocks
+     * from the camera: unlike {@link #drawnExtent}, never the draw distance setting itself, which can
+     * be far past anything drawn. Told to other mods (ADR-173).
+     */
+    private double geometryExtent;
+    /**
      * The nearest drawn LOD geometry from the camera at the last selection,
      * in blocks, less the reselection step: the depth range's near plane
      * moves out to half of it (ADR-141).
@@ -2364,6 +2370,8 @@ public final class LodRenderer {
         // The camera moves up to the reselection distance before the next selection.
         drawnExtent = Math.min(MAX_DISTANCE * 4, Math.max(lastSelectionDistance, Math.sqrt(applyExtentSq))
                 + Math.sqrt(RESELECT_DISTANCE_SQ));
+        geometryExtent = applyExtentSq == 0 ? 0
+                : Math.min(drawnExtent, Math.sqrt(applyExtentSq) + Math.sqrt(RESELECT_DISTANCE_SQ));
         drawnNearest = applyNearestSq == Double.MAX_VALUE ? 0
                 : Math.max(0, Math.sqrt(applyNearestSq) - Math.sqrt(RESELECT_DISTANCE_SQ));
         if (FrameProbe.enabled()) {
@@ -5474,7 +5482,7 @@ public final class LodRenderer {
             return;
         }
         // The LODs' depth for the mods that asked (clouds, sky), before it goes (ADR-172).
-        depthShare.capture(projection, viewRotation, depthNear, depthFar, drawnExtent);
+        depthShare.capture(projection, viewRotation, depthNear, depthFar, geometryExtent);
         // Vanilla terrain draws next with its own depth range: start it clean.
         GlCompat.clearMainDepth();
     }
