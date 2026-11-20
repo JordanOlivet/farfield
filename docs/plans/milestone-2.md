@@ -470,8 +470,10 @@ The user (2026-11-18), after 1.0.0: the other 1.21.x, starting with 1.21.11.
   - [~] H.8d 26.3, in two phases (the user, 2026-11-20). Phase 1 done:
     builds, dev servers boot, the importer reads 26.3's palettes, the dev
     clients draw the LODs on both loaders (2026-11-20), the preview off.
-    Remains: phase 2, the noise preview on the compiled density samplers
-    and the material system.
+    Phase 2 built on the server (2026-11-20): the preview's relief on the
+    compiled samplers, its ground on the material system, its features,
+    the cave cut; a pregeneration on the Fabric dev server, no failure.
+    Remains: the preview seen in a dev client, the spikes on 26.3.
   - [~] H.8e Rehearsal nodes for 26.1.2, 26.2 (2026-11-19) and 26.3 (SDL3
     window, 2026-11-20), CI and
     `release.yml` on Java 25 with the 26.x targets, the docs.
