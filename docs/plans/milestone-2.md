@@ -480,7 +480,9 @@ The user (2026-11-18), after 1.0.0: the other 1.21.x, starting with 1.21.11.
     the Fabric 26.3 dev server (2026-11-20).
   - [~] H.8e Rehearsal nodes for 26.1.2, 26.2 (2026-11-19) and 26.3 (SDL3
     window, 2026-11-20), CI and
-    `release.yml` on Java 25 with the 26.x targets, the docs.
+    `release.yml` on Java 25 with the 26.x targets, the docs. `release.yml`
+    has the six 26.x targets with Java 25 (2026-11-20, PR #4): not run until
+    the next tag. Remains: that release, README and store text.
 
 ## M2.G — Ideas to study (the user, 2026-11-09)
 
