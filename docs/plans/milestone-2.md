@@ -467,7 +467,7 @@ The user (2026-11-18), after 1.0.0: the other 1.21.x, starting with 1.21.11.
   - [~] H.8c 26.2 on both loaders: builds, dev servers boot, the import
     reads 26.2 chunks; dev clients checked 2026-11-19 after the reversed
     depth fix (ADR-171). Remains: as H.8b.
-  - [~] H.8d 26.3, in two phases (the user, 2026-11-20). Phase 1 done:
+  - [x] H.8d 26.3, in two phases (the user, 2026-11-20). Phase 1 done:
     builds, dev servers boot, the importer reads 26.3's palettes, the dev
     clients draw the LODs on both loaders (2026-11-20), the preview off.
     Phase 2 built on the server (2026-11-20): the preview's relief on the
@@ -476,7 +476,8 @@ The user (2026-11-18), after 1.0.0: the other 1.21.x, starting with 1.21.11.
     The preview seen in dev clients on both loaders (2026-11-20), with
     26.x water tinted from its fluid model. Tiles as fast as 26.2's (109
     in 0.5 min, Fabric dev server); a pregeneration no longer stops when an
-    empty server pauses (ADR-172). Remains: the spikes on 26.3.
+    empty server pauses (ADR-172). The spikes shared again and run on
+    the Fabric 26.3 dev server (2026-11-20).
   - [~] H.8e Rehearsal nodes for 26.1.2, 26.2 (2026-11-19) and 26.3 (SDL3
     window, 2026-11-20), CI and
     `release.yml` on Java 25 with the 26.x targets, the docs.

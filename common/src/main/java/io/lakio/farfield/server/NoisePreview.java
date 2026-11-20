@@ -225,18 +225,8 @@ final class NoisePreview {
             RandomState state = level.getChunkSource().randomState();
             biomes = generator.getBiomeSource();
             this.generator = generator;
-            //? if >=26.3 {
-            /*// Since 26.3 a climate sampler is made per use, over a sampler context (ADR-171).
-            sampler = state.createClimateSampler(net.minecraft.world.level.levelgen.densityfunction.SamplerContext.EMPTY_UNCACHED);
-            *///?} else {
-            sampler = state.sampler();
-            //?}
-            //? if >=26.3 {
-            /*// Since 26.3 the world keeps no wired router: its sampler compiles the settings' own (ADR-171).
-            net.minecraft.world.level.levelgen.NoiseRouter router = generator.generatorSettings().value().noiseRouter();
-            *///?} else {
-            net.minecraft.world.level.levelgen.NoiseRouter router = state.router();
-            //?}
+            sampler = Mc.climateSampler(state);
+            net.minecraft.world.level.levelgen.NoiseRouter router = Mc.noiseRouter(state, generator);
             density = router.finalDensity();
             // The cached copy only where the climate is what the biome source reads (ADR-157): Fabric's End
             // biome API asks the world's own sampler for the seed it set on it, and a copy has none.

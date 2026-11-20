@@ -98,7 +98,7 @@ final class GenerationSpike {
     private static void run(ServerLevel level, int side, Consumer<String> report) throws Exception {
         Random random = new Random(level.getSeed() ^ System.nanoTime());
         noise(level, random, report);
-        for (ChunkStatus status : List.of(ChunkStatus.NOISE, ChunkStatus.SURFACE, ChunkStatus.FULL)) {
+        for (ChunkStatus status : List.of(ChunkStatus.NOISE, Mc.SURFACE_STATUS, ChunkStatus.FULL)) {
             generate(level, status, farChunk(random), farChunk(random), side, report);
         }
         report.accept("Generation spike done.");
@@ -123,10 +123,27 @@ final class GenerationSpike {
         }
     }
 
+    /**
+     * The world's noise for the spike's threads: {@code points} per thread, the
+     * density without jaggedness (or the preliminary surface's height, since
+     * 1.21.11) then the final density, read at single blocks.
+     */
     private record Noise(ServerLevel level, ChunkGenerator generator, RandomState state, BiomeSource biomes,
-                         Climate.Sampler sampler, DensityFunction density, DensityFunction finalDensity,
+                         ThreadLocal<Climate.Sampler> sampler, ThreadLocal<PointDensity[]> points,
                          NoiseSettings settings) {
     }
+
+    private static final int DENSITY = 0;
+    private static final int FINAL_DENSITY = 1;
+    /**
+     * Since 1.21.11 the router gives the preliminary surface's height (a 2D
+     * function), not a density to search: read as is, no threshold to try.
+     */
+    //? if >=1.21.11 {
+    /*private static final boolean SURFACE_HEIGHT = true;
+    *///?} else {
+    private static final boolean SURFACE_HEIGHT = false;
+    //?}
 
     private static void noise(ServerLevel level, Random random, Consumer<String> report) throws Exception {
         ServerChunkCache chunks = level.getChunkSource();
@@ -136,12 +153,17 @@ final class GenerationSpike {
             return;
         }
         RandomState state = chunks.randomState();
-        Noise noise = new Noise(level, generator, state, generator.getBiomeSource(), state.sampler(),
-                //? if >=1.21.11 {
-                /*state.router().preliminarySurfaceLevel(), state.router().finalDensity(),
-                *///?} else {
-                state.router().initialDensityWithoutJaggedness(), state.router().finalDensity(),
-                //?}
+        net.minecraft.world.level.levelgen.NoiseRouter router = Mc.noiseRouter(state, noiseGenerator);
+        //? if >=1.21.11 {
+        /*DensityFunction density = router.preliminarySurfaceLevel();
+        *///?} else {
+        DensityFunction density = router.initialDensityWithoutJaggedness();
+        //?}
+        DensityFunction finalDensity = router.finalDensity();
+        Climate.Sampler sampler = Mc.climateSampler(state);
+        Noise noise = new Noise(level, generator, state, generator.getBiomeSource(),
+                ThreadLocal.withInitial(() -> ColumnDensity.climate(state, sampler)),
+                ThreadLocal.withInitial(() -> ColumnDensity.points(state, density, finalDensity)),
                 noiseGenerator.generatorSettings().value().noiseSettings());
         int threads = Math.max(1, Runtime.getRuntime().availableProcessors() / 2);
         ExecutorService pool = Executors.newFixedThreadPool(threads, r -> {
@@ -200,10 +222,13 @@ final class GenerationSpike {
                 int exact = noise.generator.getBaseHeight(x, z, Heightmap.Types.OCEAN_FLOOR_WG, noise.level, noise.state);
                 columns++;
                 for (int v = 0; v < variants; v++) {
+                    if (SURFACE_HEIGHT && v > 0 && v <= THRESHOLDS.length) {
+                        continue;
+                    }
                     long t0 = System.nanoTime();
                     int found = v == 0 ? preliminarySurface(noise, x, z)
-                            : v <= THRESHOLDS.length ? surface(noise, noise.density, x, z, THRESHOLDS[v - 1])
-                            : surface(noise, noise.finalDensity, x, z, 0);
+                            : v <= THRESHOLDS.length ? surface(noise, DENSITY, x, z, THRESHOLDS[v - 1])
+                            : surface(noise, FINAL_DENSITY, x, z, 0);
                     nanos[v] += System.nanoTime() - t0;
                     int d = found - exact;
                     sum[v] += Math.abs(d);
@@ -214,6 +239,9 @@ final class GenerationSpike {
             }
         }
         for (int v = 0; v < variants; v++) {
+            if (SURFACE_HEIGHT && v > 0 && v <= THRESHOLDS.length) {
+                continue;
+            }
             String label = v == 0 ? "preliminary surface" : v <= THRESHOLDS.length
                     ? "threshold " + THRESHOLDS[v - 1] + " refined" : "final density refined";
             String line = String.format(Locale.ROOT,
@@ -231,17 +259,18 @@ final class GenerationSpike {
      * jaggedness exceeds {@code threshold}: scanned down by cell height, then
      * refined to the block by bisection inside the cell.
      */
-    private static int surface(Noise noise, DensityFunction density, int x, int z, double threshold) {
+    private static int surface(Noise noise, int which, int x, int z, double threshold) {
+        PointDensity density = noise.points.get()[which];
         int minY = noise.settings.minY();
-        int step = noise.settings.getCellHeight();
+        int step = Mc.cellHeight(noise.settings);
         for (int y = minY + noise.settings.height(); y >= minY; y -= step) {
-            if (density.compute(new DensityFunction.SinglePointContext(x, y, z)) > threshold) {
+            if (density.at(x, y, z) > threshold) {
                 // Solid at y, free at y + step (or above the top): bisect.
                 int lo = y;
                 int hi = y + step;
                 while (hi - lo > 1) {
                     int mid = (lo + hi) >>> 1;
-                    if (density.compute(new DensityFunction.SinglePointContext(x, mid, z)) > threshold) {
+                    if (density.at(x, mid, z) > threshold) {
                         lo = mid;
                     } else {
                         hi = mid;
@@ -276,19 +305,26 @@ final class GenerationSpike {
                     : preliminarySurface(noise, x, z);
             checksum += height * 31L;
             if (mode != Mode.PRELIMINARY) {
-                Holder<Biome> biome = noise.biomes.getNoiseBiome(QuartPos.fromBlock(x), QuartPos.fromBlock(height),
-                        QuartPos.fromBlock(z), noise.sampler);
+                Holder<Biome> biome = Mc.noiseBiome(noise.biomes, QuartPos.fromBlock(x), QuartPos.fromBlock(height),
+                        QuartPos.fromBlock(z), noise.sampler.get());
                 checksum += biome.hashCode();
             }
         }
         return checksum;
     }
 
-    /** {@code NoiseChunk.computePreliminarySurfaceLevel}: the highest cell top above the density threshold. */
+    /**
+     * {@code NoiseChunk.computePreliminarySurfaceLevel}: the highest cell top
+     * above the density threshold; since 1.21.11 the router's height itself.
+     */
     private static int preliminarySurface(Noise noise, int x, int z) {
+        PointDensity density = noise.points.get()[DENSITY];
+        if (SURFACE_HEIGHT) {
+            return (int) Math.floor(density.at(x, 0, z));
+        }
         int minY = noise.settings.minY();
-        for (int y = minY + noise.settings.height(); y >= minY; y -= noise.settings.getCellHeight()) {
-            if (noise.density.compute(new DensityFunction.SinglePointContext(x, y, z)) > 0.390625) {
+        for (int y = minY + noise.settings.height(); y >= minY; y -= Mc.cellHeight(noise.settings)) {
+            if (density.at(x, y, z) > 0.390625) {
                 return y;
             }
         }
