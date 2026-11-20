@@ -101,7 +101,7 @@ final class SurfaceSpike {
         int seaLevel = generator.getSeaLevel();
         boolean sea = !settings.defaultFluid().isAir();
         var biomes = generator.getBiomeSource();
-        var sampler = level.getChunkSource().randomState().sampler();
+        var sampler = Mc.climateSampler(level.getChunkSource().randomState());
         PreviewFeatures stand = new PreviewFeatures(level, biomes, sampler, sea ? settings.defaultFluid() : null,
                 seaLevel, null, StreamServer.settings(), new PreviewTile(), 0, 0, (x, z) -> false, null);
 
@@ -121,7 +121,7 @@ final class SurfaceSpike {
                 long t = System.nanoTime();
                 // On the server thread: C2ME's chunk system hands no chunk to another thread (null).
                 ChunkAccess real = level.getServer().submit(() -> level.getChunkSource().getChunk(chunkX, chunkZ,
-                        ChunkStatus.SURFACE, true)).join();
+                        Mc.SURFACE_STATUS, true)).join();
                 realNanos += System.nanoTime() - t;
                 int[] heights = new int[256];
                 for (int z = 0; z < 16; z++) {
@@ -147,7 +147,7 @@ final class SurfaceSpike {
                         }
                         int bx = (chunkX << 4) + gx * PreviewTile.GRID + PreviewTile.GRID / 2;
                         int bz = (chunkZ << 4) + gz * PreviewTile.GRID + PreviewTile.GRID / 2;
-                        Holder<Biome> biome = biomes.getNoiseBiome(QuartPos.fromBlock(bx), QuartPos.fromBlock(high),
+                        Holder<Biome> biome = Mc.noiseBiome(biomes, QuartPos.fromBlock(bx), QuartPos.fromBlock(high),
                                 QuartPos.fromBlock(bz), sampler);
                         BlockState guess = NoisePreview.guess(biome, bx, high, bz, high - low >= NoisePreview.cliffRise(),
                                 seaLevel, sea, false, settings.defaultBlock())[0];
@@ -179,7 +179,7 @@ final class SurfaceSpike {
                                                     + " at y " + realY + ", the real chunk's biome there "
                                                     + key(real.getNoiseBiome(QuartPos.fromBlock(x), QuartPos.fromBlock(realY),
                                                     QuartPos.fromBlock(z))) + "; ruled " + name(r) + " at y " + ry
-                                                    + ", the biome source's there " + key(biomes.getNoiseBiome(
+                                                    + ", the biome source's there " + key(Mc.noiseBiome(biomes,
                                                     QuartPos.fromBlock(wx), QuartPos.fromBlock(ry), QuartPos.fromBlock(wz),
                                                     sampler)) + ", over the ruled top: "
                                                     + name(rules.getBlockState(new BlockPos(x, ry + 1, z)));

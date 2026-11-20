@@ -64,6 +64,39 @@ public final class Mc {
         //?}
     }
 
+    /** The status that builds a chunk's surface: {@code SURFACE}, since 26.3 part of {@code TERRAIN}. */
+    public static final net.minecraft.world.level.chunk.status.ChunkStatus SURFACE_STATUS =
+            //? if >=26.3 {
+            /*net.minecraft.world.level.chunk.status.ChunkStatus.TERRAIN;
+            *///?} else {
+            net.minecraft.world.level.chunk.status.ChunkStatus.SURFACE;
+            //?}
+
+    /** The world's climate sampler: since 26.3 one is made per use, over a sampler context (ADR-171). */
+    public static net.minecraft.world.level.biome.Climate.Sampler climateSampler(
+            net.minecraft.world.level.levelgen.RandomState state) {
+        //? if >=26.3 {
+        /*return state.createClimateSampler(net.minecraft.world.level.levelgen.densityfunction.SamplerContext.EMPTY_UNCACHED);
+        *///?} else {
+        return state.sampler();
+        //?}
+    }
+
+    /**
+     * The noise router the world's densities come from: the world's wired one
+     * up to 26.2; since 26.3 the world keeps none and its sampler compiles the
+     * settings' own (ADR-171).
+     */
+    public static net.minecraft.world.level.levelgen.NoiseRouter noiseRouter(
+            net.minecraft.world.level.levelgen.RandomState state,
+            net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator generator) {
+        //? if >=26.3 {
+        /*return generator.generatorSettings().value().noiseRouter();
+        *///?} else {
+        return state.router();
+        //?}
+    }
+
     /** The level's world spawn point. */
     public static BlockPos spawnPos(ServerLevel level) {
         //? if >=1.21.11 {
