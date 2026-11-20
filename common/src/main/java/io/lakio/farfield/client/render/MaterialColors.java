@@ -79,8 +79,9 @@ final class MaterialColors {
     /**
      * Raised whenever a look is baked differently ({@link #build}): looks
      * cached by an older bake are dropped ({@link LooksCache}, ADR-078).
+     * 2: water tinted from its fluid model on 26.x.
      */
-    static final int BAKE_VERSION = 1;
+    static final int BAKE_VERSION = 2;
     /**
      * Top bit of a face's tinted color word (its alpha byte holds the tint
      * kind, below 8): the face's texture has texels under half coverage, which
@@ -460,7 +461,7 @@ final class MaterialColors {
         }
         if (withQuads == 0) {
             // Fluids, special renderers: the particle sprite over each face, tinted as index 0.
-            probeTint(blockColors, state, 0, tints, probeBiome);
+            probeTint(blockColors, state, 0, tints, probeBiome, true);
             for (int d = 0; d < 6; d++) {
                 fullFace(d, Models.particle(state));
             }
@@ -882,13 +883,19 @@ final class MaterialColors {
      */
     private void probeTint(BlockColors blockColors, BlockState state, int tintIndex, BiomeTints tints,
                            Biome probeBiome) {
+        probeTint(blockColors, state, tintIndex, tints, probeBiome, false);
+    }
+
+    /** {@code fluid}: the block has no model of its own, a fluid's tint comes first (26.1 on). */
+    private void probeTint(BlockColors blockColors, BlockState state, int tintIndex, BiomeTints tints,
+                           Biome probeBiome, boolean fluid) {
         tintKind = -1;
         int color;
         try {
             probe.reset(state, probeBiome);
             //? if >=26.1 {
             /*// Since 26.1 a block's colors are tint sources, one per tint index (ADR-171).
-            net.minecraft.client.color.block.BlockTintSource source = blockColors.getTintSource(state, tintIndex);
+            net.minecraft.client.color.block.BlockTintSource source = tintSource(blockColors, state, tintIndex, fluid);
             color = source == null ? -1 : source.colorInWorld(state, probe, BlockPos.ZERO);
             *///?} else {
             color = blockColors.getColor(state, probe, BlockPos.ZERO, tintIndex);
@@ -901,7 +908,7 @@ final class MaterialColors {
         } catch (RuntimeException e) {
             try {
                 //? if >=26.1 {
-                /*net.minecraft.client.color.block.BlockTintSource source = blockColors.getTintSource(state, tintIndex);
+                /*net.minecraft.client.color.block.BlockTintSource source = tintSource(blockColors, state, tintIndex, fluid);
                 color = source == null ? -1 : source.color(state);
                 *///?} else {
                 color = blockColors.getColor(state, null, null, tintIndex);
@@ -914,6 +921,25 @@ final class MaterialColors {
         tintConstant[1] = FaceTextures.linear(color >> 8);
         tintConstant[2] = FaceTextures.linear(color);
     }
+
+    //? if >=26.1 {
+    /*/^*
+     * A block's tint source at {@code tintIndex}; for a fluid block without a
+     * model, its fluid model's: since 26.1 water's biome color is there, and the
+     * water block's own source is the particles' (white in the world).
+     *^/
+    private static net.minecraft.client.color.block.BlockTintSource tintSource(BlockColors blockColors,
+            BlockState state, int tintIndex, boolean fluid) {
+        if (fluid && !state.getFluidState().isEmpty()) {
+            net.minecraft.client.color.block.BlockTintSource source = net.minecraft.client.Minecraft.getInstance()
+                    .getModelManager().getFluidStateModelSet().get(state.getFluidState()).tintSource();
+            if (source != null) {
+                return source;
+            }
+        }
+        return blockColors.getTintSource(state, tintIndex);
+    }
+    *///?}
 
     private static int mapColor(BlockState state) {
         try {
