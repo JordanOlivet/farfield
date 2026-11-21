@@ -1,7 +1,7 @@
 package io.lakio.farfield.core.render;
 
 /**
- * The LODs' depth mapping as matrices (ADR-172): {@code lod.vert} keeps the
+ * The LODs' depth mapping as matrices (ADR-173): {@code lod.vert} keeps the
  * game's x, y and w and replaces the clip depth with a standard OpenGL
  * perspective over the LODs' own near and far planes. These helpers build the
  * matching view-projection and its inverse, for mods that read the LOD depth.

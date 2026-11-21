@@ -477,7 +477,7 @@ public final class LodRenderer {
     /**
      * The farthest LOD geometry in the last applied draw list (preview sections included), in blocks
      * from the camera: unlike {@link #drawnExtent}, never the draw distance setting itself, which can
-     * be far past anything drawn. Told to other mods (ADR-173).
+     * be far past anything drawn. Told to other mods (ADR-174).
      */
     private double geometryExtent;
     /**
@@ -829,7 +829,7 @@ public final class LodRenderer {
     }
     private final Matrix4f viewProj = new Matrix4f();
     private final float[] matrix = new float[16];
-    /** The LOD depth kept for other mods, once one asked (ADR-172). */
+    /** The LOD depth kept for other mods, once one asked (ADR-173). */
     private final LodDepthShare depthShare = new LodDepthShare();
     /** Draw commands per list ({@link #SOLID}, {@link #DISCARD}, {@link #TRANSLUCENT}, {@link #PLANTS}), in indirect buffer order. */
     private final IntBuffer[] commands = {MemoryUtil.memAllocInt(4 * 1024), MemoryUtil.memAllocInt(4 * 1024),
@@ -5489,7 +5489,7 @@ public final class LodRenderer {
             translucentCount = translucentDraws;
             return;
         }
-        // The LODs' depth for the mods that asked (clouds, sky), before it goes (ADR-172).
+        // The LODs' depth for the mods that asked (clouds, sky), before it goes (ADR-173).
         depthShare.capture(projection, viewRotation, depthNear, depthFar, geometryExtent);
         // Vanilla terrain draws next with its own depth range: start it clean.
         GlCompat.clearMainDepth();

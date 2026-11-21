@@ -81,7 +81,7 @@ both to `output/` at the root (gitignored, ADR-110).
 
 | Project | Content | May import Minecraft |
 |---|---|---|
-| `api` | Public API surface: the client API, LOD depth for other mods (ADR-172, `docs/api/`); `api.internal` is not API | No |
+| `api` | Public API surface: the client API, LOD depth for other mods (ADR-173, `docs/api/`); `api.internal` is not API | No |
 | `core` | The engine: data model, storage, meshing, LOD selection, jobs, protocol | No |
 | `common` | Minecraft-facing code compiled against vanilla (NeoForm + Parchment) | Vanilla only |
 | `neoforge`, `fabric` | Entry points, platform services, loader events | Yes |
