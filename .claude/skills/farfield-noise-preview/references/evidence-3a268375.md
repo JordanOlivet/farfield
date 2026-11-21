@@ -1,0 +1,1 @@
+26.3's interpolation nodes read at one block sample their cell's corner volumes: the first run held its quarters for minutes (jstack: `InterpolatedFunction` under `sampleValue`). Point reads rewrite the tree without them (`ColumnDensity.pointwise`), as the markers were read at one block up to 26.2.

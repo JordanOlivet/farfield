@@ -1,0 +1,1 @@
+{"tool_use_id":"toolu_01X8wKRbYNdBsp3gk6sTB6UH","edit":"new_string adds NeoForge/Fabric 26.1.2, 26.2, 26.3 targets each with \"java-versions\":\"25\"; and the shared workflow line: 215:          java: ${{ matrix.target.java-versions || inputs.java-versions }}"}

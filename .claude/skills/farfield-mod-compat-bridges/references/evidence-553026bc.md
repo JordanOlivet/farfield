@@ -1,0 +1,2 @@
+"Sans Farfield, Create: Sky suit la distance de rendu vanilla : ses ombres de nuages n'apparaissent que là où le terrain vanilla est chargé. Avec Farfield, on a donc à peu près le rendu de Create: Sky seul en distance 8, avec en plus le terrain lointain net."
+"Create: Sky est en « All Rights Reserved ». Un jar modifié serait une œuvre dérivée qu'on ne doit ni commiter ni partager, même pour un test."

@@ -1,0 +1,1 @@
+"La couleur de l'eau est mise en cache sur disque (`LooksCache`). L'ancienne couleur grise est donc réutilisée et le correctif n'est jamais appelé." Then "Le cache des couleurs est maintenant invalidé (`BAKE_VERSION` passe de 1 à 2)." And: "Le diagnostic confirme le correctif : l'eau prend maintenant la teinte de biome de l'eau (`tintKind=2`, bleu)."

@@ -1,0 +1,1 @@
+"1.21.11 ['required', 'minVersion', 'package', 'compatibilityLevel', 'mixins', 'client', 'server', 'injectors']" after the script added the `"server": ["DedicatedServerMixin"]` key to the 1.21.11, 26.1, 26.2 and 26.3 configs. DedicatedServerMixin body: "//? if >=1.21.11 {" wrapping the injector.

@@ -1,0 +1,25 @@
+---
+name: farfield-mc-version-port
+description: Use when porting Farfield to a new Minecraft version.
+category: minecraft-modding
+---
+
+# Porting Farfield to a Minecraft version
+
+Port one version at a time, in the order the user sets: secure the cheaper versions in game before starting the largest one (user, 2026-11-19: "teste dans un premier temps. On sécurise les deux premières versions avant de se lancer sur le gros morceaux"). Do not open the next version's node until the previous one runs on both loaders.
+
+Order of work for one version:
+
+1. Toolchain first: Gradle on Java 25 (Loom 1.19.4 requires Gradle 9.8 or later run on Java 25). Pick the Loom plugin by version. Build the existing versions (1.21.1, 1.21.11) to prove the bump changed nothing.
+2. Create the version node (`versions/<mc>.properties`, the Stonecutter node). Build it and count compile errors per phase: imports and renames first, then types, then signatures. Fix the phase counts down before reading new APIs.
+3. Fix `common` before the loaders. Plain renames are Stonecutter replacements; calls whose shape changed go through `common/.../compat/`.
+4. Stonecutter: `else if` chains work. Two replacements that overlap on one line do not chain (`gui.getChat()` then `getChat().addMessage(`), and they cancel each other even under disjoint version conditions (`.isSectionCompiled(`): move the call into a helper instead, in `McClient` for client-only calls.
+5. Keep dedicated-server safety: any helper that touches client classes goes in its own class (`McClient`), so `Mc` never loads client code on a server.
+6. Fabric and NeoForge nodes: compile both, then check mixin targets statically against the node's own sources. Loom 1.21.x remaps the targets in place, so no refmap is needed there; a `loom.mixin` block that only adds a warning can go.
+7. Start the dev servers on the node (a test world upgraded from the 1.21.1 store), read the log for errors and a clean stop, then the dev clients per `farfield-dev-client-check`.
+8. Commit each step locally and report it; the depth or render rules of a new version go to `farfield-lod-renderer`.
+9. Check the importer against the new version's own chunks, not only the build: a version may change the chunk NBT layout (26.3 wrote block palettes as names, or as `{id, properties}` and `{"": name}` compounds, default properties left out). Run the dev server on a copy of a world that the new version rewrote, then read `LOD import of ... done: N chunks ... M failed`. Before the fix every chunk failed with `block palette is not a list of compounds`; keep a unit test per palette shape in `ChunkDecoderTest`.
+10. A versioned folder can stand in for shared files and leave others out (`excluded.txt`). Use it for a preview or a feature that the new version's generation cannot yet feed: the stand-in says the feature is not there yet, and the log line says so at start, so a server never reports the feature as on.
+11. A new version's window may not be GLFW's (26.3 is SDL3). Its client cannot run minimized through Rehearsal until Rehearsal's window code has that version's node; do not launch a client over the user's focus to test the port.
+12. A call whose shape changed can compile and still skip a step. 26.3 places a feature through a `FeaturePlacer`, which gives the biome filter its feature: a direct `feature.place(...)` skipped the biome check, and every feature failed. Find the version's own entry point in its sources, and replace the whole argument list in the Stonecutter replacement (a replacement matches the exact text). Verify on the dev server: `N features failed` must be 0 in the preview's minute line.
+13. A server-side mixin for a behaviour that changed by version (1.21.2 and later pause an empty dedicated server, which a running pregen needed kept awake, ADR-172): list it under a `"server"` key in the mixin config of the versions that need it only (`common/src/versioned/<mc>/resources/farfield.mixins.json`, the 1.21.11, 26.1, 26.2 and 26.3 files), gate the class body with a Stonecutter comment (`//? if >=1.21.11 {`), and confirm on the dev server that `Server empty for N seconds, pausing` is absent while a task runs.

@@ -1,0 +1,1 @@
+ADR-172 text written this episode: "a player asked for compatibility with Create: Sky ... Next to Farfield its clouds stopped short of the horizon ... Consumers write their own bridge: Farfield never patches another mod. The check against Create: Sky used a test-only bridge mod outside the repository ... the mod's own jar was not modified."

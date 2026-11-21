@@ -1,0 +1,1 @@
+En 26.3, `placeWithBiomeCheck` doit passer avant `BiomeFilter`, ce que mon appel direct à `feature.place(...)` court-circuitait. ... A placed feature is placed through a FeaturePlacer, which gives the biome filter its feature (without it every feature failed its biome check).

@@ -1,0 +1,1 @@
+The command must come after the server's first update: sent at start it failed ("An unexpected error occurred"). Verified (Fabric 26.3 dev server, `farfield pregen start 48 32 2048`): 144 tiles in about a minute (2.4 to 2.7 cores)

@@ -1,0 +1,1 @@
+Exit code 1 Traceback (most recent call last): File "...checktargets.py", line 6, in <module> import yaml ModuleNotFoundError: No module named 'yaml'. Then: 10 targets NeoForge 26.1.2 java 25 ['farfield-neoforge-26.1.2-1.1.0-sources.jar', 'farfield-neoforge-26.1.2-1.1.0.jar'] ... suffixes unique. Modrinth: ['26.1.2', '26.2', '26.3', '1.21.11'].
