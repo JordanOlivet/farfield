@@ -15,7 +15,7 @@ import java.util.Set;
 import static org.lwjgl.opengl.GL46C.*;
 
 /**
- * The LOD depth kept for other mods (ADR-172, {@code FarfieldClientApi}):
+ * The LOD depth kept for other mods (ADR-173, {@code FarfieldClientApi}):
  * after the opaque LODs drew into the main target and before its depth is
  * cleared for the game's terrain, a copy of that depth and the matrix that
  * reads it. Nothing is copied until a mod asked for it.
@@ -33,7 +33,7 @@ final class LodDepthShare {
     private boolean failed;
     private boolean checked;
     private int loggedConsumers;
-    /** The view distance last logged: logged again once it moved by a quarter (ADR-173). */
+    /** The view distance last logged: logged again once it moved by a quarter (ADR-174). */
     private double loggedExtent;
 
     /** At the start of the level's frame: nothing to read until the LODs drew. */

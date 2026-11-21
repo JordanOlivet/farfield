@@ -2,7 +2,7 @@
 
 For mods that draw over the far terrain (clouds, sky, fog, weather) and need
 to know where Farfield's distant terrain (the LODs) is on screen. API version 1
-(ADR-172); Minecraft 1.21.1 to 26.2, NeoForge and Fabric.
+(ADR-173); Minecraft 1.21.1 to 26.3, NeoForge and Fabric.
 
 Farfield draws its LODs after the sky and before the game's terrain, with a
 depth range of its own, then clears the depth for the game's terrain. A mod

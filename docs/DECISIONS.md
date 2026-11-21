@@ -5319,7 +5319,7 @@ user's "fais les test qu'il reste".
   its fluid model's tint source, so LOD water was baked grey (looks bake 2).
 
 
-## ADR-172 — A client API: the LOD depth for mods that draw over the far terrain
+## ADR-173 — A client API: the LOD depth for mods that draw over the far terrain
 
 Status: accepted, 2026-11-20. Makes the `api` project public (ADR-006).
 
@@ -5375,9 +5375,9 @@ Status: accepted, 2026-11-20. Makes the `api` project public (ADR-006).
   draw distances above 4,096 blocks with the other mod's far clouds.
 
 
-## ADR-173 — The client API's view distance: the geometry drawn, not the setting
+## ADR-174 — The client API's view distance: the geometry drawn, not the setting
 
-Status: accepted, 2026-11-20. Amends ADR-172.
+Status: accepted, 2026-11-20. Amends ADR-173.
 
 - **Context**: in the user's Cobblemon pack (NeoForge 1.21.1, Sodium 0.8.13,
   Iris without a shader pack), with Create: Sky and the test bridge, the
