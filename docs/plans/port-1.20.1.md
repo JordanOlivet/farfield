@@ -59,18 +59,25 @@ The 50 errors, by cause:
   CurseForge files for 1.20.1: a `geckolib-neoforge-1.20.1` jar up to
   4.4.9, the `forge` jar tagged NeoForge and Forge at 4.7, Forge alone
   from 4.8 to 4.8.5.
-- [ ] D.2 `api` and `core` at Java 17 bytecode for every version (amends
+- [x] D.2 `api` and `core` at Java 17 level for every version (amends
   ADR-165, "Java 21 bytecode while a supported version runs Java 21"):
-  one build of them serves all nodes. Cost: no Java 21 API in `core`
-  (none is used today).
-- [ ] D.3 Shader packs: Iris 1.7.6 on Fabric (with Sodium 0.5.13), Oculus
+  one build of them serves all nodes (the user, 2026-11-22: "Oui si pas
+  de régression"). Cost: no Java 21 syntax or API in `core` (none is used
+  today). Checked on the spike branch: `build` green with the five
+  existing versions (`core` tests, 10 jars); the shipped jars are not
+  changed by it, since each loader node compiles the `api` and `core`
+  sources with its own toolchain (`LodKey.class` is class version 65 in
+  the NeoForge 1.21.1 jar, 69 in the Fabric 26.3 jar). Not checked: the
+  jars in game, the JMH benchmarks.
+- [x] D.3 Shader packs: Iris 1.7.6 on Fabric (with Sodium 0.5.13), Oculus
   1.8.0 and Embeddium on Forge. Both are far from the Iris 1.8.14 the
   mixins target, and Sodium 0.5 has other packages
-  (`me.jellysquid.mods.sodium`). Recommended: first release without the
-  shader path on 1.20.1 (LODs off under a shader pack, as beside an
-  unsupported Iris), then a second step.
-- [ ] D.4 A new ADR records D.1 to D.3 and the version list (D.2 and D.3
-  still open).
+  (`me.jellysquid.mods.sodium`). The work goes in two steps, the port
+  without the shader path first (P.A to P.D), then shader packs (P.S);
+  **1.20.1 is released only with shader packs working** (the user,
+  2026-11-22: "on peut faire en deux temps mais la 1.20.1 devra sortir
+  avec les shader compatibles").
+- [ ] D.4 A new ADR records D.1 to D.3 and the version list.
 
 ## P.A — Toolchain
 
@@ -161,10 +168,28 @@ The 50 errors, by cause:
   of a launcher): boots, LODs drawn. If it holds, the listing tags the
   Forge 1.20.1 file for NeoForge too.
 - [ ] D.6 The user's test in a real 1.20.1 pack (Forge), with Embeddium,
-  and with Oculus once D.3 of the decisions is settled.
+  without a shader pack (shader packs: S.5).
+
+## P.S — Shader packs (second step, before any 1.20.1 release)
+
+- [ ] S.1 Fabric: the nine Iris mixins and the shader path compiled
+  against Iris 1.7.6 (the spike only resolved the imports, against
+  Oculus); each mixin target checked in Iris 1.7.6's sources. What Iris
+  1.8 added and 1.7 lacks goes in versioned files.
+- [ ] S.2 Forge: the same against Oculus 1.8.0, each target checked in
+  its sources.
+- [ ] S.3 Sodium 0.5.13 and Embeddium 0.3.31: `RenderSectionMixin` on
+  their `RenderSection` (`me.jellysquid.mods.sodium...`), the mixin
+  plugin's detection; no Sodium config page (the API starts at 0.8).
+- [ ] S.4 Dev clients with a shader pack on each loader: LODs drawn in
+  the pack's programs, depth joined, no `Mixin apply failed`; the
+  packs of the 1.21.1 checks.
+- [ ] S.5 The user's test in a real pack with Oculus and a shader pack.
 
 ## P.E — Shipping
 
+- [ ] E.0 Gate: P.S done. No 1.20.1 jar is published before shader packs
+  work on both loaders (decision D.3).
 - [ ] E.1 `minecraft_versions` gains 1.20.1; `build` makes its two jars.
 - [ ] E.2 `release.yml`: two targets (`forge` and `fabric`, game version
   1.20.1, Java 17); the shared `publish-mod` workflow must know the
