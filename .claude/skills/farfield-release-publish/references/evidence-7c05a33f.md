@@ -1,0 +1,1 @@
+C'est bon j'ai merge la PR, je ferais des tests de toutes façon avant la prochaine release et je répondrai au issue à ce moment

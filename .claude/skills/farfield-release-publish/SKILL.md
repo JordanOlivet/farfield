@@ -6,6 +6,8 @@ category: minecraft-modding
 
 # Farfield release publish
 
+Before tagging, list the GitHub issues the user said he will answer himself once he has tested (`gh issue list`, then his own words in the session or memory). Remind him they are pending and offer drafts; never post the replies unasked.
+
 A release is a pushed tag `v<version>[-alpha.N]`. Do not tag until the user says every feature planned for the release is complete: finishing one work item is not a reason to tag. `.github/workflows/release.yml` builds both loader jars and publishes them. Never publish by hand, and never report a platform as published without its log line.
 
 1. Check `version=` in `gradle.properties` is the core of the tag (`0.1.0` for `v0.1.0-alpha.1`). A mismatch stops the Prepare job before any upload. Pick the bump from what changed since the last tag: a stream protocol version change makes it a minor bump (0.2.1 to 0.3.0), since servers and clients of different versions cannot stream; only same-protocol fixes are a patch.

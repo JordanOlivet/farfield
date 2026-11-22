@@ -19,7 +19,7 @@ A reverted or rejected decision is a new decision too: append an ADR that says s
 
 A question turn ("est-il possible", "dis-moi ce que t'en penses", "tu en penses quoi") gets an answer only. Do not commit, push, or write the progress log in that turn. Record the open question as a next step in the next real wrap-up, or wait for the go-ahead.
 
-New decisions are a new ADR appended to `docs/DECISIONS.md`; never rewrite an existing one. A constant or bound the block chose (a protocol version, a timing, a window's limits) is a decision: before the commit, append its ADR, or write in the progress log why it is not one.
+New decisions are a new ADR appended to `docs/DECISIONS.md`; never rewrite an existing one. Before writing the number, take the number after the highest ADR on `origin/main` and on every other open branch (`git fetch`, then `git show <branch>:docs/DECISIONS.md` for each branch of `git branch -a`): a parallel branch may already hold the next ones. On 2026-11-22 `main` ended at ADR-172 while an unmerged branch held 173 to 175, so the water and ice branch took ADR-176; at the rebase on `main` only the end of `DECISIONS.md` and the same-day progress file conflicted (keep main's text, append this branch's entry, join the two logs). A constant or bound the block chose (a protocol version, a timing, a window's limits) is a decision: before the commit, append its ADR, or write in the progress log why it is not one.
 
 ## What's left or next on the plan
 

@@ -1,0 +1,1 @@
+Blocks without model quads (water, other fluids) take their particle sprite over each face. `MaterialColors.fullFace` laid the sprite's U along the face's first grid axis: Z on the top face, while vanilla's still water runs U along X and V along Z. The LOD sea's ripples ran across the vanilla sea's at the render distance edge. Each face now takes a full cube's default UVs.

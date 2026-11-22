@@ -1,0 +1,1 @@
+**`docs/DECISIONS.md`** : je garde la version de `main` jusqu'à l'ADR-175, puis j'ajoute l'ADR-176 à la suite. J'ai retiré la note qui disait l'ADR-175 réservé à l'autre branche.
