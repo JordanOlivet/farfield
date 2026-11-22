@@ -740,11 +740,46 @@ final class MaterialColors {
                 pu[i00], pv[i00], pu[i10] - pu[i00], pv[i10] - pv[i00], pu[i01] - pu[i00], pv[i01] - pv[i00]);
     }
 
-    /** The sprite over the whole face, its UVs along the face's axes. */
+    /**
+     * The sprite over the whole face, turned as vanilla turns a full cube's
+     * face ({@link #cubeUv}): a fluid's top with U along X and V along Z, as
+     * its renderer draws still water. Taking U along the face's first axis
+     * laid the top's U along Z: the LOD sea's ripples ran across vanilla's.
+     */
     private void fullFace(int face, TextureAtlasSprite sprite) {
         hasQuads[face] = true;
-        layer(face, sprite, true, 0, 1, 0, 1, sprite.getU0(), sprite.getV0(),
-                sprite.getU1() - sprite.getU0(), 0, 0, sprite.getV1() - sprite.getV0());
+        float u0 = sprite.getU0();
+        float v0 = sprite.getV0();
+        float du = sprite.getU1() - u0;
+        float dv = sprite.getV1() - v0;
+        float[] c00 = cubeUv(face, 0, 0);
+        float[] c10 = cubeUv(face, 1, 0);
+        float[] c01 = cubeUv(face, 0, 1);
+        layer(face, sprite, true, 0, 1, 0, 1, u0 + c00[0] * du, v0 + c00[1] * dv,
+                (c10[0] - c00[0]) * du, (c10[1] - c00[1]) * dv, (c01[0] - c00[0]) * du, (c01[1] - c00[1]) * dv);
+    }
+
+    /**
+     * The fractions of the sprite (u, v) vanilla's models put at the point
+     * {@code (a, b)} of a full cube's face, in block units along the face's
+     * U and V axes (the default UVs of a model element spanning the block).
+     */
+    static float[] cubeUv(int face, float a, float b) {
+        int axis = face >> 1;
+        float[] p = new float[3];
+        p[(axis + 1) % 3] = a;
+        p[(axis + 2) % 3] = b;
+        float x = p[0];
+        float y = p[1];
+        float z = p[2];
+        return switch (DIRECTIONS[face]) {
+            case UP -> new float[] {x, z};
+            case DOWN -> new float[] {x, 1 - z};
+            case NORTH -> new float[] {1 - x, 1 - y};
+            case SOUTH -> new float[] {x, 1 - y};
+            case WEST -> new float[] {z, 1 - y};
+            case EAST -> new float[] {1 - z, 1 - y};
+        };
     }
 
     private static int nearest(float[] pa, float[] pb, float a, float b) {
