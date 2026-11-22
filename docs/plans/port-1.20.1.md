@@ -18,7 +18,10 @@ unresolved imports.
 - `api` and `core` (139 files, 28,000 lines) compile at `--release 17` with
   no error and no change. `:core:test` passes with the main classes at 17.
 - 1.20.1 has no NeoForm (it starts at 1.20.2) and no NeoForge worth
-  building (its 47.1 fork of Forge stopped at 47.1.106 in 2023). `common`
+  building: NeoForge for 1.20.1 is the 47.1 fork of Forge (`net.neoforged:forge`,
+  last build 47.1.106, May 2024), which loads Forge 1.20.1 jars as they
+  are. A Forge jar serves both; GeckoLib's 1.20.1 branch ships Forge and
+  Fabric only (checked 2026-11-22). `common`
   compiles against MCP 1.20.1 in Mojang's names through ModDevGradle's
   legacy plugin (`net.neoforged.moddev.legacyforge` 2.0.148, vanilla mode,
   `mcpVersion`), on Gradle 9.9.1 and Java 25 as the other nodes.
@@ -146,6 +149,9 @@ The 50 errors, by cause:
   a 1.20.1 server and client on each loader.
 - [ ] D.5 LOD stores written by 1.20.1 read by 1.21.1 after a world
   upgrade (text keys, ADR-165).
+- [ ] D.7 The Forge jar on NeoForge 47.1.106 (a 1.20.1 NeoForge instance
+  of a launcher): boots, LODs drawn. If it holds, the listing tags the
+  Forge 1.20.1 file for NeoForge too.
 - [ ] D.6 The user's test in a real 1.20.1 pack (Forge), with Embeddium,
   and with Oculus once D.3 of the decisions is settled.
 
