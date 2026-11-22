@@ -99,6 +99,36 @@ dependencies {
 
 // Client and server share the default run dir.
 registerPrepareRuns(versionedRunDir('run'), versionedRunDir('run'))
+
+// An agent's run (-PagentWindow) goes without FML's loading window, which takes the focus
+// before any mod code runs (ADR-096); Forge 47 has the same window and key as NeoForge.
+// fml.toml is put back once the game exits. -PearlyWindow keeps it.
+if (project.hasProperty('agentWindow') && !project.hasProperty('earlyWindow')) {
+    def runDir = versionedRunDir('run')
+    def fmlConfig = new File(runDir, 'config/fml.toml')
+    def saved = new File(runDir, 'config/fml.toml.agent-saved')
+    def restore = tasks.register('restoreFmlConfigAfterRunClient') {
+        doLast {
+            if (saved.exists()) {
+                fmlConfig.bytes = saved.bytes
+                saved.delete()
+            }
+        }
+    }
+    tasks.matching { it.name == 'runClient' }.configureEach {
+        finalizedBy restore
+        doFirst {
+            if (fmlConfig.exists()) {
+                saved.bytes = fmlConfig.bytes
+                fmlConfig.setText(fmlConfig.getText('UTF-8')
+                        .replaceAll(/(?m)^earlyWindowControl = true/, 'earlyWindowControl = false'), 'UTF-8')
+            } else {
+                fmlConfig.parentFile.mkdirs()
+                fmlConfig.setText("earlyWindowControl = false${System.lineSeparator()}", 'UTF-8')
+            }
+        }
+    }
+}
 registerFreshWorld('runClient', versionedRunDir('run'))
 
 // Dev servers read console commands (scripted checks pipe them in).
