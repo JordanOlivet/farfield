@@ -5486,3 +5486,37 @@ not sorted").
   the water. The vanilla area and everything opaque are unchanged. Not
   checked: NeoForge, Sodium, shader packs (`voxy_translucent` takes the same
   commands), 26.x in a client.
+
+## ADR-177 — Minecraft 1.20.1 on Forge and Fabric, the engine at Java 17
+
+Status: accepted, 2026-11-22. Continues ADR-165 (several Minecraft versions)
+and amends it on the engine's bytecode level. The user, after 1.1.0: "C'est
+parti lance le portage"; on the plan's three questions, "Ok ça me va on
+fixe ça dans le plan", "Oui si pas de régression", "Oui on peut faire en
+deux temps mais la 1.20.1 devra sortir avec les shader compatibles".
+
+- **Context**: 1.20.1 runs Java 17 and predates NeoForm (1.20.2) and the
+  NeoForge API. NeoForge for 1.20.1 is the 47.1 fork of Forge
+  (`net.neoforged:forge`, last build 47.1.106, May 2024), with Forge's
+  packages, and loads Forge 1.20.1 jars. Forge itself goes on (47.4).
+  GeckoLib's CurseForge files show the path: a `neoforge-1.20.1` jar up to
+  4.4.9, then the `forge` jar alone. A spike (`docs/plans/port-1.20.1.md`)
+  compiled `api` and `core` at `--release 17` with no change and a
+  `common` node against MCP 1.20.1 with 50 errors in 14 files.
+- **Decision**:
+  - 1.20.1 ships two jars: **Forge 47.4** (a `forge` loader project, nodes
+    for 1.20.1 only) and **Fabric**. The `neoforge` branch has no 1.20.1
+    node. The Forge jar is tagged for NeoForge on the stores only once it
+    ran on NeoForge 47.1.106; a NeoForge 1.20.1 jar of its own only if
+    that fails and a pack needs it.
+  - `common` for 1.20.1 compiles against MCP's Mojang names through
+    ModDevGradle's legacy plugin (`net.neoforged.moddev.legacyforge`,
+    `mcpVersion`), the other versions keep NeoForm.
+  - `api` and `core` compile at Java 17 level (`options.release = 17`) for
+    every version: one source, no Java 21 syntax or API in them. The loader
+    nodes still compile those sources with their own toolchain, so the
+    1.21.x and 26.x jars keep their bytecode (checked: `build` green, class
+    version 65 in the NeoForge 1.21.1 jar, 69 in the Fabric 26.3 jar).
+  - Shader packs (Iris 1.7 on Fabric, Oculus 1.8 on Forge, with Sodium 0.5
+    and Embeddium) come in a second step of the work, but **no 1.20.1 jar
+    is released before they work on both loaders**.
