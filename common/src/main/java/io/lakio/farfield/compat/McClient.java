@@ -34,9 +34,11 @@ public final class McClient {
         /*return renderer.isSectionCompiledAndVisible(pos, GlCompat.chunkFadeMillis(Minecraft.getInstance()));
         *///?} else if >=1.21.11 {
         /*return renderer.isSectionCompiledAndVisible(pos);
-        *///?} else {
+        *///?} else if >=1.20.2 {
         return renderer.isSectionCompiled(pos);
-        //?}
+        //?} else {
+        /*return renderer.isChunkCompiled(pos);
+        *///?}
     }
 
     /** The camera the game renders the level from. */

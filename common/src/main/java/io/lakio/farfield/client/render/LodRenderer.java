@@ -38,7 +38,9 @@ import it.unimi.dsi.fastutil.objects.ObjectIterator;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+//? if >=1.20.2 {
 import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
+//?}
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.Registries;
@@ -2104,7 +2106,14 @@ public final class LodRenderer {
     private void vanillaDrawnSections(Minecraft mc) {
         int[] bits = drawnBits;
         java.util.Arrays.fill(bits, 0);
+        //? if >=1.20.2 {
         for (SectionRenderDispatcher.RenderSection s : ((LevelRendererAccessor) mc.levelRenderer).farfield$visibleSections()) {
+        //?} else {
+        /*// 1.20.1: the frustum's list holds the graph's entries, each with its render chunk.
+        for (Object info : ((LevelRendererAccessor) mc.levelRenderer).farfield$visibleSections()) {
+            net.minecraft.client.renderer.chunk.ChunkRenderDispatcher.RenderChunk s =
+                    ((io.lakio.farfield.mixin.client.RenderChunkInfoAccessor) info).farfield$chunk();
+        *///?}
             //? if >=1.21.11 {
             /*if (s.sectionMesh.get() == net.minecraft.client.renderer.chunk.CompiledSectionMesh.UNCOMPILED) {
                 continue;
@@ -2114,12 +2123,17 @@ public final class LodRenderer {
                 continue;
             }
             BlockPos origin = s.getRenderOrigin();
-            *///?} else {
+            *///?} else if >=1.20.2 {
             if (s.compiled.get() == SectionRenderDispatcher.CompiledSection.UNCOMPILED) {
                 continue;
             }
             BlockPos origin = s.getOrigin();
-            //?}
+            //?} else {
+            /*if (s.compiled.get() == net.minecraft.client.renderer.chunk.ChunkRenderDispatcher.CompiledChunk.UNCOMPILED) {
+                continue;
+            }
+            BlockPos origin = s.getOrigin();
+            *///?}
             int gx = (origin.getX() >> 4) - gridMinX;
             int gy = (origin.getY() >> 4) - gridMinY;
             int gz = (origin.getZ() >> 4) - gridMinZ;

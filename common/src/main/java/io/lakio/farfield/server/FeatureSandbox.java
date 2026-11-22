@@ -527,7 +527,11 @@ final class FeatureSandbox implements WorldGenLevel {
     }
 
     @Override
+    //? if >=1.20.5 {
     public void gameEvent(Holder<GameEvent> event, Vec3 pos, GameEvent.Context context) {
+    //?} else {
+    /*public void gameEvent(GameEvent event, Vec3 pos, GameEvent.Context context) {
+    *///?}
     }
 
     @Override

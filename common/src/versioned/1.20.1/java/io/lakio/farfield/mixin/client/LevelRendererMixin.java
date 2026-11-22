@@ -1,9 +1,9 @@
 package io.lakio.farfield.mixin.client;
 
+import com.mojang.blaze3d.vertex.PoseStack;
 import io.lakio.farfield.client.render.FrameProbe;
 import io.lakio.farfield.client.render.LodRenderer;
 import net.minecraft.client.Camera;
-import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.LightTexture;
@@ -16,6 +16,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 /**
  * Draws the LODs after the sky and before the first terrain layer, and
  * marks the end of the level for the frame probe (ADR-099).
+ * Minecraft 1.20.1: {@code renderLevel} takes the pose stack (the camera's
+ * rotation, which 1.20.5 on passes as the frustum matrix) and the partial
+ * tick, and draws the terrain layers through {@code renderChunkLayer}.
  * Optional, so a mod that rewrites {@code renderLevel} cannot crash the game:
  * without it the "LOD renderer ready" line never appears.
  */
@@ -24,21 +27,21 @@ public abstract class LevelRendererMixin {
 
     @Inject(method = "renderLevel",
             at = @At(value = "INVOKE",
-                    target = "Lnet/minecraft/client/renderer/LevelRenderer;renderSectionLayer(Lnet/minecraft/client/renderer/RenderType;DDDLorg/joml/Matrix4f;Lorg/joml/Matrix4f;)V",
+                    target = "Lnet/minecraft/client/renderer/LevelRenderer;renderChunkLayer(Lnet/minecraft/client/renderer/RenderType;Lcom/mojang/blaze3d/vertex/PoseStack;DDDLorg/joml/Matrix4f;)V",
                     ordinal = 0),
             require = 0)
-    private void farfield$renderLods(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera,
-                                     GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix,
-                                     Matrix4f projectionMatrix, CallbackInfo ci) {
-        LodRenderer.render(camera, frustumMatrix, projectionMatrix);
+    private void farfield$renderLods(PoseStack poseStack, float partialTick, long finishNanoTime,
+                                     boolean renderBlockOutline, Camera camera, GameRenderer gameRenderer,
+                                     LightTexture lightTexture, Matrix4f projectionMatrix, CallbackInfo ci) {
+        LodRenderer.render(camera, poseStack.last().pose(), projectionMatrix);
     }
 
     /** The shader pack's LOD depth and matrices for this frame (ADR-113), before any pass reads them. */
     @Inject(method = "renderLevel", at = @At("HEAD"), require = 0)
-    private void farfield$beginLevel(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera,
-                                     GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix,
-                                     Matrix4f projectionMatrix, CallbackInfo ci) {
-        LodRenderer.beginLevel(frustumMatrix, projectionMatrix);
+    private void farfield$beginLevel(PoseStack poseStack, float partialTick, long finishNanoTime,
+                                     boolean renderBlockOutline, Camera camera, GameRenderer gameRenderer,
+                                     LightTexture lightTexture, Matrix4f projectionMatrix, CallbackInfo ci) {
+        LodRenderer.beginLevel(poseStack.last().pose(), projectionMatrix);
     }
 
     /**
@@ -51,9 +54,9 @@ public abstract class LevelRendererMixin {
             at = @At(value = "INVOKE",
                     target = "Lnet/minecraft/client/renderer/RenderType;translucent()Lnet/minecraft/client/renderer/RenderType;"),
             require = 0)
-    private void farfield$renderTranslucentLods(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera,
-                                                GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix,
-                                                Matrix4f projectionMatrix, CallbackInfo ci) {
+    private void farfield$renderTranslucentLods(PoseStack poseStack, float partialTick, long finishNanoTime,
+                                                boolean renderBlockOutline, Camera camera, GameRenderer gameRenderer,
+                                                LightTexture lightTexture, Matrix4f projectionMatrix, CallbackInfo ci) {
         LodRenderer.renderTranslucent(false);
     }
 
@@ -69,9 +72,9 @@ public abstract class LevelRendererMixin {
     }
 
     @Inject(method = "renderLevel", at = @At("RETURN"), require = 0)
-    private void farfield$endOfLevel(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera,
-                                     GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f frustumMatrix,
-                                     Matrix4f projectionMatrix, CallbackInfo ci) {
+    private void farfield$endOfLevel(PoseStack poseStack, float partialTick, long finishNanoTime,
+                                     boolean renderBlockOutline, Camera camera, GameRenderer gameRenderer,
+                                     LightTexture lightTexture, Matrix4f projectionMatrix, CallbackInfo ci) {
         FrameProbe.endOfLevel();
     }
 }

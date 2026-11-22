@@ -55,11 +55,16 @@ final class CpuUsage {
                 if (!name.startsWith("farfield-") || name.equals("farfield-stats")) {
                     continue;
                 }
-                long cpu = threads.getThreadCpuTime(t.threadId());
+                //? if >=1.20.5 {
+                long id = t.threadId();
+                //?} else {
+                /*long id = t.getId(); // Java 17: no threadId()
+                *///?}
+                long cpu = threads.getThreadCpuTime(id);
                 if (cpu < 0) {
                     continue;
                 }
-                Long last = lastByThread.put(t.threadId(), cpu);
+                Long last = lastByThread.put(id, cpu);
                 long delta = cpu - (last == null ? 0 : last);
                 // "farfield-server-worker-3" -> "server-worker"
                 String kind = name.substring("farfield-".length()).replaceAll("-[0-9]+$", "");

@@ -6,7 +6,6 @@ import net.minecraft.core.Holder;
 import net.minecraft.core.QuartPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ChunkLevel;
-import net.minecraft.server.level.ChunkResult;
 import net.minecraft.server.level.FullChunkStatus;
 import net.minecraft.server.level.ServerChunkCache;
 import net.minecraft.server.level.ServerLevel;
@@ -344,9 +343,9 @@ final class GenerationSpike {
         int distance = ChunkLevel.byStatus(FullChunkStatus.FULL) - ChunkLevel.byStatus(status);
         long cpu = processCpuNanos();
         long start = System.nanoTime();
-        List<CompletableFuture<ChunkResult<ChunkAccess>>> futures = server.submit(() -> {
+        List<CompletableFuture<?>> futures = server.submit(() -> {
             ServerChunkCache chunks = level.getChunkSource();
-            List<CompletableFuture<ChunkResult<ChunkAccess>>> list = new ArrayList<>(area.size());
+            List<CompletableFuture<?>> list = new ArrayList<>(area.size());
             for (ChunkPos p : area) {
                 //? if >=1.21.11 {
                 /*chunks.addTicketWithRadius(TICKET, p, distance);
@@ -374,11 +373,11 @@ final class GenerationSpike {
         }
         double seconds = (System.nanoTime() - start) / 1e9;
         double cores = (processCpuNanos() - cpu) / 1e9 / seconds;
-        long ok = futures.stream().filter(f -> f.join().isSuccess()).count();
+        long ok = futures.stream().filter(f -> Mc.chunkLoaded(f.join())).count();
         String line = String.format(Locale.ROOT,
                 "Generation up to %s: %d of %d chunks at %d,%d in %.1f s (%.1f chunks/s, %.1f ms per chunk;"
                         + " %.1f cores busy on average)",
-                status.getName(), ok, area.size(), cx, cz, seconds, ok / seconds, seconds * 1000 / Math.max(ok, 1),
+                status.toString(), ok, area.size(), cx, cz, seconds, ok / seconds, seconds * 1000 / Math.max(ok, 1),
                 cores);
         Farfield.LOG.info(line);
         report.accept(line);
