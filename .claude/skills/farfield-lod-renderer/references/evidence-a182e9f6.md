@@ -1,0 +1,2 @@
+common/src/main/java/io/lakio/farfield/client/render/LodRenderer.java:3661:        MaterialClassifier classes = drawLevel(key) == 0 ? materials : new MaterialClassifier() {
+(then the wrapper overrode only classOf, isFluid and fluidOf, and the edit added `public boolean hidesTranslucent(int m) { return materials.hidesTranslucent(m); }` to it)

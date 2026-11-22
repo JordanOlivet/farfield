@@ -1,0 +1,1 @@
+Des bandes vides sur le glaces, comme si la face haute de la glace était pas là et la bordure entre la glace vanilla et LOD se voit avec de la glace beaucoup plus claire que ce que ça devrait.

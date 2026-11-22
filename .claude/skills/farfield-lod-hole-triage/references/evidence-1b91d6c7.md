@@ -1,0 +1,1 @@
+PowerShell/Bash output: " M core/src/main/java/io/lakio/farfield/core/world/MaterialTable.java\n M core/src/test/java/io/lakio/farfield/core/mesh/BinaryGreedyMesherTest.java\n M docs/progress/2026-11-22.md\n?? core/src/jmh/java/io/lakio/farfield/core/bench/TempIceProbe.java" (git status --short after the TEMP grep came back empty)

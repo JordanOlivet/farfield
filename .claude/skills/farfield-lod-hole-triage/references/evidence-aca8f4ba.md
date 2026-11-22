@@ -1,0 +1,3 @@
+La cause est trouvée et un correctif est écrit. Le run de vérification est en cours, environ 3 min.
+
+**La cause :** dans un chunk réel, la preview remplit ses colonnes avec un « masque fluide » jusqu'au haut de l'eau réelle, glace comprise. Ce masque sert justement à lui éviter de dessiner des parois vers le terrain réel. Mais la règle de l'ADR-055 (« une voxel translucide ne cache que sa propre sorte ») faisait montrer à la glace de la preview sa face contre ce masque. Résultat : une paroi de glace verticale à z = 240, vue à travers la glace réelle, d'où la ligne claire. Le test unitaire l'a reproduit : `Quad[-Z at 0,19,10 … material 12]`.

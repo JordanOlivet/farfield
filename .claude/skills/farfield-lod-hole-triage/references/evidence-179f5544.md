@@ -1,0 +1,1 @@
+Pour l'histoire de la glace plus claire, je parlais bien de la ligne droite qui traverse le lac. La teinte de la glace LOD au delà est ok. Donc c'est l'ADR 55 qui a été cassé ou un truc lié.
