@@ -13,6 +13,8 @@ plugins {
     id 'net.fabricmc.fabric-loom' version '1.19.4' apply false
     // see https://projects.neoforged.net/neoforged/moddevgradle for new versions
     id 'net.neoforged.moddev' version '2.0.148' apply false
+    // 1.20.1 has no NeoForm: MCP's names through the legacy plugin.
+    id 'net.neoforged.moddev.legacyforge' version '2.0.148' apply false
     // Toolchains for the vanilla server below (the game's JDK: 21, 25 from 26.1).
     id 'jvm-toolchains'
 }
@@ -26,6 +28,12 @@ stonecutter.active '1.21.1'
 // Anything else goes in Stonecutter comments or a compat class.
 stonecutter.parameters { sc ->
     def atLeast = { String version -> sc.compare(sc.current.version, version) >= 0 }
+    // Before 1.20.5 (1.20.1): the names 1.21.1 changed, applied backwards.
+    sc.replacements.string(!atLeast('1.20.5')) { r ->
+        r.replace('net.minecraft.world.level.chunk.status.ChunkStatus', 'net.minecraft.world.level.chunk.ChunkStatus')
+        r.replace('net.minecraft.client.gui.screens.options.OptionsSubScreen', 'net.minecraft.client.gui.screens.OptionsSubScreen')
+        r.replace('SectionRenderDispatcher', 'ChunkRenderDispatcher')
+    }
     // 1.21.2: the level's height accessors and registry lookups.
     sc.replacements.string(atLeast('1.21.2')) { r ->
         r.replace('getMinBuildHeight()', 'getMinY()')
