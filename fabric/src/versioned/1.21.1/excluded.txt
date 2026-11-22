@@ -1,0 +1,5 @@
+# Fabric sources Minecraft 1.21.1 and later leave out (ADR-165): none.
+# This folder exists so the nodes from 1.21.1 on take it rather than
+# src/versioned/1.20.1/, whose files (the byte channel of Fabric API 0.92)
+# stand in for the shared ones on 1.20.1 only: a node takes the newest
+# folder not above its own version.

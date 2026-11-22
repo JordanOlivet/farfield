@@ -77,7 +77,7 @@ The 50 errors, by cause:
   **1.20.1 is released only with shader packs working** (the user,
   2026-11-22: "on peut faire en deux temps mais la 1.20.1 devra sortir
   avec les shader compatibles").
-- [ ] D.4 A new ADR records D.1 to D.3 and the version list.
+- [x] D.4 A new ADR records D.1 to D.3: ADR-177.
 
 ## P.A — Toolchain
 
@@ -91,72 +91,95 @@ The 50 errors, by cause:
   compile time on 1.20.1 and resolves every Iris import.
 - [x] A.3 `api` and `core` compiled with `options.release = 17`
   (`farfield-java.gradle`); tests keep Java 21.
-- [ ] A.4 `forge/` project: `multiloader-loader` with the legacy plugin
-  (`legacyForge { version = "1.20.1-${forge_version}" }`), `mods.toml`,
-  reobfuscated jar (SRG), a mixin refmap (Forge 1.20.1 needs one, unlike
-  NeoForge), MixinExtras nested with `jarJar` (Forge does not bundle it),
-  aircompressor nested.
-- [ ] A.5 `multiloader-common`: `expandProps` without the NeoForge keys on
-  a version that has none (the spike sets them empty), `mods.toml` in
-  `filesMatching`, `copyJarToOutput` on Forge's `reobfJar`.
-- [ ] A.6 Fabric node: Loom 1.19 with Minecraft 1.20.1 on a Java 17
-  toolchain; `fabric.mod.json` without the `sodium:config_api_user`
-  entrypoint on 1.20.1.
-- [ ] A.7 Dev tasks: run dirs `runs/1.20.1/`, `runVanillaServer -Pmc=1.20.1`
-  on JDK 17, `-PquickPlay` (1.20.1 has `--quickPlaySingleplayer`).
-- [ ] A.8 Rehearsal needs a 1.20.1 node on both loaders before any
-  minimized client run.
+- [x] A.4 `forge/` project: `multiloader-loader` with the legacy plugin,
+  `mods.toml`, reobfuscated jar (`reobfJar`, SRG), a mixin refmap written
+  by the annotation processor and named by each config (a `processResources`
+  filter, Forge only), the `MixinConfigs` manifest attribute (Forge 47
+  reads the configs there), MixinExtras 0.3.5 and aircompressor nested
+  with `jarJar`. The `forge` branch has a 1.20.1 node only, and exists
+  only when 1.20.1 is in the versions built. Checked in the jar: manifest,
+  refmap (5 KB, SRG names), both nested jars, `mods.toml` expanded.
+- [x] A.5 `multiloader-common`: the Forge keys read with `findProperty`
+  (empty elsewhere), `META-INF/mods.toml` in `filesMatching`,
+  `copyJarToOutput` on `reobfJar`, then `remapJar`, then `jar`. The
+  shared Iris and Sodium mixin configs take `mixin_compatibility_level`
+  (`JAVA_21` by default, `JAVA_17` for 1.20.1).
+- [~] A.6 Fabric node: Loom 1.19 with Minecraft 1.20.1 on a Java 17
+  toolchain, builds its remapped jar. Remains: `fabric.mod.json` still
+  names the `sodium:config_api_user` entrypoint, whose class is left out
+  on 1.20.1 (only Sodium 0.8 reads it, so nothing loads it; drop it from
+  the 1.20.1 jar for tidiness).
+- [~] A.7 Dev tasks: `runServer` on both loaders in `runs/1.20.1/` (Fabric
+  `fabric/runs/1.20.1/server`, Forge `forge/runs/1.20.1/run`), with
+  `level-name=world-1.20.1` set by hand (a fresh world of the test seed:
+  the template world is 1.21.1's). Remains: `runClient` with `-PquickPlay`,
+  `runVanillaServer -Pmc=1.20.1`, a 1.20.1 template world in `dev/`.
+- [~] A.8 Rehearsal (its own checkout, `rehearsal.dir`): 1.20.1 nodes on
+  Fabric and a new `forge` project, the two pattern switches of
+  `RehearsalClient` turned into `instanceof` chains (Java 17), a `McCompat`
+  for three calls, Forge 47's early window hand-off in `WindowMixin`.
+  `common` compiles for 1.20.1. Remains: its full build, the jars in a
+  dev client, and a commit there (this session cannot run git outside the
+  Farfield worktree).
 
 ## P.B — `common`
 
-- [ ] B.1 The 50 errors of the table above, `common` first (the skill's
-  order): renames as replacements under `!atLeast('1.20.5')`, shape
-  changes through `Mc` and `McClient`, whole files in
-  `src/versioned/1.20.1/`.
-- [ ] B.2 `src/versioned/1.20.1/`: `farfield.mixins.json` at `JAVA_17`
-  (done), `LevelRendererMixin` and `FogRendererMixin` rewritten for
-  1.20.1 (the spike copied 1.21.1's: the first does not compile, the
-  second compiles and its targets are not checked), `StreamPayload`,
-  `FarfieldSettingsScreen`.
-  1.21.1 gets no folder change: it keeps its own.
-- [ ] B.3 The three files with Java 21 syntax (`BlockKeys`,
-  `FeatureSpike`, `SurfaceSpike`) and `compatibilityLevel` of the Iris
-  and Sodium mixin configs (`JAVA_21` in shared resources: per version,
-  or `JAVA_17` for all).
+- [x] B.1 The 50 errors, `common` first: renames as replacements under
+  `!atLeast('1.20.5')` (chunk status package and its persisted accessors,
+  the options and video screens, the player's ping), shape changes through
+  `Mc` (`id`, `chunkLoaded`) and `McClient` (`sectionCompiled`), Stonecutter
+  comments for `Thread.threadId`, `LevelAccessor.gameEvent` and
+  `LodRenderer`'s walk of vanilla's visible sections. `:common:1.20.1`
+  compiles with no error.
+- [x] B.2 `src/versioned/1.20.1/`: `farfield.mixins.json` at `JAVA_17`,
+  `LevelRendererMixin` rewritten (`renderLevel(PoseStack, float, long,
+  ...)`, the pose stack's matrix as the frustum matrix, `renderChunkLayer`),
+  `FogRendererMixin` kept as 1.21.1's (`setupFog` has the same signature and
+  branches in 1.20.1), `LevelRendererAccessor` on `renderChunksInFrustum`
+  with `RenderChunkInfoAccessor` (its entries are private to the package),
+  `StreamPayload` (a channel id and the bytes), `FarfieldSettingsScreen`
+  (tabs over plain options lists; the sliders applied on release in later
+  versions apply when the screen closes). Not checked in a client.
+- [x] B.3 Java 21 syntax: none left in `common` (it compiles at 17); the
+  Iris and Sodium configs take the version's level (A.5).
 - [ ] B.4 Mixin targets checked against 1.20.1's sources, one by one:
   `LevelChunk`, `ChunkGenerator`, `BiomeManager`, `ClientLevel`,
   `LevelRenderer` accessors, `SpriteContents`, `Window` (1.20.1 asks for
   OpenGL 3.2; which context Forge 47's early window makes is to check,
   ADR-166 covers the case where it is under 4.6). `DedicatedServerMixin`
   is not needed (no pause of an empty server before 1.21.2).
-- [ ] B.5 World generation paths of the noise preview on 1.20.1's
-  generator (`NoiseChunk`, `RandomState`, surface rules, features):
-  compiles is not enough, `N features failed` must be 0 on the dev server
-  (skill, item 12). Stand-in with the preview off if it does not hold
-  (item 10).
+- [x] B.5 World generation paths of the noise preview on 1.20.1's
+  generator: on both dev servers the preview builds tiles, grows the
+  world's features (Forge, third minute: 180 ms of features a quarter,
+  8 villages) with `0 features failed` in every minute line.
 
 ## P.C — Loaders
 
-- [ ] C.1 Fabric: networking through `FriendlyByteBuf` receivers (Fabric
-  API 0.92 has no `PayloadTypeRegistry`), `canSend` on the channel id.
-- [ ] C.2 Forge: `FarfieldForge`, `FarfieldForgeClient`, `ForgePlatform`,
-  `ForgeNetwork` on `MinecraftForge.EVENT_BUS`; an optional
-  `SimpleChannel` or event channel that servers and clients without
-  Farfield accept (ADR-068); `ConfigScreenHandler` for the Mods screen;
-  `TickEvent` phases in place of `Post` events.
-- [ ] C.3 Dedicated-server safety on Forge (client classes in their own
-  class, as on NeoForge).
+- [x] C.1 Fabric: a 1.20.1 `FabricNetwork` (in `fabric/src/versioned/
+  1.20.1/`) on a byte channel, receivers that read the bytes on the
+  network thread and handle the message on the game thread; the client
+  receiver moved into `FabricNetwork.registerClient` for every version.
+  Streaming not checked between two games yet (D.4).
+- [x] C.2 Forge: `FarfieldForge`, `FarfieldForgeClient`, `ForgePlatform`,
+  `ForgeNetwork` (an optional `SimpleChannel`: absent or vanilla accepted
+  both ways, handlers on the game thread), `ConfigScreenHandler` for the
+  Mods screen, `TickEvent` END phases. Compiles; the server half ran (D.1).
+- [x] C.3 Dedicated-server safety on Forge: client setup in
+  `FarfieldForgeClient`, reached only when `FMLEnvironment.dist` is the
+  client; the Forge dev server booted without loading it.
 
 ## P.D — Run time
 
-- [ ] D.1 Dev servers, both loaders: boot to `Done`, no `Mixin apply
-  failed`, clean stop with the store counters.
-- [ ] D.2 Importer on 1.20.1's own chunks (DataVersion 3465): `LOD import
-  of ... done: N chunks ... 0 failed` on a world 1.20.1 wrote, and on the
-  corpus world `dh-baseline-1.20.1`. The decoder already reads this
-  format (ADR on region compression); the test world is 1.21.1's and
-  cannot be opened by 1.20.1, so 1.20.1 needs a test world of its own
-  (same seed).
+- [x] D.1 Dev servers, both loaders, on a fresh world of the test seed:
+  `Done` with no mixin failure (Forge: MixinExtras initialised; the refmap
+  warning is the dev run's, its names are Mojang's), stores opened, live
+  ingest (Fabric 726 chunks, Forge 716), the preview running, clean stop
+  with the store counters. Only the server mixins apply on a dedicated
+  server: the client ones wait for D.3.
+- [~] D.2 Importer on 1.20.1's own chunks (DataVersion 3465): Fabric dev
+  server, second boot of its 1.20.1 world, `farfield import`: `LOD import
+  of minecraft:overworld done: 529 chunks in 1 s (699/s), 4 regions (0
+  already done, 0 failed)`. Remains: the corpus world `dh-baseline-1.20.1`.
 - [ ] D.3 Dev clients, both loaders (`farfield-dev-client-check`): LODs
   drawn, depth and fog joined to vanilla's (1.20.1's fog and its
   `renderLevel` order differ from 1.21.1's).
