@@ -5447,3 +5447,42 @@ Status: accepted, 2026-11-22. Amends ADR-055 for the preview's mask.
   Fabric, Sodium, 26.x, coarse levels in a game (the same mask and rule).
   Unrelated and left: dashed pale strips on vanilla's own frozen lake (seen
   without Farfield too), the thin band at the vanilla edge (ADR-055's).
+
+
+## ADR-176 — Translucent quads far to near inside a section
+
+Status: accepted, 2026-11-22. Amends ADR-055 ("quads inside one section are
+not sorted").
+
+- **Context**: GitHub issue #1 ("Ice seems to show the wrong faces /
+  projecting in wrong order?"). Its captures are inside the vanilla render
+  distance, but the LOD side had the flaw ADR-055 left: a section's
+  translucent groups were drawn -X, +X, -Y, +Y, -Z, +Z, each in the
+  mesher's order (planes rising). The Z walls of an ice sheet's edge, under
+  the water's top, blended over that top; inside a negative group the
+  nearest plane came first.
+- **Decision** (`core/mesh/TranslucentOrder`):
+  - At mesh time each translucent direction group is sorted far to near:
+    positive faces by rising plane, negative faces by falling plane; on one
+    plane of an upward group, the lower fill first (a water top under the
+    ice top beside it). Back faces are culled, so for every face that shows
+    the camera is on its front side: that order holds for any camera,
+    with no sort per frame.
+  - At draw time a section's groups go sides first (X, then Z), then the
+    horizontal faces, those facing the camera last (camera above or below
+    the section's middle). Translucent voxels are mostly thin horizontal
+    layers (the sea, ice over it) whose walls stand under the top seen over
+    them. Not exact between directions in general (glass walls rising
+    above a translucent floor); sections stay far to near as before.
+  - Ranges that follow each other in the buffer still share one command.
+- **Checked**: unit tests `TranslucentOrderTest` (every group far to near
+  for 225 camera positions per direction; the water top under the ice top;
+  the group order). Fabric 1.21.1 dev client, A/B on one build with a
+  temporary switch (removed), 2560x1440, render distance 2, three views
+  (2394, 126, -162 facing 31, 18; 2394, 100, -162 facing 70, 35; -80, 85,
+  160 facing 90, 30): 10,000 to 22,000 pixels change, all on LOD ice edges
+  over open water; the edge walls now show tinted by the water in front of
+  them with a thin strip above it, as vanilla, where they showed bright over
+  the water. The vanilla area and everything opaque are unchanged. Not
+  checked: NeoForge, Sodium, shader packs (`voxy_translucent` takes the same
+  commands), 26.x in a client.
