@@ -157,12 +157,15 @@ processResources {
             'neoforge_version_range'       : neoforge_version_range,
             'neoforge_loader_version_range': neoforge_loader_version_range,
             'neoforge_logo_key'            : neoforge_logo_key,
+            // Forge 47 (1.20.1, ADR-177): set by that version's properties only.
+            'forge_version_range'          : findProperty('forge_version_range') ?: '',
+            'forge_loader_version_range'   : findProperty('forge_loader_version_range') ?: '',
             'credits'                      : credits,
             'java_version'                 : java_version,
             'mixin_compatibility_level'    : mixin_compatibility_level
     ]
 
-    filesMatching(['pack.mcmeta', 'fabric.mod.json', 'META-INF/neoforge.mods.toml', '*.mixins.json']) {
+    filesMatching(['pack.mcmeta', 'fabric.mod.json', 'META-INF/neoforge.mods.toml', 'META-INF/mods.toml', '*.mixins.json']) {
         expand expandProps
     }
     inputs.properties(expandProps)

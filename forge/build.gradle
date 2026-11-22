@@ -1,0 +1,107 @@
+plugins {
+    id 'multiloader-loader'
+    id 'net.neoforged.moddev.legacyforge'
+}
+
+// Minecraft 1.20.1 on Forge 47 (ADR-177): NeoForge for 1.20.1 is Forge's 47.1 fork and
+// loads this jar. ModDevGradle's legacy plugin: the game in Mojang's names for the dev
+// runs, the jar reobfuscated to SRG names with a mixin refmap, as Forge 47 needs.
+
+legacyForge {
+    version = "${minecraft_version}-${forge_version}"
+    if (project.hasProperty('parchment_version')) {
+        parchment {
+            minecraftVersion = parchment_minecraft
+            mappingsVersion = parchment_version
+        }
+    }
+    runs {
+        configureEach {
+            ideName = "Forge ${it.name.capitalize()} (${project.path})"
+            // Dev runs log the performance lines (off by default in play).
+            systemProperty('farfield.perfLogs', 'true')
+        }
+        client {
+            client()
+            gameDirectory = versionedRunDir('run')
+            // Rehearsal, the test harness mod (ADR-122), when its jar is there.
+            systemProperty('rehearsal', 'true')
+            systemProperty('rehearsal.extensions', 'io.lakio.farfield.client.FarfieldRehearsal')
+            if (project.hasProperty('agentWindow')) {
+                systemProperty('rehearsal.window', project.property('agentWindow') as String)
+            }
+            if (project.hasProperty('quickPlay')) {
+                programArguments.addAll('--quickPlaySingleplayer', project.property('quickPlay') as String)
+            }
+            if (project.hasProperty('quickPlayServer')) {
+                programArguments.addAll('--quickPlayMultiplayer', project.property('quickPlayServer') as String)
+            }
+            if (project.hasProperty('clientUsername')) {
+                programArguments.addAll('--username', project.property('clientUsername') as String)
+            }
+        }
+        server {
+            server()
+            gameDirectory = versionedRunDir('run')
+        }
+    }
+    mods {
+        "${mod_id}" {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+// Forge 47 reads the mixin configs from the jar's manifest, and the remapped jar's
+// mixins find their targets through the refmap the annotation processor writes.
+mixin {
+    add sourceSets.main, "${mod_id}.refmap.json"
+    config "${mod_id}.mixins.json"
+    config "${mod_id}.iris.mixins.json"
+    config "${mod_id}.sodium.mixins.json"
+}
+
+def mixinConfigs = ["${mod_id}.mixins.json", "${mod_id}.iris.mixins.json", "${mod_id}.sodium.mixins.json"]
+jar {
+    manifest.attributes('MixinConfigs': mixinConfigs.join(','))
+}
+// Each config names the refmap (Forge only: Loom and NeoForge need none).
+processResources {
+    inputs.property('refmap', "${mod_id}.refmap.json")
+    filesMatching('*.mixins.json') {
+        filter { String line ->
+            line.contains('"package"') ? "${line}\n  \"refmap\": \"${mod_id}.refmap.json\"," : line
+        }
+    }
+}
+
+dependencies {
+    annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
+    // MixinExtras (@Local): Forge 47 does not ship it, so the jar nests it.
+    compileOnly(annotationProcessor('io.github.llamalad7:mixinextras-common:0.3.5'))
+    implementation(jarJar('io.github.llamalad7:mixinextras-forge:0.3.5'))
+    // Libraries of the engine core, nested in the mod jar.
+    jarJar(implementation("io.airlift:aircompressor")) {
+        version {
+            strictly "[${aircompressor_version},)"
+            prefer aircompressor_version
+        }
+    }
+    additionalRuntimeClasspath "io.airlift:aircompressor:${aircompressor_version}"
+    // Shader packs (ADR-113): Oculus, Iris's Forge port, compiled against, never bundled.
+    modCompileOnly("maven.modrinth:oculus:${oculus_version}") { transitive = false }
+    // Rehearsal, the test harness mod (ADR-122), in the dev runs only, when a checkout is named.
+    def rehearsalJar = rehearsalJar('forge')
+    if (rehearsalJar != null) {
+        modRuntimeOnly files(rehearsalJar)
+    }
+}
+
+// Client and server share the default run dir.
+registerPrepareRuns(versionedRunDir('run'), versionedRunDir('run'))
+registerFreshWorld('runClient', versionedRunDir('run'))
+
+// Dev servers read console commands (scripted checks pipe them in).
+tasks.matching { it.name == 'runServer' }.configureEach {
+    standardInput = System.in
+}

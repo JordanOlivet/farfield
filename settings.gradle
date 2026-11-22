@@ -73,6 +73,12 @@ include('core')
 // Each has its properties in versions/<version>.properties.
 def minecraftVersions = providers.gradleProperty('minecraft_versions').get().split(',')*.trim()
 def versionedProjects = ['common', 'fabric', 'neoforge']
+// Forge for the versions before NeoForge's own API (1.20.1, ADR-177): a branch only
+// when such a version is built.
+def forgeVersions = minecraftVersions.findAll { it == '1.20.1' }
+if (!forgeVersions.isEmpty()) {
+    versionedProjects += 'forge'
+}
 
 // Minecraft-facing code compiled against vanilla, then one thin project per
 // loader, each versioned by Stonecutter: a branch per project, a node per
@@ -85,7 +91,8 @@ stonecutter {
     create(rootProject) { tree ->
         versionedProjects.each { String branch ->
             // NeoForge starts at 1.20.2: a 1.20.1 node is for Fabric and Forge only.
-            def versions = branch == 'neoforge' ? minecraftVersions.findAll { it != '1.20.1' } : minecraftVersions
+            def versions = branch == 'neoforge' ? minecraftVersions.findAll { it != '1.20.1' }
+                    : branch == 'forge' ? forgeVersions : minecraftVersions
             tree.branch(branch) { it.versions(versions as String[]) }
         }
         tree.vcsVersion = '1.21.1'
