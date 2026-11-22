@@ -5404,3 +5404,46 @@ Status: accepted, 2026-11-20. Amends ADR-173.
   setup (the user: the preview looks like LODs, so it counts); it differs
   from the setting while the LODs load and with the preview off. A consumer
   tuned for a shorter range caps it on its side, as the API doc says.
+
+
+## ADR-175 — The preview's fluid mask hides its ice faces too
+
+Status: accepted, 2026-11-22. Amends ADR-055 for the preview's mask.
+
+- **Context**: the user, over a frozen lake in the test world: "la ligne
+  droite qui traverse le lac. La teinte de la glace LOD au delà est ok. Donc
+  c'est l'ADR 55 qui a été cassé ou un truc lié". The line, measured: LOD
+  geometry (gone with `render off`, there with level colours), 1 block of
+  ice wall seen at a grazing angle, 10 to 16 RGB levels lighter, exactly on
+  z = 240, the border between the last real chunk (stored terrain to z 239)
+  and the preview's first chunk (positions projected on the ice plane with
+  the spectator's flying field of view, 77 degrees; the vanilla edge falls on
+  176.4 the same way). Not the stored data (ice at y 62 over water, uniform),
+  not the real mesh (the real sections meshed alone show no wall there), not
+  an overlap (the column report gives the real section and not the preview
+  quads in the real chunk, the preview's and not the real ones beyond).
+  The cause: in a real chunk the preview fills its columns with the fluid
+  mask up to the real fluid's top, ice included (the chunk's fluid top is
+  63), so it draws no wall toward real water; but the mask is a fluid, and
+  since ADR-055 a translucent voxel hides only its own kind, so the
+  preview's ice showed its face against the mask: an ice wall along every
+  real frozen sea's border with the preview, seen through the real ice.
+  A unit test reproduced it (`Quad[-Z at 0,19,10 ... material 12]`).
+- **Decision**: `MaterialClassifier.hidesTranslucent`: a translucent
+  material that hides every translucent neighbor, fluid or not. Only the
+  preview's fluid mask has it (`MaterialTable.packMaskFluid`, from
+  `BlockKeys`); the coarse levels' wrapper classifier passes it on. In a
+  section that holds both kinds, the mesher adds those voxels to what hides
+  the non-fluid kind (`BinaryGreedyMesher`, rows and columns kept only when
+  such a voxel is there). The preview's land still shows its faces against
+  the mask, and real shores (ice beside water) keep both faces.
+- **Result**: unit test `previewIceShowsNoWallTowardARealFrozenLake`
+  (failed before, passes); `core` 283 tests pass; all 10 jars build.
+  NeoForge 1.21.1 dev client, same two views as before (48, 100, 40 facing
+  yaw 20 pitch 15; 48, 160, 40 facing south pitch 30): the line's pixels go
+  from 122/153/215 back to the ice around (112/137/201); over the whole
+  frames, the line is the only change in the LODs (the rest: clouds moving,
+  water animation and the game's own dashes near the camera). Not checked:
+  Fabric, Sodium, 26.x, coarse levels in a game (the same mask and rule).
+  Unrelated and left: dashed pale strips on vanilla's own frozen lake (seen
+  without Farfield too), the thin band at the vanilla edge (ADR-055's).

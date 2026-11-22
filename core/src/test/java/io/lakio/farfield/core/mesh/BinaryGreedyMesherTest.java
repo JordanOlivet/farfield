@@ -677,6 +677,53 @@ class BinaryGreedyMesherTest {
     }
 
     @Test
+    void previewIceShowsNoWallTowardARealFrozenLake() {
+        // A preview frozen lake (water 10 up to y 18, ice 12 at 19) from z 10 on; before it a real
+        // chunk's columns, filled with the fluid mask (11) up to the real fluid's top, the ice
+        // included: the preview shows no wall toward the real lake, ice or water.
+        int mask = 11;
+        MaterialClassifier classes = new MaterialClassifier() {
+            @Override
+            public int classOf(int m) {
+                return CLASSES.classOf(m);
+            }
+
+            @Override
+            public boolean isFluid(int m) {
+                return CLASSES.isFluid(m);
+            }
+
+            @Override
+            public boolean hidesTranslucent(int m) {
+                return m == mask;
+            }
+        };
+        LodSection section = new LodSection(0);
+        for (int y = 0; y < 32; y++) {
+            for (int z = 0; z < 32; z++) {
+                for (int x = 0; x < 32; x++) {
+                    int lake = y < 10 ? 1 : y < 19 ? 10 : y == 19 ? 12 : 0;
+                    section.set(x, y, z, z >= 10 || lake == 1 || lake == 0 ? lake : mask);
+                }
+            }
+        }
+        int[][] walls = new int[6][];
+        for (int d = 0; d < 6; d++) {
+            walls[d] = new int[32];
+            Arrays.fill(walls[d], -1);
+        }
+        mesher.mesh(section, classes, walls, out);
+        for (int d = 0; d < Quad.DIRECTIONS; d++) {
+            for (int i = 0; i < out.count(d); i++) {
+                long q = out.quads(d)[i];
+                if (d == Quad.NEG_Z && Quad.z(q) == 10) {
+                    fail("a wall toward the real lake: " + Quad.toString(q));
+                }
+            }
+        }
+    }
+
+    @Test
     void plantsGiveTwoDiagonalsAndHideNothing() {
         // Stone up to y 9, grass plants (40) on the floor at (3, 10, 5) and (4, 10, 5).
         int grass = 40;

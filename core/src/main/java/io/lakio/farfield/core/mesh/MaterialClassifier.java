@@ -52,6 +52,16 @@ public interface MaterialClassifier {
     }
 
     /**
+     * Whether a {@link #TRANSLUCENT} material hides the faces of every
+     * translucent neighbor, fluid or not, instead of its own kind only: the
+     * preview's fluid mask, never drawn, which stands for a real chunk's water
+     * and the ice over it (ADR-175).
+     */
+    default boolean hidesTranslucent(int material) {
+        return false;
+    }
+
+    /**
      * Whether a {@link #TRANSLUCENT} fluid holds a plant (kelp, seagrass):
      * meshed as the fluid {@link #fluidOf} names, plus, like a {@link #PLANT},
      * two crossed quads with its own material (ADR-065).

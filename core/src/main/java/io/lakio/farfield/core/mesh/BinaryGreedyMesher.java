@@ -74,6 +74,8 @@ public final class BinaryGreedyMesher {
     private int[] partial = new int[64];
     private int[] shaped = new int[64];
     private int[] fluid = new int[64];
+    /** Translucent voxels that hide every translucent neighbor ({@link MaterialClassifier#hidesTranslucent}). */
+    private int[] hidesAll = new int[64];
     private int[] plant = new int[64];
     /** Material of the faces per palette index: {@link MaterialClassifier#fluidOf} for translucent ones. */
     private int[] faceMaterial = new int[64];
@@ -83,6 +85,8 @@ public final class BinaryGreedyMesher {
     private boolean mixedTranslucent;
     /** Every translucent voxel of the section is a fluid: partial voxels hide their faces. */
     private boolean onlyFluid;
+    /** A {@link #mixedTranslucent} section holds voxels that hide both kinds (ADR-175). */
+    private boolean anyHidesAll;
 
     /** Opaque, translucent and partial X rows, index {@code y * 32 + z}, bit x. */
     private final int[] rowsOpaque = new int[PLANE];
@@ -99,6 +103,9 @@ public final class BinaryGreedyMesher {
     private final int[] colTranslucent = new int[PLANE];
     private final int[] colPartial = new int[PLANE];
     private final int[] colFluid = new int[PLANE];
+    /** The voxels that hide both translucent kinds, rows then columns; only for {@link #anyHidesAll}. */
+    private final int[] rowsHidesAll = new int[PLANE];
+    private final int[] colHidesAll = new int[PLANE];
     /** Opaque or partial X rows before {@link #splitPartialFill} moves voxels. */
     private final int[] solidRows = new int[PLANE];
     /** Visible faces of the current direction, same layout as the columns. */
@@ -268,12 +275,14 @@ public final class BinaryGreedyMesher {
             partial = new int[opaque.length];
             shaped = new int[opaque.length];
             fluid = new int[opaque.length];
+            hidesAll = new int[opaque.length];
             plant = new int[opaque.length];
             faceMaterial = new int[opaque.length];
         }
         boolean anyVisible = false;
         boolean anyFluid = false;
         boolean anyOtherTranslucent = false;
+        boolean anyHides = false;
         anyShaped = false;
         anyPlant = false;
         for (int i = 0; i < n; i++) {
@@ -284,6 +293,8 @@ public final class BinaryGreedyMesher {
             partial[i] = c == MaterialClassifier.PARTIAL ? 1 : 0;
             shaped[i] = c == MaterialClassifier.SHAPED ? 1 : 0;
             fluid[i] = c == MaterialClassifier.TRANSLUCENT && classifier.isFluid(section.paletteEntry(i)) ? 1 : 0;
+            hidesAll[i] = c == MaterialClassifier.TRANSLUCENT && classifier.hidesTranslucent(m) ? 1 : 0;
+            anyHides |= hidesAll[i] != 0;
             // Kelp and seagrass: the water's faces, and their own crossed quads (ADR-065).
             boolean submerged = c == MaterialClassifier.TRANSLUCENT && classifier.hasPlant(m);
             plant[i] = c == MaterialClassifier.PLANT || submerged ? 1 : 0;
@@ -296,6 +307,7 @@ public final class BinaryGreedyMesher {
         }
         mixedTranslucent = anyFluid && anyOtherTranslucent;
         onlyFluid = anyFluid && !anyOtherTranslucent;
+        anyHidesAll = anyHides && mixedTranslucent;
         if (!anyVisible) {
             return false;
         }
@@ -335,6 +347,9 @@ public final class BinaryGreedyMesher {
         if (mixedTranslucent) {
             Arrays.fill(rowsFluid, 0);
         }
+        if (anyHidesAll) {
+            Arrays.fill(rowsHidesAll, 0);
+        }
         if (anyPlant) {
             Arrays.fill(rowsPlant, 0);
         }
@@ -357,6 +372,7 @@ public final class BinaryGreedyMesher {
                         }
                         int byteMask = 0xFF << xShift;
                         boolean fluidBrick = fluid[i] != 0 && mixedTranslucent;
+                        boolean hidesBrick = hidesAll[i] != 0 && anyHidesAll;
                         boolean submergedBrick = plant[i] != 0 && target != rowsPlant;
                         for (int ly = 0; ly < 8; ly++) {
                             int row = (by * 8 + ly) * S + bz * 8;
@@ -364,6 +380,9 @@ public final class BinaryGreedyMesher {
                                 target[row + lz] |= byteMask;
                                 if (fluidBrick) {
                                     rowsFluid[row + lz] |= byteMask;
+                                }
+                                if (hidesBrick) {
+                                    rowsHidesAll[row + lz] |= byteMask;
                                 }
                                 if (submergedBrick) {
                                     rowsPlant[row + lz] |= byteMask;
@@ -384,6 +403,7 @@ public final class BinaryGreedyMesher {
                             int pa = 0;
                             int sh = 0;
                             int fl = 0;
+                            int ha = 0;
                             int pl = 0;
                             for (int lx = 0; lx < 8; lx++) {
                                 if (left == 0) {
@@ -398,6 +418,7 @@ public final class BinaryGreedyMesher {
                                 pa |= partial[i] << lx;
                                 sh |= shaped[i] << lx;
                                 fl |= fluid[i] << lx;
+                                ha |= hidesAll[i] << lx;
                                 pl |= plant[i] << lx;
                             }
                             rowsOpaque[row + lz] |= op << xShift;
@@ -406,6 +427,9 @@ public final class BinaryGreedyMesher {
                             rowsShaped[row + lz] |= sh << xShift;
                             if (mixedTranslucent) {
                                 rowsFluid[row + lz] |= fl << xShift;
+                            }
+                            if (anyHidesAll) {
+                                rowsHidesAll[row + lz] |= ha << xShift;
                             }
                             if (anyPlant) {
                                 rowsPlant[row + lz] |= pl << xShift;
@@ -525,6 +549,9 @@ public final class BinaryGreedyMesher {
                 if (mixedTranslucent) {
                     System.arraycopy(rowsFluid, 0, colFluid, 0, PLANE);
                 }
+                if (anyHidesAll) {
+                    System.arraycopy(rowsHidesAll, 0, colHidesAll, 0, PLANE);
+                }
             }
             case 1 -> {
                 // Y columns at (u = z, v = x): for each z, transpose the (y, x) matrix.
@@ -534,6 +561,9 @@ public final class BinaryGreedyMesher {
                 if (mixedTranslucent) {
                     transposeGather(rowsFluid, colFluid, true);
                 }
+                if (anyHidesAll) {
+                    transposeGather(rowsHidesAll, colHidesAll, true);
+                }
             }
             default -> {
                 // Z columns at (u = x, v = y): for each y, transpose the (z, x) matrix.
@@ -542,6 +572,9 @@ public final class BinaryGreedyMesher {
                 transposeGather(rowsPartial, colPartial, false);
                 if (mixedTranslucent) {
                     transposeGather(rowsFluid, colFluid, false);
+                }
+                if (anyHidesAll) {
+                    transposeGather(rowsHidesAll, colHidesAll, false);
                 }
             }
         }
@@ -614,7 +647,8 @@ public final class BinaryGreedyMesher {
                     long f = (colFluid[i] & 0xFFFFFFFFL) << 1;
                     long other = t & ~f & 0x1FFFFFFFEL;
                     long hidesFluid = (solid | p) & ~other;
-                    long hidesOther = solid & ~f;
+                    // A voxel that hides both kinds (the preview's fluid mask) hides the other kind too.
+                    long hidesOther = anyHidesAll ? solid & (~f | (colHidesAll[i] & 0xFFFFFFFFL) << 1) : solid & ~f;
                     visible = positive
                             ? (c & ~(hidesOpaque >>> 1)) | (f & ~(hidesFluid >>> 1)) | (other & ~(hidesOther >>> 1))
                                     | (p & ~(c >>> 1))
