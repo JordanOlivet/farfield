@@ -26,6 +26,27 @@ public final class Mc {
     private Mc() {
     }
 
+    /** A resource id: a constructor before 1.21, a factory since. */
+    public static ResourceLocation id(String namespace, String path) {
+        //? if >=1.21 {
+        return ResourceLocation.fromNamespaceAndPath(namespace, path);
+        //?} else {
+        /*return new ResourceLocation(namespace, path);
+        *///?}
+    }
+
+    /**
+     * Whether a chunk future's result holds a chunk: a {@code ChunkResult} since 1.20.5, an
+     * {@code Either} with the chunk on its left before.
+     */
+    public static boolean chunkLoaded(Object result) {
+        //? if >=1.20.5 {
+        return ((net.minecraft.server.level.ChunkResult<?>) result).isSuccess();
+        //?} else {
+        /*return ((com.mojang.datafixers.util.Either<?, ?>) result).left().isPresent();
+        *///?}
+    }
+
     /** A chunk position's X, in chunks: a field up to 1.21.11, a record component since 26.1. */
     public static int chunkX(ChunkPos pos) {
         //? if >=26.1 {

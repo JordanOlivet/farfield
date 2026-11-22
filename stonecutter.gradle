@@ -32,7 +32,12 @@ stonecutter.parameters { sc ->
     sc.replacements.string(!atLeast('1.20.5')) { r ->
         r.replace('net.minecraft.world.level.chunk.status.ChunkStatus', 'net.minecraft.world.level.chunk.ChunkStatus')
         r.replace('net.minecraft.client.gui.screens.options.OptionsSubScreen', 'net.minecraft.client.gui.screens.OptionsSubScreen')
-        r.replace('SectionRenderDispatcher', 'ChunkRenderDispatcher')
+        r.replace('new net.minecraft.client.gui.screens.options.VideoSettingsScreen(null, mc, mc.options)',
+                'new net.minecraft.client.gui.screens.VideoSettingsScreen(null, mc.options)')
+        // A chunk's status is persisted apart from 1.20.5 on; the ping a player field before 1.20.2.
+        r.replace('.setPersistedStatus(', '.setStatus(')
+        r.replace('.getPersistedStatus()', '.getStatus()')
+        r.replace('.connection.latency()', '.latency')
     }
     // 1.21.2: the level's height accessors and registry lookups.
     sc.replacements.string(atLeast('1.21.2')) { r ->
