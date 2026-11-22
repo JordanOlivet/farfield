@@ -84,7 +84,9 @@ stonecutter {
     centralScript = 'build.gradle'
     create(rootProject) { tree ->
         versionedProjects.each { String branch ->
-            tree.branch(branch) { it.versions(minecraftVersions as String[]) }
+            // NeoForge starts at 1.20.2: a 1.20.1 node is for Fabric and Forge only.
+            def versions = branch == 'neoforge' ? minecraftVersions.findAll { it != '1.20.1' } : minecraftVersions
+            tree.branch(branch) { it.versions(versions as String[]) }
         }
         tree.vcsVersion = '1.21.1'
     }

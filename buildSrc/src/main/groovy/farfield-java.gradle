@@ -10,6 +10,12 @@ java {
     withSourcesJar()
 }
 
+// Java 17 bytecode and API: Minecraft 1.20.1 runs Java 17, and its nodes depend
+// on these projects. The tests keep the toolchain's level.
+tasks.named('compileJava', JavaCompile) {
+    options.release = 17
+}
+
 repositories {
     mavenCentral()
 }

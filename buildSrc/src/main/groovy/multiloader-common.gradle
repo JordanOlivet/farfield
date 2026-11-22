@@ -170,4 +170,9 @@ processResources {
 // Every compile error of a port at once, not javac's first 100 (ADR-165).
 tasks.withType(JavaCompile).configureEach {
     options.compilerArgs += ['-Xmaxerrs', '5000']
+    // -PallErrors: javac goes on to types and signatures past the unresolved imports,
+    // so one build sizes a port (with some errors that follow from the first ones).
+    if (project.hasProperty('allErrors')) {
+        options.compilerArgs += ['-XDshould-stop.ifError=FLOW']
+    }
 }

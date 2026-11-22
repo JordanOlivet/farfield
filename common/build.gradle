@@ -1,10 +1,17 @@
 plugins {
     id 'multiloader-common'
-    id 'net.neoforged.moddev'
 }
 
-neoForge {
-    neoFormVersion = neo_form_version
+// 1.20.1 has no NeoForm: the legacy plugin gives the game in Mojang's names from MCP.
+def legacy = project.hasProperty('mcp_version')
+apply plugin: legacy ? 'net.neoforged.moddev.legacyforge' : 'net.neoforged.moddev'
+
+(legacy ? legacyForge : neoForge).with {
+    if (legacy) {
+        mcpVersion = mcp_version
+    } else {
+        neoFormVersion = neo_form_version
+    }
     // Automatically enable AccessTransformers if the file exists
     def at = new File(branchDir, 'src/main/resources/META-INF/accesstransformer.cfg')
     if (at.exists()) {
@@ -28,9 +35,17 @@ dependencies {
     compileOnly group: 'io.github.llamalad7', name: 'mixinextras-common', version: '0.3.5'
     annotationProcessor group: 'io.github.llamalad7', name: 'mixinextras-common', version: '0.3.5'
     // Shader packs (ADR-113): Iris's NeoForge jar is Mojang-named, as common is.
-    compileOnly("maven.modrinth:iris:${iris_neoforge_version}") { transitive = false }
+    // 1.20.1: Oculus, Iris's Forge port, SRG-named and remapped to Mojang's names here.
+    if (project.hasProperty('oculus_version')) {
+        modCompileOnly("maven.modrinth:oculus:${oculus_version}") { transitive = false }
+    }
+    if (project.hasProperty('iris_neoforge_version')) {
+        compileOnly("maven.modrinth:iris:${iris_neoforge_version}") { transitive = false }
+    }
     // Sodium's video settings pages (Sodium 0.8 on): its NeoForge API jar is Mojang-named, as common is.
-    compileOnly("net.caffeinemc:sodium-neoforge-api:${sodium_api_version}") { transitive = false }
+    if (project.hasProperty('sodium_api_version')) {
+        compileOnly("net.caffeinemc:sodium-neoforge-api:${sodium_api_version}") { transitive = false }
+    }
 }
 
 configurations {

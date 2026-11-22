@@ -1,0 +1,3 @@
+# Shared sources Minecraft 1.20.1 leaves out (ADR-165), one path a line under java/.
+# Sodium's config API starts with Sodium 0.8 (1.21.1 on).
+io/lakio/farfield/client/sodium/FarfieldSodiumConfig.java
