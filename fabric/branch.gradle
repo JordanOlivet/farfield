@@ -3,13 +3,20 @@
 // -Pmc=<version>, else the active one (stonecutter.gradle), so ':<branch>:runClient'
 // keeps working.
 def mc = (findProperty('mc') ?: rootProject.ext.activeMinecraftVersion) as String
-if (findProject(":${project.name}:${mc}") == null) {
-    throw new GradleException("-Pmc=${mc}: Minecraft ${mc} is not a version of ${project.path} (settings.gradle)")
-}
+// A version this branch does not have (1.20.1 on NeoForge, ADR-177) fails only when its
+// tasks run, so -Pmc=1.20.1 still configures the other branches.
+def node = findProject(":${project.name}:${mc}")
 ['runClient', 'runServer', 'runPackClient', 'classes', 'syncPackInstance'].each { String name ->
     tasks.register(name) {
         group = 'farfield'
         description = "Runs ${name} of Minecraft ${mc} (${project.path}:${mc})."
-        dependsOn ":${project.name}:${mc}:${name}"
+        if (node == null) {
+            doFirst {
+                throw new GradleException("-Pmc=${mc}: Minecraft ${mc} is not a version of ${project.path} "
+                        + "(settings.gradle; a version being ported needs -Pminecraft_versions=1.21.1,${mc})")
+            }
+        } else {
+            dependsOn ":${project.name}:${mc}:${name}"
+        }
     }
 }

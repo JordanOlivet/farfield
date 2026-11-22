@@ -91,9 +91,22 @@ dependencies {
     // Shader packs (ADR-113): Oculus, Iris's Forge port, compiled against, never bundled.
     modCompileOnly("maven.modrinth:oculus:${oculus_version}") { transitive = false }
     // Rehearsal, the test harness mod (ADR-122), in the dev runs only, when a checkout is named.
+    // Its jar is reobfuscated (SRG names) and the dev run is in Mojang's names, so it goes
+    // through modRuntimeOnly to be remapped, which takes module coordinates, not a file:
+    // its output/ folder is a flat repository.
     def rehearsalJar = rehearsalJar('forge')
     if (rehearsalJar != null) {
-        modRuntimeOnly files(rehearsalJar)
+        // rehearsal-forge-<mc>-<version>.jar: the remapping needs a version.
+        modRuntimeOnly "rehearsal:rehearsal-forge:${rehearsalJar.name - 'rehearsal-forge-' - '.jar'}"
+    }
+}
+if (rehearsalJar('forge') != null) {
+    repositories {
+        flatDir {
+            name = 'RehearsalOutput'
+            dirs rehearsalJar('forge').parentFile
+            content { includeGroup 'rehearsal' }
+        }
     }
 }
 
