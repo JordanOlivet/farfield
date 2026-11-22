@@ -1865,7 +1865,10 @@ public final class LodRenderer {
         java.util.Arrays.sort(translucentOrder.elements(), 0, translucentOrder.size());
         for (int i = translucentOrder.size() - 1; i >= 0; i--) {
             long e = translucentOrder.getLong(i);
-            addCommands(resident.get(frameTranslucent.getLong((int) (e & 0xFFFFFFFFL) >>> 6)), TRANSLUCENT, (int) e & 63);
+            long key = frameTranslucent.getLong((int) (e & 0xFFFFFFFFL) >>> 6);
+            // Within the section: side faces, then the horizontal ones facing the camera last (ADR-176).
+            int[] order = io.lakio.farfield.core.mesh.TranslucentOrder.directions(cameraBelowMiddle(key, cam));
+            addTranslucentCommands(resident.get(key), (int) e & 63, order);
         }
         phase[7] = System.nanoTime();
         if (frame % 60 == 0 || evictBacklog) {
@@ -3733,6 +3736,11 @@ public final class LodRenderer {
                 }
             }
         }
+        // Translucent faces far to near within each direction, for any camera (ADR-176).
+        for (int d = 0; d < Quad.DIRECTIONS; d++) {
+            io.lakio.farfield.core.mesh.TranslucentOrder.sortFarToNear(all, groups[Quad.DIRECTIONS + d],
+                    groups[Quad.DIRECTIONS + d + 1], d);
+        }
         int[] occupied = null;
         if (all.length > 0) {
             occupied = new int[OCCUPANCY_INTS];
@@ -5040,16 +5048,16 @@ public final class LodRenderer {
     }
 
     /**
-     * Writes the draw commands of a section into a list: its groups of that
-     * pass whose direction is in {@code faces}, adjacent groups in one command.
+     * Writes the draw commands of a section into a list: its opaque groups
+     * whose direction is in {@code faces}, adjacent groups in one command
+     * (translucent ones: {@link #addTranslucentCommands}).
      */
     private void addCommands(Resident r, int list, int faces) {
-        int first = list == TRANSLUCENT ? Quad.DIRECTIONS : 0;
-        int runStart = r.groups[first];
+        int runStart = r.groups[0];
         int runEnd = runStart;
         for (int d = 0; d < Quad.DIRECTIONS; d++) {
-            int start = r.groups[first + d];
-            int end = r.groups[first + d + 1];
+            int start = r.groups[d];
+            int end = r.groups[d + 1];
             if ((faces & 1 << d) == 0 || start == end) {
                 continue;
             }
@@ -5060,6 +5068,39 @@ public final class LodRenderer {
             runEnd = end;
         }
         addCommand(list, runStart, runEnd, r.slot);
+    }
+
+    /**
+     * The translucent groups of a section facing the camera ({@code faces}),
+     * in {@code order}; ranges that follow each other in the buffer share a
+     * command.
+     */
+    private void addTranslucentCommands(Resident r, int faces, int[] order) {
+        int runStart = -1;
+        int runEnd = -1;
+        for (int d : order) {
+            int start = r.groups[Quad.DIRECTIONS + d];
+            int end = r.groups[Quad.DIRECTIONS + d + 1];
+            if ((faces & 1 << d) == 0 || start == end) {
+                continue;
+            }
+            if (start != runEnd) {
+                if (runStart >= 0) {
+                    addCommand(TRANSLUCENT, runStart, runEnd, r.slot);
+                }
+                runStart = start;
+            }
+            runEnd = end;
+        }
+        if (runStart >= 0) {
+            addCommand(TRANSLUCENT, runStart, runEnd, r.slot);
+        }
+    }
+
+    /** Whether the camera is below the middle of a section's height. */
+    private static boolean cameraBelowMiddle(long key, Vec3 cam) {
+        double size = LodSection.SIZE << drawLevel(key);
+        return cam.y < (LodKey.y(key) + 0.5) * size;
     }
 
     private void addCommand(int list, int start, int end, int slot) {
