@@ -3667,6 +3667,11 @@ public final class LodRenderer {
             }
 
             @Override
+            public boolean hidesTranslucent(int m) {
+                return materials.hidesTranslucent(m);
+            }
+
+            @Override
             public int fluidOf(int m) {
                 return materials.fluidOf(m); // kelp is its water there, without its quads
             }

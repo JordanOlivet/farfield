@@ -123,8 +123,8 @@ public final class BlockKeys {
     /** {@link MaterialTable.Resolver} from block states; unknown keys are opaque cubes. */
     public static int resolve(String key) {
         if (key.equals(PreviewVoxels.MASK_FLUID_KEY)) {
-            // The preview's real-fluid mask: hides preview water faces, not land ones.
-            return MaterialTable.packFluid();
+            // The preview's real-fluid mask: hides preview water and ice faces, not land ones (ADR-175).
+            return MaterialTable.packMaskFluid();
         }
         BlockState state = state(key);
         if (state == null) {

@@ -61,6 +61,8 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
     private static final int COVER_SHIFT = 14;
     /** Packed flag of fluids holding a plant ({@link #hasPlant}), above the cover's quarters. */
     private static final int SUBMERGED = 1 << 17;
+    /** Packed flag of translucent materials that hide every translucent neighbor ({@link #hidesTranslucent}). */
+    private static final int HIDES_TRANSLUCENT = 1 << 18;
     private static final int[] WHOLE_VOXEL = {ShapeBoxes.pack(0, 0, 0, 16, 16, 16)};
 
     private final KeyRegistry keys;
@@ -106,9 +108,22 @@ public final class MaterialTable implements MaterialClassifier, MipBuilder.Shape
         return packFluid() | SUBMERGED;
     }
 
+    /**
+     * {@link #packFluid()} of a fluid that hides every translucent neighbor, ice included: the
+     * preview's real-fluid mask, which stands for a real chunk's water and the ice over it (ADR-175).
+     */
+    public static int packMaskFluid() {
+        return packFluid() | HIDES_TRANSLUCENT;
+    }
+
     @Override
     public boolean isFluid(int material) {
         return (properties(material) & FLUID) != 0;
+    }
+
+    @Override
+    public boolean hidesTranslucent(int material) {
+        return (properties(material) & HIDES_TRANSLUCENT) != 0;
     }
 
     @Override
