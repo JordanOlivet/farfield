@@ -48,10 +48,17 @@ The 50 errors, by cause:
 
 ## Decisions to take before starting
 
-- [ ] D.1 Loaders: **Forge 47.4 and Fabric** (recommended), no NeoForge
-  node. Forge is a third loader project (`forge/`, about the size of
-  `neoforge/`: 4 files, 200 lines), with nodes for 1.20.1 only; the
-  `neoforge` branch has none for 1.20.1 (done in `settings.gradle`).
+- [x] D.1 Loaders: **Forge 47.4 and Fabric**, no NeoForge node (the user,
+  2026-11-22: "Ok ça me va on fixe ça dans le plan"). Forge is a third
+  loader project (`forge/`, about the size of `neoforge/`: 4 files, 200
+  lines), with nodes for 1.20.1 only; the `neoforge` branch has none for
+  1.20.1 (done in `settings.gradle`). The Forge jar is tagged for
+  NeoForge on the stores only once it has run on NeoForge 47.1.106
+  (run time item D.7). A NeoForge 1.20.1 jar of its own only if that run
+  fails and a pack the user plays needs it. Precedent, GeckoLib's
+  CurseForge files for 1.20.1: a `geckolib-neoforge-1.20.1` jar up to
+  4.4.9, the `forge` jar tagged NeoForge and Forge at 4.7, Forge alone
+  from 4.8 to 4.8.5.
 - [ ] D.2 `api` and `core` at Java 17 bytecode for every version (amends
   ADR-165, "Java 21 bytecode while a supported version runs Java 21"):
   one build of them serves all nodes. Cost: no Java 21 API in `core`
@@ -62,7 +69,8 @@ The 50 errors, by cause:
   (`me.jellysquid.mods.sodium`). Recommended: first release without the
   shader path on 1.20.1 (LODs off under a shader pack, as beside an
   unsupported Iris), then a second step.
-- [ ] D.4 A new ADR records D.1 to D.3 and the version list.
+- [ ] D.4 A new ADR records D.1 to D.3 and the version list (D.2 and D.3
+  still open).
 
 ## P.A — Toolchain
 
