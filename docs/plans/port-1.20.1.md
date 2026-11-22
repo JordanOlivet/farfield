@@ -180,9 +180,11 @@ The 50 errors, by cause:
   server, second boot of its 1.20.1 world, `farfield import`: `LOD import
   of minecraft:overworld done: 529 chunks in 1 s (699/s), 4 regions (0
   already done, 0 failed)`. Remains: the corpus world `dh-baseline-1.20.1`.
-- [ ] D.3 Dev clients, both loaders (`farfield-dev-client-check`): LODs
+- [~] D.3 Dev clients, both loaders (`farfield-dev-client-check`): LODs
   drawn, depth and fog joined to vanilla's (1.20.1's fog and its
-  `renderLevel` order differ from 1.21.1's).
+  `renderLevel` order differ from 1.21.1's). Done: both runs configure
+  (`--dry-run`, `:forge:1.20.1:prepareClientRun`, Rehearsal 1.20.1 on the
+  Forge run). Remains: every client check, no client has run yet.
 - [ ] D.4 Client mode against the vanilla 1.20.1 server; streaming between
   a 1.20.1 server and client on each loader.
 - [ ] D.5 LOD stores written by 1.20.1 read by 1.21.1 after a world
