@@ -1,5 +1,6 @@
 package io.lakio.farfield.fabric;
 
+import io.lakio.farfield.client.StreamClient;
 import io.lakio.farfield.net.StreamPayload;
 import io.lakio.farfield.platform.services.INetwork;
 import io.lakio.farfield.server.StreamServer;
@@ -21,6 +22,12 @@ public final class FabricNetwork implements INetwork {
         PayloadTypeRegistry.playS2C().register(StreamPayload.TYPE, StreamPayload.CODEC);
         ServerPlayNetworking.registerGlobalReceiver(StreamPayload.TYPE,
                 (payload, context) -> StreamServer.receive(context.player(), payload.data()));
+    }
+
+    /** Client only: the client's receiver. */
+    static void registerClient() {
+        ClientPlayNetworking.registerGlobalReceiver(StreamPayload.TYPE,
+                (payload, context) -> StreamClient.receive(payload.data()));
     }
 
     @Override
