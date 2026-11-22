@@ -8,7 +8,7 @@ The 2026-11-21 reading was wrong; the 2026-11-22 probe and the user's own look r
 
 - 2026-11-21 (screenshot pair only): clouds behind a LOD peak looked masked by its silhouette. Not reproduced.
 - 2026-11-22, probe (TEMP, removed): at one frame every 5 s, the main depth and colour read at 48 x 27 points after the LODs, after Farfield's depth clear, right before and right after the game's `renderClouds` call (Cirrus replaces it at its head). After the LODs 594 of 1,296 points held depth, after the clear 0, before the clouds 85 (vanilla terrain only). Where its clouds fell on LODs, Cirrus changed their pixels: 135 of 454 and 161 of 509 LOD points.
-- Cirrus's cloud shader reads no depth (`assets/cirrus/shaders/core/cirrus_clouds.fsh`); it draws at the vanilla cloud stage, after the game's terrain.
+- Cirrus's clouds read no depth texture; they draw at the vanilla cloud stage, after the game's terrain.
 - The user, in a visible client the same day: clouds draw over the LODs; a capture shows cloud bands crossing a tall distant peak without a break.
 - So clouds draw over every LOD, in front of it or behind it, as `docs/api/client-api.md` says. A view where the cloud field ends above the far terrain looks like masking in a pair; read the probe, not the pair.
 
