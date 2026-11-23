@@ -2,3 +2,5 @@
 # preview's port is in phases: 2a the relief, 2b the surface rules (26.3's own
 # SurfaceColumns in java/), 2c the features' stand-in world, which waits.
 io/lakio/farfield/mixin/client/WindowMixin.java
+# The game's window is SDL3's since 26.3: no GLFW context to ask for.
+io/lakio/farfield/client/render/GlContextProbe.java

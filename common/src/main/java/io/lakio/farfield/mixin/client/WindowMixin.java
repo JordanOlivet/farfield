@@ -2,7 +2,7 @@ package io.lakio.farfield.mixin.client;
 
 import com.mojang.blaze3d.platform.Window;
 import io.lakio.farfield.Farfield;
-import org.lwjgl.glfw.GLFW;
+import io.lakio.farfield.client.render.GlContextProbe;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -22,7 +22,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * hands it over through {@code ImmediateWindowHandler}; without its early
  * window ({@code earlyWindowControl = false} in {@code fml.toml}, which a
  * test run sets, ADR-096) that call creates the window with the hints set
- * here, so the probe runs there too. Both injections are optional.
+ * here, so the probe runs there too. Both injections are optional. Forge 47
+ * (1.20.1) refuses both (its Mixin injects into a constructor at RETURN
+ * only): the forge project hooks its hand-off instead.
  */
 @Mixin(Window.class)
 public abstract class WindowMixin {
@@ -33,7 +35,7 @@ public abstract class WindowMixin {
                     remap = false),
             require = 0)
     private void farfield$requestGl46(CallbackInfo ci) {
-        farfield$probeGl46();
+        GlContextProbe.requestGl46();
     }
 
     @Inject(method = "<init>",
@@ -45,7 +47,7 @@ public abstract class WindowMixin {
             require = 0)
     private void farfield$requestGl46WithoutEarlyWindow(CallbackInfo ci) {
         if (!farfield$neoForgeEarlyWindow()) {
-            farfield$probeGl46();
+            GlContextProbe.requestGl46();
         }
     }
 
@@ -69,21 +71,5 @@ public abstract class WindowMixin {
             Farfield.LOG.warn("Could not read NeoForge's early window setting; its window is left as it is", e);
             return true;
         }
-    }
-
-    private static void farfield$probeGl46() {
-        GLFW.glfwWindowHint(GLFW.GLFW_CONTEXT_VERSION_MAJOR, 4);
-        GLFW.glfwWindowHint(GLFW.GLFW_CONTEXT_VERSION_MINOR, 6);
-        GLFW.glfwWindowHint(GLFW.GLFW_VISIBLE, GLFW.GLFW_FALSE);
-        long probe = GLFW.glfwCreateWindow(16, 16, "Farfield OpenGL 4.6 probe", 0L, 0L);
-        GLFW.glfwWindowHint(GLFW.GLFW_VISIBLE, GLFW.GLFW_TRUE);
-        if (probe != 0L) {
-            GLFW.glfwDestroyWindow(probe);
-            Farfield.LOG.info("OpenGL 4.6 context available: requested for the game window");
-            return;
-        }
-        Farfield.LOG.warn("No OpenGL 4.6 context available; LOD rendering will be disabled");
-        GLFW.glfwWindowHint(GLFW.GLFW_CONTEXT_VERSION_MAJOR, 3);
-        GLFW.glfwWindowHint(GLFW.GLFW_CONTEXT_VERSION_MINOR, 2);
     }
 }

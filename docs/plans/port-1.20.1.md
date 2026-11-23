@@ -112,15 +112,22 @@ The 50 errors, by cause:
 - [~] A.7 Dev tasks: `runServer` on both loaders in `runs/1.20.1/` (Fabric
   `fabric/runs/1.20.1/server`, Forge `forge/runs/1.20.1/run`), with
   `level-name=world-1.20.1` set by hand (a fresh world of the test seed:
-  the template world is 1.21.1's). Remains: `runClient` with `-PquickPlay`,
-  `runVanillaServer -Pmc=1.20.1`, a 1.20.1 template world in `dev/`.
+  the template world is 1.21.1's). `runClient` on both loaders (Fabric
+  `fabric/runs/1.20.1/client`, Forge `forge/runs/1.20.1/run`), the world
+  `farfield-1201` of the test seed created by Rehearsal
+  (`world farfield-1201 create <seed>`), then opened by name. Remains:
+  `-PquickPlay` (not tried), `runVanillaServer -Pmc=1.20.1`, a 1.20.1
+  template world in `dev/`.
 - [~] A.8 Rehearsal (its own checkout, `rehearsal.dir`): 1.20.1 nodes on
   Fabric and a new `forge` project, the two pattern switches of
   `RehearsalClient` turned into `instanceof` chains (Java 17), a `McCompat`
-  for three calls, Forge 47's early window hand-off in `WindowMixin`.
-  `common` compiles for 1.20.1. Remains: its full build, the jars in a
-  dev client, and a commit there (this session cannot run git outside the
-  Farfield worktree).
+  for three calls. Committed and pushed (`3045fee`). 2026-11-23: every
+  version builds; on Forge 47 two of its constructor injections were
+  refused at run time (Mixin 0.8.5 injects into a constructor at RETURN
+  only): `MinecraftMixin` redirects `setWindowActive` on 1.20.1, and a
+  Forge-only config (`rehearsal.forge.mixins.json`) hooks the head of
+  Forge's `NoVizFallback.windowHandoff` for the window hints. Both jars
+  ran in the dev clients (window minimized, inbox, every command).
 
 ## P.B — `common`
 
@@ -144,10 +151,17 @@ The 50 errors, by cause:
   Iris and Sodium configs take the version's level (A.5).
 - [ ] B.4 Mixin targets checked against 1.20.1's sources, one by one:
   `LevelChunk`, `ChunkGenerator`, `BiomeManager`, `ClientLevel`,
-  `LevelRenderer` accessors, `SpriteContents`, `Window` (1.20.1 asks for
-  OpenGL 3.2; which context Forge 47's early window makes is to check,
-  ADR-166 covers the case where it is under 4.6). `DedicatedServerMixin`
-  is not needed (no pause of an empty server before 1.21.2).
+  `LevelRenderer` accessors, `SpriteContents`. `DedicatedServerMixin`
+  is not needed (no pause of an empty server before 1.21.2). `Window`
+  done 2026-11-23: on Fabric the probe applies as on 1.21.1 (4.6 context);
+  on Forge 47 neither injection of `WindowMixin` finds its call (Forge
+  creates the window through its own `ImmediateWindowHandler`), so the
+  game ran on 3.2 with the 4.x functions from extensions (ADR-166). The
+  forge project now probes 4.6 at the head of `NoVizFallback.windowHandoff`
+  (the path with the early window off, as test runs set it): 4.6 context
+  in the log. With the early window on (the default), Forge 47's early
+  display tries its GL versions from the highest down (`GL_VERSIONS`, read
+  in its bytecode), as NeoForge's does; not run yet.
 - [x] B.5 World generation paths of the noise preview on 1.20.1's
   generator: on both dev servers the preview builds tiles, grows the
   world's features (Forge, third minute: 180 ms of features a quarter,
@@ -180,11 +194,14 @@ The 50 errors, by cause:
   server, second boot of its 1.20.1 world, `farfield import`: `LOD import
   of minecraft:overworld done: 529 chunks in 1 s (699/s), 4 regions (0
   already done, 0 failed)`. Remains: the corpus world `dh-baseline-1.20.1`.
-- [~] D.3 Dev clients, both loaders (`farfield-dev-client-check`): LODs
-  drawn, depth and fog joined to vanilla's (1.20.1's fog and its
-  `renderLevel` order differ from 1.21.1's). Done: both runs configure
-  (`--dry-run`, `:forge:1.20.1:prepareClientRun`, Rehearsal 1.20.1 on the
-  Forge run). Remains: every client check, no client has run yet.
+- [x] D.3 Dev clients, both loaders (`farfield-dev-client-check`), on a
+  fresh world of the test seed, window minimized, 2026-11-23: no mixin
+  failure, OpenGL 4.6 context, `wait stable` settled, 421 sections drawn
+  on each loader at the same pose (48 170 32). Screenshots read: far view
+  joined to vanilla's chunks by day and by night, fog at the horizon,
+  level colors (red to purple), the four tabs of the settings screen with
+  each label once. Not checked: Sodium or Embeddium (S.3), shader packs
+  (P.S), the early window on with Forge (B.4).
 - [ ] D.4 Client mode against the vanilla 1.20.1 server; streaming between
   a 1.20.1 server and client on each loader.
 - [ ] D.5 LOD stores written by 1.20.1 read by 1.21.1 after a world
