@@ -59,9 +59,11 @@ mixin {
     config "${mod_id}.mixins.json"
     config "${mod_id}.iris.mixins.json"
     config "${mod_id}.sodium.mixins.json"
+    config "${mod_id}.forge.mixins.json"
 }
 
-def mixinConfigs = ["${mod_id}.mixins.json", "${mod_id}.iris.mixins.json", "${mod_id}.sodium.mixins.json"]
+def mixinConfigs = ["${mod_id}.mixins.json", "${mod_id}.iris.mixins.json", "${mod_id}.sodium.mixins.json",
+        "${mod_id}.forge.mixins.json"]
 jar {
     manifest.attributes('MixinConfigs': mixinConfigs.join(','))
 }
