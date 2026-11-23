@@ -110,14 +110,18 @@ The 50 errors, by cause:
   on 1.20.1 (only Sodium 0.8 reads it, so nothing loads it; drop it from
   the 1.20.1 jar for tidiness).
 - [~] A.7 Dev tasks: `runServer` on both loaders in `runs/1.20.1/` (Fabric
-  `fabric/runs/1.20.1/server`, Forge `forge/runs/1.20.1/run`), with
+  `fabric/runs/1.20.1/server`, Forge `forge/runs/1.20.1/server`, a folder
+  of its own since 2026-11-23: a dev client joining it shared its log), with
   `level-name=world-1.20.1` set by hand (a fresh world of the test seed:
   the template world is 1.21.1's). `runClient` on both loaders (Fabric
   `fabric/runs/1.20.1/client`, Forge `forge/runs/1.20.1/run`), the world
   `farfield-1201` of the test seed created by Rehearsal
-  (`world farfield-1201 create <seed>`), then opened by name. Remains:
-  `-PquickPlay` (not tried), `runVanillaServer -Pmc=1.20.1`, a 1.20.1
-  template world in `dev/`.
+  (`world farfield-1201 create <seed>`), then opened by name.
+  `runVanillaServer -Pmc=1.20.1` (`runs/vanilla-server-1.20.1`): delete
+  the `world` folder it copies from `dev/` before the first start, the
+  template's `level.dat` is 1.21.1's and 1.20.1 makes its own from
+  `level-seed`. Remains: `-PquickPlay` (not tried), a 1.20.1 template
+  world in `dev/`.
 - [~] A.8 Rehearsal (its own checkout, `rehearsal.dir`): 1.20.1 nodes on
   Fabric and a new `forge` project, the two pattern switches of
   `RehearsalClient` turned into `instanceof` chains (Java 17), a `McCompat`
@@ -202,8 +206,23 @@ The 50 errors, by cause:
   level colors (red to purple), the four tabs of the settings screen with
   each label once. Not checked: Sodium or Embeddium (S.3), shader packs
   (P.S), the early window on with Forge (B.4).
-- [ ] D.4 Client mode against the vanilla 1.20.1 server; streaming between
-  a 1.20.1 server and client on each loader.
+- [x] D.4 Client mode against the vanilla 1.20.1 server; streaming between
+  a 1.20.1 server and client on each loader. 2026-11-23, dev runs, fresh
+  worlds of the test seed. Client mode: `Client mode: building the LODs`,
+  the client store closed with 536 chunks ingested on Fabric, 453 on
+  Forge. Streaming: session 1 on both sides, 1,952 sections and 89 preview
+  tiles in the first 10 s on Fabric (1,837 and 89 on Forge), 423 sections
+  drawn, the mirror closed with its sections; a second Fabric join opened
+  the mirror with 807 sections held (`same store`). Fixed on the way:
+  Forge 47 announces the shutdown before the last client tick, which
+  reopened a stream session and a mirror nothing closed; no session or
+  pipeline starts once the game is stopping. Not Farfield's, left open:
+  a Forge 47 dev client joining the vanilla server stalls at login about
+  two times in three (`Failed to connect to the server` after 30 s, the
+  server logs the join), with or without Farfield (4 of 6 joins with
+  Rehearsal alone); never seen against the Forge server (2 joins) or on
+  Fabric. To see in a launcher install (D.6, D.7). Not checked: a Fabric
+  client on the Forge server and the reverse, two clients.
 - [ ] D.5 LOD stores written by 1.20.1 read by 1.21.1 after a world
   upgrade (text keys, ADR-165).
 - [ ] D.7 The Forge jar on NeoForge 47.1.106 (a 1.20.1 NeoForge instance

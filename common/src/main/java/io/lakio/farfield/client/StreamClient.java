@@ -85,6 +85,13 @@ public final class StreamClient {
 
     private static StreamClient instance;
 
+    /**
+     * The game is closing: no session opens again. Forge 47 announces the
+     * shutdown before the last client tick, which would reopen the session
+     * and a mirror nothing closes.
+     */
+    private static volatile boolean stopping;
+
     private final ResourceKey<Level> dimension;
     private final Path dir;
     private LodWorld mirror;
@@ -200,6 +207,9 @@ public final class StreamClient {
      * dimension, and sends the wanted requests.
      */
     public static void tick(Minecraft mc) {
+        if (stopping) {
+            return;
+        }
         ClientLevel level = mc.level;
         boolean remote = level != null && !mc.hasSingleplayerServer() && mc.getConnection() != null
                 && Services.NETWORK.serverStreams();
@@ -266,6 +276,7 @@ public final class StreamClient {
 
     /** The game is closing. */
     public static void onClientStopping() {
+        stopping = true;
         StreamClient c = instance;
         instance = null;
         if (c != null) {

@@ -26,6 +26,9 @@ public final class LodClient {
 
     private static LodClient instance;
 
+    /** The game is closing: no pipeline starts again (see {@code StreamClient.stopping}). */
+    private static volatile boolean stopping;
+
     private final LodPipeline pipeline;
     private ClientLevel level;
 
@@ -131,6 +134,7 @@ public final class LodClient {
 
     /** The game is closing: write and close the stores before the JVM exits. */
     public static void onClientStopping() {
+        stopping = true;
         LodClient c = instance;
         instance = null;
         if (c != null) {
@@ -145,6 +149,9 @@ public final class LodClient {
      * player). Chunk loads can come before the first tick of a new level.
      */
     private static LodClient ensure(Minecraft mc, ClientLevel level) {
+        if (stopping) {
+            return null;
+        }
         // A server with Farfield sends its LODs (ADR-068): nothing to build here.
         boolean remote = level != null && !mc.hasSingleplayerServer() && mc.getConnection() != null
                 && !StreamClient.streaming(mc);
