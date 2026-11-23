@@ -42,7 +42,9 @@ legacyForge {
         }
         server {
             server()
-            gameDirectory = versionedRunDir('run')
+            // A folder of its own: a dev client joining it (streaming checks) would
+            // otherwise share its logs/latest.log.
+            gameDirectory = versionedRunDir('server')
         }
     }
     mods {
@@ -112,8 +114,7 @@ if (rehearsalJar('forge') != null) {
     }
 }
 
-// Client and server share the default run dir.
-registerPrepareRuns(versionedRunDir('run'), versionedRunDir('run'))
+registerPrepareRuns(versionedRunDir('run'), versionedRunDir('server'))
 
 // An agent's run (-PagentWindow) goes without FML's loading window, which takes the focus
 // before any mod code runs (ADR-096); Forge 47 has the same window and key as NeoForge.
