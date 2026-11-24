@@ -69,6 +69,12 @@ def mixinConfigs = ["${mod_id}.mixins.json", "${mod_id}.iris.mixins.json", "${mo
 jar {
     manifest.attributes('MixinConfigs': mixinConfigs.join(','))
 }
+// The shippable jar is the reobfuscated one. The legacy plugin writes it to the node's
+// own build/libs; it goes to the branch's (forge/build/libs), where CI and the release
+// look for every loader's jars.
+tasks.named('reobfJar') {
+    destinationDirectory = base.libsDirectory
+}
 // Each config names the refmap (Forge only: Loom and NeoForge need none).
 processResources {
     inputs.property('refmap', "${mod_id}.refmap.json")

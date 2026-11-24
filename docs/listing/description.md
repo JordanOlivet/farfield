@@ -2,7 +2,7 @@
 
 **Farfield** shows your world far past your render distance: 4,096 blocks by default, out to the world border if you ask (~33 millions blocks). Mountains, coasts, forests and seas are drawn as levels of detail (LOD), for a fraction of what real chunks would cost, and the terrain your world has not generated yet is drawn too, so the horizon is never empty.
 
-NeoForge and Fabric · single player and servers
+NeoForge, Fabric and Forge · single player and servers
 
 ![Vanilla at 8 chunks against Farfield, the same view](https://cdn.modrinth.com/data/3ToF1nXi/images/8fb598c574cfe1c5523934b431dd147eee863783.png)
 
@@ -12,7 +12,7 @@ NeoForge and Fabric · single player and servers
 - Up close they keep the details that read from afar: water at vanilla's height, grass and flowers, kelp, and the shapes of fences, walls, panes and stairs. Farther away, coarser levels take over where a block would be smaller than a few pixels on screen (the Detail setting).
 - The distance is yours to set, from 256 blocks to the world border (Fog Distance): the far levels are coarse, so the cost grows slowly with it. Under a shader pack it stops at 262,144 blocks.
 - After a join or a teleport the view fills from you outward.
-- Works with Sodium, and with Iris shader packs (below).
+- Works with Sodium and Embeddium, and with shader packs under Iris or Oculus (below).
 
 ![Vanilla at 8 chunks against Farfield, the same view](https://cdn.modrinth.com/data/3ToF1nXi/images/b7cb5ac50ffadb76540871cea8efb5a3ce013630.png)
 
@@ -40,7 +40,7 @@ Real terrain replaces the preview chunk by chunk as you explore. The preview is 
 
 ## Shader packs
 
-With Iris, the LODs are drawn and lit by your shader pack, water and its reflections included, through the contract the pack already ships for far terrain: Voxy's (Photon, Complementary, BSL, MakeUp: tested), or Distant Horizons' for packs that ship only that one. Farfield takes the place of those mods; do not install them beside it.
+With Iris (Oculus on Forge), the LODs are drawn and lit by your shader pack, water and its reflections included, through the contract the pack already ships for far terrain: Voxy's (Photon, Complementary, BSL, MakeUp: tested), or Distant Horizons' for packs that ship only that one. Farfield takes the place of those mods; do not install them beside it.
 
 ![Under Photon: the LODs and the preview lit by the shader pack](https://cdn.modrinth.com/data/3ToF1nXi/images/f35168b81ee4190f5611bd683135971ba687782a.jpg)
 
@@ -58,7 +58,7 @@ With Iris, the LODs are drawn and lit by your shader pack, water and its reflect
 
 ## For server owners
 
-Install Farfield on the server and on the players' clients; both need the same Farfield version to stream. Settings in `config/farfield-server.properties`:
+Install Farfield on the server and on the players' clients; both need the same Farfield version to stream, whatever their loaders (a Fabric client streams from a Forge server). Settings in `config/farfield-server.properties`:
 
 - `streaming_radius`: how far around a player LODs and the preview are sent (default 4,096 blocks, up to the world border), each to the player's own distance within it.
 - `player_kbps` and `total_kbps`: bandwidth caps per player and for all players (defaults 1,024 and 10,240 KB/s); the game's own packets always pass first.
@@ -70,13 +70,13 @@ Install Farfield on the server and on the players' clients; both need the same F
 
 ## Compatibility
 
-Tested with Sodium 0.8, Iris with Photon, Complementary Reimagined and Unbound, BSL and MakeUp, C2ME, ModernFix, Lithium, FerriteCore, Chunky and Sinytra Connector, in a NeoForge pack of 386 mods and a Fabric pack of 76, with Biomes O' Plenty and Terralith in the preview. Other LOD mods (Distant Horizons, Voxy): use one at a time. Beside one of them Farfield stays off and says so in the chat.
+Tested with Sodium 0.8 and 0.5, Embeddium, Iris and Oculus with Photon, Complementary Reimagined and Unbound, BSL and MakeUp, C2ME, ModernFix, Lithium, FerriteCore, Chunky and Sinytra Connector, in a NeoForge pack of 386 mods and Fabric packs of 76 and 678, with Biomes O' Plenty and Terralith in the preview. Other LOD mods (Distant Horizons, Voxy): use one at a time. Beside one of them Farfield stays off and says so in the chat.
 
 ![Levels of detail: finer near, coarser far](https://cdn.modrinth.com/data/3ToF1nXi/images/2724da186657ca00d678ebbf5888423d808e91ef.png)
 
 ## Settings
 
-Mod Menu on Fabric, the mods list on NeoForge, or a key you bind in Controls > Key Binds > Farfield, in four tabs: Rendering (distant terrain on or off, detail, textures, fog distances), Preview (on or off, its light, its trees, plants and other features, and in single player the distance its features grow within), Performance (building threads, up to your computer's logical processors) and Debug (level colors, performance logs).
+Mod Menu on Fabric, the mods list on NeoForge and Forge, or a key you bind in Controls > Key Binds > Farfield, in four tabs: Rendering (distant terrain on or off, detail, textures, fog distances), Preview (on or off, its light, its trees, plants and other features, and in single player the distance its features grow within), Performance (building threads, up to your computer's logical processors) and Debug (level colors, performance logs).
 
 Commands: `/farfield render`, `detail`, `textures`, `fog`, `preview`, `import`, `pregen`, `debug levels` in single player; on a server, players use `/farfieldclient` for the drawing ones.
 

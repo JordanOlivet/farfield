@@ -14,8 +14,8 @@ thousands of chunks, chosen by the player or the server operator.
   a fraction of the world itself.
 - **Works everywhere**: single player, small servers, and large public
   servers with a robust streaming protocol that never hurts gameplay.
-- **Full control**: our own code, publishable, on NeoForge and Fabric, ready
-  for Minecraft's move to Vulkan.
+- **Full control**: our own code, publishable, on NeoForge and Fabric (and
+  Forge for 1.20.1, ADR-177), ready for Minecraft's move to Vulkan.
 
 ## Product requirements
 
@@ -59,7 +59,7 @@ thousands of chunks, chosen by the player or the server operator.
 - Replacing Sodium for near terrain.
 - Rendering entities or block entities as LOD.
 - macOS (possible later through Vulkan/MoltenVK).
-- Minecraft versions older than 1.21.1.
+- Minecraft versions older than 1.20.1 (1.20.1 itself: ADR-177).
 
 ## Success metrics (targets to confirm with the spikes)
 

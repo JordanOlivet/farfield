@@ -6,10 +6,16 @@ Far-distance terrain rendering for Minecraft, using levels of detail (LOD):
 the terrain beyond your render distance, 4,096 blocks by default and out to
 the world border, at a fraction of the cost of real chunks.
 
-Status: 1.1.0, Minecraft 1.21.1 and 1.21.11, NeoForge and Fabric (one source tree,
-ADR-165); 26.x comes next. What it does
-today, its requirements and what is planned: [`docs/listing/description.md`](docs/listing/description.md)
-(the text of the Modrinth and CurseForge pages).
+Status: 1.2.0, one source tree for every Minecraft version and loader
+(ADR-165). What it does today, its requirements and what is planned:
+[`docs/listing/description.md`](docs/listing/description.md) (the text of the
+Modrinth and CurseForge pages).
+
+| Minecraft | Loaders |
+|---|---|
+| 1.20.1 | Forge 47 (its jar also loads on NeoForge 47.1), Fabric |
+| 1.21.1, 1.21.11 | NeoForge, Fabric |
+| 26.1.2, 26.2, 26.3 | NeoForge, Fabric |
 
 - Vision: [`docs/VISION.md`](docs/VISION.md)
 - Decisions: [`docs/DECISIONS.md`](docs/DECISIONS.md)
@@ -18,13 +24,15 @@ today, its requirements and what is planned: [`docs/listing/description.md`](doc
 
 ## Building
 
-Requires a JDK to launch Gradle; Java 21 is provisioned automatically.
+Requires a JDK to launch Gradle; the JDKs the build needs (17, 21 and 25) are
+provisioned automatically.
 
 ```
 ./gradlew build
 ```
 
-Jars: `neoforge/build/libs/` and `fabric/build/libs/`.
+Jars: `neoforge/build/libs/`, `fabric/build/libs/` and `forge/build/libs/`, one
+per loader and Minecraft version.
 
 ## Brand
 

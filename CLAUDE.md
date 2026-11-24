@@ -6,11 +6,12 @@ code in this repository.
 ## What this is
 
 **Farfield**, a far-distance terrain rendering mod for Minecraft using levels
-of detail (LOD). MC 1.21.1 and 1.21.11 (Java 21), 26.1.2 and 26.2 (Java 25,
-unobfuscated; 26.3 in progress), one source tree with Stonecutter (ADR-165,
-ADR-171), NeoForge + Fabric from one codebase (MultiLoader pattern, no
-Architectury), Vulkan planned. Gradle runs on Java 25 (Loom 1.19, its daemon
-toolchain in `gradle/gradle-daemon-jvm.properties`). Public repository (ADR-066), LGPL-3.0-only (ADR-067).
+of detail (LOD). MC 1.20.1 (Java 17), 1.21.1 and 1.21.11 (Java 21), 26.1.2,
+26.2 and 26.3 (Java 25, unobfuscated), one source tree with Stonecutter
+(ADR-165, ADR-171, ADR-177), NeoForge + Fabric from one codebase (MultiLoader
+pattern, no Architectury), and Forge 47 for 1.20.1, which has no NeoForge
+node (NeoForge 47.1 loads the Forge jar). Vulkan planned. Gradle runs on Java
+25 (Loom 1.19, its daemon toolchain in `gradle/gradle-daemon-jvm.properties`). Public repository (ADR-066), LGPL-3.0-only (ADR-067).
 
 It replaces our Neo-Voxy fork of Voxy. Reuse Neo-Voxy *concepts*, never copy
 its code as is, and never port Voxy-derived code (ADR-001).
@@ -29,6 +30,8 @@ point), `docs/DECISIONS.md` (ADRs, binding), the active plan in `docs/plans/`,
 .\gradlew.bat :neoforge:runClient        # dev client (run dir: neoforge\run)
 .\gradlew.bat :fabric:runServer          # dev server (run dir: fabric\runs\server)
 .\gradlew.bat :fabric:runClient          # dev client (run dir: fabric\runs\client)
+.\gradlew.bat :forge:runServer -Pmc=1.20.1   # Forge dev server (run dir: forge\runs\1.20.1\server)
+.\gradlew.bat :forge:runClient -Pmc=1.20.1   # Forge dev client (run dir: forge\runs\1.20.1\run)
 .\gradlew.bat runVanillaServer           # vanilla server for client mode checks (runs\vanilla-server)
 ```
 
@@ -39,7 +42,10 @@ Several Minecraft versions (ADR-165, Stonecutter): `common`, `fabric` and
 `build` builds every version. The dev tasks above run the active version
 (`stonecutter.active` in `stonecutter.gradle`, the root build file); `-Pmc=<mc>`
 picks another. Run dirs: the paths above are 1.21.1's, another version uses
-`<loader>/runs/<mc>/...`. Version-specific code goes in Stonecutter comments
+`<loader>/runs/<mc>/...`. The `forge` project has 1.20.1 nodes only (ADR-177),
+so its tasks always take `-Pmc=1.20.1`, and `neoforge` has no 1.20.1 node.
+Forge 47 reads its mixin configs from the jar's manifest and needs a refmap
+(`forge/build.gradle`); Forge-only mixins are in `farfield.forge.mixins.json`. Version-specific code goes in Stonecutter comments
 (`//? if >=1.21.5 {`); a part that differs as a whole is a module of its own
 (a whole file: `src/versioned/<mc>/`, which also serves the later versions until
 one has its own folder, ADR-171). Plain renames are Stonecutter
@@ -69,13 +75,15 @@ one window per client). Extra arguments go to Gradle.
 
 Releases (ADR-031): push a tag `v<version from gradle.properties>[-alpha.N]`,
 e.g. `git tag v0.1.0-alpha.2 && git push origin v0.1.0-alpha.2`;
-`.github/workflows/release.yml` publishes both jars to Modrinth, CurseForge
-and a GitHub Release.
+`.github/workflows/release.yml` publishes every loader and version's jar to
+Modrinth, CurseForge and a GitHub Release (one target each; a new Minecraft
+version adds its targets there).
 
-Shippable jars: `neoforge/build/libs/farfield-neoforge-<mc>-<version>.jar`
-and `fabric/build/libs/farfield-fabric-<mc>-<version>.jar`, one per Minecraft
-version. Every build also copies
-both to `output/` at the root (gitignored, ADR-110).
+Shippable jars: `neoforge/build/libs/farfield-neoforge-<mc>-<version>.jar`,
+`fabric/build/libs/farfield-fabric-<mc>-<version>.jar` and
+`forge/build/libs/farfield-forge-1.20.1-<version>.jar`, one per loader and
+Minecraft version. Every build also copies them to `output/` at the root
+(gitignored, ADR-110).
 
 ## Architecture (ADR-006)
 
@@ -84,10 +92,12 @@ both to `output/` at the root (gitignored, ADR-110).
 | `api` | Public API surface: the client API, LOD depth for other mods (ADR-173, `docs/api/`); `api.internal` is not API | No |
 | `core` | The engine: data model, storage, meshing, LOD selection, jobs, protocol | No |
 | `common` | Minecraft-facing code compiled against vanilla (NeoForm + Parchment) | Vanilla only |
-| `neoforge`, `fabric` | Entry points, platform services, loader events | Yes |
+| `neoforge`, `fabric`, `forge` | Entry points, platform services, loader events | Yes |
 
 - `api` and `core` never import `net.minecraft`, `com.mojang`,
-  `net.neoforged` or `net.fabricmc`. Everything testable lives there.
+  `net.neoforged`, `net.minecraftforge` or `net.fabricmc`. Everything
+  testable lives there. Both compile at Java 17's level, since the 1.20.1
+  jars run on Java 17.
 - `common` never imports loader APIs. Loader-specific behavior goes through
   `ServiceLoader` services in `common/.../platform/services/`, implemented in
   each loader and declared in `META-INF/services/<fully qualified interface>`.

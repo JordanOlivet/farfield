@@ -309,11 +309,31 @@ The 50 errors, by cause:
 
 ## P.E — Shipping
 
-- [ ] E.0 Gate: P.S done. No 1.20.1 jar is published before shader packs
-  work on both loaders (decision D.3).
-- [ ] E.1 `minecraft_versions` gains 1.20.1; `build` makes its two jars.
-- [ ] E.2 `release.yml`: two targets (`forge` and `fabric`, game version
+- [x] E.0 Gate: P.S done. No 1.20.1 jar is published before shader packs
+  work on both loaders (decision D.3). P.S ticked on 2026-11-24; the user
+  the same evening: "lance la phase de publication en 1.2.0".
+- [x] E.1 `minecraft_versions` gains 1.20.1; `build` makes its two jars.
+  2026-11-24, with `version=1.2.0`: the default `build` makes 12 jars
+  (Forge and Fabric 1.20.1, NeoForge and Fabric for the five others).
+  The Forge jar is the reobfuscated one, which the legacy plugin wrote to
+  the node's own folder: it now goes to `forge/build/libs`, where CI
+  picks up every loader's jars.
+- [~] E.2 `release.yml`: two targets (`forge` and `fabric`, game version
   1.20.1, Java 17); the shared `publish-mod` workflow must know the
-  `forge` loader. `build.yml` boots a dev server per node.
-- [ ] E.3 Listing and README: the where-it-works table, Forge.
-- [ ] E.4 `CLAUDE.md`: versions, the `forge` project and its commands.
+  `forge` loader. `build.yml` boots a dev server per node. Done
+  (2026-11-24): the two targets, the Forge one with the loaders `forge`
+  and `neoforge` (D.7 ran it on NeoForge 47.1.106; the publish action
+  splits its loaders on spaces, and the shared workflow passes the field
+  as it is, so it needed no change); checked offline: 12 targets, one
+  1.2.0 jar each, unique suffixes, actionlint clean, both stores know
+  the six game versions and the three loaders. Remains: a CI run with
+  the 1.20.1 nodes (the branch's pull request; the release workflow runs
+  only on a tag). CI boots no dev server, for any version: the servers
+  of every node were booted on the dev PC (P.D).
+- [~] E.3 Listing and README: the where-it-works table, Forge. Done
+  (2026-11-24): the README's table of Minecraft versions and loaders,
+  `docs/listing/description.md` (Forge, Embeddium, Oculus, streaming
+  across loaders, the settings screen on Forge), `docs/VISION.md`'s two
+  lines 1.20.1 made false. Remains: the user's read of the listing text,
+  then the stores (Modrinth by the script, CurseForge by his paste).
+- [x] E.4 `CLAUDE.md`: versions, the `forge` project and its commands.
