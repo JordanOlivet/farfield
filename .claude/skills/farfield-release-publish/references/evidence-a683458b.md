@@ -1,0 +1,1 @@
+The pull request #7 was merged by rebase: on `main` these commits carry other hashes (the last one, the plan's E.2 tick, is `13cbd5e`, which the tag `v1.2.0` names).

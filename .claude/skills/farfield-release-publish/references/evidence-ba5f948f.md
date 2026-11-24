@@ -1,0 +1,1 @@
+git fetch -q origin && git log --oneline -1 origin/main && MSYS_NO_PATHCONV=1 git show origin/main:gradle.properties | grep "^version=" && git tag v1.2.0 origin/main && git push origin v1.2.0 2>&1 | tail -2 && git ls-remote --tags origin v1.2.0

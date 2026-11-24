@@ -1,0 +1,1 @@
+until [ -n "$RUN" ] || [ $(( $(date +%s) - t0 )) -gt 300 ]; do RUN=$(gh run list --workflow release.yml --limit 5 --json databaseId,headBranch --jq "[.[] | select(.headBranch == \"$TAG\")][0].databaseId // empty") ... done ... gh run watch "$RUN" --exit-status --interval 30 > /dev/null 2>&1
