@@ -1,0 +1,1 @@
+The plan text written in the trace: "E.1 ... The Forge jar is the reobfuscated one, which the legacy plugin wrote to the node's own folder: it now goes to `forge/build/libs`, where CI picks up every loader's jars."
