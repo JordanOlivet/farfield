@@ -1,0 +1,1 @@
+Received invalid discriminator byte 33 on channel farfield:stream  —  Forge's `SimpleChannel` puts a discriminator byte first  —  Forge 47 drops the last name of a channel list that does not end with a zero byte, as Fabric sends it

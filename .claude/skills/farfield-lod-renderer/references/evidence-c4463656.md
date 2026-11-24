@@ -1,0 +1,1 @@
+if (!Services.PLATFORM.isModLoaded("iris") || io.lakio.farfield.compat.RivalLodMods.any()) ... private static boolean irisLoaded() { return Services.PLATFORM.isModLoaded("iris") || Services.PLATFORM.isModLoaded("oculus"); }
