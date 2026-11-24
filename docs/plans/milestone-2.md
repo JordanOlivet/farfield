@@ -482,7 +482,10 @@ The user (2026-11-18), after 1.0.0: the other 1.21.x, starting with 1.21.11.
     window, 2026-11-20), CI and
     `release.yml` on Java 25 with the 26.x targets, the docs. `release.yml`
     has the six 26.x targets with Java 25 (2026-11-20, PR #4): not run until
-    the next tag. Remains: that release, README and store text.
+    the next tag. That tag is `v1.2.0` (2026-11-24): the six 26.x jars
+    published to both stores; the README names the versions. Remains:
+    nothing in the store text says what was not tested on 26.x (Sodium,
+    shader packs: H.8b), only the GitHub Release's notes do.
 
 ## M2.G — Ideas to study (the user, 2026-11-09)
 
