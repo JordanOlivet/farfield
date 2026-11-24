@@ -9,8 +9,12 @@ name: Release
 # One target per loader and Minecraft version, each with its game version and a
 # version suffix of its own (Modrinth refuses one version number twice): a
 # Minecraft version added to minecraft_versions in gradle.properties gets two
-# targets here. 26.x targets declare Java 25 (ADR-171); Gradle itself runs on the
-# Java 25 of gradle/gradle-daemon-jvm.properties whatever JDK starts it.
+# targets here. 26.x targets declare Java 25 (ADR-171), the 1.20.1 ones Java 17
+# (ADR-177); Gradle itself runs on the Java 25 of gradle/gradle-daemon-jvm.properties
+# whatever JDK starts it.
+#
+# 1.20.1 has a Forge jar and no NeoForge one (ADR-177): NeoForge for 1.20.1 is the
+# 47.1 fork of Forge and loads the Forge jar, so that file carries both loaders.
 
 on:
   push:
@@ -28,7 +32,11 @@ jobs:
       modrinth-id: ${{ vars.MODRINTH_ID }}
       curseforge-id: ${{ vars.CURSEFORGE_ID }}
       targets: >-
-        [{"loader":"neoforge","label":"NeoForge 1.21.1","files":"neoforge/build/libs/farfield-neoforge-1.21.1-*.jar",
+        [{"loader":"forge neoforge","label":"Forge 1.20.1","files":"forge/build/libs/farfield-forge-1.20.1-*.jar",
+          "game-versions":"1.20.1","java-versions":"17","version-suffix":"forge-1.20.1"},
+         {"loader":"fabric","label":"Fabric 1.20.1","files":"fabric/build/libs/farfield-fabric-1.20.1-*.jar",
+          "game-versions":"1.20.1","java-versions":"17","version-suffix":"fabric-1.20.1"},
+         {"loader":"neoforge","label":"NeoForge 1.21.1","files":"neoforge/build/libs/farfield-neoforge-1.21.1-*.jar",
           "game-versions":"1.21.1","version-suffix":"neoforge-1.21.1"},
          {"loader":"fabric","label":"Fabric 1.21.1","files":"fabric/build/libs/farfield-fabric-1.21.1-*.jar",
           "game-versions":"1.21.1","version-suffix":"fabric-1.21.1"},
