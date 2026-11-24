@@ -15,6 +15,7 @@ on fabric/runs/prod. Environment switches:
   FARFIELD_JVM_ARGS=<args>    extra JVM arguments, space separated (temporary -D switches)
 """
 import glob
+import json
 import os
 import subprocess
 import sys
@@ -35,8 +36,9 @@ def main():
         sys.exit(__doc__)
     shader = sys.argv[1]
     run = os.path.join(ROOT, 'fabric', 'runs', 'prod')
+    instance = local_property('farfield.fabricPack.dir')
     args = [sys.executable, '-I', os.path.join(local_property('rehearsal.dir'), 'scripts', 'fabric_pack.py'),
-            '--instance', local_property('farfield.fabricPack.dir'),
+            '--instance', instance,
             '--run-dir', run,
             '--prepared', os.path.join(ROOT, 'fabric', 'runs', 'pack'),
             '--world', os.environ.get('FARFIELD_WORLD') or os.path.join(ROOT, 'dev', 'client', 'saves', 'farfield-test'),
@@ -48,10 +50,14 @@ def main():
     if os.environ.get('FARFIELD_WITHOUT'):
         args += ['--without', 'farfield-']
     else:
+        # The jar of the pack's Minecraft version: the folder holds one per version, and the
+        # newest by date is whichever version the last build ended with.
+        with open(os.path.join(instance, 'minecraftinstance.json'), encoding='utf-8') as f:
+            game = json.load(f)['gameVersion']
         libs = os.path.join(ROOT, 'fabric', 'build', 'libs')
-        jars = [j for j in glob.glob(os.path.join(libs, 'farfield-fabric-*.jar')) if 'sources' not in j]
+        jars = [j for j in glob.glob(os.path.join(libs, f'farfield-fabric-{game}-*.jar')) if 'sources' not in j]
         if not jars:
-            sys.exit('no Farfield jar in fabric/build/libs: gradlew build first')
+            sys.exit(f'no farfield-fabric-{game}-*.jar in fabric/build/libs: gradlew build first')
         args += ['--mod', max(jars, key=os.path.getmtime)]
     if os.environ.get('FARFIELD_EXTRA_MODS'):
         args += ['--extra-mods', os.environ['FARFIELD_EXTRA_MODS']]
