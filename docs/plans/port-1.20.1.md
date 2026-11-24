@@ -262,7 +262,8 @@ The 50 errors, by cause:
   mod: Forge 47.4.29 alone, then with Embeddium 0.3.31 (S.3). The user's
   test (2026-11-24) was on a Fabric pack, Prominence II (678 mods, Sodium
   0.5.13, Indium, Iris 1.7.6 with its shaders off): "C'est nikel"; its
-  log: no mixin failure, OpenGL 4.6.0, 18,190 sections drawn. Remains: a
+  log: no mixin failure, OpenGL 4.6.0, 18,190 sections drawn. His second
+  pass the same evening, with the final jar: "c'est good". Remains: a
   Forge pack with Embeddium, if the user wants one tested.
 
 ## P.S — Shader packs (second step, before any 1.20.1 release)
@@ -294,13 +295,17 @@ The 50 errors, by cause:
   the two loaders give the same image (mean difference under 6 of 255).
   One night capture (Forge, Complementary Reimagined). Not judged: the
   look of each pack, the Nether and the End.
-- [~] S.5 The user's test in a real pack with a shader pack. Done
+- [x] S.5 The user's test in a real pack with a shader pack. Done
   (2026-11-24): his Fabric pack (Prominence II, Sodium 0.5.13, Iris 1.7.6)
   with Complementary Reimagined: programs built, LODs drawn; he saw one
   black chunk on the rim of the game's view, a LOD section left to the
   game by Sodium 0.8's distance rule where Sodium 0.5 drew nothing. Fixed,
-  and checked in his pack at his view. Remains: his retest with the fixed
-  jar; a pack with Oculus, if he wants one tested.
+  and checked in his pack at his view. His retest with the fixed jar, the
+  same evening: "Je viens de tester sur le pack prominence c'est good"
+  (his log: the jar of `output/`, Complementary Reimagined on, the
+  preview's features in the generation region, 0 features failed). Left
+  out: a pack with Oculus in the user's hands (Oculus was checked by the
+  agent on a production client, S.4).
 
 ## P.E — Shipping
 
