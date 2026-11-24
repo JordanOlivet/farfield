@@ -5,6 +5,7 @@
 
 uniform int u_renderDistance;  // the game's render distance in chunks
 uniform bool u_sodiumRule;     // Sodium (or a fork) draws the terrain, else vanilla
+uniform int u_sodiumGrow;      // blocks Sodium grows a section by in its distance test (0 or 1)
 uniform ivec3 u_gridMin;       // section coordinates of the compiled-sections grid's corner
 uniform ivec2 u_gridSize;      // its width (x and z) and height, in sections
 
@@ -44,14 +45,15 @@ bool vanillaDraws(ivec3 block) {
         return false; // not compiled yet: the game draws nothing there
     }
     if (u_sodiumRule) {
-        // Sodium's OcclusionCuller: nearest point of the section grown by one
-        // block, within the render distance horizontally and vertically.
+        // Sodium's OcclusionCuller: nearest point of the section, grown by one
+        // block since Sodium 0.6 and as it is in Sodium 0.5 and its forks,
+        // within the render distance horizontally and vertically.
         float d = float(u_renderDistance * 16);
         ivec3 o = section * 16 - u_cameraBlock;
         vec3 n;
         for (int i = 0; i < 3; i++) {
-            int lo = o[i] - 1;
-            int hi = o[i] + 17;
+            int lo = o[i] - u_sodiumGrow;
+            int hi = o[i] + 16 + u_sodiumGrow;
             n[i] = float(lo > 0 ? lo : (hi < 0 ? hi : 0)) - u_cameraFrac[i];
         }
         return n.x * n.x + n.z * n.z < d * d && abs(n.y) < d;
