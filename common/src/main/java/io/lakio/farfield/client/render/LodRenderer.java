@@ -1166,9 +1166,9 @@ public final class LodRenderer {
         int camX = Mth.floor(cam.x);
         int camY = Mth.floor(cam.y);
         int camZ = Mth.floor(cam.z);
-        double nx = nearest(sx * 16 - camX, cam.x - camX);
-        double ny = nearest(sy * 16 - camY, cam.y - camY);
-        double nz = nearest(sz * 16 - camZ, cam.z - camZ);
+        double nx = nearest(sx * 16 - camX, cam.x - camX, sodiumGrow);
+        double ny = nearest(sy * 16 - camY, cam.y - camY, sodiumGrow);
+        double nz = nearest(sz * 16 - camZ, cam.z - camZ, sodiumGrow);
         double d = rd * 16;
         boolean inReach = nx * nx + nz * nz < d * d && Math.abs(ny) < d;
         return "chunk " + (loaded ? "loaded" : "not loaded") + ", section " + (compiled ? "compiled" : "not compiled")
@@ -4985,7 +4985,7 @@ public final class LodRenderer {
             return false; // under a pack's DH contract the LODs lie under the game's terrain too (ADR-119)
         }
         return gameDrawsAll(key, cam, renderDistance, drawnBits, gridMinX, gridMinY, gridMinZ, gridWidth, gridHeight,
-                sodiumRule);
+                sodiumRule, sodiumGrow);
     }
 
     /**
@@ -5004,12 +5004,13 @@ public final class LodRenderer {
         int width = gridWidth;
         int height = gridHeight;
         boolean sodium = sodiumRule;
-        return key -> gameDrawsAll(key, cam, renderDistance, bits, minX, minY, minZ, width, height, sodium);
+        int grow = sodiumGrow;
+        return key -> gameDrawsAll(key, cam, renderDistance, bits, minX, minY, minZ, width, height, sodium, grow);
     }
 
     private static boolean gameDrawsAll(long key, Vec3 cam, int renderDistance, int[] drawnBits, int gridMinX,
                                         int gridMinY, int gridMinZ, int gridWidth, int gridHeight,
-                                        boolean sodiumRule) {
+                                        boolean sodiumRule, int sodiumGrow) {
         int level = drawLevel(key);
         if (level > 1 || gridWidth <= 0) {
             return false;
@@ -5036,9 +5037,9 @@ public final class LodRenderer {
                     }
                     if (sodiumRule) {
                         double d = renderDistance * 16 - 1;
-                        double nx = nearest(sx * 16 - camX, cam.x - camX);
-                        double ny = nearest(sy * 16 - camY, cam.y - camY);
-                        double nz = nearest(sz * 16 - camZ, cam.z - camZ);
+                        double nx = nearest(sx * 16 - camX, cam.x - camX, sodiumGrow);
+                        double ny = nearest(sy * 16 - camY, cam.y - camY, sodiumGrow);
+                        double nz = nearest(sz * 16 - camZ, cam.z - camZ, sodiumGrow);
                         if (nx * nx + nz * nz >= d * d || Math.abs(ny) >= d) {
                             return false;
                         }
@@ -5060,10 +5061,17 @@ public final class LodRenderer {
         return true;
     }
 
-    /** Sodium's nearest point of a section grown by one block, on one axis, relative to the camera. */
-    private static double nearest(int offset, double cameraFrac) {
-        int lo = offset - 1;
-        int hi = offset + 17;
+    /**
+     * Sodium's nearest point of a section, on one axis, relative to the
+     * camera: the section grown by {@code grow} blocks, 1 since Sodium 0.6
+     * and 0 in Sodium 0.5 and its forks ({@link #sodiumGrow}). Growing a
+     * section Sodium 0.5 tests as it is brought its diagonal corner up to
+     * 1.4 blocks nearer: a section just past the render distance counted
+     * as drawn by the game, and its LOD was not drawn either.
+     */
+    private static double nearest(int offset, double cameraFrac, int grow) {
+        int lo = offset - grow;
+        int hi = offset + 16 + grow;
         return (lo > 0 ? lo : hi < 0 ? hi : 0) - cameraFrac;
     }
 

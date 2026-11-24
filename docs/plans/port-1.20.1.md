@@ -294,7 +294,13 @@ The 50 errors, by cause:
   the two loaders give the same image (mean difference under 6 of 255).
   One night capture (Forge, Complementary Reimagined). Not judged: the
   look of each pack, the Nether and the End.
-- [ ] S.5 The user's test in a real pack with Oculus and a shader pack.
+- [~] S.5 The user's test in a real pack with a shader pack. Done
+  (2026-11-24): his Fabric pack (Prominence II, Sodium 0.5.13, Iris 1.7.6)
+  with Complementary Reimagined: programs built, LODs drawn; he saw one
+  black chunk on the rim of the game's view, a LOD section left to the
+  game by Sodium 0.8's distance rule where Sodium 0.5 drew nothing. Fixed,
+  and checked in his pack at his view. Remains: his retest with the fixed
+  jar; a pack with Oculus, if he wants one tested.
 
 ## P.E — Shipping
 
