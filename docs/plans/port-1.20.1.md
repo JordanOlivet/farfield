@@ -117,6 +117,10 @@ The 50 errors, by cause:
   `fabric/runs/1.20.1/client`, Forge `forge/runs/1.20.1/run`), the world
   `farfield-1201` of the test seed created by Rehearsal
   (`world farfield-1201 create <seed>`), then opened by name.
+  Production clients for the checks no dev run gives (the shipped jar, its
+  refmap, other loaders' installs): `dev/rehearsal/prod-client.sh` through
+  portablemc (installs in `runs/pmc`), the mods under test from
+  `dev/rehearsal/fetch-mods.py`.
   `runVanillaServer -Pmc=1.20.1` (`runs/vanilla-server-1.20.1`): delete
   the `world` folder it copies from `dev/` before the first start, the
   template's `level.dat` is 1.21.1's and 1.20.1 makes its own from
@@ -153,19 +157,21 @@ The 50 errors, by cause:
   versions apply when the screen closes). Not checked in a client.
 - [x] B.3 Java 21 syntax: none left in `common` (it compiles at 17); the
   Iris and Sodium configs take the version's level (A.5).
-- [ ] B.4 Mixin targets checked against 1.20.1's sources, one by one:
-  `LevelChunk`, `ChunkGenerator`, `BiomeManager`, `ClientLevel`,
-  `LevelRenderer` accessors, `SpriteContents`. `DedicatedServerMixin`
-  is not needed (no pause of an empty server before 1.21.2). `Window`
-  done 2026-11-23: on Fabric the probe applies as on 1.21.1 (4.6 context);
-  on Forge 47 neither injection of `WindowMixin` finds its call (Forge
+- [x] B.4 Mixin targets on 1.20.1: `LevelChunk`, `ChunkGenerator`,
+  `BiomeManager`, `ClientLevel`, `LevelRenderer` and its accessors,
+  `SpriteContents`, `FogRenderer`. Forge's annotation processor resolves
+  each remapped target at compile time, and every one applied at run time
+  (the config is `required`): dev servers and clients on both loaders, and
+  production clients on the shipped jars (Forge 47.4.29 with its refmap,
+  NeoForge 47.1.106, Fabric Loader 0.20.1), 2026-11-24.
+  `DedicatedServerMixin` is not needed (no pause of an empty server before
+  1.21.2). `Window`: on Fabric the 4.6 probe applies as on 1.21.1; on
+  Forge 47 neither injection of `WindowMixin` finds its call (Forge
   creates the window through its own `ImmediateWindowHandler`), so the
-  game ran on 3.2 with the 4.x functions from extensions (ADR-166). The
-  forge project now probes 4.6 at the head of `NoVizFallback.windowHandoff`
-  (the path with the early window off, as test runs set it): 4.6 context
-  in the log. With the early window on (the default), Forge 47's early
-  display tries its GL versions from the highest down (`GL_VERSIONS`, read
-  in its bytecode), as NeoForge's does; not run yet.
+  forge project probes 4.6 at the head of `NoVizFallback.windowHandoff`,
+  the path with the early window off (test runs). With the early window
+  on, the players' default, Forge's own window holds the context: OpenGL
+  4.6.0 in the dev client (`-PearlyWindow`) and in the production clients.
 - [x] B.5 World generation paths of the noise preview on 1.20.1's
   generator: on both dev servers the preview builds tiles, grows the
   world's features (Forge, third minute: 180 ms of features a quarter,
@@ -194,10 +200,14 @@ The 50 errors, by cause:
   ingest (Fabric 726 chunks, Forge 716), the preview running, clean stop
   with the store counters. Only the server mixins apply on a dedicated
   server: the client ones wait for D.3.
-- [~] D.2 Importer on 1.20.1's own chunks (DataVersion 3465): Fabric dev
+- [x] D.2 Importer on 1.20.1's own chunks (DataVersion 3465): Fabric dev
   server, second boot of its 1.20.1 world, `farfield import`: `LOD import
   of minecraft:overworld done: 529 chunks in 1 s (699/s), 4 regions (0
-  already done, 0 failed)`. Remains: the corpus world `dh-baseline-1.20.1`.
+  already done, 0 failed)`. The corpus world `dh-baseline-1.20.1`
+  (2026-11-24): its `level.dat` names about 100 mods the dev server lacks
+  and does not load, so its region files went under a vanilla 1.20.1
+  `level.dat`: `1,431 chunks in 1 s (1,010/s), 220 regions (0 already
+  done, 0 failed)` (the world holds 1,433 full chunks, `docs/corpus.md`).
 - [x] D.3 Dev clients, both loaders (`farfield-dev-client-check`), on a
   fresh world of the test seed, window minimized, 2026-11-23: no mixin
   failure, OpenGL 4.6 context, `wait stable` settled, 421 sections drawn
@@ -221,30 +231,66 @@ The 50 errors, by cause:
   two times in three (`Failed to connect to the server` after 30 s, the
   server logs the join), with or without Farfield (4 of 6 joins with
   Rehearsal alone); never seen against the Forge server (2 joins) or on
-  Fabric. To see in a launcher install (D.6, D.7). Not checked: a Fabric
-  client on the Forge server and the reverse, two clients.
-- [ ] D.5 LOD stores written by 1.20.1 read by 1.21.1 after a world
-  upgrade (text keys, ADR-165).
-- [ ] D.7 The Forge jar on NeoForge 47.1.106 (a 1.20.1 NeoForge instance
-  of a launcher): boots, LODs drawn. If it holds, the listing tags the
-  Forge 1.20.1 file for NeoForge too.
-- [ ] D.6 The user's test in a real 1.20.1 pack (Forge), with Embeddium,
-  without a shader pack (shader packs: S.5).
+  Fabric. A production Forge 47.4.29 client joined the vanilla server 6
+  times of 6 (2026-11-24): the stall is the dev run's. Across loaders
+  (2026-11-24): a Fabric client on the Forge server got no answer (Forge's
+  `SimpleChannel` puts a discriminator byte first) and a Forge client on
+  the Fabric server never saw the channel (Forge 47 drops the last name of
+  a channel list that does not end with a zero byte, as Fabric sends it).
+  The Forge side now uses a raw channel with Fabric's bytes and reads the
+  server's channel list itself: Forge server with a Fabric and a Forge
+  client at once, then Fabric server with a Forge and a Fabric client, all
+  four streaming, 423 sections drawn each.
+- [x] D.5 LOD stores written by 1.20.1 read by 1.21.1 after a world
+  upgrade (text keys, ADR-165). 2026-11-24: the Fabric 1.20.1 dev server's
+  world, its store included, copied into the 1.21.1 Fabric dev server: the
+  three stores opened, the import at start took the 4 regions the upgrade
+  rewrote (649 chunks, 0 regions failed; one chunk read while the server
+  rewrote it gave `bad chunk length` once), and a 1.21.1 client streamed
+  963 sections in its first 10 s and drew the same terrain (snow, ice,
+  water, grass) as the 1.20.1 client at the same place.
+- [x] D.7 The Forge jar on NeoForge 47.1.106. 2026-11-24, a production
+  client installed by portablemc (`dev/rehearsal/prod-client.sh`,
+  `neoforge:1.20.1-47.1.106`), the jar of `output/` in its mods folder:
+  `NeoForge v47.1.106 Initialized`, no mixin failure, OpenGL 4.6.0, 479
+  sections drawn, the view the same as on Forge 47.4.29 (480 sections).
+  Left to the user: tagging the Forge 1.20.1 file for NeoForge on the
+  listings.
+- [~] D.6 The user's test in a real 1.20.1 pack (Forge), with Embeddium,
+  without a shader pack (shader packs: S.5). Done by the agent
+  (2026-11-24), on production clients with the shipped jars and no other
+  mod: Forge 47.4.29 alone, then with Embeddium 0.3.31 (S.3). Remains: the
+  user's own pack, with its hundred mods.
 
 ## P.S — Shader packs (second step, before any 1.20.1 release)
 
-- [ ] S.1 Fabric: the nine Iris mixins and the shader path compiled
-  against Iris 1.7.6 (the spike only resolved the imports, against
-  Oculus); each mixin target checked in Iris 1.7.6's sources. What Iris
-  1.8 added and 1.7 lacks goes in versioned files.
-- [ ] S.2 Forge: the same against Oculus 1.8.0, each target checked in
-  its sources.
-- [ ] S.3 Sodium 0.5.13 and Embeddium 0.3.31: `RenderSectionMixin` on
-  their `RenderSection` (`me.jellysquid.mods.sodium...`), the mixin
-  plugin's detection; no Sodium config page (the API starts at 0.8).
-- [ ] S.4 Dev clients with a shader pack on each loader: LODs drawn in
-  the pack's programs, depth joined, no `Mixin apply failed`; the
-  packs of the 1.21.1 checks.
+- [x] S.1 Fabric: the nine Iris mixins and the shader path against Iris
+  1.7.6, each target read in its jar (2026-11-24): eight are the same as
+  in Iris 1.8; `ShaderPack`'s constructor has no "is a zip" flag there,
+  so `IrisPackLoadMixin` takes the older call through a second optional
+  injection. Nothing else of the shader path needed a versioned file.
+- [x] S.2 Forge: the same nine targets read in Oculus 1.8.0's jar, all as
+  in Iris 1.7.6. The renderer looked for the mod `iris`: Oculus is found
+  under its own id too.
+- [x] S.3 Sodium 0.5.13 and Embeddium 0.3.31 (2026-11-24). No mixin of
+  ours applies there, and none is needed: the Sodium 0.8 one is an
+  optional shortcut, and its plugin leaves it out on the `me.jellysquid`
+  package. No Sodium config page (the API starts at 0.8). The hand-off's
+  distance rule had to follow Sodium 0.5's: a section's own box, where
+  Sodium 0.8 grows it by one block (`u_sodiumGrow`); without it the LODs
+  hid their water on the rim of the game's view, where Embeddium drew
+  nothing. Production clients: Forge with Embeddium 482 sections drawn,
+  Fabric with Sodium 422, no pit over the sea.
+- [x] S.4 Clients with a shader pack on each loader (2026-11-24), in
+  production (the shipped jars; Fabric with Sodium 0.5.13 and Iris 1.7.6,
+  Forge with Embeddium 0.3.31 and Oculus 1.8.0) rather than in the dev
+  runs: Complementary Reimagined r5.9.3 and Unbound r5.9, BSL 10.1.1,
+  MakeUp UltraFast 9.5e and Photon 1.3b each through its Voxy contract,
+  `programs built, translucent LODs on`, no `Mixin apply failed`; the LODs
+  change 29 to 51 % of the frame against the same view without them, and
+  the two loaders give the same image (mean difference under 6 of 255).
+  One night capture (Forge, Complementary Reimagined). Not judged: the
+  look of each pack, the Nether and the End.
 - [ ] S.5 The user's test in a real pack with Oculus and a shader pack.
 
 ## P.E — Shipping
