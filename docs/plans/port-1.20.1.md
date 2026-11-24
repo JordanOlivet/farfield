@@ -333,12 +333,14 @@ The 50 errors, by cause:
   and `CI=true gradlew build` gives the runner's build on the dev PC.
   The second run is green: 12 jars, each in its loader's `build/libs`
   of the uploaded artifact, the Forge one reobfuscated with its refmap.
-  Left out: the release workflow itself, which runs only on a tag. CI boots no dev server, for any version: the servers
+  The release workflow ran on the tag `v1.2.0` (2026-11-24): 15 jobs
+  green, the 12 targets published to both stores. CI boots no dev server, for any version: the servers
   of every node were booted on the dev PC (P.D).
 - [~] E.3 Listing and README: the where-it-works table, Forge. Done
   (2026-11-24): the README's table of Minecraft versions and loaders,
   `docs/listing/description.md` (Forge, Embeddium, Oculus, streaming
   across loaders, the settings screen on Forge), `docs/VISION.md`'s two
-  lines 1.20.1 made false. Remains: the user's read of the listing text,
-  then the stores (Modrinth by the script, CurseForge by his paste).
+  lines 1.20.1 made false. The user on the listing text: "C'est good";
+  pushed to Modrinth after the release and read back, the same as the
+  file. Remains: the user's paste of the text on CurseForge.
 - [x] E.4 `CLAUDE.md`: versions, the `forge` project and its commands.
