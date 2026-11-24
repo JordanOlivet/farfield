@@ -5520,3 +5520,70 @@ deux temps mais la 1.20.1 devra sortir avec les shader compatibles".
   - Shader packs (Iris 1.7 on Fabric, Oculus 1.8 on Forge, with Sodium 0.5
     and Embeddium) come in a second step of the work, but **no 1.20.1 jar
     is released before they work on both loaders**.
+
+## ADR-178 — The preview's features run in the game's own generation region
+
+Status: accepted, 2026-11-24. Extends ADR-079 (the stand-in world).
+
+- **Context**: the user's Fabric 1.20.1 pack logged 957 feature warnings
+  in 90 s from the preview's thread, all for lake features. During real
+  generation a feature's world is always the game's generation region, and
+  mods rely on it: they cast the world to that class, or to an accessor of
+  theirs on it, to read its center or its structures (a lake, a geode, an
+  ore that stays out of a structure). The stand-in world was a world of its
+  own class: those features threw, the preview had none of them, and where
+  another mod turns a feature's exception into a warning the preview never
+  counted the failure nor left the feature out. Two of the user's three
+  packs hold about ten mods that read the region from a feature's world
+  (lakes, basalt columns, deltas, vines, magma, geodes, ores kept out of
+  structures). The user chose to give those features what they read, over
+  leaving them out ("go 2 pour rendre les lacs").
+- **Decision** (`SandboxRegion`): the features are given a subclass of the
+  game's region that stands over the stand-in world.
+  - It is a region by its class only. Every method the game's region
+    declares is taken over and answered by the stand-in world, so a feature
+    sees the same world as before and nothing of the real region's own
+    state (its chunk cache) is read. Its center is the chunk being
+    decorated; it holds an empty chunk and, since 1.21, a cache of one
+    place and the first generation step, only so the game's class can be
+    made.
+  - Other mods change the game's region class (a faster chunk lookup,
+    light from their own engine). Their changes inside the methods taken
+    over never run. Three defaults of the level interfaces they are known
+    to give the region their own are taken over too (the chunk at a
+    position, the two brightness reads).
+  - A level method a mod **adds** to the region's class that this one does
+    not take over would run on the real region's empty state. At the first
+    stand-in world the class is read once for such a method; when there is
+    one, or when the game's region refuses to be made, the features keep
+    the plain stand-in world, as before this decision, and the log names
+    the cause. One line says which world the features got.
+  - The game's constructor already asks the region for its level (1.20.1)
+    or its registries (26.3), before the subclass's own field is set: the
+    stand-in world of the region being made is held per thread meanwhile.
+  - 26.3 included: its region maps its cache at construction, which the
+    first step leaves empty.
+- **Not chosen**: making the stand-in world itself extend the region (any
+  method a mod adds to the region would then replace the stand-in's own,
+  with no way to tell); leaving failing features out after their first
+  failures (stops the warnings, keeps the preview without lakes).
+- **Cost**: one more call per block read or set, and one empty chunk per
+  stand-in world. Lakes that used to fail now run; the cost guard
+  (ADR-131) still leaves out those that keep nothing seen.
+- **Checked** (2026-11-24): the user's Fabric 1.20.1 pack (678 mods, run
+  in production from a folder of its own, the preview rebuilt from
+  nothing, 170 s): `features run in a generation region over the stand-in
+  world`, 0 `errored during placement` lines where the jar before logged
+  1,008, `0 features failed`, no new exception; 52,348 light sources kept
+  against 51,135 (lava lakes), the cost guard leaving a mod's oil lake out
+  of a biome where it keeps nothing seen. The features stage: 273 then
+  89 ms a quarter in the first two minutes, against 282 then 73 ms before
+  and 321 then 87 ms in another run of the old path: no difference beyond
+  the spread between runs. Dev servers, a tile spike over new ground
+  (`farfield spike tile at 3000 3000`): the region line and `0 features
+  failed` on Fabric 1.20.1, 1.21.1, 1.21.11, 26.1.2, 26.2 and 26.3, on
+  Forge 1.20.1 and NeoForge 1.21.1. `build` of every version green. Not
+  checked: a lake seen in a capture of the preview; the NeoForge and
+  Fabric 1.21.1 packs; a pack where a mod adds a level method to the
+  region (the fallback's first branch; its second ran in the pack on the
+  first build, the features as before).

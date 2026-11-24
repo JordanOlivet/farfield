@@ -83,6 +83,13 @@ final class FeatureSandbox implements WorldGenLevel {
     private final BiomeManager biomeManager;
     private final List<FeatureSorter.StepFeatureData> steps;
     private final Function<Holder<Biome>, net.minecraft.world.level.biome.BiomeGenerationSettings> settings;
+    /**
+     * What the features are given as their world: this sandbox as the game's own generation
+     * region ({@link SandboxRegion}, ADR-178), or this sandbox itself where that cannot be.
+     */
+    private final WorldGenLevel world;
+    /** The chunk being decorated: the center a feature reads from the region. */
+    private ChunkPos decorating = new ChunkPos(0, 0);
     /** Per step, the time its features took (stand-in chunks made meanwhile included); null: not timed. */
     @Nullable
     private long[] stepNanos;
@@ -99,6 +106,12 @@ final class FeatureSandbox implements WorldGenLevel {
         ChunkGeneratorAccessor accessor = (ChunkGeneratorAccessor) generator;
         this.steps = accessor.farfield$featuresPerStep().get();
         this.settings = accessor.farfield$generationSettingsGetter();
+        this.world = SandboxRegion.over(this, level);
+    }
+
+    /** The chunk whose features run now. */
+    ChunkPos decorating() {
+        return decorating;
     }
 
     /** Per feature, its time and what it set; null: not measured (the spike's, {@link FeatureCosts}). */
@@ -183,6 +196,7 @@ final class FeatureSandbox implements WorldGenLevel {
     List<Failure> decorate(int chunkX, int chunkZ, Filter filter) {
         List<Failure> failures = new ArrayList<>();
         ChunkPos chunkPos = new ChunkPos(chunkX, chunkZ);
+        decorating = chunkPos;
         SectionPos sectionPos = SectionPos.of(chunkPos, getMinSection());
         BlockPos origin = sectionPos.origin();
         WorldgenRandom worldRandom = new WorldgenRandom(new XoroshiroRandomSource(RandomSupport.generateUniqueSeed()));
@@ -220,7 +234,7 @@ final class FeatureSandbox implements WorldGenLevel {
                 setNow = 0;
                 current = costs != null ? name(feature) : null;
                 try {
-                    feature.placeWithBiomeCheck(this, generator, worldRandom, origin);
+                    feature.placeWithBiomeCheck(world, generator, worldRandom, origin);
                 } catch (Throwable t) {
                     failures.add(new Failure(name(feature), t));
                 }
