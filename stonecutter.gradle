@@ -89,8 +89,8 @@ stonecutter.parameters { sc ->
         r.replace('ChunkStatus.NOISE', 'ChunkStatus.BIOMES')
         r.replace('ChunkStatus.CARVERS', 'ChunkStatus.TERRAIN')
         // A placed feature is placed by a feature placer, which gives the biome filter its feature.
-        r.replace('feature.placeWithBiomeCheck(this, generator, worldRandom, origin)',
-                'new net.minecraft.world.level.levelgen.placement.FeaturePlacer(this, generator).placeWithBiomeCheck(feature, worldRandom, origin)')
+        r.replace('feature.placeWithBiomeCheck(world, generator, worldRandom, origin)',
+                'new net.minecraft.world.level.levelgen.placement.FeaturePlacer(world, generator).placeWithBiomeCheck(feature, worldRandom, origin)')
         // Iris 1.11.7: the DH program patch takes a set of names more (none here).
         r.replace('vertex, null, null, null, fragment, iris.getTextureMap());',
                 'vertex, null, null, null, fragment, iris.getTextureMap(), java.util.Set.of());')
