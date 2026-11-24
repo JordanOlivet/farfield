@@ -28,4 +28,19 @@ public abstract class IrisPackLoadMixin {
         String macro = PackContract.choose(root);
         return ImmutableList.<StringPair>builder().addAll(defines).add(new StringPair(macro, "")).build();
     }
+
+    /**
+     * Iris 1.7 (Minecraft 1.20.1, and Oculus, its Forge port): the same call,
+     * before the pack's constructor took whether the pack is a zip (read in
+     * Iris 1.7.6). Only one of the two finds its call.
+     */
+    @ModifyArg(method = "loadExternalShaderpack",
+            at = @At(value = "INVOKE",
+                    target = "Lnet/irisshaders/iris/shaderpack/ShaderPack;<init>(Ljava/nio/file/Path;Ljava/util/Map;Lcom/google/common/collect/ImmutableList;)V"),
+            index = 2)
+    private static ImmutableList<StringPair> farfield$contractMacroIris17(Path root, Map<String, String> changedConfigs,
+                                                                         ImmutableList<StringPair> defines) {
+        String macro = PackContract.choose(root);
+        return ImmutableList.<StringPair>builder().addAll(defines).add(new StringPair(macro, "")).build();
+    }
 }
