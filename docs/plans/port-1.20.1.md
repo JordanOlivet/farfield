@@ -259,8 +259,11 @@ The 50 errors, by cause:
 - [~] D.6 The user's test in a real 1.20.1 pack (Forge), with Embeddium,
   without a shader pack (shader packs: S.5). Done by the agent
   (2026-11-24), on production clients with the shipped jars and no other
-  mod: Forge 47.4.29 alone, then with Embeddium 0.3.31 (S.3). Remains: the
-  user's own pack, with its hundred mods.
+  mod: Forge 47.4.29 alone, then with Embeddium 0.3.31 (S.3). The user's
+  test (2026-11-24) was on a Fabric pack, Prominence II (678 mods, Sodium
+  0.5.13, Indium, Iris 1.7.6 with its shaders off): "C'est nikel"; its
+  log: no mixin failure, OpenGL 4.6.0, 18,190 sections drawn. Remains: a
+  Forge pack with Embeddium, if the user wants one tested.
 
 ## P.S — Shader packs (second step, before any 1.20.1 release)
 

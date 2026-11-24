@@ -1,0 +1,1 @@
+user: Fais tout ce que tu peux faire seul, même parmis les points qui tu m'attribus. Si tu as besoin de mod pour faire des tests, tu peux les télécharger et te préparer un modpack custom de dev pour tester.... (digest, background) — assistant in raw window: "Ça fait 2 blocages sur 3 sans Farfield." Raw episode confirms the agent ran the Forge/Fabric checks after this request.
