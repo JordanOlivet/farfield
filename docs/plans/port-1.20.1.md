@@ -318,7 +318,7 @@ The 50 errors, by cause:
   The Forge jar is the reobfuscated one, which the legacy plugin wrote to
   the node's own folder: it now goes to `forge/build/libs`, where CI
   picks up every loader's jars.
-- [~] E.2 `release.yml`: two targets (`forge` and `fabric`, game version
+- [x] E.2 `release.yml`: two targets (`forge` and `fabric`, game version
   1.20.1, Java 17); the shared `publish-mod` workflow must know the
   `forge` loader. `build.yml` boots a dev server per node. Done
   (2026-11-24): the two targets, the Forge one with the loaders `forge`
@@ -331,8 +331,9 @@ The 50 errors, by cause:
   the game jar without recompiling it, and an anonymous subclass of a
   game class did not compile against that jar; a named class fixed it,
   and `CI=true gradlew build` gives the runner's build on the dev PC.
-  Remains: a green CI run with the 1.20.1 nodes (the release workflow
-  runs only on a tag). CI boots no dev server, for any version: the servers
+  The second run is green: 12 jars, each in its loader's `build/libs`
+  of the uploaded artifact, the Forge one reobfuscated with its refmap.
+  Left out: the release workflow itself, which runs only on a tag. CI boots no dev server, for any version: the servers
   of every node were booted on the dev PC (P.D).
 - [~] E.3 Listing and README: the where-it-works table, Forge. Done
   (2026-11-24): the README's table of Minecraft versions and loaders,
