@@ -178,9 +178,8 @@ final class PreviewFeatures {
             // lookup in the chunk's own biomes, and a stand-in holds one per quart column, at its
             // ground: the rules then saw another biome at every chunk's first cell row and column
             // (grass lines across a gravel beach, ADR-104).
-            this.surfaceBiomes = new net.minecraft.world.level.biome.BiomeManager(this::quartBiome,
-                    net.minecraft.world.level.biome.BiomeManager.obfuscateSeed(level.getSeed())) {
-            };
+            this.surfaceBiomes = new SurfaceBiomes(this::quartBiome,
+                    net.minecraft.world.level.biome.BiomeManager.obfuscateSeed(level.getSeed()));
         }
         this.sandbox = new FeatureSandbox(level, this::standIn);
         this.sandbox.timeSteps(stepNanos);
@@ -905,6 +904,24 @@ final class PreviewFeatures {
             Heightmap.Types.OCEAN_FLOOR_WG, Heightmap.Types.MOTION_BLOCKING, Heightmap.Types.MOTION_BLOCKING_NO_LEAVES,
             Heightmap.Types.OCEAN_FLOOR, Heightmap.Types.WORLD_SURFACE);
     private static final Heightmap.Types[] HEIGHTMAPS = ALL_HEIGHTMAPS.toArray(new Heightmap.Types[0]);
+
+    /**
+     * The biomes the surface rules read. A named class with a constructor of its own, not an
+     * anonymous one: an anonymous class takes its constructor's parameter names from the game's
+     * class, and the 1.20.1 game jar CI builds (no recompile there) names both of them alike,
+     * which javac refuses.
+     */
+    private static final class SurfaceBiomes extends net.minecraft.world.level.biome.BiomeManager {
+        //? if >=26.3 {
+        /*SurfaceBiomes(net.minecraft.world.level.biome.BiomeResolver source, long obfuscatedSeed) {
+            super(source, obfuscatedSeed);
+        }
+        *///?} else {
+        SurfaceBiomes(net.minecraft.world.level.biome.BiomeManager.NoiseBiomeSource source, long obfuscatedSeed) {
+            super(source, obfuscatedSeed);
+        }
+        //?}
+    }
 
     //? if <26.3 {
     /** A noise chunk for the surface rules alone: every block is above its preliminary surface. */

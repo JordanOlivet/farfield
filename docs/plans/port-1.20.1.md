@@ -326,9 +326,13 @@ The 50 errors, by cause:
   splits its loaders on spaces, and the shared workflow passes the field
   as it is, so it needed no change); checked offline: 12 targets, one
   1.2.0 jar each, unique suffixes, actionlint clean, both stores know
-  the six game versions and the three loaders. Remains: a CI run with
-  the 1.20.1 nodes (the branch's pull request; the release workflow runs
-  only on a tag). CI boots no dev server, for any version: the servers
+  the six game versions and the three loaders. The pull request's first
+  CI run failed on the 1.20.1 node: on a runner the legacy plugin builds
+  the game jar without recompiling it, and an anonymous subclass of a
+  game class did not compile against that jar; a named class fixed it,
+  and `CI=true gradlew build` gives the runner's build on the dev PC.
+  Remains: a green CI run with the 1.20.1 nodes (the release workflow
+  runs only on a tag). CI boots no dev server, for any version: the servers
   of every node were booted on the dev PC (P.D).
 - [~] E.3 Listing and README: the where-it-works table, Forge. Done
   (2026-11-24): the README's table of Minecraft versions and loaders,
