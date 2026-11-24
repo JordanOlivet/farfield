@@ -459,6 +459,9 @@ public final class LodRenderer {
     private ClientLevel colorLevel;
     /** Sodium or a fork draws the terrain: its section rule decides where LODs give way. */
     private boolean sodiumRule;
+
+    /** Blocks Sodium grows a section by in its distance test: 1, or 0 for Sodium 0.5 and its forks. */
+    private int sodiumGrow = 1;
     private static boolean pushedFog;
     private static boolean followVanillaFog;
     private static boolean thickFogDimension;
@@ -900,6 +903,7 @@ public final class LodRenderer {
         final int gridMin;
         final int gridSize;
         final int sodiumRule;
+        final int sodiumGrow;
         final int hiddenMin;
         final int lightmap;
         final int fogColor;
@@ -936,6 +940,7 @@ public final class LodRenderer {
             gridMin = program.uniform("u_gridMin");
             gridSize = program.uniform("u_gridSize");
             sodiumRule = program.uniform("u_sodiumRule");
+            sodiumGrow = program.uniform("u_sodiumGrow");
             hiddenMin = program.uniform("u_hiddenMin");
             lightmap = program.uniform("u_lightmap");
             fogColor = program.uniform("u_fogColor");
@@ -1412,7 +1417,13 @@ public final class LodRenderer {
                 || classExists("org.embeddedt.embeddium.impl.Embeddium")
                 || classExists("me.jellysquid.mods.sodium.client.SodiumClientMod");
         columnShortcut = classExists("net.caffeinemc.mods.sodium.client.SodiumClientMod");
-        Farfield.LOG.info("LOD hand-off follows the {} section rule", sodiumRule ? "Sodium" : "vanilla");
+        // Sodium 0.5 and its forks of that line (Embeddium 0.3, both in the me.jellysquid package) test a
+        // section's distance on its own box; Sodium 0.6 and later grow it by one block (read in 0.5.13,
+        // Embeddium 0.3.31 and Sodium 0.8.13).
+        sodiumGrow = classExists("me.jellysquid.mods.sodium.client.SodiumClientMod")
+                && !classExists("net.caffeinemc.mods.sodium.client.SodiumClientMod") ? 0 : 1;
+        Farfield.LOG.info("LOD hand-off follows the {} section rule{}", sodiumRule ? "Sodium" : "vanilla",
+                sodiumRule ? " (sections grown by " + sodiumGrow + " block in its distance test)" : "");
         packLink = createPackLink();
         if (packLink != null && pendingPackReload) {
             // A contract forced before the renderer started: the pack loads again with it.
@@ -5196,6 +5207,7 @@ public final class LodRenderer {
         boolean locked = selector.forcedLevel() >= 0;
         glUniform2i(s.gridSize, locked ? 0 : gridWidth, locked ? 0 : gridHeight);
         glUniform1i(s.sodiumRule, sodiumRule ? 1 : 0);
+        glUniform1i(s.sodiumGrow, sodiumGrow);
         glUniform2i(s.hiddenMin, hiddenMinX, hiddenMinZ);
         glUniform1i(s.lightmap, LIGHTMAP_UNIT);
         glUniform4f(s.fogColor, fogColor[0], fogColor[1], fogColor[2], 1f);
