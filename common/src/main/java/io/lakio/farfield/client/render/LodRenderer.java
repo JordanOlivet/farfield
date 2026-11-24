@@ -1511,8 +1511,13 @@ public final class LodRenderer {
     }
 
     /** The shader pack path over Iris (ADR-113), or null without Iris or with Voxy itself. */
+    /** Iris, or Oculus, its Forge port for Minecraft 1.20.1: the same classes under another mod id. */
+    private static boolean irisLoaded() {
+        return Services.PLATFORM.isModLoaded("iris") || Services.PLATFORM.isModLoaded("oculus");
+    }
+
     private static ShaderPackLink createPackLink() {
-        if (!Services.PLATFORM.isModLoaded("iris") || Services.PLATFORM.isModLoaded("voxy")) {
+        if (!irisLoaded() || Services.PLATFORM.isModLoaded("voxy")) {
             return null;
         }
         try {
@@ -1595,7 +1600,7 @@ public final class LodRenderer {
      */
     public static String forcePackContract(int contract) {
         LodRenderer r = INSTANCE;
-        if (!Services.PLATFORM.isModLoaded("iris") || io.lakio.farfield.compat.RivalLodMods.any()) {
+        if (!irisLoaded() || io.lakio.farfield.compat.RivalLodMods.any()) {
             return "No shader pack path here (Iris missing, or another LOD mod installed).";
         }
         io.lakio.farfield.client.render.iris.PackContract.force(contract);
