@@ -9,6 +9,7 @@
     "LevelChunkMixin"
   ],
   "client": [
+    "client.BossHealthOverlayMixin",
     "client.ClientLevelAccessor",
     "client.FogRendererMixin",
     "client.LevelRendererAccessor",

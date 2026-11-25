@@ -26,10 +26,11 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * Overworld, 768 in heavy rain, 10 to 96 in the Nether) and the render
  * distance's (cylindrical, the last tenth before the far plane). While LODs
  * are drawn both move out to the player's fog distance (ADR-034); a thick
- * environment fog (the Nether, the boss fog) moves out to its own distance,
- * unless set to vanilla, and then, in water, lava, powder snow, blindness
- * or darkness, the LODs take the game's fog (ADR-033). The fog the LODs read
- * goes to {@link GameFog}.
+ * environment fog (the Nether) moves out to its own distance, unless set to
+ * vanilla, and then, in water, lava, powder snow, blindness or darkness, the
+ * LODs take the game's fog (ADR-033). A boss bar's fog, as thick, is not
+ * created while LODs are drawn ({@code BossHealthOverlayMixin}, ADR-179). The
+ * fog the LODs read goes to {@link GameFog}.
  *
  * <p>The frame's {@link FogData} itself is changed, once the game has filled
  * it, not the values it uploads: Sodium reads that object for its own terrain

@@ -5587,3 +5587,57 @@ Status: accepted, 2026-11-24. Extends ADR-079 (the stand-in world).
   Fabric 1.21.1 packs; a pack where a mod adds a level method to the
   region (the fallback's first branch; its second ran in the pack on the
   first build, the features as before).
+
+## ADR-179 — No boss fog while LODs are drawn
+
+Status: accepted, 2026-11-25. Amends ADR-033 and ADR-034 (LODs in thick
+fog). From issue #3: a player saw no LOD in the End until he set the thick
+fog distance to off.
+
+- **Context**: the game has two sources of thick fog, and gives them the
+  same treatment: a dimension's own (the Nether) and a boss bar's (the
+  ender dragon's, shown to players within 192 blocks of the End's centre
+  while the dragon lives). Both end the terrain fog 96 blocks away and
+  leave the sky undrawn. ADR-033 and ADR-034 were written for the Nether:
+  with the thick fog distance at its default, vanilla, the LODs take the
+  game's fog and nothing is selected beyond it. The boss bar's fog fell
+  under the same rule, so a new world's End showed no LOD at all from its
+  main island, where every player arrives, until the dragon died; the
+  owner's own checks in the End, away from the island or after the fight,
+  showed them.
+- **Decision** (`BossHealthOverlayMixin`): while LODs are drawn, a boss
+  bar creates no world fog. The game then sets up the fog, the sky and the
+  light of the dimension as it does without the boss, and the LODs follow
+  the rule of that dimension: the fog distance in the End, the thick fog
+  distance in a dimension whose own fog is thick. One log line each time
+  the fog is left out.
+  - The game's question (`shouldCreateWorldFog`) is answered, not its
+    callers: the fog distances, the sky and the End flash's light all ask
+    it, from classes that changed with each Minecraft version (the level
+    renderer up to 1.21.1, the fog environment, the game renderer and the
+    light map since). One mixin serves every version.
+  - With LOD rendering off, or no LOD world, the boss fog stays as the
+    game draws it.
+  - The thick fog distance now names dimensions only, as its label and
+    tooltip already said.
+- **Not chosen**: telling the two fogs apart in the fog mixin and moving
+  the boss's out like normal fog (the sky stays undrawn, and each version
+  needs the dimension's own fog read again); a third fog setting for
+  bosses (one more choice for a fog met in one place of one dimension);
+  changing the thick fog default (the Nether's haze was the user's choice,
+  ADR-033).
+- **Cost**: the dragon fight loses its fog while LODs are drawn; the End
+  flash lights the sky at its full strength there, as away from the fight.
+- **Checked** (2026-11-25, NeoForge dev clients on the test world, its
+  dragon alive, the scenario `dev/rehearsal/scenarios/dimension-fog.cmd`;
+  the counts are LOD sections drawn). Before, on 1.21.1: 2 under the boss
+  bar with the thick fog distance at vanilla (a black frame), 135 with it
+  off, 111 out of the bar's range at vanilla; in the Nether 2 at vanilla
+  and 93 off. After, on 1.21.1: 135 under the boss bar at vanilla, with
+  the far islands, the End's sky and the dragon in the capture and the log
+  line once; the four other counts as before. After, on 1.21.11: 185 under
+  the boss bar at vanilla and off, 151 out of range, the Nether 2 and 139.
+  `build` of every version green. Not checked: Fabric, Forge 1.20.1 and
+  26.x in game (the same mixin on the same class, compiled only), Sodium
+  or a shader pack, the fight itself (the dragon's breath, the End flash),
+  a player's pack.
