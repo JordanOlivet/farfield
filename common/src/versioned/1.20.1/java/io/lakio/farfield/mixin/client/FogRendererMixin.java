@@ -18,7 +18,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * start, leaving a ring) moves out to the player's fog distance (ADR-034).
  * Thick dimension fog (the Nether) moves out to its own distance, unless
  * set to vanilla; then, and in water, lava or powder snow, the LODs take
- * the game's fog (ADR-033).
+ * the game's fog (ADR-033). A boss bar's fog, which the game sets up as
+ * thick fog, is not created while LODs are drawn
+ * ({@code BossHealthOverlayMixin}, ADR-179).
  * Blindness and fog a mod already changed are left alone. Vanilla's normal
  * branch ends the fog exactly at the far plane, its thick branch at
  * {@code min(far, 192) / 2}. Optional: without it the seam keeps its fog ring.

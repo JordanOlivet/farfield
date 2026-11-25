@@ -1224,6 +1224,27 @@ public final class LodRenderer {
         thickFogDimension = thickDimension;
     }
 
+    private static boolean bossFogLeftOut;
+
+    /**
+     * Whether a boss bar's world fog is left out (ADR-179): while LODs are
+     * drawn, so the dimension keeps the fog, the sky and the light it has
+     * without the boss, and the LODs show. Asked by the boss overlay's mixin
+     * each time the game asks for that fog.
+     *
+     * @param created the game's own answer: a boss bar in view creates world fog
+     */
+    public static boolean leavesOutBossFog(boolean created) {
+        boolean leftOut = created && drawsBeyondVanilla();
+        if (leftOut != bossFogLeftOut) {
+            bossFogLeftOut = leftOut;
+            if (leftOut) {
+                Farfield.LOG.info("Boss fog left out while the LODs are drawn (ADR-179)");
+            }
+        }
+        return leftOut;
+    }
+
     /**
      * Moves the game's terrain fog out to a fog distance (ADR-034): opaque at
      * the distance (never closer than the far plane), from 60 % of it; for
