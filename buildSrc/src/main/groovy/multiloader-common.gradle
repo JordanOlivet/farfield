@@ -25,9 +25,11 @@ ext.versionedRunDir = { String path ->
 // the game rewrote, a mixin config. They live in src/versioned/<minecraft version>/ of the
 // branch, never in Stonecutter comments. A node takes the folder of the newest version not
 // above its own (ADR-171): src/versioned/26.1/ serves 26.1.2, 26.2 and 26.3 until one of
-// them needs a folder of its own.
+// them needs a folder of its own. A folder whose name is not a version (a tool's hidden
+// folder, such as .claude/ or .idea/) is left out: Stonecutter refuses to compare its name.
 def versionedDirs = (new File(branchDir, 'src/versioned').listFiles() ?: [] as File[])
-        .findAll { it.directory && stonecutter.compare(it.name, minecraft_version as String) <= 0 }
+        .findAll { it.directory && it.name ==~ /\d+(\.\d+)*/ }
+        .findAll { stonecutter.compare(it.name, minecraft_version as String) <= 0 }
 def versionedDir = versionedDirs.max { a, b -> stonecutter.compare(a.name, b.name) }
 if (versionedDir != null) {
     def versionedJava = new File(versionedDir, 'java')
