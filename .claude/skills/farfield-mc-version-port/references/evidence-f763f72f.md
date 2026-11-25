@@ -1,0 +1,2 @@
+Edit new_string: "// them needs a folder of its own. A folder whose name is not a version (a tool's hidden\n// folder, such as .claude/ or .idea/) is left out: Stonecutter refuses to compare its name."
+Bash result: "stray folders: common/src/versioned/.claude fabric/src/versioned/.claude\nBUILD SUCCESSFUL in 55s\nbuild exit 0"
