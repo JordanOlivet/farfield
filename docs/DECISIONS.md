@@ -5637,7 +5637,15 @@ fog distance to off.
   the far islands, the End's sky and the dragon in the capture and the log
   line once; the four other counts as before. After, on 1.21.11: 185 under
   the boss bar at vanilla and off, 151 out of range, the Nether 2 and 139.
-  `build` of every version green. Not checked: Fabric, Forge 1.20.1 and
-  26.x in game (the same mixin on the same class, compiled only), Sodium
-  or a shader pack, the fight itself (the dragon's breath, the End flash),
-  a player's pack.
+  `build` of every version green. The same day, the same scenario on every
+  other dev client (counts under the boss bar at vanilla, then off, out of
+  range, the Nether at vanilla and off): NeoForge 26.1.2 181, 181, 149, 2,
+  139; NeoForge 26.2 185, 185, 152, 2, 139; NeoForge 26.3 176, 176, 148, 2,
+  139; Fabric 1.20.1 161, 161, 149, 2, 136; Fabric 1.21.1 140, 140, 109, 2,
+  83; Fabric 1.21.11 178, 178, 150, 2, 139; Fabric 26.1.2 and 26.2 185,
+  185, 152, 2, 139; Fabric 26.3 176, 176, 148, 2, 139; Forge 1.20.1 161,
+  161, 149, 2, 136; Fabric 1.21.1 with Sodium 0.8.13 139, 139, 109, 2, 87;
+  Fabric 1.21.11 with Sodium 0.8.14 153, 153, 150, 2, 127. Each run: the
+  log line once, no `Mixin apply failed`, no crash report. Not checked: a
+  shader pack, the fight itself (the dragon's breath, the End flash), a
+  player's pack, a production jar in game.
