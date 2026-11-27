@@ -911,7 +911,8 @@ public final class PreviewTile {
                 int px = bx0 + i * GRID;
                 int ci = (int) Math.min(px / span, SAMPLES - 2);
                 long fx = px - ci * span;
-                int[] c = undersides == null ? null : floatingCorners(ci, ck);
+                int[] c = undersides == null ? null
+                        : floatingCorners(ci, ck, (fx * 2 >= span ? 1 : 0) | (fz * 2 >= span ? 2 : 0));
                 long h00 = c == null ? sample(ci, ck) : c[0];
                 long h10 = c == null ? sample(ci + 1, ck) : c[1];
                 long h01 = c == null ? sample(ci, ck + 1) : c[2];
@@ -1021,7 +1022,7 @@ public final class PreviewTile {
         int tx = fx - i * GRID * 2;
         int tz = fz - k * GRID * 2;
         int span = GRID * 2;
-        int[] c = floatingCorners(i, k);
+        int[] c = floatingCorners(i, k, (tx * 2 >= span ? 1 : 0) | (tz * 2 >= span ? 2 : 0));
         if (c == null) {
             return SOLID_DOWN;
         }
@@ -1032,42 +1033,98 @@ public final class PreviewTile {
     }
 
     /**
-     * The four samples around cell (i, k) of a tile with undersides, as
-     * heights then undersides (00, 10, 01, 11); null when one goes down
-     * solid. Where some have ground and some none (the void beside an
-     * island), those without take the middle level of those with, height
-     * and underside alike (ADR-159): between them the ground thins toward
-     * that level instead of sloping down to the bottom of the world.
+     * The gap in blocks past which two slabs of floating ground are two
+     * layers, one over the other, and not one slope (ADR-180): the spacing
+     * of the tile's samples, 4 blocks at level 0.
      */
-    private int[] floatingCorners(int i, int k) {
-        int[] c = {sample(i, k), sample(i + 1, k), sample(i, k + 1), sample(i + 1, k + 1),
-                underside(i, k), underside(i + 1, k), underside(i, k + 1), underside(i + 1, k + 1)};
-        return floatCorners(c) ? c : null;
+    public int layerGap() {
+        return GRID << level;
     }
 
     /**
-     * {@link #floatingCorners} on four heights and four undersides in place;
-     * false when an underside is {@link #SOLID_DOWN}.
+     * The four samples around cell (i, k) of a tile with undersides, as
+     * heights then undersides (00, 10, 01, 11), for a place of the cell
+     * nearest to corner {@code near} (bit 0 along X, bit 1 along Z); null
+     * when one goes down solid. See {@link #floatCorners}.
      */
-    static boolean floatCorners(int[] c) {
-        long mids = 0;
+    private int[] floatingCorners(int i, int k, int near) {
+        int[] c = {sample(i, k), sample(i + 1, k), sample(i, k + 1), sample(i + 1, k + 1),
+                underside(i, k), underside(i + 1, k), underside(i, k + 1), underside(i + 1, k + 1)};
+        return floatCorners(c, near, layerGap()) ? c : null;
+    }
+
+    /**
+     * Makes four heights and four undersides (00, 10, 01, 11) those of one
+     * piece of floating ground, in place; false when an underside is {@link
+     * #SOLID_DOWN}.
+     * <p>
+     * Where some corners have ground and some none (the void beside an
+     * island), those without take the middle level of those with, height
+     * and underside alike (ADR-159): between them the ground thins toward
+     * that level instead of sloping down to the bottom of the world.
+     * <p>
+     * Corners whose slabs lie more than {@code gap} blocks apart in height
+     * are two layers, an island over another (ADR-180): a place takes the
+     * layer of the corner nearest to it ({@code near}; where that one has no
+     * ground, the layer of the corner beside it with the higher top, else of
+     * the opposite one), and the corners of the other layers count as
+     * having no ground. Joined, they stood as a wall from one island to the
+     * other.
+     */
+    static boolean floatCorners(int[] c, int near, int gap) {
         int ground = 0;
         for (int j = 0; j < 4; j++) {
             if (c[4 + j] == SOLID_DOWN) {
                 return false;
             }
             if (c[4 + j] < c[j]) {
-                mids += c[j] + c[4 + j];
-                ground++;
+                ground |= 1 << j;
             }
         }
-        if (ground > 0 && ground < 4) {
-            int mid = (int) Math.floorDiv(mids, 2L * ground);
+        if (ground == 0) {
+            return true;
+        }
+        int seed = near;
+        if ((ground >> near & 1) == 0) {
+            int a = near ^ 1;
+            int b = near ^ 2;
+            boolean hasA = (ground >> a & 1) != 0;
+            boolean hasB = (ground >> b & 1) != 0;
+            seed = hasA && hasB ? (c[a] >= c[b] ? a : b) : hasA ? a : hasB ? b : near ^ 3;
+        }
+        // The layer: the corners within the gap of one already in it, from the seed on.
+        int layer = 1 << seed;
+        for (boolean grown = true; grown && layer != ground;) {
+            grown = false;
             for (int j = 0; j < 4; j++) {
-                if (c[4 + j] >= c[j]) {
-                    c[j] = mid;
-                    c[4 + j] = mid;
+                if ((ground & ~layer & 1 << j) == 0) {
+                    continue;
                 }
+                for (int m = 0; m < 4; m++) {
+                    if ((layer & 1 << m) != 0 && c[4 + j] - c[m] <= gap && c[4 + m] - c[j] <= gap) {
+                        layer |= 1 << j;
+                        grown = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if (layer == 0xF) {
+            return true;
+        }
+        long mids = 0;
+        int members = 0;
+        for (int j = 0; j < 4; j++) {
+            if ((layer & 1 << j) != 0) {
+                mids += c[j] + c[4 + j];
+                members++;
+            }
+        }
+        int mid = (int) Math.floorDiv(mids, 2L * members);
+        for (int j = 0; j < 4; j++) {
+            if ((layer & 1 << j) == 0) {
+                c[j] = mid;
+                c[4 + j] = mid;
             }
         }
         return true;
@@ -1092,7 +1149,8 @@ public final class PreviewTile {
         int h10 = sample(i + 1, k);
         int h01 = sample(i, k + 1);
         int h11 = sample(i + 1, k + 1);
-        int[] c = undersides == null ? null : floatingCorners(i, k);
+        int[] c = undersides == null ? null
+                : floatingCorners(i, k, (tx * 2 >= span ? 1 : 0) | (tz * 2 >= span ? 2 : 0));
         if (c != null) {
             h00 = c[0];
             h10 = c[1];

@@ -1677,4 +1677,103 @@ class PreviewTest {
         assertEquals(50, view.underside(8, 8));
         assertEquals(-64, view.underside(100, 100));
     }
+
+    /**
+     * Two islands of the End side by side in plan and far apart in height
+     * (ADR-180): ground 30 to 39 over samples 2 to 5 along X, ground 100 to
+     * 109 over samples 6 to 10, both over samples 2 to 10 along Z, the void
+     * elsewhere. Blocks 20 to 23 along X lie between a sample of each.
+     */
+    private static PreviewTile stackedIslands() {
+        PreviewTile t = island(50);
+        for (int k = 2; k <= 10; k++) {
+            for (int i = 2; i <= 10; i++) {
+                t.setHeight(i, k, i <= 5 ? 40 : 110);
+                t.setUnderside(i, k, i <= 5 ? 30 : 100);
+            }
+        }
+        return t;
+    }
+
+    /** The voxels of a section that are not air, between two voxel heights. */
+    private static int filled(LodSection section, int fromY, int toY) {
+        if (section == null) {
+            return 0;
+        }
+        int n = 0;
+        for (int z = 0; z < LodSection.SIZE; z++) {
+            for (int x = 0; x < LodSection.SIZE; x++) {
+                for (int y = fromY; y < toY; y++) {
+                    if (section.material(x, y, z) != AIR) {
+                        n++;
+                    }
+                }
+            }
+        }
+        return n;
+    }
+
+    @Test
+    void islandsOfTwoLayersAreNotJoinedByAWall() {
+        PreviewTile tile = stackedIslands();
+        PreviewVoxels.Tiles tiles = (x, z) -> x == 0 && z == 0 ? tile : null;
+        // Between the two samples, a block belongs to the island of the sample nearer to it.
+        assertTrue(tile.height(21, 20) <= 40 && tile.blockUnderside(21, 20) >= 30,
+                "block 21 is the low island's: " + tile.blockUnderside(21, 20) + " to " + tile.height(21, 20));
+        assertTrue(tile.height(22, 20) <= 110 && tile.blockUnderside(22, 20) >= 100,
+                "block 22 is the high island's: " + tile.blockUnderside(22, 20) + " to " + tile.height(22, 20));
+    }
+
+    @Test
+    void noVoxelFillsTheGapBetweenIslandsOfTwoLayers() {
+        PreviewTile tile = stackedIslands();
+        PreviewVoxels.Tiles tiles = (x, z) -> x == 0 && z == 0 ? tile : null;
+        // Blocks: section (0, 2, 0) is 64 to 95 high, all of it in the gap between the islands.
+        assertEquals(0, filled(PreviewVoxels.build(0, 0, 2, 0, tiles, null, AIR, -64, -1, -1, -1, 0), 0,
+                LodSection.SIZE), "blocks in the gap, at 1 block a voxel");
+        // Both islands stay: the low one in section 1 (32 to 63), the high one in section 3 (96 to 127).
+        assertEquals(STONE, PreviewVoxels.build(0, 0, 1, 0, tiles, null, AIR, -64, -1, -1, -1, 0)
+                .material(12, 32 - 32, 20));
+        assertEquals(STONE, PreviewVoxels.build(0, 0, 3, 0, tiles, null, AIR, -64, -1, -1, -1, 0)
+                .material(30, 100 - 96, 20));
+        // Voxels of 4 blocks read the samples themselves: section (0, 0, 0) of level 2 is 0 to 127
+        // high, and its voxels 11 to 23 (44 to 95) lie in the gap.
+        LodSection coarse = PreviewVoxels.build(2, 0, 0, 0, tiles, null, AIR, -64, -1, -1, -1, 0);
+        assertNotNull(coarse);
+        assertEquals(0, filled(coarse, 11, 24), "voxels in the gap, at 4 blocks a voxel");
+        assertTrue(filled(coarse, 7, 10) > 0, "the low island at 4 blocks a voxel");
+        assertTrue(filled(coarse, 25, 28) > 0, "the high island at 4 blocks a voxel");
+    }
+
+    @Test
+    void aCoarseTileCutIntoViewsKeepsTwoLayersApart() {
+        PreviewTile tile = stackedIslands();
+        tile.setLevel(1);
+        PreviewTile view = tile.expand(0, 0);
+        for (int i = 0; i < PreviewTile.SAMPLES; i++) {
+            int h = view.sample(i, 12);
+            int u = view.underside(i, 12);
+            assertTrue(u >= h || h <= 40 && u >= 30 || h <= 110 && u >= 100,
+                    "sample " + i + " of the view is of one island or none: " + u + " to " + h);
+        }
+    }
+
+    @Test
+    void aThinSlopeOfFloatingGroundStaysOnePiece() {
+        // Ground 2 blocks thick rising 3 blocks a sample: its samples' slabs do not overlap, yet they
+        // are nearer than a sample's spacing, so it is one slope and not a stair of layers (ADR-180).
+        PreviewTile t = island(50);
+        for (int k = 2; k <= 10; k++) {
+            for (int i = 2; i <= 10; i++) {
+                t.setHeight(i, k, 40 + 3 * i);
+                t.setUnderside(i, k, 38 + 3 * i);
+            }
+        }
+        for (int bx = 8; bx < 40; bx++) {
+            int h = t.height(bx, 20);
+            int u = t.blockUnderside(bx, 20);
+            assertTrue(h - u >= 2, "block " + bx + " keeps its ground: " + u + " to " + h);
+            assertTrue(Math.abs(h - (40 + 3 * (bx + 0.5) / 4.0)) <= 2, "block " + bx + " on the slope: " + h);
+        }
+    }
 }
