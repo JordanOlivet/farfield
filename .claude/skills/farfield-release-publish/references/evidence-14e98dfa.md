@@ -1,0 +1,2 @@
+- **Ce qui échoue** : c'est ce retrait qui reçoit le 401, une fois les fichiers envoyés. Il n'a d'ailleurs jamais fonctionné : tes 42 versions sont encore toutes marquées.
+- **Ma recommandation** : désactiver ce retrait dans le workflow de publication de `ci-workflows`, plutôt que d'élargir les droits du token. Le projet étant hors recherche, ce marquage n'apporte rien, et les releases repasseront au vert. Ce workflow sert aussi aux mods Krios.

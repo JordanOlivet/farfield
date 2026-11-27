@@ -5649,3 +5649,55 @@ fog distance to off.
   log line once, no `Mixin apply failed`, no crash report. Not checked: a
   shader pack, the fight itself (the dragon's breath, the End flash), a
   player's pack, a production jar in game.
+
+## ADR-180 — Floating ground of two layers is not joined
+
+Status: accepted, 2026-11-28. Amends ADR-159 (the undersides of floating
+ground). The user, in his pack's End (Nullscape): the far islands, in
+preview, show "beaucoup trop de relief" beside the real ones.
+
+- **Context**: a tile holds one top and one underside per sample. Between
+  two samples with ground the preview interpolated both, and a voxel
+  column took the highest top and the lowest underside of its footprint,
+  whatever the height between the two slabs. Where an island floats over
+  another (Nullscape stacks them, 100 blocks and more apart), the block
+  between a sample of each became a ramp, and the column over both a solid
+  wall from the lower island to the upper one: towers and curtains where
+  the real terrain has the void. The samples themselves were right: on
+  195,608 real columns of a Nullscape world, the level-0 tiles' tops
+  differ from the chunks' by 3.7 blocks on average.
+- **Decision**: two slabs more than a sample's spacing apart in height
+  (`PreviewTile.layerGap`, 4 blocks at level 0, doubling per level) are
+  two layers and are not joined.
+  - Between samples (`PreviewTile.floatCorners`): a place takes the layer
+    of the cell's corner nearest to it, and the corners of other layers
+    count there as corners without ground do since ADR-159: the layer
+    thins toward its own middle level. An island's edge thus ends half way
+    to the next sample, where the other island's begins.
+  - In a voxel column (`PreviewVoxels.columnHeight`): the column is the
+    layer of its highest point, down to the lowest underside the layer
+    reaches in the footprint. The lower island loses the columns it
+    shares with the upper one's edge.
+  - Slabs nearer than the spacing stay one piece, so a thin slope whose
+    samples do not overlap is still a slope.
+  - The tiles do not change: no new format, no new protocol, nothing to
+    rebuild. A sample still holds one layer, the highest: the part of a
+    lower island right under an upper one is not stored and not drawn.
+- **Not chosen**: several slabs per sample (a new tile format, and the
+  surface search of a column, about 5 s a quarter under Nullscape,
+  would run once per layer); splitting on any gap between slabs (a thin
+  slope at a coarse level, whose samples are 64 blocks apart and more,
+  would break into steps).
+- **Checked** (2026-11-28): core tests that failed first (a block between
+  two layers read 56 to 66 for islands at 30 to 39 and 100 to 109; 463
+  blocks stood in the gap at 1 block a voxel; a view cut from a level-1
+  tile held a sample at 65 to 75) and pass now, with one that a thin slope
+  stays whole; the 290 core tests green. NeoForge 1.21.1 dev client with
+  Nullscape, the test seed, the same two views of the End (from 700, 170,
+  384 facing east, and from 0, 197, 0) before and after, then with the
+  zone's chunks real: the towers and curtains between stacked islands are
+  gone, the islands float in layers as the real ones do. Not checked: the
+  cost of a preview mesh job (no line of the run before to compare with),
+  the other Minecraft versions and Fabric (the code is in `core`), the
+  user's pack, a tall mound that stays in both views outside the real
+  zone.

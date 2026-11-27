@@ -1531,10 +1531,12 @@ public final class PreviewVoxels {
         int lowest = Integer.MAX_VALUE;
         // The lowest underside of the footprint's floating ground (ADR-159); samples without ground (the void
         // around islands) count for nothing, and a column of them only holds nothing. Any sample going down
-        // solid makes the column go down solid.
+        // solid makes the column go down solid. Of two layers, an island over another, the column is the
+        // higher one's alone (ADR-180): bestUnder is the underside of the highest point.
         boolean floats = tile.hasUndersides();
         boolean solidDown = !floats;
         int under = Integer.MAX_VALUE;
+        int bestUnder = Integer.MAX_VALUE;
         // A tile as stored covers 512 << level blocks with the same samples (a far section's, E.3b; a view: level 0).
         int t = tile.level();
         int lx = Math.floorMod(bx, PreviewTile.BLOCKS << t) >> t;
@@ -1546,8 +1548,9 @@ public final class PreviewVoxels {
             for (int dz = 0; dz < s; dz++) {
                 for (int dx = 0; dx < s; dx++) {
                     int v = tile.height(lx + dx, lz + dz);
+                    int u = PreviewTile.SOLID_DOWN;
                     if (floats) {
-                        int u = tile.blockUnderside(lx + dx, lz + dz);
+                        u = tile.blockUnderside(lx + dx, lz + dz);
                         if (u == PreviewTile.SOLID_DOWN) {
                             solidDown = true;
                         } else if (u >= v) {
@@ -1559,7 +1562,26 @@ public final class PreviewVoxels {
                     lowest = Math.min(lowest, v);
                     if (v > best) {
                         best = v;
+                        bestUnder = u;
                         cell[0] = (lz + dz) / PreviewTile.GRID * PreviewTile.CELLS + (lx + dx) / PreviewTile.GRID;
+                    }
+                }
+            }
+            if (floats && !solidDown && under < bestUnder) {
+                // Ground lower than the highest point's own: of its layer, or of an island under it.
+                int gap = tile.layerGap();
+                under = bestUnder;
+                for (boolean grown = true; grown;) {
+                    grown = false;
+                    for (int dz = 0; dz < s; dz++) {
+                        for (int dx = 0; dx < s; dx++) {
+                            int u = tile.blockUnderside(lx + dx, lz + dz);
+                            if (u < under && u < tile.height(lx + dx, lz + dz)
+                                    && tile.height(lx + dx, lz + dz) >= under - gap) {
+                                under = u;
+                                grown = true;
+                            }
+                        }
                     }
                 }
             }
@@ -1567,8 +1589,9 @@ public final class PreviewVoxels {
             for (int k = lz / PreviewTile.GRID; k <= (lz + s) / PreviewTile.GRID; k++) {
                 for (int i = lx / PreviewTile.GRID; i <= (lx + s) / PreviewTile.GRID; i++) {
                     int v = tile.sample(i, k);
+                    int u = PreviewTile.SOLID_DOWN;
                     if (floats) {
-                        int u = tile.underside(i, k);
+                        u = tile.underside(i, k);
                         if (u == PreviewTile.SOLID_DOWN) {
                             solidDown = true;
                         } else if (u >= v) {
@@ -1580,8 +1603,26 @@ public final class PreviewVoxels {
                     lowest = Math.min(lowest, v);
                     if (v > best) {
                         best = v;
+                        bestUnder = u;
                         // A sample on the far edge belongs to the next tile's cell: keep the last one.
                         cell[0] = Math.min(k, last) * PreviewTile.CELLS + Math.min(i, last);
+                    }
+                }
+            }
+            if (floats && !solidDown && under < bestUnder) {
+                // As above, on the samples themselves.
+                int gap = tile.layerGap();
+                under = bestUnder;
+                for (boolean grown = true; grown;) {
+                    grown = false;
+                    for (int k = lz / PreviewTile.GRID; k <= (lz + s) / PreviewTile.GRID; k++) {
+                        for (int i = lx / PreviewTile.GRID; i <= (lx + s) / PreviewTile.GRID; i++) {
+                            int u = tile.underside(i, k);
+                            if (u < under && u < tile.sample(i, k) && tile.sample(i, k) >= under - gap) {
+                                under = u;
+                                grown = true;
+                            }
+                        }
                     }
                 }
             }
