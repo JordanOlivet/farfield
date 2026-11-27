@@ -6,7 +6,7 @@ Far-distance terrain rendering for Minecraft, using levels of detail (LOD):
 the terrain beyond your render distance, 4,096 blocks by default and out to
 the world border, at a fraction of the cost of real chunks.
 
-Status: 1.2.0, one source tree for every Minecraft version and loader
+Status: 1.2.1, one source tree for every Minecraft version and loader
 (ADR-165). What it does today, its requirements and what is planned:
 [`docs/listing/description.md`](docs/listing/description.md) (the text of the
 Modrinth and CurseForge pages).
