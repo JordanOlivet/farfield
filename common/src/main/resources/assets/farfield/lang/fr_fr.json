@@ -20,7 +20,7 @@
   "farfield.options.fog_shown": "Brouillard des LOD",
   "farfield.options.fog_shown.tooltip": "Brouillard sur le terrain lointain dans les dimensions normales, opaque à la distance des LOD. Désactivé : pas de brouillard, le bord du terrain se voit ; la distance reste la même.",
   "farfield.options.thick_fog": "Distance du brouillard épais",
-  "farfield.options.thick_fog.tooltip": "Pareil dans les dimensions à brouillard épais comme le Nether. Vanilla : le terrain lointain se fond dans le brouillard du jeu, il en reste donc peu de visible.",
+  "farfield.options.thick_fog.tooltip": "Pareil dans les dimensions à brouillard épais comme le Nether. Vanilla : le brouillard du jeu cache le terrain lointain, rien n'en est visible. Désactivé ou une distance : le terrain s'y voit aussi.",
   "farfield.options.fog.blocks": "%s blocs",
   "farfield.options.fog.off": "Désactivé",
   "farfield.options.fog.vanilla": "Vanilla",

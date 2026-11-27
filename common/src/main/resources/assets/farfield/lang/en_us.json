@@ -20,7 +20,7 @@
   "farfield.options.fog_shown": "LOD Fog",
   "farfield.options.fog_shown.tooltip": "Fog over the distant terrain in normal dimensions, opaque at the LOD distance. Off: no fog, the terrain's edge shows; the distance stays.",
   "farfield.options.thick_fog": "Thick Fog Distance",
-  "farfield.options.thick_fog.tooltip": "The same in dimensions with thick fog, such as the Nether. Vanilla: distant terrain fades into the game's own fog, so little of it shows.",
+  "farfield.options.thick_fog.tooltip": "The same in dimensions with thick fog, such as the Nether. Vanilla: the game's own fog hides the distant terrain, none of it shows. Off or a distance: the terrain shows there too.",
   "farfield.options.fog.blocks": "%s blocks",
   "farfield.options.fog.off": "Off",
   "farfield.options.fog.vanilla": "Vanilla",
